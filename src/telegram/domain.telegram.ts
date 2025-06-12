@@ -58,7 +58,7 @@ export interface IMessageSorter<Item = any> {
 }
 
 export const createSubscriptionModel = (botName: EBotName) => {
-  throw new Error(`method to be defined`); // TODO: implement this function
+  throw new Error(`method to be defined`); // TODO: implement the function
   // delete if not needed
   // switch (botName) {
   //   case EBotName.BOT_INSTANCE_NAME:

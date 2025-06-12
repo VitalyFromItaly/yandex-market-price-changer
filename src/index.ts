@@ -8,12 +8,7 @@ import { connectDB } from './database/mongo';
 import { createApiRoutes } from './routes';
 import { authMiddleware } from './middleware/auth.middleware';
 import { errorHandler } from './middleware/error.handler';
-import { UserService } from './services/UserService';
-import { BotController } from './controllers/BotController';
-import { UserController } from './controllers/UserController';
-import { adminAuthMiddleware } from './middleware/admin.middleware';
 import { botFather } from './telegram';
-import runCron from './cron';
 
 
 // Расширение dayjs
@@ -73,13 +68,9 @@ async function bootstrap() {
     await connectDB();
     console.log('Connected to MongoDB');
 
-    // Инициализируем телеграм-бота
+    // Инициализируем телеграм-ботов
     await botFather.boot();
     console.log('Telegram bots initialized');
-
-    // Запускаем cron задачи
-    runCron();
-    console.log('Cron jobs started');
 
     // Запускаем HTTP сервер
     app.listen(PORT, () => {
