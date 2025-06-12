@@ -1,7 +1,7 @@
 {
-  "name": "tg-bots-boilerplate",
+  "name": "tg-bot-yandex-market-price-changer",
   "version": "0.0.0",
-  "description": "tg-bots-boilerplate is a boilerplate for Telegram bots using Node.js, TypeScript, and Express.",
+  "description": "tg-bot-yandex-market-price-changer for Telegram bots using Node.js, TypeScript, and Express.",
   "engines": {
     "node": ">= 22.11 < 23"
   },
