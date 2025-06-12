@@ -1,7 +1,7 @@
 {
-  "name": "fin4you",
+  "name": "tg-bots-boilerplate",
   "version": "0.0.0",
-  "description": "Bot trader",
+  "description": "tg-bots-boilerplate is a boilerplate for Telegram bots using Node.js, TypeScript, and Express.",
   "engines": {
     "node": ">= 22.11 < 23"
   },
@@ -38,7 +38,7 @@
     "typescript-eslint": "~8.19",
     "vitest": "~2.1"
   },
-  "author": "bagzon@gmail.com",
+  "author": "perekutnev@gmail.com",
   "license": "Apache-2.0",
   "dependencies": {
     "@clickhouse/client": "^1.10.1",
