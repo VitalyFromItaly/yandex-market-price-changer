@@ -151,8 +151,6 @@ export class FileUploadHandler {
       return;
     }
 
-    console.log({ yandexMarketModel });
-
     if (!yandexMarketModel?.isConfigured()) {
       await ctx.reply(
         '❌ Настройки Yandex Market не заполнены. Пожалуйста, настройте API в профиле.',
