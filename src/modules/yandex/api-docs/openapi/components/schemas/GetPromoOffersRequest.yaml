@@ -1,0 +1,22 @@
+description: Получение списка товаров, которые участвуют или могут участвовать в акции.
+type: object
+required:
+  - promoId
+properties:
+  promoId:
+    description: Идентификатор акции.
+    type: string
+  statusType:
+    description: "{% note warning \"Вместо него используйте `statuses`.\" %}\n\n\_\n\n{% endnote %}\n\nФильтр для товаров, которые добавлены в акцию вручную.\n\nЕсли не передать параметр `statusType`, вернутся все товары.\n"
+    deprecated: true
+    $ref: ./PromoOfferParticipationStatusFilterType.yaml
+  statuses:
+    description: >-
+      Фильтр для товаров, которые могут участвовать в акции. Можно задать
+      несколько значений.
+    type: array
+    nullable: true
+    uniqueItems: true
+    minItems: 1
+    items:
+      $ref: ./PromoOfferParticipationStatusMultiFilterType.yaml

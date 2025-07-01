@@ -1,0 +1,9 @@
+name: limit
+description: |
+  Количество значений на одной странице.
+in: query
+required: false
+example: 20
+schema:
+  type: integer
+  format: int32

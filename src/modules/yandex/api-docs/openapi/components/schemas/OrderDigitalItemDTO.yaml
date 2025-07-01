@@ -1,0 +1,50 @@
+description: Цифровой товар.
+type: object
+required:
+  - id
+  - slip
+  - activate_till
+properties:
+  id:
+    description: >
+      Идентификатор товара в заказе.
+
+
+      Он приходит в ответе на запрос [GET
+      campaigns/{campaignId}/orders/{orderId}](../../reference/orders/getOrder.md)
+      — параметр `id` в `items`.
+    type: integer
+    format: int64
+  code:
+    description: |
+      {% note warning "Вместо него используйте `codes`" %}
+
+      Совместное использование обоих параметров приведет к ошибке.
+
+      {% endnote %}
+
+      Сам ключ.
+    type: string
+    deprecated: true
+  codes:
+    description: Ключи, относящиеся к товару.
+    type: array
+    items:
+      type: string
+    minItems: 1
+    maxItems: 5000
+    uniqueItems: true
+    nullable: true
+  slip:
+    description: Инструкция по активации.
+    type: string
+    maxLength: 10000
+  activate_till:
+    description: >
+      Дата, до которой нужно активировать ключи. Если ключи действуют бессрочно,
+      укажите любую дату в отдаленном будущем.
+
+
+      Формат даты: `ГГГГ-ММ-ДД`.
+    type: string
+    format: date

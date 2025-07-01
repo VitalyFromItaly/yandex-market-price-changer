@@ -1,0 +1,14 @@
+description: Цена на товар.
+type: object
+required:
+  - value
+  - currencyId
+properties:
+  value:
+    description: Значение.
+    type: number
+    minimum: 0
+    exclusiveMinimum: true
+  currencyId:
+    description: Валюта.
+    $ref: ./CurrencyType.yaml

@@ -1,0 +1,12 @@
+description: Параметр отображает одно грузовое место.
+type: object
+properties:
+  id:
+    description: Идентификатор коробки в составе заказа.
+    type: integer
+    format: int64
+  fulfilmentId:
+    description: "{% note warning \"Не используйте этот параметр.\" %}\n\n\_\n\n{% endnote %}\n"
+    type: string
+    pattern: ^[\p{Alnum}- ]*$
+    deprecated: true

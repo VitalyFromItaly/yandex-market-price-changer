@@ -1,11 +1,9 @@
 import { Types } from 'mongoose';
-import { UserContext } from '../../services/UserService';
 
 declare global {
   namespace Express {
     interface Request {
       userId: string;
-      userContext?: UserContext;
       user?: {
         _id: Types.ObjectId | string;
         username: string;

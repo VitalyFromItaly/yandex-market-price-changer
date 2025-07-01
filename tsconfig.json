@@ -5,7 +5,7 @@
     "lib": ["ES2022", "DOM"],
     "moduleResolution": "node16",
     "rootDir": ".",
-    "outDir": "build",
+    "outDir": "dist",
     "allowSyntheticDefaultImports": true,
     "importHelpers": true,
     "alwaysStrict": false,
@@ -21,5 +21,12 @@
 
   },
   "include": ["src"],
+  "exclude": [
+    "src/modules/yandex/api/**/*",
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ],
   "typeRoots": ["src/types/main.d.ts","src/types/express/index.d.ts" ]
 }

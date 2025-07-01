@@ -1,0 +1,20 @@
+description: Товар в карантине.
+type: object
+properties:
+  offerId:
+    $ref: ./ShopSku.yaml
+  currentPrice:
+    description: "{% note warning \"Вместо него используйте значение из `verdicts` → `params`.\" %}\n\n\_\n\n{% endnote %}\n\nНовая цена.\n"
+    deprecated: true
+    $ref: ./BasePriceDTO.yaml
+  lastValidPrice:
+    description: "{% note warning \"Вместо него используйте значение из `verdicts` → `params`.\" %}\n\n\_\n\n{% endnote %}\n\nПоследняя цена до попадания в карантин.\n"
+    deprecated: true
+    $ref: ./BasePriceDTO.yaml
+  verdicts:
+    description: Причины попадания товара в карантин.
+    type: array
+    nullable: true
+    minItems: 1
+    items:
+      $ref: ./PriceQuarantineVerdictDTO.yaml

@@ -1,0 +1,12 @@
+name: pageSize
+description: |
+  Размер страницы.
+
+  Используется вместе с параметром `page_number`.
+
+  `page_size` игнорируется, если задан `page_token` или `limit`.
+in: query
+required: false
+schema:
+  type: integer
+  format: int32

@@ -1,0 +1,54 @@
+description: |
+  Данные, необходимые для генерации отчета.
+type: object
+required:
+  - campaignId
+properties:
+  campaignId:
+    description: >
+      Идентификатор кампании.
+
+
+      Его можно узнать с помощью запроса [GET
+      campaigns](../../reference/campaigns/getCampaigns.md) или найти в кабинете
+      продавца на Маркете — нажмите на название своего бизнеса и перейдите на
+      страницу:
+
+        * **Модули и API** → блок **Передача данных Маркету**.
+        * **Лог запросов** → выпадающий список в блоке **Показывать логи**.
+
+      ⚠️ Не передавайте вместо него идентификатор магазина, который указан в
+      кабинете продавца на Маркете рядом с названием магазина и в некоторых
+      отчетах.
+    type: integer
+    format: int64
+  warehouseIds:
+    description: >-
+      Фильтр по идентификаторам складов (только модель FBY). Чтобы узнать
+      идентификатор, воспользуйтесь запросом [GET
+      warehouses](../../reference/warehouses/getFulfillmentWarehouses.md).
+    type: array
+    nullable: true
+    minItems: 1
+    uniqueItems: true
+    items:
+      type: integer
+      format: int64
+  reportDate:
+    description: >-
+      Фильтр по дате (для модели FBY). В отчет попадут данные за
+      **предшествующий** дате день.
+    type: string
+    format: date
+  categoryIds:
+    description: Фильтр по категориям на Маркете (кроме модели FBY).
+    type: array
+    nullable: true
+    minItems: 1
+    uniqueItems: true
+    items:
+      type: integer
+      format: int64
+  hasStocks:
+    description: Фильтр по наличию остатков (кроме модели FBY).
+    type: boolean

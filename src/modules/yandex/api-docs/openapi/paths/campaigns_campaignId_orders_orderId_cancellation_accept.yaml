@@ -1,0 +1,71 @@
+put:
+  tags:
+    - orders
+    - dbs
+  x-auth-scopes:
+    - all-methods
+    - inventory-and-order-processing
+  operationId: acceptOrderCancellation
+  summary: Отмена заказа покупателем
+  description: >
+    {% include notitle
+    [access](../../_auto/method_scopes/acceptOrderCancellation.md) %}
+
+
+    Подтверждает или отклоняет заявку покупателя на отмену заказа, который
+    передан службе доставки.
+
+
+    Покупатель может отменить заказ в течение его обработки или доставки. Если
+    заказ еще обрабатывается (статус `PROCESSING`), вам не нужно подтверждать
+    отмену заказа — он будет отменен автоматически.
+
+
+    Если заказ уже передан службе доставки (статус `DELIVERY` или `PICKUP`) и
+    пользователь отменил его, вы можете предупредить службу об отмене в течение
+    48 часов.
+
+      * Служба доставки узнала об отмене до передачи заказа покупателю — подтвердите отмену с помощью запроса [PUT campaigns/{campaignId}/orders/{orderId}/cancellation/accept](../../reference/orders/acceptOrderCancellation.md).
+      * Заказ уже доставлен — отклоните отмену с помощью этого же запроса. Тогда у покупателя останется заказ, и деньги за него возвращаться не будут.
+
+    **Как узнать об отмененных заказах:**
+
+      * Отправьте запрос [GET campaigns/{campaignId}/orders](../../reference/orders/getOrders.md). В его URL добавьте входной параметр `onlyWaitingForCancellationApprove=true`.
+      * В кабинете или через почту — на нее придет уведомление об отмене.
+      * Подключите API-уведомления. Маркет отправит вам запрос [POST notification](../../push-notifications/reference/sendNotification.md), когда появится новая заявка на отмену заказа. [{#T}](../../push-notifications/index.md)
+
+    Если в течение 48 часов вы не подтвердите или отклоните отмену, заказ будет
+    отменен автоматически.
+
+
+    |**⚙️ Лимит:** 500 запросов в час|
+
+    |-|
+  parameters:
+    - $ref: ../components/parameters/CampaignId.yaml
+    - $ref: ../components/parameters/OrderId.yaml
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/AcceptOrderCancellationRequest.yaml
+  responses:
+    '200':
+      description: Ответ на отмену заказа был успешно передан.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/EmptyApiResponse.yaml
+    '400':
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml

@@ -1,0 +1,39 @@
+description: Информация о чате.
+type: object
+required:
+  - chatId
+  - type
+  - status
+  - createdAt
+  - updatedAt
+properties:
+  chatId:
+    description: Идентификатор чата.
+    type: integer
+    format: int64
+    minimum: 1
+  orderId:
+    description: Идентификатор заказа.
+    type: integer
+    format: int64
+    minimum: 1
+  type:
+    $ref: ./ChatType.yaml
+  status:
+    $ref: ./ChatStatusType.yaml
+  createdAt:
+    description: |
+      Дата и время создания чата.
+
+      Формат даты: ISO 8601 со смещением относительно UTC.
+    type: string
+    format: date-time
+    example: '2017-11-21T00:00:00+03:00'
+  updatedAt:
+    description: |
+      Дата и время последнего сообщения в чате.
+
+      Формат даты: ISO 8601 со смещением относительно UTC.
+    type: string
+    format: date-time
+    example: '2017-11-21T00:00:00+03:00'

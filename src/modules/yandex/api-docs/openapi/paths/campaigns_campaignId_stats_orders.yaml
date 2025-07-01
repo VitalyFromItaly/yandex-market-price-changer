@@ -1,0 +1,44 @@
+post:
+  tags:
+    - orders-stats
+    - fby
+    - fbs
+    - dbs
+    - express
+  x-auth-scopes:
+    - all-methods
+    - all-methods:read-only
+    - inventory-and-order-processing
+    - inventory-and-order-processing:read-only
+  operationId: getOrdersStats
+  summary: Детальная информация по заказам
+  description: "{% include notitle [access](../../_auto/method_scopes/getOrdersStats.md) %}\n\nВозвращает информацию по заказам на Маркете, в которых есть ваши товары.\n\nС помощью нее вы можете собрать статистику по вашим заказам и узнать, например, какие из товаров чаще всего возвращаются покупателями, какие, наоборот, пользуются большим спросом и\_т.\_п.\n\n{% note tip \"Информация по созданным или обновленным заказам может появиться с задержкой до 40 минут\" %}\n\nЧтобы получить данные без задержки, используйте [метод получения информации о заказах](../../reference/orders/getOrders.md).\n\n{% endnote %}\n\nВ одном запросе можно получить информацию не более чем по 200 заказам.\n\n|**⚙️ Лимит:** 1 000 000 заказов в час|\n|-|\n"
+  parameters:
+    - $ref: ../components/parameters/CampaignId.yaml
+    - $ref: ../components/parameters/PageToken.yaml
+    - $ref: ../components/parameters/PageLimit.yaml
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/GetOrdersStatsRequest.yaml
+  responses:
+    '200':
+      description: Информация по заказам.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/GetOrdersStatsResponse.yaml
+    '400':
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml

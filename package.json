@@ -3,25 +3,29 @@
   "version": "0.0.0",
   "description": "tg-bot-yandex-market-price-changer for Telegram bots using Node.js, TypeScript, and Express.",
   "engines": {
-    "node": ">= 22.11 < 23"
+    "node": ">= 20 < 23"
   },
   "main": "src/index.ts",
   "scripts": {
-    "start": "npm run build && node --enable-source-maps dist/index.js",
-    "dev": "nodemon ",
-    "clean": "rimraf coverage build tmp",
-    "build": "ts-node src/index.ts",
+    "start": "node --enable-source-maps dist/index.js",
+    "start:prod": "npm run build && npm start",
+    "dev": "nodemon",
+    "clean": "rimraf coverage dist tmp",
+    "build": "tsc",
     "lint": "eslint .",
     "lint-fix": "eslint . --fix",
     "tunnel": "vk-tunnel --insecure=1 --http-protocol=http --ws-protocol=ws --host=localhost --port=3004 --timeout=5000",
-    "prettier-fix": "prettier --write ./src"
+    "tunnel:ngrok": "ngrok http http://localhost:3004",
+    "prettier-fix": "prettier --write ./src",
+    "api": "openapi --input src/modules/yandex/api-docs/openapi/openapi.yaml --output src/modules/yandex/api",
+    "parser:run": "npx ts-node src/modules/parser/run-simple-parser.ts"
   },
   "devDependencies": {
     "@eslint/js": "~9.17",
     "@types/eslint__js": "~8.42",
     "@types/express": "^5.0.0",
     "@types/lodash": "^4.17.15",
-    "@types/node": "^20.17.19",
+    "@types/node": "^20.19.0",
     "@typescript-eslint/parser": "~8.19",
     "@vitest/coverage-v8": "~2.1",
     "@vitest/eslint-plugin": "~1.1",
@@ -42,24 +46,25 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@clickhouse/client": "^1.10.1",
-    "axios": "^1.7.9",
+    "axios": "1.8.2",
     "bcrypt": "^5.1.1",
     "body-parser": "^1.20.3",
-    "bybit-api": "^3.10.30",
     "dayjs": "^1.11.13",
     "dotenv": "^16.4.7",
     "env-cmd": "^10.1.0",
     "express": "^4.21.2",
+    "iconv-lite": "^0.6.3",
     "joi": "^17.13.3",
     "lodash": "^4.17.21",
     "mitt": "^3.0.1",
     "mongoose": "^8.10.1",
-    "openai": "^4.80.1",
+    "openapi-typescript-codegen": "^0.29.0",
     "technicalindicators": "^3.1.0",
     "telegraf": "^4.16.3",
     "ts-patch": "^3.3.0",
     "tslib": "~2.8",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "xlsx": "^0.18.5"
   },
   "volta": {
     "node": "22.12.0"

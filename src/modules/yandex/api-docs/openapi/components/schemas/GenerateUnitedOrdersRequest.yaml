@@ -1,0 +1,46 @@
+description: |
+  Данные, необходимые для генерации отчета.
+type: object
+required:
+  - businessId
+  - dateFrom
+  - dateTo
+properties:
+  businessId:
+    description: Идентификатор кабинета.
+    format: int64
+    type: integer
+  dateFrom:
+    description: Начало периода, включительно.
+    format: date
+    type: string
+  dateTo:
+    description: Конец периода, включительно. Максимальный период — 1 год.
+    format: date
+    type: string
+  campaignIds:
+    description: >
+      Список идентификаторов кампании тех магазинов, которые нужны в отчете.
+
+
+      Их можно узнать с помощью запроса [GET
+      campaigns](../../reference/campaigns/getCampaigns.md) или найти в кабинете
+      продавца на Маркете — нажмите на название своего бизнеса и перейдите на
+      страницу:
+
+        * **Модули и API** → блок **Передача данных Маркету**.
+        * **Лог запросов** → выпадающий список в блоке **Показывать логи**.
+
+      ⚠️ Не используйте вместо них идентификаторы магазинов, которые указаны в
+      кабинете продавца на Маркете рядом с названием магазина и в некоторых
+      отчетах.
+    type: array
+    nullable: true
+    minItems: 1
+    uniqueItems: true
+    items:
+      type: integer
+      format: int64
+  promoId:
+    description: Идентификатор акции, товары из которой нужны в отчете.
+    type: string

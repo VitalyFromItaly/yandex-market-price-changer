@@ -3,7 +3,8 @@ import crypto from 'crypto';
 
 const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true },
+  telegramId: { type: String, unique: true },
+  email: { type: String, unique: true },
   apiToken: { type: String, unique: true },
   isActive: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },

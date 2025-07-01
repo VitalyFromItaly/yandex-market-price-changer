@@ -1,0 +1,302 @@
+description: Основные параметры товара.
+type: object
+required:
+  - offerId
+properties:
+  offerId:
+    $ref: ./ShopSku.yaml
+  name:
+    $ref: ./OfferName.yaml
+  marketCategoryId:
+    $ref: ./PartnerMarketCategoryId.yaml
+  category:
+    $ref: ./OfferCategory.yaml
+  pictures:
+    description: >
+      Ссылки на изображения товара. Изображение по первой ссылке считается
+      основным, остальные дополнительными.
+
+
+      **Требования к ссылкам**
+
+
+      * Ссылок может быть до 30.
+
+      * Указывайте ссылку целиком, включая протокол http или https.
+
+      * Максимальная длина — 512 символов.
+
+      * Русские буквы в URL можно.
+
+      * Можно использовать прямые ссылки на изображения и на Яндекс Диск. Ссылки
+      на Яндекс Диске нужно копировать с помощью функции **Поделиться**.
+      Относительные ссылки и ссылки на другие облачные хранилища — не работают.
+
+
+      ✅ `https://example-shop.ru/images/sku12345.jpg`
+
+
+      ✅ `https://yadi.sk/i/NaBoRsimVOLov`
+
+
+      ❌ `/images/sku12345.jpg`
+
+
+      ❌ `https://www.dropbox.com/s/818f/tovar.jpg`
+
+
+      Ссылки на изображение должны быть постоянными. Нельзя использовать
+      динамические ссылки, меняющиеся от выгрузки к выгрузке.
+
+
+      Если нужно заменить изображение, выложите новое изображение по новой
+      ссылке, а ссылку на старое удалите. Если просто заменить изображение по
+      старой ссылке, оно не обновится.
+
+
+      [Требования к
+      изображениям](https://yandex.ru/support/marketplace/assortment/fields/images.html)
+    type: array
+    nullable: true
+    minItems: 1
+    maxItems: 30
+    items:
+      type: string
+  videos:
+    description: >
+      Ссылки (URL) на видео товара.
+
+
+      **Требования к ссылке**
+
+
+      * Указывайте ссылку целиком, включая протокол http или https.
+
+      * Максимальная длина — 512 символов.
+
+      * Русские буквы в URL можно.
+
+      * Можно использовать прямые ссылки на видео и на Яндекс Диск. Ссылки на
+      Яндекс Диске нужно копировать с помощью функции **Поделиться**.
+      Относительные ссылки и ссылки на другие облачные хранилища — не работают.
+
+
+      ✅ `https://example-shop.ru/video/sku12345.avi`
+
+
+      ✅ `https://yadi.sk/i/NaBoRsimVOLov`
+
+
+      ❌ `/video/sku12345.avi`
+
+
+      ❌ `https://www.dropbox.com/s/818f/super-tovar.avi`
+
+
+      Ссылки на видео должны быть постоянными. Нельзя использовать динамические
+      ссылки, меняющиеся от выгрузки к выгрузке.
+
+
+      Если нужно заменить видео, выложите новое видео по новой ссылке, а ссылку
+      на старое удалите. Если просто заменить видео по старой ссылке, оно не
+      обновится.
+
+
+      [Требования к
+      видео](https://yandex.ru/support/marketplace/assortment/fields/video.html)
+    type: array
+    nullable: true
+    minItems: 1
+    maxItems: 6
+    items:
+      type: string
+  manuals:
+    description: |
+      Список инструкций по использованию товара.
+
+      Максимальное количество инструкций — 6.
+    type: array
+    nullable: true
+    minItems: 1
+    maxItems: 6
+    items:
+      $ref: ./OfferManualDTO.yaml
+  vendor:
+    $ref: ./OfferVendor.yaml
+  barcodes:
+    $ref: ./OfferBarcodes.yaml
+  description:
+    $ref: ./OfferDescription.yaml
+  manufacturerCountries:
+    description: >
+      Страна, где был произведен товар.
+
+
+      Записывайте названия стран так, как они записаны в
+      [списке](https://yastatic.net/s3/doc-binary/src/support/market/ru/countries.xlsx).
+    type: array
+    nullable: true
+    minItems: 1
+    uniqueItems: true
+    items:
+      type: string
+      example: Россия
+  weightDimensions:
+    description: |
+      Габариты упаковки и вес товара.
+    $ref: ./OfferWeightDimensionsDTO.yaml
+  vendorCode:
+    $ref: ./OfferVendorCode.yaml
+  tags:
+    description: >
+      Метки товара, которые использует магазин. Покупателям теги не видны. По
+      тегам можно группировать и фильтровать разные товары в каталоге —
+      например, товары одной серии, коллекции или линейки.
+
+
+      Максимальная длина тега — 20 символов. У одного товара может быть максимум
+      10 тегов.
+    type: array
+    nullable: true
+    minItems: 1
+    maxItems: 50
+    uniqueItems: true
+    items:
+      type: string
+      example: до 500 рублей
+  shelfLife:
+    description: >
+      Срок годности — период, по прошествии которого товар становится
+      непригоден.
+
+
+      Указывайте срок, указанный на банке или упаковке. Текущая дата, дата
+      поставки или дата отгрузки значения не имеет.
+
+
+      Обязательно указывайте срок, если он есть.
+
+
+      В комментарии укажите условия хранения. Например, `Хранить в сухом
+      помещении`.
+    $ref: ./TimePeriodDTO.yaml
+  lifeTime:
+    description: >
+      Срок службы — период, в течение которого товар должен исправно выполнять
+      свою функцию.
+
+
+      Обязательно указывайте срок, если он есть.
+
+
+      В комментарии укажите условия хранения. Например, `Использовать при
+      температуре не ниже −10 градусов`.
+    $ref: ./TimePeriodDTO.yaml
+  guaranteePeriod:
+    description: >
+      Гарантийный срок — период, в течение которого можно заменить или починить
+      товар без дополнительной платы.
+
+
+      Обязательно указывайте срок, если он есть.
+
+
+      В комментарии опишите особенности гарантийного обслуживания. Например,
+      `Гарантия на аккумулятор — 6 месяцев`.
+    $ref: ./TimePeriodDTO.yaml
+  customsCommodityCode:
+    description: "{% note warning \"Вместо него используйте `commodityCodes` с типом `CUSTOMS_COMMODITY_CODE`.\" %}\n\n\_\n\n{% endnote %}\n\nКод товара в единой Товарной номенклатуре внешнеэкономической деятельности (ТН ВЭД) — 10 или 14 цифр без пробелов.\n\nОбязательно укажите, если он есть.\n"
+    deprecated: true
+    example: 8517610008
+    type: string
+  commodityCodes:
+    description: |
+      Товарные коды.
+    type: array
+    nullable: true
+    minItems: 1
+    items:
+      $ref: ./CommodityCodeDTO.yaml
+  certificates:
+    description: >
+      Номера документов на товар: сертификата, декларации соответствия и т. п.
+
+
+      Передавать можно только номера документов, сканы которого загружены в
+      кабинете продавца по
+      [инструкции](https://yandex.ru/support/marketplace/assortment/restrictions/certificates.html).
+    type: array
+    nullable: true
+    minItems: 1
+    maxItems: 6
+    uniqueItems: true
+    items:
+      type: string
+  boxCount:
+    description: >
+      Количество грузовых мест.
+
+
+      Параметр используется, если товар представляет собой несколько коробок,
+      упаковок и так далее. Например, кондиционер занимает два места — внешний и
+      внутренний блоки в двух коробках.
+
+
+      Для товаров, занимающих одно место, не передавайте этот параметр.
+    type: integer
+    format: int32
+    minimum: 2
+  condition:
+    description: >
+      Состояние уцененного товара.
+
+
+      Используется только для товаров, продаваемых с уценкой.
+
+
+      [Правила продажи уцененных
+      товаров](https://yandex.ru/support/marketplace/assortment/restrictions/used-goods.html)
+    $ref: ./OfferConditionDTO.yaml
+  type:
+    description: |
+      Особый тип товара. Указывается, если товар:
+
+      * имеет особый тип, который хотите убрать;
+      * лекарство;
+      * бумажная или электронная книга;
+      * аудиокнига;
+      * музыка или видео;
+      * изготовляется на заказ;
+      * алкоголь.
+    $ref: ./OfferType.yaml
+  downloadable:
+    description: >
+      Признак цифрового товара. Укажите `true`, если товар доставляется по
+      электронной почте.
+
+
+      [Как работать с цифровыми товарами](../../step-by-step/digital.md)
+    type: boolean
+  adult:
+    description: >
+      Параметр включает для товара пометку 18+. Устанавливайте ее только для
+      товаров, которые относятся к удовлетворению сексуальных потребностей.
+    type: boolean
+  age:
+    description: >
+      Если товар не предназначен для детей младше определенного возраста,
+      укажите это.
+
+
+      Возрастное ограничение можно задавать в годах (с нуля, с 6, 12, 16 или 18)
+      или в месяцах (любое число от 0 до 12).
+    $ref: ./AgeDTO.yaml
+  params:
+    description: "{% note warning \"При передаче характеристик используйте `parameterValues`.\" %}\n\n\_\n\n{% endnote %}\n\nХарактеристики, которые есть только у товаров конкретной категории — например, диаметр колес велосипеда или материал подошвы обуви.\n"
+    type: array
+    nullable: true
+    minItems: 1
+    deprecated: true
+    maxItems: 600
+    items:
+      $ref: ./OfferParamDTO.yaml

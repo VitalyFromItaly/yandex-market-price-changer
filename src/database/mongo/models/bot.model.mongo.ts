@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { EBotType } from '../../../telegram/domain.telegram';
+import { EBotType } from '../../../modules/telegram/domain.telegram';
 import { TBotStatus } from './models.domain';
 
 export interface IBotSchema {
@@ -7,7 +7,6 @@ export interface IBotSchema {
   token: string;
   type?: EBotType;
   description?: any;
-  subscription?: any;
   status?: TBotStatus;
   created_at: Date;
   timezone?: string;
@@ -18,7 +17,6 @@ const botsSchema = new mongoose.Schema<IBotSchema>({
   token: { type: String, require: true },
   type: { type: String },
   description: { type: mongoose.Schema.Types.Mixed },
-  subscription:  { type: mongoose.Schema.Types.Mixed },
   status: { type: String }, // описать статусную схему
   created_at: { type: Date, default: Date.now }, // должно быть в ютс формате
   timezone: { type: String }, // дата в utc

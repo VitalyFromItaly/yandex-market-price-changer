@@ -1,0 +1,17 @@
+description: Информация об услугах Маркета.
+type: object
+required:
+  - type
+  - parameters
+properties:
+  type:
+    description: Услуга Маркета.
+    $ref: ./CalculatedTariffType.yaml
+  amount:
+    description: Стоимость услуги в рублях.
+    type: number
+  parameters:
+    description: Параметры расчета тарифа.
+    type: array
+    items:
+      $ref: ./TariffParameterDTO.yaml

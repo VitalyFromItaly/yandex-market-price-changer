@@ -1,0 +1,42 @@
+post:
+  tags:
+    - chats
+    - dbs
+    - fbs
+    - fby
+    - express
+  x-auth-scopes:
+    - all-methods
+    - communication
+  operationId: createChat
+  summary: Создание нового чата с покупателем
+  description: "{% include notitle [access](../../_auto/method_scopes/createChat.md) %}\n\nСоздает новый чат с покупателем.\n\n|**⚙️ Лимит:** 1\_000 запросов в час|\n|-|\n"
+  parameters:
+    - $ref: ../components/parameters/BusinessId.yaml
+  requestBody:
+    required: true
+    description: description
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/CreateChatRequest.yaml
+  responses:
+    '200':
+      description: |
+        Все получилось: чат создан.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/CreateChatResponse.yaml
+    '400':
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml

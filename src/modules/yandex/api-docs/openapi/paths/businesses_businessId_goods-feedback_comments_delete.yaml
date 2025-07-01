@@ -1,0 +1,50 @@
+post:
+  tags:
+    - goods-feedback
+    - fby
+    - fbs
+    - dbs
+    - express
+  x-auth-scopes:
+    - all-methods
+    - communication
+  operationId: deleteGoodsFeedbackComment
+  summary: Удаление комментария к отзыву
+  description: >
+    {% include notitle
+    [access](../../_auto/method_scopes/deleteGoodsFeedbackComment.md) %}
+
+
+    Удаляет комментарий магазина.
+
+
+    |**⚙️ Лимит:** 1 000 запросов в час|
+
+    |-|
+  parameters:
+    - $ref: ../components/parameters/BusinessId.yaml
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/DeleteGoodsFeedbackCommentRequest.yaml
+  responses:
+    '200':
+      description: Пустой ответ.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/EmptyApiResponse.yaml
+    '400':
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml

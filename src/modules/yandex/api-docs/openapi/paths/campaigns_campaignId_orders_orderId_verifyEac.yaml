@@ -1,0 +1,55 @@
+put:
+  tags:
+    - order-delivery
+    - express
+  x-auth-scopes:
+    - all-methods
+    - inventory-and-order-processing
+  operationId: verifyOrderEac
+  summary: Передача кода подтверждения
+  description: |
+    {% include notitle [access](../../_auto/method_scopes/verifyOrderEac.md) %}
+
+    Отправляет Маркету код подтверждения для его проверки.
+
+    **Если у магазина настроена работа с кодами подтверждения:**
+
+      В запросах [GET campaigns/{campaignId}/orders/{orderId}](../../reference/orders/getOrder.md), [GET campaigns/{campaignId}/orders](../../reference/orders/getOrders.md), [PUT campaigns/{campaignId}/orders/{orderId}/status](../../reference/orders/updateOrderStatus.md) в параметре `delivery`, вложенном в `order`, возвращается параметр `eacType` с типом `Enum` — тип кода подтверждения для передачи заказа.
+
+      Возможные значения:
+
+      * `MERCHANT_TO_COURIER` (временно не возвращается) — продавец передает код курьеру для получения невыкупа;
+      * `COURIER_TO_MERCHANT` — курьер передает код продавцу для получения заказа.
+
+      Параметр `eacType` возвращается при статусах заказа `COURIER_FOUND`, `COURIER_ARRIVED_TO_SENDER` и `DELIVERY_SERVICE_UNDELIVERED`. Если заказ в других статусах, параметр может отсутствовать.
+
+    |**⚙️ Лимит:** 100 000 запросов в час|
+    |-|
+  parameters:
+    - $ref: ../components/parameters/CampaignId.yaml
+    - $ref: ../components/parameters/OrderId.yaml
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/VerifyOrderEacRequest.yaml
+  responses:
+    '200':
+      description: Проверка кода выполнена успешно.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/VerifyOrderEacResponse.yaml
+    '400':
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml

@@ -1,0 +1,127 @@
+get:
+  tags:
+    - orders
+    - fbs
+    - dbs
+    - fby
+    - express
+  x-auth-scopes:
+    - all-methods
+    - all-methods:read-only
+    - inventory-and-order-processing
+    - inventory-and-order-processing:read-only
+    - communication
+    - finance-and-accounting
+  operationId: getOrders
+  summary: Информация о нескольких заказах
+  description: >
+    {% include notitle [access](../../_auto/method_scopes/getOrders.md) %}
+
+
+    Возвращает информацию о заказах. Запрос можно использовать, чтобы узнать,
+    нет ли новых заказов.
+
+
+    {% note tip "Вы также можете настроить API-уведомления" %}
+
+
+    Маркет отправит вам
+    [запрос](../../push-notifications/reference/sendNotification.md), когда
+    появится новый заказ или изменится его статус. А полную информацию можно
+    получить с помощью этого метода или [GET
+    campaigns/{campaignId}/orders/{orderId}](../../reference/orders/getOrder.md).
+
+
+    [{#T}](../../push-notifications/index.md)
+
+
+    {% endnote %}
+
+
+    Доступна фильтрация по нескольким характеристикам заказов:
+
+
+    * дате оформления;
+
+
+    * статусу;
+
+
+    * идентификаторам заказов;
+
+
+    * этапу обработки или причине отмены;
+
+
+    * типу (настоящий или тестовый);
+
+
+    * дате отгрузки в службу доставки;
+
+
+    * дате и времени обновления заказа.
+
+
+    Информация о заказах, доставленных или отмененных больше 30 дней назад, не
+    возвращается. Ее можно получить с помощью запроса информации об отдельном
+    заказе [GET
+    campaigns/{campaignId}/orders/{orderId}](../../reference/orders/getOrder.md)
+    (если у вас есть идентификатор заказа) или запроса отчета по заказам [POST
+    campaigns/{campaignId}/stats/orders](../../reference/stats/getOrdersStats.md).
+
+
+    Максимальный диапазон дат за один запрос к ресурсу — 30 дней.
+
+
+    Результаты возвращаются постранично. Для навигации по страницам используйте
+    параметры `page_token` и `limit`.
+
+
+    Получить более подробную информацию о покупателе и его номере телефона можно
+    с помощью запроса [GET
+    campaigns/{campaignId}/orders/{orderId}/buyer](../../reference/orders/getOrderBuyerInfo.md).
+
+
+    |**⚙️ Лимит:** 100 000 запросов в час|
+
+    |-|
+  parameters:
+    - $ref: ../components/parameters/CampaignId.yaml
+    - $ref: ../components/parameters/GetOrdersOrderIds.yaml
+    - $ref: ../components/parameters/GetOrdersStatus.yaml
+    - $ref: ../components/parameters/GetOrdersSubstatus.yaml
+    - $ref: ../components/parameters/GetOrdersFromDate.yaml
+    - $ref: ../components/parameters/GetOrdersToDate.yaml
+    - $ref: ../components/parameters/GetOrdersSupplierShipmentDateFrom.yaml
+    - $ref: ../components/parameters/GetOrdersSupplierShipmentDateTo.yaml
+    - $ref: ../components/parameters/GetOrdersUpdatedAtFrom.yaml
+    - $ref: ../components/parameters/GetOrdersUpdatedAtTo.yaml
+    - $ref: ../components/parameters/GetOrdersDispatchType.yaml
+    - $ref: ../components/parameters/GetOrdersFake.yaml
+    - $ref: ../components/parameters/GetOrdersHasCis.yaml
+    - $ref: ../components/parameters/GetOrdersOnlyWaitingForCancellationApprove.yaml
+    - $ref: ../components/parameters/GetOrdersOnlyEstimatedDelivery.yaml
+    - $ref: ../components/parameters/GetOrdersBuyerType.yaml
+    - $ref: ../components/parameters/PageNum.yaml
+    - $ref: ../components/parameters/PageSize.yaml
+    - $ref: ../components/parameters/PageToken.yaml
+    - $ref: ../components/parameters/PageLimit.yaml
+  responses:
+    '200':
+      description: Информация о заказах.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/GetOrdersResponse.yaml
+    '400':
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml

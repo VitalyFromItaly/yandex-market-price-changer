@@ -1,0 +1,12 @@
+description: |
+  Тип заказа для фильтрации:
+
+  * `UNREDEEMED` — невыкуп.
+
+  * `RETURN` — возврат.
+
+  Если не указывать, в ответе будут и невыкупы, и возвраты.
+type: string
+enum:
+  - UNREDEEMED
+  - RETURN

@@ -1,0 +1,11 @@
+description: Список идентификаторов лицензий.
+name: ids
+in: query
+required: false
+schema:
+  type: array
+  uniqueItems: true
+  items:
+    type: integer
+    format: int64
+    minimum: 1

@@ -1,0 +1,17 @@
+description: Информация о сообщениях.
+type: object
+required:
+  - messages
+properties:
+  orderId:
+    description: Идентификатор заказа.
+    type: integer
+    format: int64
+  messages:
+    description: Информация о сообщениях.
+    type: array
+    items:
+      $ref: ./ChatMessageDTO.yaml
+  paging:
+    description: Информация о страницах с результатами.
+    $ref: ./ForwardScrollingPagerDTO.yaml

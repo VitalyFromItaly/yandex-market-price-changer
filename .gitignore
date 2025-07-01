@@ -30,3 +30,6 @@ build/
 .env
 volumes
 dist
+
+# Temporary files
+static/temp/

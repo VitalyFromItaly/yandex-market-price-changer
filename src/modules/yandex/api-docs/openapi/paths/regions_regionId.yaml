@@ -1,0 +1,64 @@
+get:
+  tags:
+    - regions
+    - fby
+    - fbs
+    - dbs
+    - express
+  x-auth-scopes:
+    - all-methods
+    - all-methods:read-only
+    - settings-management
+    - finance-and-accounting
+    - offers-and-cards-management
+    - offers-and-cards-management:read-only
+    - pricing
+    - pricing:read-only
+    - inventory-and-order-processing
+    - inventory-and-order-processing:read-only
+    - promotion
+    - promotion:read-only
+    - communication
+    - supplies-management:read-only
+  operationId: searchRegionsById
+  summary: Информация о регионе
+  description: >
+    {% include notitle [access](../../_auto/method_scopes/searchRegionsById.md)
+    %}
+
+
+    Возвращает информацию о регионе.
+
+
+    Для методов `GET regions`, `GET regions/{regionId}` и `GET
+    regions/{regionId}/children` действует групповое ресурсное ограничение.
+    Ограничение вводится на суммарное количество регионов, информация о которых
+    запрошена при помощи этих методов (не более 100 000 регионов).
+
+
+    Объем запросов к ресурсу, который возможно выполнить в течение суток,
+    зависит от суммарного количества регионов.
+
+
+    |**⚙️ Лимит:** 50 000 запросов в час|
+
+    |-|
+  parameters:
+    - $ref: ../components/parameters/RegionId.yaml
+  responses:
+    '200':
+      description: Найденный регион.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/GetRegionsResponse.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml

@@ -1,0 +1,42 @@
+post:
+  tags:
+    - auth
+    - fby
+    - fbs
+    - dbs
+    - express
+  x-auth-scopes:
+    - all-methods
+    - all-methods:read-only
+    - settings-management
+    - finance-and-accounting
+    - offers-and-cards-management
+    - offers-and-cards-management:read-only
+    - pricing
+    - pricing:read-only
+    - inventory-and-order-processing
+    - inventory-and-order-processing:read-only
+    - promotion
+    - promotion:read-only
+    - communication
+    - supplies-management:read-only
+  summary: Получение информации об авторизационном токене
+  description: "{% include notitle [access](../../_auto/method_scopes/getAuthTokenInfo.md) %}\n\n{% note info \"Метод доступен только для Api-Key-токена.\" %}\n\n\_\n\n{% endnote %}\n\nВозвращает информацию о переданном авторизационном токене.\n\n|**⚙️ Лимит:** 100 запросов в час|\n|-|\n"
+  operationId: getAuthTokenInfo
+  responses:
+    '200':
+      description: Информация об авторизационном токене.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/GetTokenInfoResponse.yaml
+    '400':
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml

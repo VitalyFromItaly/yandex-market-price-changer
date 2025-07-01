@@ -1,5 +1,5 @@
 export default function TryCatch() {
-  return function (_target: any, _propertyKey: string, descriptor: PropertyDescriptor) {
+  return function (_target: any, _propertyKey: string, descriptor?: PropertyDescriptor) {
     const originalMethod = descriptor.value;
     descriptor.value = async function (...args: any[]) {
       try {

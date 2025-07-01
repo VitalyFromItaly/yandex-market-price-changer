@@ -1,0 +1,48 @@
+get:
+  tags:
+    - shipments
+    - fbs
+  x-auth-scopes:
+    - all-methods
+    - inventory-and-order-processing
+  operationId: downloadShipmentInboundAct
+  summary: Получение фактического акта приема-передачи
+  description: >
+    {% include notitle
+    [access](../../_auto/method_scopes/downloadShipmentInboundAct.md) %}
+
+
+    Возвращает фактический акт приема-передачи для заданной отгрузки.
+
+
+    Такой акт становится доступен спустя несколько часов после завершения
+    отгрузки. Он может понадобиться, если после отгрузки обнаружатся
+    расхождения.
+
+
+    |**⚙️ Лимит:** 200 запросов в час|
+
+    |-|
+  parameters:
+    - $ref: ../components/parameters/CampaignId.yaml
+    - $ref: ../components/parameters/params_ShipmentId.yaml
+  responses:
+    '200':
+      description: Акт в формате PDF.
+      content:
+        application/pdf:
+          schema:
+            type: string
+            format: binary
+    '400':
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml

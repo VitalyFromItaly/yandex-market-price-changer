@@ -8,8 +8,8 @@ import { connectDB } from './database/mongo';
 import { createApiRoutes } from './routes';
 import { authMiddleware } from './middleware/auth.middleware';
 import { errorHandler } from './middleware/error.handler';
-import { botFather } from './telegram';
-
+import { botFather } from './modules/telegram';
+import { FileUploadService } from './services/file-upload.service';
 
 // Расширение dayjs
 dayjs.extend(utc);
@@ -22,6 +22,9 @@ const PORT = process.env.PORT ?? 3000;
 
 // Создаем Express приложение
 const app = express();
+
+// Настраиваем middleware для обработки telegram webhook'ов перед body-parser
+// app.use(telegramWebhookMiddleware);
 
 // Настраиваем middleware
 app.use(bodyParser.json());
@@ -64,13 +67,9 @@ process.on('SIGTERM', async () => {
 // Основная функция запуска приложения
 async function bootstrap() {
   try {
-    // Подключаемся к БД
     await connectDB();
-    console.log('Connected to MongoDB');
-
-    // Инициализируем телеграм-ботов
+    await FileUploadService.init(); // Инициализируем сервис файлов
     await botFather.boot();
-    console.log('Telegram bots initialized');
 
     // Запускаем HTTP сервер
     app.listen(PORT, () => {

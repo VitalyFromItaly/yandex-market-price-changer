@@ -1,0 +1,23 @@
+description: >+
+  Указывайте в виде последовательности цифр. Подойдут коды EAN-13, EAN-8, UPC-A,
+  UPC-E или Code 128.
+
+
+  Для книг указывайте ISBN.
+
+
+  Для товаров [определенных категорий и торговых
+  марок](https://yastatic.net/s3/doc-binary/src/support/market/ru/yandex-market-list-for-gtin.xlsx)
+  штрихкод должен быть действительным кодом GTIN. Обратите внимание: внутренние
+  штрихкоды, начинающиеся на 2 или 02, и коды формата Code 128 не являются GTIN.
+
+
+  [Что такое GTIN](*gtin)
+
+type: array
+nullable: true
+minItems: 1
+uniqueItems: true
+items:
+  type: string
+  example: 46012300000000

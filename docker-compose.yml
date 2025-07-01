@@ -1,4 +1,24 @@
+version: '3.8'
+
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NODE_VERSION=22.12.0
+      - MONGODB_URI=mongodb://root:secret@mongodb:27017/yandex-market-bot
+    depends_on:
+      - mongodb
+    networks:
+      - net
+    volumes:
+      - "./static:/app/static"
+
   mongodb:
     image: mongo:latest
     restart: unless-stopped
@@ -23,6 +43,9 @@ services:
       ME_CONFIG_MONGODB_ADMINUSERNAME: root
       ME_CONFIG_MONGODB_ADMINPASSWORD: secret
       ME_CONFIG_MONGODB_URL: mongodb://root:secret@mongodb:27017/
+    depends_on:
+      - mongodb
+
 networks:
   net:
     driver: bridge

@@ -1,0 +1,38 @@
+description: |
+  Данные, необходимые для генерации документа.
+type: object
+required:
+  - campaignId
+properties:
+  campaignId:
+    description: >
+      Идентификатор кампании.
+
+
+      Его можно узнать с помощью запроса [GET
+      campaigns](../../reference/campaigns/getCampaigns.md) или найти в кабинете
+      продавца на Маркете — нажмите на название своего бизнеса и перейдите на
+      страницу:
+
+        * **Модули и API** → блок **Передача данных Маркету**.
+        * **Лог запросов** → выпадающий список в блоке **Показывать логи**.
+
+      ⚠️ Не передавайте вместо него идентификатор магазина, который указан в
+      кабинете продавца на Маркете рядом с названием магазина и в некоторых
+      отчетах.
+    format: int64
+    type: integer
+  shipmentId:
+    description: Идентификатор отгрузки.
+    format: int64
+    type: integer
+  orderIds:
+    description: Фильтр по идентификаторам заказа в отгрузке.
+    type: array
+    nullable: true
+    minItems: 1
+    uniqueItems: true
+    items:
+      description: Идентификатор заказа.
+      format: int64
+      type: integer

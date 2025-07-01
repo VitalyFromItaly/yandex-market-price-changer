@@ -1,0 +1,175 @@
+put:
+  tags:
+    - outlets
+    - dbs
+  x-auth-scopes:
+    - all-methods
+    - settings-management
+  operationId: updateOutlet
+  summary: Изменение информации о точке продаж
+  description: |
+    {% include notitle [access](../../_auto/method_scopes/updateOutlet.md) %}
+
+    Изменяет информацию о точке продаж магазина на Маркете.
+
+    |**⚙️ Лимит:** 100 000 запросов в час|
+    |-|
+  parameters:
+    - $ref: ../components/parameters/CampaignId.yaml
+    - $ref: ../components/parameters/OutletId.yaml
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/ChangeOutletRequest.yaml
+  responses:
+    '200':
+      description: Пустой ответ.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/EmptyApiResponse.yaml
+    '400':
+      description: >
+        | **Описание**                                  |
+        **Пояснение**                                                                                                                                                                                                                                                                              
+        | **Способы
+        решения**                                                                                
+        |
+
+        |-----------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
+
+        | **datediff-is-to-big-local**                  | При доставке по своему
+        региону разница между максимальным и минимальным сроком доставки не
+        должна превышать двух
+        дней.                                                                                                                                                                     
+        | Убедитесь, что разница между `maxDeliveryDays` и `minDeliveryDays` не
+        превышает двух дней.          |
+
+        | **datediff-is-to-big-remote**                 | При доставке в другие
+        регионы разница между максимальным и минимальным сроком доставки не
+        должна превышать четырех
+        дней.                                                                                                                                                                   
+        | Убедитесь, что разница между `maxDeliveryDays` и `minDeliveryDays` не
+        превышает четырех дней.       |
+
+        | **datediff-is-to-big-long-period**            | При доставке в другие
+        регионы, где минимальный срок доставки больше 18 дней, разница между
+        максимальным и минимальным сроком доставки не должна превышать
+        минимальный
+        срок.                                                                                                                
+        | Убедитесь, что разница между `maxDeliveryDays` и `minDeliveryDays` не
+        превышает `minDeliveryDays`.  |
+
+        | **Outlet is disabled for editing by partner** | Нельзя изменить
+        информацию о точке продажи магазина, так как вы отказались от доставки в
+        пункты выдачи заказов Маркета. Подробнее о правилах доставки для
+        DBS-магазинов читайте [в Справке Маркета для
+        продавцов](https://yandex.ru/support2/marketplace/ru/orders/dbs/settings/pvz#rules).
+        | Обратитесь в службу поддержки, если вы готовы включить доставку в
+        пункты выдачи заказов Маркета.    |
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml
+get:
+  tags:
+    - outlets
+    - dbs
+  x-auth-scopes:
+    - all-methods
+    - all-methods:read-only
+    - settings-management
+  operationId: getOutlet
+  summary: Информация об одной точке продаж
+  description: |
+    {% include notitle [access](../../_auto/method_scopes/getOutlet.md) %}
+
+    Возвращает информацию о точках продаж магазина.
+
+    |**⚙️ Лимит:** 100 000 запросов в час|
+    |-|
+  parameters:
+    - $ref: ../components/parameters/CampaignId.yaml
+    - $ref: ../components/parameters/OutletId.yaml
+  responses:
+    '200':
+      description: Информация о точке продаж.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/GetOutletResponse.yaml
+    '400':
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml
+delete:
+  tags:
+    - outlets
+    - dbs
+  x-auth-scopes:
+    - all-methods
+    - settings-management
+  operationId: deleteOutlet
+  summary: Удаление точки продаж
+  description: |
+    {% include notitle [access](../../_auto/method_scopes/deleteOutlet.md) %}
+
+    Удаляет точку продаж магазина на Маркете.
+
+    |**⚙️ Лимит:** 100 000 запросов в час|
+    |-|
+  parameters:
+    - $ref: ../components/parameters/CampaignId.yaml
+    - $ref: ../components/parameters/OutletId.yaml
+  responses:
+    '200':
+      description: Пустой ответ.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/EmptyApiResponse.yaml
+    '400':
+      description: >
+        | **Описание**                                  |
+        **Пояснение**                                                                                                                                                                                                                                                                
+        | **Способы
+        решения**                                                                             
+        |
+
+        |-----------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
+
+        | **Outlet is disabled for editing by partner** | Нельзя удалить точку
+        продажи магазина, так как вы отказались от доставки в пункты выдачи
+        заказов Маркета. Подробнее о правилах доставки для DBS-магазинов читайте
+        [в Справке Маркета для
+        продавцов](https://yandex.ru/support2/marketplace/ru/orders/dbs/settings/pvz#rules).
+        | Обратитесь в службу поддержки, если вы готовы включить доставку в
+        пункты выдачи заказов Маркета. |
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml

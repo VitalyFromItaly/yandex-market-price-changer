@@ -1,0 +1,9 @@
+description: |
+  Тип автора:
+
+  * `USER` — пользователь.
+  * `BUSINESS` — кабинет.
+type: string
+enum:
+  - USER
+  - BUSINESS

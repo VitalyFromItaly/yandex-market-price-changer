@@ -1,0 +1,23 @@
+description: Цена с указанием скидки, валюты и времени последнего обновления.
+type: object
+properties:
+  value:
+    description: Цена на товар.
+    type: number
+  discountBase:
+    description: >
+      Цена на товар без скидки.
+
+
+      Число должно быть целым. Вы можете указать цену со скидкой от 5 до 99%.
+
+
+      Передавайте этот параметр при каждом обновлении цены, если предоставляете
+      скидку на товар.
+    type: number
+  currencyId:
+    description: |
+      Валюта, в которой указана цена на товар.
+    $ref: ./CurrencyType.yaml
+  vat:
+    $ref: ./VatType.yaml

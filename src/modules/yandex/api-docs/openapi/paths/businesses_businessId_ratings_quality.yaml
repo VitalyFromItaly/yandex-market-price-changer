@@ -1,0 +1,57 @@
+post:
+  tags:
+    - ratings
+    - fby
+    - fbs
+    - dbs
+    - express
+  x-auth-scopes:
+    - all-methods
+    - all-methods:read-only
+    - settings-management
+    - inventory-and-order-processing
+    - inventory-and-order-processing:read-only
+  operationId: getQualityRatings
+  summary: Индекс качества магазинов
+  description: >
+    {% include notitle [access](../../_auto/method_scopes/getQualityRatings.md)
+    %}
+
+
+    Возвращает значение индекса качества магазинов и его составляющие.
+
+
+    Подробнее об индексе качества читайте [в Справке Маркета для
+    продавцов](https://yandex.ru/support2/marketplace/ru/quality/score/).
+
+
+    |**⚙️ Лимит:** 10 000 запросов в час|
+
+    |-|
+  parameters:
+    - $ref: ../components/parameters/BusinessId.yaml
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../components/schemas/GetQualityRatingRequest.yaml
+  responses:
+    '200':
+      description: Значение индекса качества магазинов и его составляющие.
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/GetQualityRatingResponse.yaml
+    '400':
+      $ref: ../components/responses/400.yaml
+    '401':
+      $ref: ../components/responses/401.yaml
+    '403':
+      $ref: ../components/responses/403.yaml
+    '404':
+      $ref: ../components/responses/404.yaml
+    '420':
+      $ref: ../components/responses/420.yaml
+    '500':
+      $ref: ../components/responses/500.yaml

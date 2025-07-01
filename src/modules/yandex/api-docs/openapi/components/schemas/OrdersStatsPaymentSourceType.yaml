@@ -1,0 +1,14 @@
+description: |
+  Способ денежного перевода:
+  - `BUYER` — оплата или возврат деньгами.
+
+  Устаревшие способы:
+  - `CASHBACK`.
+  - `MARKETPLACE`.
+  - `SPLIT`.
+type: string
+enum:
+  - BUYER
+  - CASHBACK
+  - MARKETPLACE
+  - SPLIT

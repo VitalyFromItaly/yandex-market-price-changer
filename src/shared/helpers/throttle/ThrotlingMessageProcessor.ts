@@ -1,5 +1,5 @@
-import { MAX_MESSAGE_LENGTH } from '../../../telegram/bots/shared/constants';
-import { IMessageSorter } from '../../../telegram/domain.telegram';
+import { MAX_MESSAGE_LENGTH } from '../../../modules/telegram/bots/shared/constants';
+import { IMessageSorter } from '../../../modules/telegram/domain.telegram';
 
 export default class ThrottlingMessageProcessor {
   private bufferMap: Map<number, string[]>; // ключ - user_id, значение - буфер сообщений
