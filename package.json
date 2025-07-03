@@ -7,11 +7,11 @@
   },
   "main": "src/index.ts",
   "scripts": {
-    "start": "node --enable-source-maps dist/index.js",
+    "start": "npm run build && node --enable-source-maps dist/index.js",
     "start:prod": "npm run build && npm start",
     "dev": "nodemon",
     "clean": "rimraf coverage dist tmp",
-    "build": "tsc",
+    "build": "ts-node src/index.ts",
     "lint": "eslint .",
     "lint-fix": "eslint . --fix",
     "tunnel": "vk-tunnel --insecure=1 --http-protocol=http --ws-protocol=ws --host=localhost --port=3004 --timeout=5000",
