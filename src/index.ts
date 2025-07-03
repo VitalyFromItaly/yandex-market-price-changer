@@ -64,6 +64,9 @@ process.on('SIGTERM', async () => {
 // Основная функция запуска приложения
 async function bootstrap() {
   try {
+    console.log({
+      'env': process.env
+    })
     await connectDB();
     await FileUploadService.init(); // Инициализируем сервис файлов
     await botFather.boot();
