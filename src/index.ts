@@ -30,9 +30,6 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Добавляем middleware для инициализации пользовательского контекста
-// const initUserContext = userContextMiddleware(userService);
-
 // Публичные маршруты (без аутентификации)
 app.get('/', (_req, res) => {
   res.json({ status: 'ok' });
