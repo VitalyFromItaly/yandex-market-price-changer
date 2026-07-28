@@ -2,6 +2,7 @@ import { Context } from 'telegraf';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { esc, htmlOptions } from '../../../formatting/telegram-format';
 
 export class CallbackQueryHandler {
   constructor(
@@ -50,52 +51,52 @@ export class CallbackQueryHandler {
 
         case 'settings_api':
           await ctx.editMessageText(`
-            🔧 **Настройка API Яндекс Маркета**
+            🔧 <b>Настройка API Яндекс Маркета</b>
 
-            📋 **Для настройки потребуется:**
+            📋 <b>Для настройки потребуется:</b>
 
-            🔑 **Campaign ID** - ID кампании в Яндекс.Маркете
-            🏢 **Business ID** - ID бизнеса в Яндекс.Маркете
-            🎫 **API токен** - токен авторизации
+            🔑 <b>Campaign ID</b> - ID кампании в Яндекс.Маркете
+            🏢 <b>Business ID</b> - ID бизнеса в Яндекс.Маркете
+            🎫 <b>API токен</b> - токен авторизации
 
-            📍 **Где найти:**
+            📍 <b>Где найти:</b>
             1. Войдите в личный кабинет partner.market.yandex.ru
             2. Campaign ID: в URL кабинета после /campaigns/
             3. Business ID: в разделе "Настройки" → "Общие"
             4. API токен: "Настройки" → "API" → "Создать токен"
 
-            💡 **Отправьте данные в формате:**
-            \`campaign_id: 12345\`
-\`business_id: 67890\`
-            \`token: ваш_токен_здесь\`
+            💡 <b>Отправьте данные в формате:</b>
+            <code>campaign_id: 12345</code>
+<code>business_id: 67890</code>
+            <code>token: ваш_токен_здесь</code>
 
-            Или по отдельности, бот автоматически определит тип данных.`);
+            Или по отдельности, бот автоматически определит тип данных.`, htmlOptions());
           break;
 
         case 'help_api_setup':
-          await ctx.editMessageText(`❓ **Подробная инструкция настройки API**
+          await ctx.editMessageText(`❓ <b>Подробная инструкция настройки API</b>
 
-            📋 **Шаг 1: Получение Campaign ID**
+            📋 <b>Шаг 1: Получение Campaign ID</b>
             • Откройте partner.market.yandex.ru
             • В URL после /campaigns/ будет ваш Campaign ID
             • Пример: partner.market.yandex.ru/campaigns/12345
 
-            🏢 **Шаг 2: Получение Business ID**
+            🏢 <b>Шаг 2: Получение Business ID</b>
             • В кабинете: "Настройки" → "Общие настройки"
             • Найдите "ID бизнеса" или "Business ID"
 
-            🔑 **Шаг 3: Создание API токена**
+            🔑 <b>Шаг 3: Создание API токена</b>
             • "Настройки" → "API и веб-сервисы"
             • "Создать токен" → выберите нужные права
             • Скопируйте созданный токен
 
-            📤 **Отправка данных:**
+            📤 <b>Отправка данных:</b>
             Отправьте каждый параметр отдельным сообщением:
             1. Campaign ID: 12345
             2. Business ID: 67890
             3. Token: ваш_длинный_токен
 
-✅ Бот автоматически сохранит настройки.`);
+✅ Бот автоматически сохранит настройки.`, htmlOptions());
           break;
 
         case 'main_menu':
@@ -122,15 +123,15 @@ export class CallbackQueryHandler {
               ctx.from.id.toString(),
             );
             if (settings) {
-              const settingsText = `🔧 **Текущие настройки API**
+              const settingsText = `🔧 <b>Текущие настройки API</b>
 
-🔑 **Campaign ID:** ${settings.campaign_id ? `\`${settings.campaign_id}\`` : '❌ Не заполнен'}
-🏢 **Business ID:** ${settings.business_id ? `\`${settings.business_id}\`` : '❌ Не заполнен'}
-🎫 **API токен:** ${settings.token ? `\`${settings.token.substring(0, 10)}...\`` : '❌ Не заполнен'}
+🔑 <b>Campaign ID:</b> ${settings.campaign_id ? `<code>${esc(settings.campaign_id)}</code>` : '❌ Не заполнен'}
+🏢 <b>Business ID:</b> ${settings.business_id ? `<code>${esc(settings.business_id)}</code>` : '❌ Не заполнен'}
+🎫 <b>API токен:</b> ${settings.token ? `<code>${esc(settings.token.substring(0, 10))}...</code>` : '❌ Не заполнен'}
 
 ${await this.yandexMarketService.isConfigured(ctx.from.id.toString()) ? '✅ Все настройки заполнены' : '⚠️ Требуется дозаполнение'}`;
 
-              await ctx.editMessageText(settingsText);
+              await ctx.editMessageText(settingsText, htmlOptions());
             } else {
               await ctx.editMessageText('❌ Настройки не найдены.');
             }
@@ -140,7 +141,7 @@ ${await this.yandexMarketService.isConfigured(ctx.from.id.toString()) ? '✅ В�
           break;
 
         default:
-          await ctx.editMessageText(`Неизвестная команда: ${callbackData}`);
+          await ctx.editMessageText(`Неизвестная команда: ${esc(callbackData)}`);
       }
     });
   }
@@ -165,9 +166,9 @@ ${await this.yandexMarketService.isConfigured(ctx.from.id.toString()) ? '✅ В�
         ? 'без изменений'
         : `${coefficient > 1 ? '+' : ''}${((coefficient - 1) * 100).toFixed(1)}%`;
 
-      const successMessage = `✅ **Коэффициент цены установлен!**
+      const successMessage = `✅ <b>Коэффициент цены установлен!</b>
 
-💰 Новый коэффициент: **x${coefficient}** (${percentageText})
+💰 Новый коэффициент: <b>x${coefficient}</b> (${percentageText})
 
 📊 Это означает:
 ${coefficient > 1 ? '• Цены будут увеличены' : coefficient < 1 ? '• Цены будут уменьшены' : '• Цены останутся без изменений'}

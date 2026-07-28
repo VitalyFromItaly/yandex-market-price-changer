@@ -1,6 +1,7 @@
 import { Context } from 'telegraf';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
 export class ApiSettingsHandler {
@@ -44,9 +45,9 @@ export class ApiSettingsHandler {
         );
 
         if (result.success) {
-          await ctx.reply(result.message, result.keyboard);
+          await ctx.reply(result.message, htmlOptions(result.keyboard));
         } else {
-          await ctx.reply(result.message);
+          await ctx.reply(result.message, htmlOptions());
         }
       } catch (error) {
         console.error('Ошибка обработки настроек API:', error);
@@ -176,12 +177,12 @@ export class ApiSettingsHandler {
       // Не можем автоматически определить campaignId или businessId, спрашиваем
       return {
         success: false,
-        message: `🤔 Получен ID: **${cleanText}**
+        message: `🤔 Получен ID: <b>${esc(cleanText)}</b>
 
-📋 **Уточните тип данных:**
+📋 <b>Уточните тип данных:</b>
 Отправьте сообщение в формате:
-• \`campaign_id: ${cleanText}\` - если это Campaign ID
-• \`business_id: ${cleanText}\` - если это Business ID
+• <code>campaign_id: ${cleanText}</code> - если это Campaign ID
+• <code>business_id: ${cleanText}</code> - если это Business ID
 
 💡 Или воспользуйтесь кнопками для уточнения.`,
       };
@@ -200,16 +201,16 @@ export class ApiSettingsHandler {
     // Не удалось определить тип данных
     return {
       success: false,
-      message: `❓ **Не удалось определить тип данных**
+      message: `❓ <b>Не удалось определить тип данных</b>
 
-📝 **Получено:** "${cleanText}"
+📝 <b>Получено:</b> "${esc(cleanText)}"
 
-💡 **Отправьте данные в правильном формате:**
-• \`campaign_id: 12345\` - ID кампании
-• \`business_id: 67890\` - ID бизнеса
-• \`token: ваш_токен\` - API токен
+💡 <b>Отправьте данные в правильном формате:</b>
+• <code>campaign_id: 12345</code> - ID кампании
+• <code>business_id: 67890</code> - ID бизнеса
+• <code>token: ваш_токен</code> - API токен
 
-📋 **Примеры корректного ввода:**
+📋 <b>Примеры корректного ввода:</b>
 • campaign_id: 123456789
 • business_id: 987654321
 • token: ACMA:bhD15nJMV71y4UZPbAFOVTZvNVGgHzkfPIH9QdWm:e0035103`,
@@ -308,9 +309,9 @@ export class ApiSettingsHandler {
 
       // Формируем сообщение об успехе
       const successMessages = {
-        campaign_id: `✅ **Campaign ID сохранен**\n🔑 ID кампании: \`${value}\``,
-        business_id: `✅ **Business ID сохранен**\n🏢 ID бизнеса: \`${value}\``,
-        token: `✅ **API токен сохранен**\n🎫 Токен: \`${String(value).substring(0, 10)}...\``,
+        campaign_id: `✅ <b>Campaign ID сохранен</b>\n🔑 ID кампании: <code>${value}</code>`,
+        business_id: `✅ <b>Business ID сохранен</b>\n🏢 ID бизнеса: <code>${value}</code>`,
+        token: `✅ <b>API токен сохранен</b>\n🎫 Токен: <code>${String(value).substring(0, 10)}...</code>`,
       };
 
       let message = successMessages[type];
@@ -319,7 +320,7 @@ export class ApiSettingsHandler {
 
       // Проверяем, все ли настройки заполнены
       if (await this.yandexMarketService.isConfigured(telegramUserId)) {
-        message += `\n\n🎉 **Все настройки API заполнены!**`;
+        message += `\n\n🎉 <b>Все настройки API заполнены!</b>`;
 
         const keyboard = await this.keyboard.createInlineButtons([
           { text: '👀 Проверить настройки', callback_data: 'check_settings' },
@@ -341,7 +342,7 @@ export class ApiSettingsHandler {
         }
 
         if (missingFields.length > 0) {
-          message += `\n\n📋 **Осталось заполнить:**\n${missingFields.map((field) => `• ${field}`).join('\n')}`;
+          message += `\n\n📋 <b>Осталось заполнить:</b>\n${missingFields.map((field) => `• ${field}`).join('\n')}`;
         }
 
         const keyboard = await this.keyboard.createInlineButtons([

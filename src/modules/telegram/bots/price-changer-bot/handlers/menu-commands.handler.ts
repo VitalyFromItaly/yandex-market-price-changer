@@ -1,4 +1,5 @@
 import { Context } from 'telegraf';
+import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { TelegramUserService } from '../../shared/services/telegram-user.service';
@@ -38,16 +39,16 @@ export class MenuCommandsHandler {
 
     const message = `⚙️ Настройки API
 
-🔑 **Campaign ID**: ${yandexSettings?.campaign_id || 'Не установлен'}
-🏢 **Business ID**: ${yandexSettings?.business_id || 'Не установлен'}
-🎫 **Token**: ${yandexSettings?.token ? '✅ Установлен' : '❌ Не установлен'}
+🔑 <b>Campaign ID</b>: ${esc(yandexSettings?.campaign_id) || 'Не установлен'}
+🏢 <b>Business ID</b>: ${esc(yandexSettings?.business_id) || 'Не установлен'}
+🎫 <b>Token</b>: ${yandexSettings?.token ? '✅ Установлен' : '❌ Не установлен'}
 
 📝 Для изменения настроек просто отправьте новые данные в формате:
-\`Campaign ID: ваш_id\`
-\`Business ID: ваш_id\`
-\`Token: ваш_токен\``;
+<code>Campaign ID: ваш_id</code>
+<code>Business ID: ваш_id</code>
+<code>Token: ваш_токен</code>`;
 
-    await ctx.reply(message, { parse_mode: 'Markdown' });
+    await ctx.reply(message, htmlOptions());
   }
 
   private async showProfile(ctx: Context) {
@@ -55,11 +56,11 @@ export class MenuCommandsHandler {
 
     const message = `📊 Мой профиль
 
-👤 **Пользователь**: ${ctx.from.first_name} ${ctx.from.last_name || ''}
-🆔 **ID**: ${ctx.from.id}
-📅 **Подписка**: ${subscription ? '✅ Активна' : '❌ Неактивна'}`;
+👤 <b>Пользователь</b>: ${ctx.from.first_name} ${ctx.from.last_name || ''}
+🆔 <b>ID</b>: ${ctx.from.id}
+📅 <b>Подписка</b>: ${subscription ? '✅ Активна' : '❌ Неактивна'}`;
 
-    await ctx.reply(message, { parse_mode: 'Markdown' });
+    await ctx.reply(message, htmlOptions());
   }
 
   /** @deprecated Кнопка «Изменить цены» снята (TASK-009). Не вызывается. */

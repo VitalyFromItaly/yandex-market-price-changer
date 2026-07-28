@@ -8,6 +8,7 @@ import {
 } from '../services/file-processing.service';
 import TelegramApiService from '../../services/telegram.api.service';
 import { QUEUE_NAMES, JOB_TYPES } from '../../index';
+import { esc } from '../../formatting/telegram-format';
 
 @Injectable()
 @Processor(QUEUE_NAMES.NOTIFICATIONS)
@@ -19,9 +20,11 @@ export class NotificationsProcessor {
     const { botToken, chatId, step, details } = job.data;
 
     try {
-      let message = `🔄 ${step}`;
+      // step и details приходят из полезной нагрузки джобы и могут содержать
+      // данные Маркета — экранируем, иначе символ < сломает разметку.
+      let message = `🔄 ${esc(step)}`;
       if (details) {
-        message += `\n\n${details}`;
+        message += `\n\n${esc(details)}`;
       }
 
       await TelegramApiService.sendMessage(botToken, chatId, message);
@@ -51,7 +54,8 @@ export class NotificationsProcessor {
     const { botToken, chatId, error } = job.data;
 
     try {
-      const message = `❌ Произошла ошибка при обработке файла:\n\n${error}\n\n💡 Попробуйте загрузить файл ещё раз.`;
+      // Текст ошибки приходит из внешнего источника — обязательно экранируем.
+      const message = `❌ Произошла ошибка при обработке файла:\n\n${esc(error)}\n\n💡 Попробуйте загрузить файл ещё раз.`;
       await TelegramApiService.sendMessage(botToken, chatId, message);
       return { success: true };
     } catch (sendError) {
@@ -60,40 +64,48 @@ export class NotificationsProcessor {
     }
   }
 
+  /**
+   * @deprecated Отчёт об изменении цен — функционал отключён (TASK-009).
+   * Отчёты по заказам (M5) форматируются отдельно.
+   *
+   * Дефект на память: 'без изменений' здесь определялось как priceCoefficient === 2,
+   * хотя «без изменений» — это коэффициент 1.0. Двойка была fallback-значением,
+   * то есть отчёт называл «без изменений» реальное УДВОЕНИЕ цены.
+   */
   private formatPriceUpdateReport(results: any, priceCoefficient: number): string {
     const { updated, created, zeroed, errors, summary } = results;
     const coefficientText = priceCoefficient === 2 ? 'без изменений' : `x${priceCoefficient} (${priceCoefficient > 1 ? '+' : ''}${((priceCoefficient - 1) * 100).toFixed(1)}%)`;
 
-    let message = `✅ **Обработка завершена!**\n\n`;
-    message += `💰 **Коэффициент:** ${coefficientText}\n\n`;
-    message += `📊 **Результаты:**\n`;
-    message += `• 🔄 Обновлено товаров: **${updated}**\n`;
-    message += `• ➕ Создано товаров: **${created}**\n`;
+    let message = `✅ <b>Обработка завершена!</b>\n\n`;
+    message += `💰 <b>Коэффициент:</b> ${coefficientText}\n\n`;
+    message += `📊 <b>Результаты:</b>\n`;
+    message += `• 🔄 Обновлено товаров: <b>${updated}</b>\n`;
+    message += `• ➕ Создано товаров: <b>${created}</b>\n`;
 
     if (zeroed > 0) {
-      message += `• 🔴 Обнулено остатков: **${zeroed}**\n`;
+      message += `• 🔴 Обнулено остатков: <b>${zeroed}</b>\n`;
     }
 
-    message += `• 📋 Всего обработано: **${summary.totalProcessed}**\n`;
+    message += `• 📋 Всего обработано: <b>${summary.totalProcessed}</b>\n`;
 
     if (errors.length > 0) {
-      message += `• ❌ Ошибок: **${errors.length}**\n`;
+      message += `• ❌ Ошибок: <b>${errors.length}</b>\n`;
     }
 
     const successRate = summary.totalProcessed > 0
       ? Math.round(((summary.successfulUpdates + summary.successfulCreations + summary.successfulZeroing) / summary.totalProcessed) * 100)
       : 0;
 
-    message += `\n📈 **Успешность:** ${successRate}%\n`;
+    message += `\n📈 <b>Успешность:</b> ${successRate}%\n`;
 
     if (errors.length > 0) {
-      message += `\n⚠️ **Первые ошибки:**\n`;
+      message += `\n⚠️ <b>Первые ошибки:</b>\n`;
       const firstErrors = errors.slice(0, 3);
       firstErrors.forEach((error, index) => {
         if (error.type === 'creation_error') {
-          message += `${index + 1}. Товар ${error.offerId}: ${error.errors[0]?.message || 'Неизвестная ошибка'}\n`;
+          message += `${index + 1}. Товар ${esc(error.offerId)}: ${esc(error.errors[0]?.message || 'Неизвестная ошибка')}\n`;
         } else {
-          message += `${index + 1}. ${error.error}\n`;
+          message += `${index + 1}. ${esc(error.error)}\n`;
         }
       });
 
@@ -103,7 +115,7 @@ export class NotificationsProcessor {
     }
 
     if (zeroed > 0) {
-      message += `\n🔍 **Обнуление остатков:** Товары, которые есть в Yandex, но отсутствуют в файле, автоматически получили нулевые остатки.\n`;
+      message += `\n🔍 <b>Обнуление остатков:</b> Товары, которые есть в Yandex, но отсутствуют в файле, автоматически получили нулевые остатки.\n`;
     }
 
     message += `\n💡 Все изменения будут видны в личном кабинете Yandex Market через несколько минут.`;

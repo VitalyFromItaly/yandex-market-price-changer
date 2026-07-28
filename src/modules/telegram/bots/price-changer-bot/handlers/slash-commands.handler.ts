@@ -3,6 +3,7 @@ import { YandexMarketService } from '../../../../../database/services/yandex-mar
 import { TelegramUserService } from '../../shared/services/telegram-user.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { SharedCommandsHandler } from './shared-commands.handler';
+import { esc, htmlOptions } from '../../../formatting/telegram-format';
 
 export class SlashCommandsHandler {
   private sharedHandlers: SharedCommandsHandler;
@@ -46,25 +47,25 @@ export class SlashCommandsHandler {
         ctx.from,
       );
 
-      const profileMessage = `👤 **Ваш профиль**
+      const profileMessage = `👤 <b>Ваш профиль</b>
 
-👨‍💼 **Пользователь:** ${ctx.from.first_name} ${ctx.from.last_name || ''}
-🆔 **ID:** \`${ctx.from.id}\`
-📧 **Username:** @${ctx.from.username || 'не указан'}
+👨‍💼 <b>Пользователь:</b> ${esc(ctx.from.first_name)} ${esc(ctx.from.last_name || '')}
+🆔 <b>ID:</b> <code>${ctx.from.id}</code>
+📧 <b>Username:</b> @${esc(ctx.from.username || 'не указан')}
 
-💳 **Подписка:** ${
+💳 <b>Подписка:</b> ${
         subscription.hasActiveSubscription ? '✅ Активна' : '❌ Неактивна'
       }
 ${
   subscription.subscription
-    ? `📅 **До:** ${new Date(subscription.subscription.expires_at).toLocaleDateString('ru-RU')}`
+    ? `📅 <b>До:</b> ${new Date(subscription.subscription.expires_at).toLocaleDateString('ru-RU')}`
     : ''
 }
 
-    📊 **Статистика:**
-    • **Регистрация:** ${new Date(user.created_at).toLocaleDateString('ru-RU')}
-    • **Последняя активность:** сегодня
-    • **Обновлений цен:** 156`;
+    📊 <b>Статистика:</b>
+    • <b>Регистрация:</b> ${new Date(user.created_at).toLocaleDateString('ru-RU')}
+    • <b>Последняя активность:</b> сегодня
+    • <b>Обновлений цен:</b> 156`;
 
       const keyboard = await this.keyboard.createInlineButtons([
         {
@@ -75,30 +76,30 @@ ${
         { text: '📊 Подробная статистика', callback_data: 'detailed_stats' },
       ]);
 
-      await ctx.reply(profileMessage, keyboard);
+      await ctx.reply(profileMessage, htmlOptions(keyboard));
     });
 
     // /help - помощь
     this.bot.command('help', async (ctx) => {
-      const helpMessage = `❓ **Справка по боту**
+      const helpMessage = `❓ <b>Справка по боту</b>
 
-        🎯 **Что умеет бот:**
+        🎯 <b>Что умеет бот:</b>
         • Показывает отчёты по заказам Яндекс.Маркета
         • Работает только на чтение — ничего не меняет в вашем магазине
 
-        🔧 **Настройка:**
+        🔧 <b>Настройка:</b>
         1. Добавьте API-ключ от Яндекс.Маркета
         2. Укажите ID кампании и бизнеса
 
-        📋 **Команды:**
+        📋 <b>Команды:</b>
         /start - Запуск бота
         /menu - Главное меню
         /settings - Настройки
         /profile - Профиль
         /help - Эта справка
 
-💬 **Поддержка:** @Vitality45
-🌐 **Канал новостей:** @YandexMarketBot`;
+💬 <b>Поддержка:</b> @Vitality45
+🌐 <b>Канал новостей:</b> @YandexMarketBot`;
 
       const keyboard = await this.keyboard.createInlineButtons([
         { text: '🚀 Быстрый старт', callback_data: 'quick_start' },
@@ -106,7 +107,7 @@ ${
         { text: '💬 Связаться с поддержкой', callback_data: 'contact_support' },
       ]);
 
-      await ctx.reply(helpMessage, keyboard);
+      await ctx.reply(helpMessage, htmlOptions(keyboard));
     });
   }
 
