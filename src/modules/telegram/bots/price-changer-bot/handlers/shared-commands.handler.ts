@@ -1,5 +1,6 @@
 import { Context } from 'telegraf';
 import { Injectable } from '@nestjs/common';
+import { MENU } from '../menu.constants';
 import { ITelegramKeyboard } from '../../../domain.telegram';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
@@ -121,7 +122,7 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
     const keyboard = await this.keyboard.createInlineButtons([
       { text: '⚙️ Настроить API', callback_data: 'settings_api' },
       { text: '❓ Инструкция', callback_data: 'help_api_setup' },
-      { text: '🏠 Главное меню', callback_data: 'main_menu' },
+      { text: MENU.MAIN, callback_data: 'main_menu' },
     ]);
 
     await ctx.reply(settingsMessage, keyboard);
@@ -217,7 +218,7 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
       const keyboard = await this.keyboard.createInlineButtons([
         { text: '📄 Загрузить прайс-лист', callback_data: 'upload_file' },
         { text: '💰 Изменить коэффициент', callback_data: 'change_coefficient' },
-        { text: '🏠 Главное меню', callback_data: 'main_menu' },
+        { text: MENU.MAIN, callback_data: 'main_menu' },
       ]);
 
       await ctx.reply(successMessage, keyboard);

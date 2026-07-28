@@ -1,5 +1,6 @@
 import { Context } from 'telegraf';
 import { Injectable } from '@nestjs/common';
+import { MENU, MENU_LABELS } from '../menu.constants';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
@@ -63,18 +64,11 @@ export class ApiSettingsHandler {
    * Проверка, является ли текст кнопкой меню
    */
   private isMenuButton(text: string): boolean {
-    // Список ОБЯЗАН совпадать с актуальными подписями меню, иначе нажатие
-    // кнопки проваливается сюда и гасится без ответа — именно так и были
-    // сломаны все кнопки. Кнопки про цены и прайс-лист убраны (TASK-009).
-    // Четвёртая копия списка подписей; сведение в один источник — TASK-014.
-    const menuButtons = [
-      '⚙️ Настройки API',
-      '❓ Помощь',
-      '📊 Мой профиль',
-      '🏠 Главное меню',
-    ];
-
-    return menuButtons.includes(text);
+    // Раньше здесь был свой, ЧЕТВЁРТЫЙ по счёту список подписей. Он разъехался
+    // с клавиатурой, и нажатие кнопки проваливалось сюда, где гасилось без
+    // ответа — так и были сломаны все кнопки меню. Теперь источник один
+    // (menu.constants), рассинхронизация невозможна (TASK-014).
+    return (MENU_LABELS as readonly string[]).includes(text);
   }
 
   /**
@@ -325,7 +319,7 @@ export class ApiSettingsHandler {
 
         const keyboard = await this.keyboard.createInlineButtons([
           { text: '👀 Проверить настройки', callback_data: 'check_settings' },
-          { text: '🏠 Главное меню', callback_data: 'main_menu' },
+          { text: MENU.MAIN, callback_data: 'main_menu' },
         ]);
 
         return { success: true, message, keyboard };
@@ -348,7 +342,7 @@ export class ApiSettingsHandler {
 
         const keyboard = await this.keyboard.createInlineButtons([
           { text: '⚙️ Продолжить настройку', callback_data: 'settings_api' },
-          { text: '🏠 Главное меню', callback_data: 'main_menu' },
+          { text: MENU.MAIN, callback_data: 'main_menu' },
         ]);
 
         return { success: true, message, keyboard };

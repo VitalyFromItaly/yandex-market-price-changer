@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { MENU } from '../menu.constants';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { TelegramUserService } from '../../shared/services/telegram-user.service';
@@ -27,7 +28,7 @@ export class SlashCommandsHandler {
     // /settings - настройки
     bot.command('settings', async (ctx) => {
       const inlineKeyboard = await this.keyboard.createInlineButtons([
-        { text: '🔧 Настройки API', callback_data: 'settings_api' },
+        { text: MENU.SETTINGS, callback_data: 'settings_api' },
         { text: '🔄 Автообновление', callback_data: 'settings_auto_update' },
       ]);
 

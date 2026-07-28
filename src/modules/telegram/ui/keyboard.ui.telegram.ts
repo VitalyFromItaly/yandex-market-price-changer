@@ -95,7 +95,14 @@ export class TelegramKeyboard implements ITelegramKeyboard {
   // === ГОТОВЫЕ ШАБЛОНЫ ===
 
   /**
-   * Главное меню
+   * @deprecated НЕ ВЫЗЫВАТЬ. Строит reply-клавиатуру с ЖЁСТКО ЗАШИТЫМИ
+   * подписями, которых нет ни в menu.constants, ни в bot.hears. Вызов этого
+   * метода воспроизведёт блокер B2 один в один: кнопки отрисуются, но ни одна
+   * не сработает — нажатие уйдёт в catch-all и будет погашено без ответа.
+   *
+   * Reply-кнопки маршрутизируются ПО ТЕКСТУ, поэтому их подписи обязаны
+   * приходить из menu.constants. Используйте PriceChangerKeyboard.createMenuKeyboard().
+   * (Inline-кнопок это не касается — они маршрутизируются по callback_data.)
    */
   public async createMainMenu() {
     return Markup.keyboard([
@@ -119,7 +126,9 @@ export class TelegramKeyboard implements ITelegramKeyboard {
   }
 
   /**
-   * Меню с возвратом назад
+   * @deprecated НЕ ВЫЗЫВАТЬ — та же проблема, что у createMainMenu:
+   * reply-клавиатура с подписями вне menu.constants. Обработчика на
+   * «⬅️ Назад» не существует.
    */
   public async createBackMenu() {
     return Markup.keyboard([

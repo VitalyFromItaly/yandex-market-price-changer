@@ -1,5 +1,6 @@
 import { Context } from 'telegraf';
 import { Injectable } from '@nestjs/common';
+import { MENU } from '../menu.constants';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
@@ -17,13 +18,11 @@ export class MenuCommandsHandler {
   ) {}
 
   public register(bot: TTelegrafBot) {
-    // Подписи должны совпадать с PriceChangerKeyboard.menuCommands —
-    // пока это два независимых списка (сведение в один источник: TASK-014).
-    // Кнопки «Изменить цены» и «Обновить коэффициент» сняты (TASK-009).
-    bot.hears('🏠 Главное меню', (ctx) => this.showMainMenu(ctx));
-    bot.hears('⚙️ Настройки API', (ctx) => this.showApiSettings(ctx));
-    bot.hears('📊 Мой профиль', (ctx) => this.showProfile(ctx));
-    bot.hears('❓ Помощь', (ctx) => this.showMainMenu(ctx));
+    // Подписи — из menu.constants, единственного источника (TASK-014).
+    bot.hears(MENU.MAIN, (ctx) => this.showMainMenu(ctx));
+    bot.hears(MENU.SETTINGS, (ctx) => this.showApiSettings(ctx));
+    bot.hears(MENU.PROFILE, (ctx) => this.showProfile(ctx));
+    bot.hears(MENU.HELP, (ctx) => this.showMainMenu(ctx));
   }
 
   private async showMainMenu(ctx: Context) {

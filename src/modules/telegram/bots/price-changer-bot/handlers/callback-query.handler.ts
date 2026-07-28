@@ -1,5 +1,6 @@
 import { Context } from 'telegraf';
 import { Injectable } from '@nestjs/common';
+import { MENU, menuLayout } from '../menu.constants';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
@@ -101,14 +102,9 @@ export class CallbackQueryHandler {
           break;
 
         case 'main_menu':
-          // Подписи обязаны совпадать с PriceChangerKeyboard.menuCommands и с
-          // bot.hears в MenuCommandsHandler — иначе кнопка молча не работает.
-          // Здесь это ТРЕТЬЯ копия списка; сведение в единый источник — TASK-014.
-          // Кнопки про коэффициент и прайс-лист убраны (TASK-009).
-          const mainKeyboard = await this.keyboard.createKeyboard([
-            ['⚙️ Настройки API'],
-            ['❓ Помощь', '📊 Мой профиль'],
-          ]);
+          // Раскладка — из menu.constants (TASK-014). Раньше здесь была
+          // третья независимая копия списка подписей.
+          const mainKeyboard = await this.keyboard.createKeyboard(menuLayout());
           await ctx.editMessageText('🏠 Главное меню:');
           await ctx.reply('Выберите действие:', mainKeyboard);
           break;
@@ -179,7 +175,7 @@ ${coefficient > 1 ? '• Цены будут увеличены' : coefficient <
       const keyboard = await this.keyboard.createInlineButtons([
         { text: '📄 Загрузить прайс-лист', callback_data: 'upload_file' },
         { text: '💰 Изменить коэффициент', callback_data: 'change_coefficient' },
-        { text: '🏠 Главное меню', callback_data: 'main_menu' },
+        { text: MENU.MAIN, callback_data: 'main_menu' },
       ]);
 
       await ctx.editMessageText(successMessage, { reply_markup: keyboard.reply_markup });
