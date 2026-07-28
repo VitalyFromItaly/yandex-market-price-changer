@@ -2,7 +2,51 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 0
+    "archived_tasks": 2
   },
-  "tasks": []
+  "tasks": [
+    {
+      "id": "TASK-001",
+      "milestone": "M0",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "Починить сборку проекта: сейчас \"build\": \"ts-node src/main.ts\" ЗАПУСКАЕТ приложение вместо компиляции, поэтому dist/main.js не создаётся никогда, а \"start\" и Dockerfile CMD до него не доходят — прод по факту работает под ts-node",
+      "acceptance_criteria": [
+        "Создан nest-cli.json, скрипт build выполняет nest build (или tsc) и создаёт dist/main.js",
+        "npm start поднимает приложение из dist/main.js, а не через ts-node",
+        "Dockerfile выполняет сборку на этапе образа и запускает node dist/main.js",
+        "npm run dev по-прежнему работает через nodemon + ts-node"
+      ],
+      "test_steps": [
+        "Шаг 1: rm -rf dist && npm run build",
+        "Шаг 2: убедиться, что dist/main.js существует",
+        "Шаг 3: node dist/main.js — приложение стартует и слушает порт",
+        "Шаг 4: docker build . — образ собирается, контейнер стартует без ts-node в процессе"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-003",
+      "milestone": "M0",
+      "category": "refactor",
+      "priority": "critical",
+      "description": "Удалить осиротевший Express-стек, оставшийся от домиграционной версии: он недостижим из main.ts и даёт 6 ошибок TS2307 на удалённые пути database/mongo/** и telegram/api/**",
+      "acceptance_criteria": [
+        "Удалены src/controllers/, src/routes/, src/middleware/, src/services/UserService.ts",
+        "Удалён src/modules/telegram/bots/shared/services/user-subscription.service.ts (домиграционный дубль TelegramUserService)",
+        "Удалены неиспользуемые src/modules/telegram/bots/shared/BaseScene.ts и BaseService.ts",
+        "Удалены 0-байтные src/modules/yandex/index.ts и src/types/main.d.ts (с правкой typeRoots в tsconfig, если нужно)",
+        "npx tsc --noEmit проходит с нулём ошибок",
+        "Приложение стартует и обрабатывает вебхук так же, как до удаления"
+      ],
+      "test_steps": [
+        "Шаг 1: npx tsc --noEmit — ноль ошибок (было 6 TS2307)",
+        "Шаг 2: npm run dev — приложение стартует",
+        "Шаг 3: отправить боту /start — ответ приходит, регрессии нет"
+      ],
+      "dependencies": [],
+      "status": "done"
+    }
+  ]
 }

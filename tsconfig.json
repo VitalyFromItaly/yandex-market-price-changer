@@ -4,7 +4,7 @@
     "module": "node16",
     "lib": ["ES2022", "DOM"],
     "moduleResolution": "node16",
-    "rootDir": ".",
+    "rootDir": "src",
     "outDir": "dist",
     "allowSyntheticDefaultImports": true,
     "importHelpers": true,
@@ -29,6 +29,5 @@
     "dist",
     "**/*.test.ts",
     "**/*.spec.ts"
-  ],
-  "typeRoots": ["src/types/main.d.ts","src/types/express/index.d.ts" ]
+  ]
 }

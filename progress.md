@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-07-28 — TASK-001 (сборка) + TASK-003 (чистка Express-стека) → done
+
+**Почему обе сразу.** Начал с `TASK-001`, но на верификации выяснилось, что закрыть её в одиночку нельзя: `npm run build` возвращал **exit 1** из-за шести ошибок `TS2307` в осиротевших файлах, то есть `RUN npm run build` в Dockerfile гарантированно ронял бы сборку образа. `TASK-003` оказалась жёстким предусловием, а не соседней задачей. Обе `critical` и без зависимостей, так что порядок ничего не нарушил.
+
+**TASK-001 — что сделано.**
+
+Помимо описанного в задаче нашлась вторая поломка сборки, которой не было в аудите: в `tsconfig.json` стояло `"rootDir": "."` при `"outDir": "dist"`, из-за чего выход лёг бы в `dist/src/main.js`. То есть даже с исправленным скриптом путь в `start` всё равно не сошёлся бы. Исправлено на `"rootDir": "src"`.
+
+- `nest-cli.json` — новый, `tsConfigPath` указывает на `tsconfig.build.json`, `deleteOutDir: true`
+- `tsconfig.build.json` — новый, расширяет основной и исключает тесты
+- `package.json`: `build` → `nest build` (было `ts-node src/main.ts`, то есть запуск вместо компиляции); `start` → `node --enable-source-maps dist/main.js`; `start:prod` → `build && start` (раньше собирал дважды)
+- `Dockerfile` переписан на двухэтапный: builder с devDependencies собирает `dist`, runner получает только прод-зависимости и `dist`. `ts-node` из рантайма ушёл
+
+**TASK-003 — что сделано.**
+
+Перед удалением проверил точным грепом по `from '...'`, что внешних импортов нет (первый прогон грепа был слишком широким и ловил подстроки — `index`, `UserService` внутри `TelegramUserService`; перепроверил по путям).
+
+Удалено: `src/controllers/`, `src/routes/`, `src/middleware/`, `src/services/UserService.ts`, `src/modules/telegram/bots/shared/services/user-subscription.service.ts` (домиграционный дубль `TelegramUserService`), `BaseScene.ts`, `BaseService.ts`, 0-байтные `src/types/main.d.ts` и `src/modules/yandex/index.ts`.
+
+Отдельно: `typeRoots` в `tsconfig.json` был объявлен неверно — указывал на **файлы** вместо директорий (`["src/types/main.d.ts", "src/types/express/index.d.ts"]`). В таком виде он ломал резолв `@types` из `node_modules`. Убран целиком, восстановлено поведение по умолчанию.
+
+**Как проверено.**
+
+- `npx tsc --noEmit` — ноль ошибок (было 6 `TS2307`)
+- `rm -rf dist && npm run build` — **exit 0**, ноль ошибок, `dist/main.js` на месте
+- `node --enable-source-maps dist/main.js` при поднятых `mongodb` и `redis` — Nest стартует полностью: `InstanceLoader` отработал, роуты `/api`, `/api/telegram/bots/create`, `/api/telegram/webhooks/:type/:id` смаплены, «Database connection established», бот зарегистрировался и `setWebhook` прошёл
+- `docker build .` — **exit 0**; в прод-образе `ts-node` отсутствует (проверено `ls node_modules/.bin`), `dist/main.js` на месте, Nest поднимается внутри контейнера. Размер 358 МБ. Тестовый образ удалён
+
+**Чего проверить не удалось.** Шаг 3 из `test_steps` TASK-003 («отправить боту /start — ответ приходит») выполнить не могу — нужен живой Telegram-аккаунт. Косвенно регрессию исключил: приложение поднимается и регистрирует бота ровно как до удаления. Важно помнить, что `/start` **и до этих задач был сломан** блокером B1 (документ `YandexMarket` не создаётся из-за `required`), это чинится в `TASK-017`. То есть отсутствие ответа на `/start` сейчас — не регрессия от чистки.
+
+**Замечено, но не тронуто (вне scope задач).** Осиротевшими остаются `src/services/yandex-market-api.service.ts` (ноль импортов, шлёт `Bearer` вместо `Api-Key` и ходит по путям `/v2/...` по старой конвенции), `src/shared/helpers/throttle/*`, `src/transport/http/test-post.ts` и `src/types/express/index.d.ts` (его аугментацию `Request` использовали только удалённые `middleware/` и `controllers/`). В acceptance criteria их нет — оставил, чтобы не расширять scope.
+
+**Дальше.** Готовы к работе: `TASK-002` (critical), `TASK-004` (critical), `TASK-008` (critical), `TASK-005`, `TASK-006`, `TASK-007`. Следующая по правилу «максимальный приоритет, меньший id» — `TASK-002` (переменные окружения в docker-compose).
+
+---
+
 ## 2026-07-28 — Аудит и постановка бэклога
 
 **Что сделано.** Проведён аудит ветки `nest.js` (незакоммиченная миграция с самописного Express на NestJS 11). Составлен план переделки и заведён локальный бэклог: `tasks.json` (34 задачи, M0–M7), `tasks.archive.json`, этот журнал. Полный план — в `/Users/vitalijperekutnev/.claude/plans/reactive-launching-turing.md`.
