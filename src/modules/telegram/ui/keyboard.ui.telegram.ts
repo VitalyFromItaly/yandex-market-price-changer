@@ -1,9 +1,11 @@
 import { Markup } from 'telegraf';
+import { Injectable } from '@nestjs/common';
 import { ITelegramKeyboard, TTelegramKeyboard } from '../domain.telegram';
 import { KeyboardBuilder } from '../bots/shared/KeyboardBuilder';
 import { Promise } from 'mongoose';
 import { keyboard } from 'telegraf/markup';
 
+@Injectable()
 export class TelegramKeyboard implements ITelegramKeyboard {
   public protected = new KeyboardBuilder();
 

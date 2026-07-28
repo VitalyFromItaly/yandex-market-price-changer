@@ -1,10 +1,13 @@
 import { Context } from 'telegraf';
+import { Injectable } from '@nestjs/common';
 import { ITelegramKeyboard } from '../../../domain.telegram';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 
+@Injectable()
 export class SharedCommandsHandler {
   constructor(
-    private keyboard: ITelegramKeyboard,
+    private keyboard: PriceChangerKeyboard,
     private yandexMarketService: YandexMarketService
   ) {}
 

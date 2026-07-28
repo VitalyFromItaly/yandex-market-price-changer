@@ -1,20 +1,21 @@
 import { Context } from 'telegraf';
+import { Injectable } from '@nestjs/common';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
+@Injectable()
 export class ApiSettingsHandler {
   constructor(
-    private bot: TTelegrafBot,
-    private keyboard: ITelegramKeyboard,
+    private keyboard: PriceChangerKeyboard,
     private yandexMarketService: YandexMarketService,
   ) {}
 
-  public setupHandlers() {
+  public register(bot: TTelegrafBot) {
     console.log('Setting up API settings handler...');
 
-    this.bot.on('text', async (ctx) => {
+    bot.on('text', async (ctx) => {
       try {
         const text = ctx.message.text.trim();
         console.log(

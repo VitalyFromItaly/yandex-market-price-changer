@@ -1,3 +1,4 @@
+import { Injectable } from '@nestjs/common';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { TelegramUserService } from '../../shared/services/telegram-user.service';
@@ -5,29 +6,26 @@ import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { SharedCommandsHandler } from './shared-commands.handler';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 
+@Injectable()
 export class SlashCommandsHandler {
-  private sharedHandlers: SharedCommandsHandler;
-
   constructor(
-    private bot: TTelegrafBot,
-    private keyboard: ITelegramKeyboard,
+    private keyboard: PriceChangerKeyboard,
     private userService: TelegramUserService,
     private yandexMarketService: YandexMarketService,
-  ) {
-    this.sharedHandlers = new SharedCommandsHandler(keyboard, yandexMarketService);
-  }
+    private sharedHandlers: SharedCommandsHandler,
+  ) {}
 
-  public setupHandlers() {
+  public register(bot: TTelegrafBot) {
     console.log('Setting up slash commands handlers...');
 
     // /menu - главное меню
-    this.bot.command('menu', async (ctx) => {
+    bot.command('menu', async (ctx) => {
       const keyboard = await this.keyboard.createMenuKeyboard();
       await ctx.reply('📋 Главное меню:', keyboard);
     });
 
     // /settings - настройки
-    this.bot.command('settings', async (ctx) => {
+    bot.command('settings', async (ctx) => {
       const inlineKeyboard = await this.keyboard.createInlineButtons([
         { text: '🔧 Настройки API', callback_data: 'settings_api' },
         { text: '🔄 Автообновление', callback_data: 'settings_auto_update' },
@@ -41,10 +39,11 @@ export class SlashCommandsHandler {
     // помечены @deprecated и оставлены как справочный материал.
 
     // /profile - профиль
-    this.bot.command('profile', async (ctx) => {
-      const user = await this.userService.handleUser(ctx.from);
+    bot.command('profile', async (ctx) => {
+      const user = await this.userService.handleUser(ctx.from, ctx.botInfo.id);
       const subscription = await this.userService.checkUserSubscription(
         ctx.from,
+        ctx.botInfo.id,
       );
 
       const profileMessage = `👤 <b>Ваш профиль</b>
@@ -80,7 +79,7 @@ ${
     });
 
     // /help - помощь
-    this.bot.command('help', async (ctx) => {
+    bot.command('help', async (ctx) => {
       const helpMessage = `❓ <b>Справка по боту</b>
 
         🎯 <b>Что умеет бот:</b>
@@ -114,13 +113,13 @@ ${
   /**
    * Настройка команд бота (для меню слева от поля ввода)
    */
-  public async setupBotCommands() {
+  public async setupBotCommands(bot: TTelegrafBot) {
     try {
       // Список должен содержать ТОЛЬКО реально зарегистрированные команды.
       // Убраны: /price и /upload (изменение цен отключено, TASK-009),
       // а также /files и /cleanup — их обработчики были удалены ещё при
       // миграции, но команды продолжали рекламироваться и молча не работали.
-      await this.bot.telegram.setMyCommands([
+      await bot.telegram.setMyCommands([
         { command: 'start', description: '🏠 Запустить бота' },
         { command: 'menu', description: '📋 Главное меню' },
         { command: 'settings', description: '⚙️ Настройки' },

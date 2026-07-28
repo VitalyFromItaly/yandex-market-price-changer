@@ -1,6 +1,8 @@
 import { TelegramKeyboard } from '../../ui/keyboard.ui.telegram';
 import { Markup } from 'telegraf';
+import { Injectable } from '@nestjs/common';
 
+@Injectable()
 export class PriceChangerKeyboard extends TelegramKeyboard {
   // Убраны кнопки «Установить коэффициент цены» и «Загрузить прайс-лист»
   // (TASK-009): изменение цен по API отключено.

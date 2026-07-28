@@ -1,20 +1,21 @@
 import { Context } from 'telegraf';
+import { Injectable } from '@nestjs/common';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 
+@Injectable()
 export class CallbackQueryHandler {
   constructor(
-    private bot: TTelegrafBot,
-    private keyboard: ITelegramKeyboard,
+    private keyboard: PriceChangerKeyboard,
     private yandexMarketService: YandexMarketService,
   ) {}
 
-  public setupHandlers() {
+  public register(bot: TTelegrafBot) {
     console.log('Setting up callback query handlers...');
 
-    this.bot.on('callback_query', async (ctx) => {
+    bot.on('callback_query', async (ctx) => {
       const callbackData = (ctx.callbackQuery as any).data;
 
       // Обязательно отвечаем на callback query

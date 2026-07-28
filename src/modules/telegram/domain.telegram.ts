@@ -3,7 +3,6 @@ import { Update } from 'telegraf/types';
 import http from 'http';
 import { SceneContextScene, WizardContextWizard, WizardSessionData } from 'telegraf/scenes';
 import { KeyboardBuilder } from './bots/shared/KeyboardBuilder';
-import PriceChangerBot from './bots/price-changer-bot/price-changer.bot';
 
 export type THandleUpdatePayload = Update;
 export type TWebHookResponse = http.ServerResponse;
@@ -16,12 +15,16 @@ export enum EBotName {
   PRICE_CHANGER_BOT = 'PriceChangerBot',
 }
 
+/**
+ * @deprecated Описывал контракт классов-ботов из ручного графа `new`
+ * (BaseTelegramBot / PriceChangerBot), которые удалены в TASK-011.
+ * Их место занял BotRegistry — см. bots/bot-registry.service.ts.
+ */
 export interface ITelegramBot {
   get id(): string;
 
   boot(): void;
   launch(): Promise<void>;
-  // notifySubscribers(payload: NotifyPayload): void;
   handleUpdate(payload: THandleUpdatePayload, webhookResponse?: TWebHookResponse): Promise<void>;
 }
 

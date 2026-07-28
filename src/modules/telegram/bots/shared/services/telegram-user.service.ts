@@ -1,70 +1,79 @@
-import DecorateMethodsWith from '../../../../../shared/decorators/DecorateWith';
-import TryCatch from '../../../../../shared/decorators/TryCatch';
+import { Injectable, Logger } from '@nestjs/common';
 import { User } from '@telegraf/types/manage';
 import { Context } from 'telegraf';
-import { TTelegrafBot } from '../../../domain.telegram';
 import { SubscriptionService } from '../../../../../database/services/subscription.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { SubscriptionDocument } from '../../../../../database/schemas/subscription.schema';
 import { YandexMarketDocument } from '../../../../../database/schemas/yandex-market.schema';
 
-@DecorateMethodsWith(TryCatch())
+/**
+ * Синглтон: экземпляра Telegraf больше не держит. Идентификатор бота
+ * приходит параметром (в хендлерах это `ctx.botInfo.id`) — раньше ради него
+ * на каждый вызов делался `bot.telegram.getMe()`.
+ *
+ * Класс-декоратор `@DecorateMethodsWith(TryCatch())` снят (TASK-013): он
+ * ГЛОТАЛ все исключения и возвращал undefined. Из-за этого checkUserSubscription
+ * отдавал undefined, а вызывающий код падал на `.hasActiveSubscription`
+ * с невнятным TypeError вместо настоящей ошибки.
+ */
+@Injectable()
 export class TelegramUserService {
+  private readonly logger = new Logger(TelegramUserService.name);
+
   constructor(
-    private bot: TTelegrafBot,
     private subscriptionService: SubscriptionService,
-    private yandexMarketService: YandexMarketService
+    private yandexMarketService: YandexMarketService,
   ) {}
 
-  public async handleUser(telegramUser: User) {
+  public async handleUser(telegramUser: User, botId: number) {
     try {
-      const botData = await this.bot.telegram.getMe();
       let userSubscription = await this.subscriptionService.findByUserAndChat(
         telegramUser.id,
-        botData.id
+        botId
       );
       if (!userSubscription) {
         userSubscription = await this.subscriptionService.createSubscription({
           user_id: telegramUser.id,
-          chat_id: botData.id,
+          chat_id: botId,
           plan: 'week',
           last_payment_amount: 0,
         });
       }
       return userSubscription;
     } catch (error) {
-      console.error('handleUser Ошибка при получении данных:', error);
-      throw new Error('User not found or could not be created.');
+      this.logger.error('handleUser: не удалось получить или создать подписку', error);
+      throw error; // не глушим — выше есть bot.catch
     }
   }
 
-  public async handleUserYandexStore(userSubscription: SubscriptionDocument): Promise<YandexMarketDocument> {
-    const botData = await this.bot.telegram.getMe();
+  public async handleUserYandexStore(
+    userSubscription: SubscriptionDocument,
+    botId: number,
+  ): Promise<YandexMarketDocument> {
     let yandexStore = await this.yandexMarketService.findByTelegramUser(
       userSubscription.user_id.toString()
     );
     if (!yandexStore) {
       yandexStore = await this.yandexMarketService.create({
         telegramUserId: userSubscription.user_id.toString(),
-        telegramChatId: botData.id.toString(),
+        telegramChatId: botId.toString(),
       });
     }
     return yandexStore;
   }
 
-  public async checkUserSubscription(telegramUser: User): Promise<{
+  public async checkUserSubscription(telegramUser: User, botId: number): Promise<{
     hasActiveSubscription: boolean;
     subscription?: any;
   }> {
-    const botData = await this.bot.telegram.getMe();
     const isActive = await this.subscriptionService.isSubscriptionActive(
       telegramUser.id,
-      botData.id,
+      botId,
     );
     if (isActive) {
       const subscription = await this.subscriptionService.findByUserAndChat(
         telegramUser.id,
-        botData.id
+        botId
       );
       return { hasActiveSubscription: true, subscription };
     }

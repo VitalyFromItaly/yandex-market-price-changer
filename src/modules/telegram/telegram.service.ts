@@ -1,8 +1,8 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
-  OnModuleInit,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { InjectModel } from '@nestjs/mongoose';
@@ -10,36 +10,27 @@ import { Model } from 'mongoose';
 import { Bot, BotDocument } from '../../database/schemas/bot.schema';
 import { SubscriptionService } from '../../database/services/subscription.service';
 import { YandexMarketService } from '../../database/services/yandex-market.service';
-import BotFather from './bots/bot.father';
-import { EBotType } from './domain.telegram';
-import { FileUploadService } from './services/file-upload.service';
-import { FileProcessingService } from './queue/services/file-processing.service';
-import { AppConfigService } from '../../config/app-config.service';
+import { BotRegistry } from './bots/bot-registry.service';
 
+/**
+ * Раньше здесь был шов между Nest и ручным графом `new`: конструктор создавал
+ * BotFather и передавал ему инжектированные сервисы, а всё ниже жило без DI.
+ * Теперь инициализацией ботов занимается BotRegistry (обычный провайдер с
+ * OnApplicationBootstrap), а этот сервис отвечает только за прикладные операции.
+ *
+ * FileUploadService.init() убран из onModuleInit: приём документов снят
+ * (TASK-009), каталог static/temp больше не нужен на старте.
+ */
 @Injectable()
-export class TelegramService implements OnModuleInit {
-  private botFather: BotFather;
+export class TelegramService {
+  private readonly logger = new Logger(TelegramService.name);
 
   constructor(
     @InjectModel(Bot.name) private botModel: Model<BotDocument>,
     private subscriptionService: SubscriptionService,
     private yandexMarketService: YandexMarketService,
-    private fileProcessingService: FileProcessingService,
-    private appConfig: AppConfigService,
-  ) {
-    this.botFather = new BotFather(
-      this.botModel,
-      this.subscriptionService,
-      this.yandexMarketService,
-      this.fileProcessingService,
-      this.appConfig,
-    );
-  }
-
-  async onModuleInit() {
-    FileUploadService.init();
-    await this.botFather.boot();
-  }
+    private readonly registry: BotRegistry,
+  ) {}
 
   async createBot(body: {
     token: string;
@@ -55,63 +46,35 @@ export class TelegramService implements OnModuleInit {
       return { error: 'bot with this token already exists' };
     }
 
-    return await this.botModel.create({
-      token,
-      type,
-      name,
-      status,
-      description,
-    });
+    return await this.botModel.create({ token, type, name, status, description });
   }
 
-  public async handleWebhook(
-    type: string,
-    id: string,
-    body: any,
-    res: Response,
-  ) {
-    const bot = this.botFather.findBot({ id, type: type as EBotType });
-
-    if (!bot) {
+  public async handleWebhook(type: string, id: string, body: any, res: Response) {
+    if (!this.registry.find(type, id)) {
       throw new NotFoundException(`Bot with id ${id} not found`);
     }
 
-    console.log(`Webhook for ${type} with id ${id}`);
     try {
-      await bot.handleUpdate(body, res);
-      return {
-        status: 'success',
-      };
+      await this.registry.handleUpdate(type, id, body, res);
+      return { status: 'success' };
     } catch (error) {
-      console.error('Error handling webhook:', error);
+      this.logger.error(`Ошибка обработки вебхука ${type}/${id}`, error as Error);
       throw new BadRequestException(error);
     }
   }
 
-  // Пример методов для работы с подписками
   async createUserSubscription(
     user_id: number,
     chat_id: number,
     plan: 'day' | 'week' | 'month' | 'year' = 'week',
   ) {
-    return await this.subscriptionService.createSubscription({
-      user_id,
-      chat_id,
-      plan,
-    });
+    return await this.subscriptionService.createSubscription({ user_id, chat_id, plan });
   }
 
-  async checkUserSubscription(
-    user_id: number,
-    chat_id: number,
-  ): Promise<boolean> {
-    return await this.subscriptionService.isSubscriptionActive(
-      user_id,
-      chat_id,
-    );
+  async checkUserSubscription(user_id: number, chat_id: number): Promise<boolean> {
+    return await this.subscriptionService.isSubscriptionActive(user_id, chat_id);
   }
 
-  // Пример методов для работы с Yandex Market
   async createYandexMarketConfig(
     telegramUserId: string,
     telegramChatId: string,
@@ -133,7 +96,6 @@ export class TelegramService implements OnModuleInit {
     return await this.yandexMarketService.findByTelegramUser(telegramUserId);
   }
 
-  // Методы для работы с ботами
   async findAllBots() {
     return this.botModel.find();
   }

@@ -1,30 +1,29 @@
 import { Context } from 'telegraf';
+import { Injectable } from '@nestjs/common';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { TelegramUserService } from '../../shared/services/telegram-user.service';
 import { SharedCommandsHandler } from './shared-commands.handler';
 
+@Injectable()
 export class MenuCommandsHandler {
-  private sharedCommandsHandler: SharedCommandsHandler;
-
   constructor(
-    private bot: TTelegrafBot,
-    private keyboard: ITelegramKeyboard,
+    private keyboard: PriceChangerKeyboard,
     private userService: TelegramUserService,
-    private yandexMarketService: YandexMarketService
-  ) {
-    this.sharedCommandsHandler = new SharedCommandsHandler(this.keyboard, this.yandexMarketService);
-  }
+    private yandexMarketService: YandexMarketService,
+    private sharedCommandsHandler: SharedCommandsHandler,
+  ) {}
 
-  public setupHandlers() {
+  public register(bot: TTelegrafBot) {
     // Подписи должны совпадать с PriceChangerKeyboard.menuCommands —
     // пока это два независимых списка (сведение в один источник: TASK-014).
     // Кнопки «Изменить цены» и «Обновить коэффициент» сняты (TASK-009).
-    this.bot.hears('🏠 Главное меню', (ctx) => this.showMainMenu(ctx));
-    this.bot.hears('⚙️ Настройки API', (ctx) => this.showApiSettings(ctx));
-    this.bot.hears('📊 Мой профиль', (ctx) => this.showProfile(ctx));
-    this.bot.hears('❓ Помощь', (ctx) => this.showMainMenu(ctx));
+    bot.hears('🏠 Главное меню', (ctx) => this.showMainMenu(ctx));
+    bot.hears('⚙️ Настройки API', (ctx) => this.showApiSettings(ctx));
+    bot.hears('📊 Мой профиль', (ctx) => this.showProfile(ctx));
+    bot.hears('❓ Помощь', (ctx) => this.showMainMenu(ctx));
   }
 
   private async showMainMenu(ctx: Context) {
@@ -52,7 +51,7 @@ export class MenuCommandsHandler {
   }
 
   private async showProfile(ctx: Context) {
-    const subscription = await this.userService.checkUserSubscription(ctx.from);
+    const subscription = await this.userService.checkUserSubscription(ctx.from, ctx.botInfo.id);
 
     const message = `📊 Мой профиль
 
