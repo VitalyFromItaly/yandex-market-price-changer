@@ -286,7 +286,7 @@ export const catchErrorCodes = (options: ApiRequestOptions, result: ApiResult): 
 /**
  * Request method
  * @param config The OpenAPI configuration object
- * @param options The request options from the service
+ * @param options The request options from the services
  * @returns CancelablePromise<T>
  * @throws ApiError
  */

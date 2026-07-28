@@ -1,12 +1,16 @@
 import BaseTelegramBot from '../shared/BaseTelegramBot';
-import { EBotName, TTelegrafBot } from '../../domain.telegram';
-import { IBotSchema } from '../../../../database/mongo/models/bot.model.mongo';
+import { TTelegrafBot } from '../../domain.telegram';
+import { IBotSchema } from '../../../../database/schemas/bot.schema';
 import { PriceChangerKeyboard } from './price-changer.keyboard';
 import { MenuCommandsHandler } from './handlers/menu-commands.handler';
 import { CallbackQueryHandler } from './handlers/callback-query.handler';
 import { ApiSettingsHandler } from './handlers/api-settings.handler';
 import { SlashCommandsHandler } from './handlers/slash-commands.handler';
 import { FileUploadHandler } from './handlers/file-upload.handler';
+import { SubscriptionService } from '../../../../database/services/subscription.service';
+import { YandexMarketService } from '../../../../database/services/yandex-market.service';
+import { ITelegramBot } from '../../domain.telegram';
+import { FileProcessingService } from '../../queue/services/file-processing.service';
 
 export default class PriceChangerBot extends BaseTelegramBot {
   private menuCommandsHandler: MenuCommandsHandler;
@@ -15,16 +19,29 @@ export default class PriceChangerBot extends BaseTelegramBot {
   private slashCommandsHandler: SlashCommandsHandler;
   private fileUploadHandler: FileUploadHandler;
 
-  constructor(bot: TTelegrafBot, botInfo: IBotSchema) {
+  constructor(
+    bot: TTelegrafBot,
+    botInfo: IBotSchema & { _id: string },
+    subscriptionService: SubscriptionService,
+    yandexMarketService: YandexMarketService,
+    fileProcessingService: FileProcessingService,
+    // Больше не нужен fileDataProcessorService
+  ) {
     const keyboard = new PriceChangerKeyboard();
-    super(bot, botInfo, keyboard);
+    super(bot, botInfo, keyboard, subscriptionService, yandexMarketService);
 
-    // Инициализируем handlers
-    this.menuCommandsHandler = new MenuCommandsHandler(this.bot, this.keyboard, this.userService);
-    this.callbackQueryHandler = new CallbackQueryHandler(this.bot, this.keyboard);
-    this.apiSettingsHandler = new ApiSettingsHandler(this.bot, this.keyboard);
-    this.slashCommandsHandler = new SlashCommandsHandler(this.bot, this.keyboard, this.userService);
-    this.fileUploadHandler = new FileUploadHandler(this.bot, this.botInfo.token);
+    // Инициализируем handlers с сервисами
+    this.menuCommandsHandler = new MenuCommandsHandler(this.bot, this.keyboard, this.userService, yandexMarketService);
+    this.callbackQueryHandler = new CallbackQueryHandler(this.bot, this.keyboard, yandexMarketService);
+    this.apiSettingsHandler = new ApiSettingsHandler(this.bot, this.keyboard, yandexMarketService);
+    this.slashCommandsHandler = new SlashCommandsHandler(this.bot, this.keyboard, this.userService, yandexMarketService);
+
+    // Обновленный вызов конструктора
+    this.fileUploadHandler = new FileUploadHandler(
+      this.bot,
+      this.botInfo.token,
+      fileProcessingService,
+    );
   }
 
   public boot() {
@@ -43,7 +60,13 @@ export default class PriceChangerBot extends BaseTelegramBot {
     console.log(`${this.instanceName} booted successfully.`);
   }
 
+  public async launch(): Promise<void> {
+    this.boot();
+    await super.launch();
+  }
+
   public onStart() {
+    console.log('Starting... ', this.instanceName);
     this.bot.start(async (ctx) => {
       const userSubscription = await this.userService.handleUser(ctx.from);
 
@@ -55,8 +78,10 @@ export default class PriceChangerBot extends BaseTelegramBot {
         return;
       }
 
-      if (!userSubscription.isActive()) {
-        // @todo научититься открывать чат с Vitality45
+      // Проверяем активность подписки через сервис
+      const subscriptionCheck = await this.userService.checkUserSubscription(ctx.from);
+      if (!subscriptionCheck.hasActiveSubscription) {
+        // @todo научитиься открывать чат с Vitality45
         const keyboard = await this.keyboard.createKeyboard([
           ['Написать @Vitality45'],
         ]);

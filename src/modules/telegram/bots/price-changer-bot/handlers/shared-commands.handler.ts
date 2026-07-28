@@ -1,9 +1,12 @@
 import { Context } from 'telegraf';
 import { ITelegramKeyboard } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/mongo/services/yandex-market.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 
 export class SharedCommandsHandler {
-  constructor(private keyboard: ITelegramKeyboard) {}
+  constructor(
+    private keyboard: ITelegramKeyboard,
+    private yandexMarketService: YandexMarketService
+  ) {}
 
   /**
    * Обработчик установки коэффициента цены
@@ -11,8 +14,8 @@ export class SharedCommandsHandler {
   async handlePriceCoefficientCommand(ctx: Context): Promise<void> {
     try {
       // Получаем текущие настройки
-      const yandexSettings = await YandexMarketService.getByTelegramUser(
-        ctx.from.id.toString(),
+      const yandexSettings = await this.yandexMarketService.getByTelegramUser(
+        ctx.from.id.toString()
       );
 
       const currentCoefficient = yandexSettings?.priceCoefficient || 1.2;
@@ -56,12 +59,13 @@ export class SharedCommandsHandler {
   async handleUploadPriceListCommand(ctx: Context): Promise<void> {
     try {
       // Проверяем настройки Яндекс Маркета
-      const yandexSettings = await YandexMarketService.getByTelegramUser(
-        ctx.from.id.toString(),
+      const yandexSettings = await this.yandexMarketService.getByTelegramUser(
+        ctx.from.id.toString()
       );
 
       // Если настройки не найдены или не заполнены
-      if (!yandexSettings || !yandexSettings.isConfigured()) {
+      const isConfigured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
+      if (!yandexSettings || !isConfigured) {
         await this.handleMissingApiSettings(ctx, yandexSettings);
         return;
       }
@@ -180,7 +184,7 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
       }
 
       // Сохраняем коэффициент
-      await YandexMarketService.upsertByTelegramUser(
+      await this.yandexMarketService.upsertByTelegramUser(
         ctx.from.id.toString(),
         ctx.chat.id.toString(),
         { priceCoefficient: coefficientValue }

@@ -1,14 +1,12 @@
-import DecorateMethodsWith from '../../../../../shared/decorators/DecorateWith';
-import TryCatch from '../../../../../shared/decorators/TryCatch';
 import { User } from '@telegraf/types/manage';
 import { Context } from 'telegraf';
 import { EBotName, TTelegrafBot } from '../../../domain.telegram';
-import { SubscriptionService } from '../../../../../database/mongo/services/subscription.service';
-import { SubscriptionModel, YandexMarketModel } from '../../../../../database/mongo/models';
+import { SubscriptionService } from '../../../../../database/mongo/services/subscription.services';
+import { YandexMarketModel } from '../../../../../database/mongo/models';
 import { ISubscriptionSchema } from '../../../../../database/mongo/models/subscription.model.mongo';
 import { IYandexMarketSchema } from '../../../../../database/mongo/models/yandex-market.model.mongo';
 
-@DecorateMethodsWith(TryCatch())
+// @DecorateMethodsWith(TryCatch())
 export class TelegramUserService {
   private bot: TTelegrafBot;
 

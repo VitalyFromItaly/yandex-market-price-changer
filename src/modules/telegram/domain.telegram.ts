@@ -54,7 +54,7 @@ export interface ITelegramCustomKeyboard {
 }
 
 export type TFindBotPayload = {
-  type?: string;
+  type?: EBotType;
   name?: string;
   id: string;
 };

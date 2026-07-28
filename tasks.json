@@ -1,0 +1,900 @@
+{
+  "meta": {
+    "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
+    "prd_source": "аудит ветки nest.js + требования заказчика от 2026-07-28",
+    "prd_version": "1.1",
+    "generated_at": "2026-07-28",
+    "total_tasks": 35,
+    "categories": [
+      "infrastructure",
+      "functional",
+      "ui",
+      "integration",
+      "refactor",
+      "deprecation",
+      "unit",
+      "e2e"
+    ],
+    "milestones": {
+      "M0": "Стабилизация — блокеры сборки и запуска, чистка осиротевшего Express-стека, зелёный tsc",
+      "M1": "Deprecation изменения цен — код помечаем @deprecated и не удаляем, функционал убираем из UI",
+      "M2": "Идиоматичный NestJS — ConfigModule с Joi, BotRegistry на DI вместо ручного new-графа, замена глотающего TryCatch",
+      "M3": "Онбординг — пошаговый визард трёх кредов (по одному за шаг), документ создаётся только целиком, гейт на неготовых",
+      "M4": "Yandex read-only слой — версионированный клиент с Api-Key, orders v2, returns v2, маппинг статусов",
+      "M5": "Отчёты — уехало клиенту / выкуплено / едет обратно / выгрузка в пути (.xlsx) + кнопки",
+      "M6": "Планировщик — ежедневная рассылка по MSK, настройка времени, включение и выключение",
+      "M7": "Тесты — юниты на денежную арифметику и маппинг статусов, e2e онбординга",
+      "M8": "Обновление остатков через загрузку файла — единственная write-операция, возвращаемая после перехода в read-only"
+    },
+    "active_tasks": 35,
+    "archived_tasks": 0,
+    "archive_file": "tasks.archive.json"
+  },
+  "agent_instructions": {
+    "before_start": [
+      "Прочитай этот файл (tasks.json) и git log --oneline -20",
+      "Прочитай progress.md, чтобы понять контекст последних сессий (журнал ротируется: старые записи в progress.archive.md — их читать НЕ нужно)",
+      "Выбери ОДНУ задачу со статусом pending и наивысшим приоритетом (critical > high > medium > low)",
+      "Проверь, что ВСЕ задачи из dependencies имеют статус done. Если нет — выбери другую задачу",
+      "При равном приоритете предпочитай задачу с меньшим id (раньше по milestone)",
+      "Выполненные задачи перенесены в tasks.archive.json (история). Если задача из dependencies ОТСУТСТВУЕТ в tasks.json — она уже выполнена (в архиве) и считается done."
+    ],
+    "during_work": [
+      "Работай ТОЛЬКО над выбранной задачей",
+      "Стек: NestJS 11 + Mongoose 8 (@nestjs/mongoose) + Bull/Redis + telegraf 4.16 + TypeScript 5.7. Тесты — vitest",
+      "Все запросы к данным строго скоупь по telegramUserId — это мультитенантный сервис, кред одного продавца не должен утечь другому",
+      "Секреты и настройки — ТОЛЬКО через ConfigService, никакого прямого process.env в новом коде",
+      "Пути к Partner API ВСЕГДА с версией (v1/v2) — неверсионированные запросы Яндекс скоро отключит. Заголовок авторизации — Api-Key, не Bearer",
+      "Денежные поля: itemsTotal и deliveryTotal. НЕ использовать deprecated total, subsidyTotal, totalWithSubsidy, buyerItemsTotal, buyerTotal. Для возвратов — amount, не refundAmount",
+      "Код изменения цен помечен @deprecated — не развивать его и не звать из нового кода, но и не удалять",
+      "Ошибки не глушить: в очередях пробрасывать, чтобы Bull сделал retry; в боте ловить через bot.catch с Nest Logger",
+      "Порядок регистрации хендлеров telegraf значим — catch-all всегда регистрируется ПОСЛЕДНИМ",
+      "Делай коммиты после каждого логического изменения, с осмысленным сообщением",
+      "Не трогай код, не связанный с текущей задачей"
+    ],
+    "before_finish": [
+      "Выполни ВСЕ test_steps из задачи end-to-end (как пользователь, а не только unit-тесты)",
+      "Убедись, что npx tsc --noEmit проходит без ошибок",
+      "Меняй status на done ТОЛЬКО после успешного прохождения всех test_steps",
+      "Напиши summary проделанной работы в progress.md (дата, id задачи, что сделано, как проверено). Если progress.md разросся (>~500 строк), перенеси записи старше двух недель в progress.archive.md",
+      "ЗАПРЕЩЕНО удалять или редактировать формулировки задач — разрешено менять ТОЛЬКО поле status",
+      "Если задача оказалась слишком крупной — НЕ удаляй её, добавь заметку в progress.md и оставь pending",
+      "Переводя задачу в done, перенеси её из tasks.json в tasks.archive.json (в конец массива tasks). Формулировку задачи не меняй",
+      "CONTINUOUS LOOP: после archive + progress + коммитов СРАЗУ выбери следующую ready-задачу по before_start. НЕ спрашивай «дальше?», «можно продолжать?» и permission между задачами",
+      "Останавливай цикл ТОЛЬКО если: задача blocked; нужен явный consent на опасное действие (drop базы, прод); нет секретов/инфры (нет боевого Api-Key Яндекса, нет ngrok); acceptance criteria противоречивы. Кратко сообщи причину остановки и жди пользователя."
+    ],
+    "status_values": [
+      "pending",
+      "in_progress",
+      "done",
+      "blocked"
+    ],
+    "archive_policy": "tasks.json содержит только невыполненные задачи (pending/in_progress/blocked). Выполненные (done) хранятся в tasks.archive.json для истории и НЕ возвращаются обратно. Отсутствие id в tasks.json означает, что задача выполнена (см. архив).",
+    "continuous_loop": "После закрытия задачи немедленно бери следующую ready (deps done, max priority, tie-break меньший id). Без спроса. Стоп только на blocked/consent/infra/ambiguity.",
+    "intake_policy": "Любую новую работу, о которой пользователь просит в течение сессии, СНАЧАЛА оформляй задачей в бэклоге (tasks.json), а не делай ad-hoc в обход ledger: присвой следующий свободный id, заполни milestone/category/priority/description/acceptance_criteria/test_steps/dependencies со статусом pending, при необходимости обнови meta.total_tasks/active_tasks — и только потом выполняй через обычный flow (before_start → работа → before_finish). Исключение — тривиальные правки в рамках уже выбранной задачи."
+  },
+  "reference": {
+    "partner_api": {
+      "base_url": "https://api.partner.market.yandex.ru/",
+      "versioning": "Версия в пути URL ОБЯЗАТЕЛЬНА. Неверсионированные запросы Яндекс скоро отключит. Версия относится к конкретному методу — разные методы могут иметь разные актуальные версии.",
+      "auth_header": "Api-Key",
+      "recommended_scopes": [
+        "inventory-and-order-processing:read-only",
+        "all-methods:read-only"
+      ],
+      "limits": {
+        "GET v2/campaigns/{campaignId}/orders": "10 000 запросов/час, пагинация pageToken + limit (1–50), page/pageSize deprecated",
+        "GET v2/campaigns/{campaignId}/returns": "5 000 запросов/час, пагинация pageToken + limit (default 50, max 100)"
+      },
+      "history_window": "getOrders не отдаёт данные старше 30 дней, каждый диапазон дат ограничен 30 днями. Для истории — POST v1/businesses/{businessId}/orders (поэтому business_id обязателен).",
+      "date_filters": {
+        "fromDate/toDate": "DD-MM-YYYY — дата СОЗДАНИЯ заказа",
+        "updatedAtFrom/updatedAtTo": "ISO 8601 с offset — любое ОБНОВЛЕНИЕ",
+        "supplierShipmentDateFrom/supplierShipmentDateTo": "DD-MM-YYYY — дата ОТГРУЗКИ в службу доставки"
+      },
+      "money_fields": {
+        "use": ["itemsTotal", "deliveryTotal", "amount (returns)", "partnerCompensationAmount (returns)"],
+        "deprecated": ["total", "subsidyTotal", "totalWithSubsidy", "buyerItemsTotal", "buyerTotal", "priceBeforeDiscount", "refundAmount", "partnerCompensation"]
+      },
+      "order_statuses": ["PLACING", "RESERVED", "UNPAID", "PENDING", "PROCESSING", "DELIVERY", "PICKUP", "DELIVERED", "CANCELLED", "PARTIALLY_RETURNED", "RETURNED", "UNKNOWN"],
+      "gotcha": "В API существуют ОБЕ опечатки подстатуса: DELIVERY_SERIVCE_UNDELIVERED и DELIVERY_SERVICE_UNDELIVERED. Матчить оба.",
+      "docs": [
+        "https://yandex.ru/dev/market/partner-api/doc/ru/concepts/method-call",
+        "https://yandex.ru/dev/market/partner-api/doc/ru/reference/orders/getOrders",
+        "https://yandex.ru/dev/market/partner-api/doc/ru/reference/returns/getReturns",
+        "https://yandex.ru/dev/market/partner-api/doc/ru/changelog/main"
+      ]
+    },
+    "report_status_map": {
+      "shipped_today": "status=DELIVERY, фильтр supplierShipmentDateFrom/To = сегодня",
+      "redeemed": "status=DELIVERED, фильтр updatedAtFrom/To = сегодня",
+      "returning": "подстатусы COURIER_RETURNS_ORDER, COURIER_RETURNED_ORDER, DELIVERY_SERIVCE_UNDELIVERED, DELIVERY_SERVICE_UNDELIVERED, FULL_NOT_RANSOM + GET v2/campaigns/{id}/returns с shipmentStatuses=IN_TRANSIT",
+      "in_transit_export": "status=PROCESSING + DELIVERY + PICKUP, без фильтра даты, выгрузка .xlsx"
+    },
+    "decisions": {
+      "creds_required": "Все три: token, campaign_id, business_id. Спрашивать по одному за шаг. Без всех трёх дальше не пускать.",
+      "timezone": "Всегда Europe/Moscow",
+      "report_g_format": "Файл .xlsx документом в чат",
+      "amounts_shown": "Оба числа: itemsTotal (товары) и itemsTotal + deliveryTotal (с доставкой)",
+      "keep_as_is": "Сгенерированный OpenAPI-клиент src/modules/yandex/api/** и CqrsModule оставляем — удалять не решено"
+    }
+  },
+  "tasks": [
+    {
+      "id": "TASK-001",
+      "milestone": "M0",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "Починить сборку проекта: сейчас \"build\": \"ts-node src/main.ts\" ЗАПУСКАЕТ приложение вместо компиляции, поэтому dist/main.js не создаётся никогда, а \"start\" и Dockerfile CMD до него не доходят — прод по факту работает под ts-node",
+      "acceptance_criteria": [
+        "Создан nest-cli.json, скрипт build выполняет nest build (или tsc) и создаёт dist/main.js",
+        "npm start поднимает приложение из dist/main.js, а не через ts-node",
+        "Dockerfile выполняет сборку на этапе образа и запускает node dist/main.js",
+        "npm run dev по-прежнему работает через nodemon + ts-node"
+      ],
+      "test_steps": [
+        "Шаг 1: rm -rf dist && npm run build",
+        "Шаг 2: убедиться, что dist/main.js существует",
+        "Шаг 3: node dist/main.js — приложение стартует и слушает порт",
+        "Шаг 4: docker build . — образ собирается, контейнер стартует без ts-node в процессе"
+      ],
+      "dependencies": [],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-002",
+      "milestone": "M0",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "Привести переменные окружения в соответствие: docker-compose передаёт MONGODB_URI и REDIS_URL, а код читает MONGODB_URL, MONGODB_DATABASE, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD; TELEGRAM_TOKEN и TELEGRAM_PROXY_URL не передаются в контейнер вообще. .env.example не содержит REDIS_* и YANDEX_MARKET_BASE_URL",
+      "acceptance_criteria": [
+        "Имена переменных в docker-compose.yml совпадают с теми, что реально читает код",
+        "TELEGRAM_TOKEN и TELEGRAM_PROXY_URL пробрасываются в сервис app",
+        ".env.example содержит полный список переменных, включая REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, YANDEX_MARKET_BASE_URL",
+        "В .env.example нет реальных секретов"
+      ],
+      "test_steps": [
+        "Шаг 1: docker compose up -d — приложение поднимается в контейнере",
+        "Шаг 2: в логах видно успешное подключение к mongodb и redis по адресам сервисов compose, а не localhost",
+        "Шаг 3: cp .env.example .env, заполнить значения — npm run dev стартует без ошибок отсутствующих переменных"
+      ],
+      "dependencies": ["TASK-001"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-003",
+      "milestone": "M0",
+      "category": "refactor",
+      "priority": "critical",
+      "description": "Удалить осиротевший Express-стек, оставшийся от домиграционной версии: он недостижим из main.ts и даёт 6 ошибок TS2307 на удалённые пути database/mongo/** и telegram/api/**",
+      "acceptance_criteria": [
+        "Удалены src/controllers/, src/routes/, src/middleware/, src/services/UserService.ts",
+        "Удалён src/modules/telegram/bots/shared/services/user-subscription.service.ts (домиграционный дубль TelegramUserService)",
+        "Удалены неиспользуемые src/modules/telegram/bots/shared/BaseScene.ts и BaseService.ts",
+        "Удалены 0-байтные src/modules/yandex/index.ts и src/types/main.d.ts (с правкой typeRoots в tsconfig, если нужно)",
+        "npx tsc --noEmit проходит с нулём ошибок",
+        "Приложение стартует и обрабатывает вебхук так же, как до удаления"
+      ],
+      "test_steps": [
+        "Шаг 1: npx tsc --noEmit — ноль ошибок (было 6 TS2307)",
+        "Шаг 2: npm run dev — приложение стартует",
+        "Шаг 3: отправить боту /start — ответ приходит, регрессии нет"
+      ],
+      "dependencies": [],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-004",
+      "milestone": "M0",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Починить форматирование сообщений Telegram: telegram.api.service.ts хардкодит legacy parse_mode 'Markdown' (жирный = *text*), а тексты отчётов используют **text**, из-за чего Telegram отвечает 400 «Can't find end of Bold entity» и сообщение не доходит вообще. Одновременно десятки ctx.reply шлют **bold** вообще без parse_mode, и пользователь видит буквальные звёздочки",
+      "acceptance_criteria": [
+        "Введён единый хелпер форматирования исходящих сообщений (например src/modules/telegram/formatting/), парс-режим задаётся в одном месте",
+        "Выбран HTML либо MarkdownV2; при MarkdownV2 реализовано экранирование спецсимволов",
+        "Ни один вызов отправки не хардкодит parse_mode в обход хелпера",
+        "Сообщения с жирным текстом доставляются без ошибки 400",
+        "Динамические данные (названия товаров, суммы) корректно экранируются и не ломают разметку"
+      ],
+      "test_steps": [
+        "Шаг 1: отправить через хелпер сообщение с жирным текстом и спецсимволами (_ * [ ] ( ) ~ ` > # + - = | { } . !)",
+        "Шаг 2: сообщение приходит в Telegram, разметка отрисована, ошибки 400 в логах нет",
+        "Шаг 3: проверить сообщение с названием товара, содержащим скобки и дефис — не ломается"
+      ],
+      "dependencies": [],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-005",
+      "milestone": "M0",
+      "category": "functional",
+      "priority": "high",
+      "description": "Починить SubscriptionService: методы getActiveSubscriptions, cancelSubscription и updateExpiredSubscriptions фильтруют и пишут по полю isActive, которого нет ни в текущей схеме Subscription, ни в домиграционной — чтения всегда возвращают 0 документов, записи молча отбрасываются strict-режимом",
+      "acceptance_criteria": [
+        "Запросы переведены на реально существующие поля схемы (статус и срок действия подписки)",
+        "getActiveSubscriptions возвращает действительно активные подписки",
+        "updateExpiredSubscriptions переводит просроченные подписки в неактивный статус и изменения сохраняются в базе",
+        "Логика активности согласована с isSubscriptionActive, которая уже используется при /start"
+      ],
+      "test_steps": [
+        "Шаг 1: создать в базе две подписки — одну действующую, одну с истёкшим сроком",
+        "Шаг 2: вызвать getActiveSubscriptions — возвращается ровно одна, действующая",
+        "Шаг 3: вызвать updateExpiredSubscriptions — просроченная сменила статус, проверить документ в Mongo",
+        "Шаг 4: вызвать cancelSubscription — статус изменился в базе, а не отброшен"
+      ],
+      "dependencies": [],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-006",
+      "milestone": "M0",
+      "category": "infrastructure",
+      "priority": "medium",
+      "description": "Восстановить корректность индексов, потерянную при миграции схем: пропали unique-индексы {telegramUserId, telegramChatId} у YandexMarket и {user_id, chat_id} у Subscription (на свежей базе дедупликации больше нет), а у User появились unique без sparse на email и apiToken — второй документ с null значением словит конфликт",
+      "acceptance_criteria": [
+        "Возвращены составные unique-индексы для YandexMarket и Subscription",
+        "unique-индексы на необязательных полях User объявлены со sparse",
+        "На пустой базе создание двух документов с null email проходит без ошибки дубликата",
+        "Повторное создание записи с той же парой (telegramUserId, telegramChatId) отклоняется"
+      ],
+      "test_steps": [
+        "Шаг 1: поднять пустую базу, дать приложению создать индексы",
+        "Шаг 2: db.yandexmarkets.getIndexes() — составной unique присутствует",
+        "Шаг 3: создать двух пользователей без email — оба сохраняются",
+        "Шаг 4: попытаться создать дубль по (telegramUserId, telegramChatId) — получаем ошибку уникальности"
+      ],
+      "dependencies": [],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-007",
+      "milestone": "M0",
+      "category": "unit",
+      "priority": "medium",
+      "description": "Привести в порядок тестовую инфраструктуру: __tests__/unit/main.test.ts импортирует несуществующие Delays и greeter из src/main.js и является мёртвым кодом, при этом vitest настроен и никакой код Nest тестами не покрыт",
+      "acceptance_criteria": [
+        "Мёртвый тест удалён",
+        "npx vitest run выполняется успешно и находит тесты",
+        "Добавлен минимальный smoke-тест, проверяющий, что AppModule компилируется через Test.createTestingModule (внешние подключения замоканы)",
+        "В package.json есть скрипт test"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run — прогон зелёный, мёртвого теста нет",
+        "Шаг 2: smoke-тест на AppModule проходит без живых Mongo и Redis"
+      ],
+      "dependencies": ["TASK-003"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-008",
+      "milestone": "M1",
+      "category": "deprecation",
+      "priority": "critical",
+      "description": "Пометить весь функционал изменения цен как @deprecated, не удаляя код: продукт переходит в read-only режим. Заодно зафиксировать в комментариях известные дефекты этого кода, чтобы они не переехали в новый функционал",
+      "acceptance_criteria": [
+        "@deprecated с пояснением проставлен на PriceChanger, OfferService.updateOfferPrice, OfferService.createOfferMappings, updateOfferStock",
+        "@deprecated проставлен на обработчики очередей PARSE_FILE, COMPARE_DATA, UPDATE_YANDEX_OFFERS и на FileUploadHandler, FileUploadService, FileDataProcessorService",
+        "В комментариях зафиксированы дефекты: скрытая наценка +5 ₽ на пути обновления и её отсутствие на пути создания; fallback-коэффициент 2 вместо 1.2; compareData читает price.value вместо basicPrice; writeFileSync offers.json общий для всех тенантов",
+        "Ни одна строка этого кода не удалена",
+        "Новый код никуда его не импортирует",
+        "npx tsc --noEmit проходит"
+      ],
+      "test_steps": [
+        "Шаг 1: открыть помеченные файлы в IDE — методы отображаются зачёркнутыми",
+        "Шаг 2: npx tsc --noEmit — ошибок нет",
+        "Шаг 3: grep по новому коду — импортов deprecated-модулей нет"
+      ],
+      "dependencies": [],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-009",
+      "milestone": "M1",
+      "category": "ui",
+      "priority": "critical",
+      "description": "Убрать изменение цен из интерфейса бота: снять кнопки и команды про коэффициент, изменение цен и загрузку прайс-листа, снять обработчик документов, чтобы загрузка файла больше не запускала конвейер",
+      "acceptance_criteria": [
+        "Из reply-клавиатур и inline-клавиатур убраны все пункты про цены, коэффициент и загрузку прайса",
+        "setMyCommands больше не рекламирует /price и /upload, а также давно удалённые /files и /cleanup",
+        "Обработчик bot.on(message('document')) снят — присланный файл не скачивается и не ставится в очередь",
+        "Ветки callback_query про коэффициент и загрузку удалены из switch",
+        "Тексты /help и /start не упоминают изменение цен"
+      ],
+      "test_steps": [
+        "Шаг 1: отправить боту /start — в меню нет пунктов про цены и загрузку прайса",
+        "Шаг 2: открыть список команд в Telegram — нет /price, /upload, /files, /cleanup",
+        "Шаг 3: прислать боту xlsx-файл — бот не начинает обработку, очередь пуста, файл не появился в static/temp",
+        "Шаг 4: прочитать /help — нет упоминаний изменения цен"
+      ],
+      "dependencies": ["TASK-008"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-010",
+      "milestone": "M2",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "Ввести @nestjs/config с валидацией через Joi: сейчас process.env читается напрямую и в момент вычисления декораторов модулей, из-за чего BullModule.forRoot в app.module.ts работает только благодаря случайному порядку импортов (dotenv подгружается в database.module.ts раньше). Отсутствие переменной обнаруживается не при старте, а в рантайме",
+      "acceptance_criteria": [
+        "Установлен @nestjs/config, ConfigModule подключён глобально",
+        "Написана Joi-схема валидации всех переменных (joi уже в зависимостях), приложение падает на старте с внятным сообщением при отсутствии обязательной переменной",
+        "MongooseModule.forRootAsync и BullModule.forRootAsync получают значения через ConfigService, а не из process.env в декораторе",
+        "Разрозненные import 'dotenv/config' убраны, загрузка .env централизована",
+        "В коде приложения не осталось прямых обращений к process.env"
+      ],
+      "test_steps": [
+        "Шаг 1: убрать MONGODB_URL из .env и запустить — приложение падает на старте с понятной ошибкой валидации, а не с невнятной ошибкой подключения",
+        "Шаг 2: вернуть переменную — приложение стартует, подключается к Mongo и Redis",
+        "Шаг 3: grep process.env по src — обращений в коде приложения нет"
+      ],
+      "dependencies": ["TASK-002"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-011",
+      "milestone": "M2",
+      "category": "refactor",
+      "priority": "critical",
+      "description": "Заменить ручной new-граф ботов на BotRegistry поверх Nest DI. Сейчас ниже telegram.service.ts:28 DI нет вообще: BotFather вручную создаёт PriceChangerBot, тот — шесть хендлеров, каждый захватывает this.bot. Хендлеры должны стать stateless-синглтонами с методом register(bot, botInfo), а сборкой заниматься BotComposer",
+      "acceptance_criteria": [
+        "Создан BotRegistry (@Injectable, OnApplicationBootstrap) — загружает документы Bot из Mongo, собирает по одному Telegraf на бота, хранит реестр type → id → bot и умеет find(type, id)",
+        "Использован OnApplicationBootstrap, а не OnModuleInit, чтобы вебхук регистрировался после того, как HTTP-сервер начал принимать соединения",
+        "Хендлеры переведены в @Injectable-синглтоны без поля bot, с методом register(bot, botInfo)",
+        "Создан BotComposer, регистрирующий хендлеры в фиксированном порядке, catch-all — ПОСЛЕДНИМ",
+        "BotFather удалён, telegram.service.ts больше не создаёт объекты через new",
+        "Мультибот сохранён: несколько документов Bot с разными токенами поднимаются независимо",
+        "TelegramController по-прежнему находит нужный бот по type и id и отдаёт апдейт",
+        "Инициализация ботов дожидается завершения (устранён незаavaited launchBots)"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run dev — в логах инициализация ботов завершается до сообщения о готовности приложения",
+        "Шаг 2: отправить боту /start — ответ приходит",
+        "Шаг 3: добавить в Mongo второй документ Bot с другим токеном, перезапустить — оба бота отвечают независимо",
+        "Шаг 4: проверить в коде, что catch-all зарегистрирован последним и произвольный текст доходит до него, а не перехватывается раньше"
+      ],
+      "dependencies": ["TASK-010", "TASK-009"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-012",
+      "milestone": "M2",
+      "category": "integration",
+      "priority": "critical",
+      "description": "Убрать лишний HTTP-сервер telegraf: bot.launch({webhook}) в telegraf 4.16 безусловно вызывает startWebhook и listen(undefined), поднимая на каждого бота отдельный сервер на случайном порту, в который никто не стучится — апдейты и так приходят через TelegramController",
+      "acceptance_criteria": [
+        "Вместо bot.launch вызывается bot.telegram.setWebhook с тем же URL /api/telegram/webhooks/{type}/{id}",
+        "При старте поднимается ровно один HTTP-сервер — сервер Nest",
+        "Для локальной разработки предусмотрен режим long polling через флаг конфигурации",
+        "Обработка апдейтов через контроллер работает как раньше",
+        "Ошибка установки вебхука не глушится, а логируется и приводит к внятному падению старта"
+      ],
+      "test_steps": [
+        "Шаг 1: запустить приложение и посмотреть открытые порты процесса (lsof -i -P | grep node) — слушается только порт приложения",
+        "Шаг 2: getWebhookInfo у Telegram показывает корректный URL",
+        "Шаг 3: отправить боту сообщение — апдейт приходит через контроллер, бот отвечает",
+        "Шаг 4: подставить заведомо неверный домен — приложение сообщает об ошибке явно, а не рапортует об успешном старте"
+      ],
+      "dependencies": ["TASK-011"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-013",
+      "milestone": "M2",
+      "category": "refactor",
+      "priority": "critical",
+      "description": "Убрать глотающий ошибки декоратор TryCatch с классов бота: он ловит исключение и возвращает undefined без rethrow, из-за чего падение launch выглядит успешным стартом, checkUserSubscription возвращает undefined и роняет обращение к hasActiveSubscription, а синхронные методы становятся асинхронными",
+      "acceptance_criteria": [
+        "@DecorateMethodsWith(TryCatch()) снят с BaseTelegramBot и TelegramUserService",
+        "Введён bot.catch на каждый бот: ошибка логируется через Nest Logger и пользователю уходит нейтральное сообщение",
+        "В обработчиках очередей ошибки пробрасываются, чтобы Bull отрабатывал retry",
+        "Локальные try/catch расставлены точечно там, где нужен мягкий сценарий",
+        "Сам файл TryCatch.ts оставлен и помечен @deprecated, чтобы не сломать deprecated-код изменения цен",
+        "Ошибка внутри обработчика больше не приводит к молчанию бота"
+      ],
+      "test_steps": [
+        "Шаг 1: искусственно бросить ошибку внутри обработчика команды — в логах видна полная ошибка со стеком, пользователю приходит понятное сообщение",
+        "Шаг 2: временно указать неверный токен бота — старт завершается явной ошибкой, а не рапортом об успехе",
+        "Шаг 3: бросить ошибку внутри джобы — Bull делает retry согласно настройкам очереди"
+      ],
+      "dependencies": ["TASK-011"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-014",
+      "milestone": "M2",
+      "category": "ui",
+      "priority": "high",
+      "description": "Свести метки меню в единый источник истины: сейчас клавиатура рисует один набор подписей, а hears слушает совершенно другой, пересечение пустое — все кнопки главного меню молча не работают, а нажатия проваливаются в catch-all, который возвращает управление без next()",
+      "acceptance_criteria": [
+        "Введён единый константный объект меток меню, из которого берут значения и клавиатура, и регистрация hears",
+        "Невозможно рассинхронизировать подпись кнопки и её обработчик — метка используется в обоих местах из одного места",
+        "Каждая кнопка главного меню приводит к ответу бота",
+        "Catch-все обработчик текста не перехватывает нажатия кнопок меню"
+      ],
+      "test_steps": [
+        "Шаг 1: /start и последовательно нажать каждую кнопку меню — каждая даёт осмысленный ответ",
+        "Шаг 2: проверить в коде, что список меток объявлен ровно один раз",
+        "Шаг 3: отправить произвольный текст — он доходит до catch-all и получает ответ"
+      ],
+      "dependencies": ["TASK-011"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-015",
+      "milestone": "M3",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Реализовать хранилище состояния диалога онбординга: пошаговый сбор кредов требует состояния на пользователя, которого в проекте нет вообще (сессии и сцены telegraf не подключены, BaseScene никогда не инстанцировался). Хранить в Redis, который уже поднят под Bull",
+      "acceptance_criteria": [
+        "Создан OnboardingStateService поверх Redis (пакет redis уже в зависимостях)",
+        "Ключ вида onboarding:{botId}:{userId}, TTL 30 минут",
+        "Состояние хранит текущий шаг и уже собранные креды",
+        "Есть методы получить, продвинуть шаг, сбросить состояние",
+        "Состояние изолировано по пользователю и по боту — соседний пользователь не видит чужие креды",
+        "Истечение TTL корректно возвращает пользователя к началу визарда"
+      ],
+      "test_steps": [
+        "Шаг 1: начать онбординг, проверить в Redis появление ключа с TTL",
+        "Шаг 2: пройти шаг — состояние обновилось, шаг продвинулся",
+        "Шаг 3: сбросить состояние — ключ удалён",
+        "Шаг 4: вручную удалить ключ и продолжить диалог — бот корректно начинает визард заново, не падая"
+      ],
+      "dependencies": ["TASK-010"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-016",
+      "milestone": "M3",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Реализовать пошаговый визард онбординга: спрашивать три креда ПО ОДНОМУ за шаг (token, campaign_id, business_id), валидируя каждый отдельно. Сейчас ApiSettingsHandler пытается угадать тип креда из произвольного текста, потому что состояния нет, и не может различить, что именно прислал пользователь",
+      "acceptance_criteria": [
+        "Визард спрашивает креды строго по одному, следующий вопрос приходит после успешной валидации предыдущего",
+        "Каждый кред валидируется отдельно с понятным сообщением об ошибке и повторным запросом того же шага",
+        "В инструкции по получению токена указан именно read-only скоуп (inventory-and-order-processing:read-only или all-methods:read-only) — боту не нужны права на запись",
+        "Есть возможность прервать визард и начать заново",
+        "Догадки по типу креда из произвольного текста больше нет — тип определяется текущим шагом",
+        "Токен не логируется и не отображается обратно пользователю целиком"
+      ],
+      "test_steps": [
+        "Шаг 1: /start новым аккаунтом — бот просит первый кред и только его",
+        "Шаг 2: прислать заведомо неверное значение — бот сообщает об ошибке и просит тот же кред заново",
+        "Шаг 3: прислать корректное — бот переходит ко второму, затем к третьему креду",
+        "Шаг 4: проверить логи — значение токена в них не попало",
+        "Шаг 5: прервать визард и начать заново — состояние сброшено, визард начинается с первого шага"
+      ],
+      "dependencies": ["TASK-015", "TASK-011"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-017",
+      "milestone": "M3",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Устранить блокер онбординга: схема YandexMarket требует campaign_id, business_id и token, а telegram-user.service.ts создаёт документ-заглушку только с telegramUserId и telegramChatId, из-за чего save() падает с ValidationError и /start ломается у каждого нового пользователя. Схему НЕ ослаблять — убрать преждевременное создание документа",
+      "acceptance_criteria": [
+        "handleUserYandexStore больше не создаёт пустой документ и корректно работает при его отсутствии",
+        "Документ YandexMarket создаётся ровно один раз — в конце визарда, когда собраны все три креда",
+        "Схема сохраняет required на всех трёх полях",
+        "/start нового пользователя проходит без ошибок и ведёт в визард",
+        "Повторный /start у настроенного пользователя не создаёт дубликат и не затирает креды",
+        "Приведён к единому виду telegramChatId — сейчас в разных местах передаётся то ctx.botInfo.id, то ctx.chat.id"
+      ],
+      "test_steps": [
+        "Шаг 1: чистая база, /start новым аккаунтом — ошибки «Ошибка при получении вашего магазина» больше нет, начинается визард",
+        "Шаг 2: проверить Mongo — документа YandexMarket ещё нет",
+        "Шаг 3: пройти визард до конца — документ появился со всеми тремя полями",
+        "Шаг 4: снова /start — дубликат не создан, креды на месте"
+      ],
+      "dependencies": ["TASK-016"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-018",
+      "milestone": "M3",
+      "category": "functional",
+      "priority": "high",
+      "description": "Поставить гейт на неготовых пользователей: пока не заполнены все три креда, ни один отчёт и ни одна функция не должны отрабатывать — вместо этого пользователь возвращается в визард на нужный шаг",
+      "acceptance_criteria": [
+        "Введена единая проверка готовности конфигурации, применяемая ко всем отчётам и кнопкам",
+        "При незаполненных кредах пользователь получает объяснение и возвращается в визард на первый незаполненный шаг",
+        "Проверка выполняется до любого обращения к Partner API",
+        "Настроенный пользователь проходит гейт без лишних сообщений"
+      ],
+      "test_steps": [
+        "Шаг 1: пользователь с неполными кредами нажимает кнопку отчёта — получает возврат в визард, запроса к Яндексу не произошло (проверить по логам)",
+        "Шаг 2: дозаполнить креды — та же кнопка отдаёт отчёт",
+        "Шаг 3: удалить один кред в базе и нажать кнопку — снова гейт"
+      ],
+      "dependencies": ["TASK-017"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-019",
+      "milestone": "M4",
+      "category": "integration",
+      "priority": "critical",
+      "description": "Создать YandexModule и per-tenant клиент Partner API: сейчас у src/modules/yandex/** нет модуля вообще, а классы создаются вручную через new из обработчиков очередей. Клиент не может быть синглтоном — токен и идентификаторы принадлежат конкретному продавцу, поэтому нужна фабрика",
+      "acceptance_criteria": [
+        "Создан YandexModule, зарегистрирован в графе приложения",
+        "Создан YandexClientFactory с методом forTenant(creds), возвращающим клиент для конкретного продавца",
+        "Клиент шлёт заголовок Api-Key (не Authorization: Bearer)",
+        "Все пути содержат явную версию (v2 для orders и returns) — неверсионированных запросов нет",
+        "Версия зафиксирована явно, а не «последняя по умолчанию»",
+        "Креды одного продавца не могут утечь в запрос за другого — проверено тестом",
+        "Ошибки Partner API преобразуются в понятные доменные ошибки с сохранением кода ответа"
+      ],
+      "test_steps": [
+        "Шаг 1: создать клиент через фабрику с боевыми кредами и запросить список заказов — приходит непустой ответ",
+        "Шаг 2: проверить в логах исходящий запрос — путь содержит версию, заголовок Api-Key присутствует",
+        "Шаг 3: подставить неверный токен — получаем внятную ошибку авторизации, а не необработанное исключение",
+        "Шаг 4: создать два клиента с разными кредами — запросы уходят с разными токенами"
+      ],
+      "dependencies": ["TASK-010"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-020",
+      "milestone": "M4",
+      "category": "integration",
+      "priority": "high",
+      "description": "Реализовать пагинацию и соблюдение лимитов Partner API: у orders максимум 50 записей на страницу и 10 000 запросов в час, у returns — до 100 на страницу и 5 000 запросов в час, пагинация только через pageToken (page и pageSize объявлены deprecated). Отдельно учесть, что окно данных ограничено 30 днями",
+      "acceptance_criteria": [
+        "Постраничный обход реализован через pageToken и nextPageToken, параметры page и pageSize не используются",
+        "limit не превышает допустимый максимум метода",
+        "Ответ 420 (превышение лимита) обрабатывается с экспоненциальной паузой и повтором, а не роняет отчёт",
+        "Запрос диапазона дат шире 30 дней не отправляется — либо разбивается, либо отклоняется с внятным сообщением",
+        "Обход большого количества страниц не приводит к неограниченному потреблению памяти"
+      ],
+      "test_steps": [
+        "Шаг 1: запросить заказы у продавца, где их больше 50 — вернулись все, обход прошёл по нескольким страницам",
+        "Шаг 2: проверить логи — используется pageToken, значение limit в допустимых границах",
+        "Шаг 3: смоделировать ответ 420 — клиент делает паузу и повтор, отчёт в итоге отдаётся",
+        "Шаг 4: запросить период в 45 дней — поведение соответствует принятому решению, необработанной ошибки нет"
+      ],
+      "dependencies": ["TASK-019"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-021",
+      "milestone": "M4",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Вынести маппинг статусов заказов в единый константный файл: какие статусы и подстатусы соответствуют каждому из четырёх отчётов и какой фильтр даты применяется. Маппинг должен быть в одном месте, а не размазан по коду отчётов, чтобы его можно было править не трогая логику",
+      "acceptance_criteria": [
+        "Создан src/modules/yandex/reports/report-status-map.ts с типизированным маппингом",
+        "Отчёт «уехало сегодня»: status DELIVERY, фильтр по дате отгрузки supplierShipmentDate",
+        "Отчёт «выкуплено»: status DELIVERED, фильтр по updatedAt",
+        "Отчёт «едет обратно»: подстатусы COURIER_RETURNS_ORDER, COURIER_RETURNED_ORDER, FULL_NOT_RANSOM и ОБА варианта опечатки DELIVERY_SERIVCE_UNDELIVERED и DELIVERY_SERVICE_UNDELIVERED",
+        "Отчёт «едет до клиента»: статусы PROCESSING, DELIVERY, PICKUP",
+        "В комментарии зафиксировано, что опечатка в имени подстатуса присутствует в самом API и оба варианта обязательны",
+        "Логика отчётов читает маппинг, а не хардкодит статусы у себя"
+      ],
+      "test_steps": [
+        "Шаг 1: прочитать файл — все четыре отчёта описаны, оба варианта опечатки присутствуют",
+        "Шаг 2: grep по коду отчётов — строковых литералов статусов вне файла маппинга нет",
+        "Шаг 3: изменить маппинг и убедиться, что поведение отчёта изменилось без правок его кода"
+      ],
+      "dependencies": ["TASK-019"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-022",
+      "milestone": "M4",
+      "category": "integration",
+      "priority": "high",
+      "description": "Подключить метод возвратов GET v2/campaigns/{campaignId}/returns для отчёта о том, что едет обратно. Учесть, что поле refundAmount объявлено устаревшим и заменено объектом amount, а partnerCompensation заменён на partnerCompensationAmount",
+      "acceptance_criteria": [
+        "Метод возвратов вызывается по пути с версией v2",
+        "Используется фильтр shipmentStatuses для отбора возвратов в пути",
+        "Суммы читаются из amount (объект со значением и валютой), устаревший refundAmount не используется",
+        "Компенсация читается из partnerCompensationAmount",
+        "Поддержана пагинация метода",
+        "Пустой список возвратов обрабатывается корректно и не выглядит как ошибка"
+      ],
+      "test_steps": [
+        "Шаг 1: запросить возвраты у продавца с активными возвратами — данные приходят, суммы ненулевые",
+        "Шаг 2: проверить логи — путь содержит v2",
+        "Шаг 3: запросить у продавца без возвратов — приходит пустой результат, а не ошибка",
+        "Шаг 4: grep по коду — обращений к refundAmount и partnerCompensation нет"
+      ],
+      "dependencies": ["TASK-019"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-023",
+      "milestone": "M5",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Отчёт (а): сколько заказов уехало клиенту за сегодня и на какую сумму. Статус DELIVERY, фильтр по дате отгрузки в службу доставки за сегодня по московскому времени",
+      "acceptance_criteria": [
+        "Отчёт возвращает количество заказов и обе суммы: itemsTotal (товары) и itemsTotal + deliveryTotal (с доставкой)",
+        "Не используются устаревшие поля total, subsidyTotal, buyerTotal, buyerItemsTotal",
+        "«Сегодня» вычисляется по Europe/Moscow, а не по времени сервера",
+        "Используется фильтр даты отгрузки, а не даты создания заказа",
+        "Пустой результат отображается понятным сообщением, а не пустой таблицей",
+        "Сообщение проходит через единый хелпер форматирования и доставляется без ошибки Telegram"
+      ],
+      "test_steps": [
+        "Шаг 1: нажать кнопку отчёта — приходит количество и обе суммы",
+        "Шаг 2: сверить с личным кабинетом Маркета за тот же день — числа совпадают",
+        "Шаг 3: проверить у продавца без отгрузок за сегодня — приходит понятное сообщение об отсутствии данных",
+        "Шаг 4: убедиться, что при серверном времени в другом поясе граница суток считается по московскому"
+      ],
+      "dependencies": ["TASK-021", "TASK-018", "TASK-004"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-024",
+      "milestone": "M5",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Отчёт (б): сколько заказов выкуплено и на какую сумму. Статус DELIVERED, фильтр по updatedAt за сегодня по московскому времени",
+      "acceptance_criteria": [
+        "Отчёт возвращает количество и обе суммы (товары и с доставкой)",
+        "Фильтр по updatedAt передаётся в формате ISO 8601 со смещением, как требует метод",
+        "«Сегодня» вычисляется по Europe/Moscow",
+        "Диапазон не превышает ограничение метода в 30 дней",
+        "Пустой результат отображается понятным сообщением"
+      ],
+      "test_steps": [
+        "Шаг 1: нажать кнопку отчёта — приходит количество и обе суммы",
+        "Шаг 2: сверить с личным кабинетом Маркета — числа совпадают",
+        "Шаг 3: проверить формат переданного фильтра в логах — ISO 8601 со смещением",
+        "Шаг 4: проверить у продавца без выкупов сегодня — понятное сообщение"
+      ],
+      "dependencies": ["TASK-021", "TASK-018", "TASK-004"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-025",
+      "milestone": "M5",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Отчёт (в): сколько заказов едет обратно (возвраты и невыкупы) и на какую сумму в рублях. Собирается из двух источников — заказы с подстатусами возврата и метод возвратов с логистическим статусом «в пути»",
+      "acceptance_criteria": [
+        "Учтены подстатусы заказов COURIER_RETURNS_ORDER, COURIER_RETURNED_ORDER, FULL_NOT_RANSOM и ОБА варианта опечатки DELIVERY_SERIVCE_UNDELIVERED и DELIVERY_SERVICE_UNDELIVERED",
+        "Дополнительно учитываются возвраты из метода returns со статусом отгрузки «в пути»",
+        "Один и тот же заказ не посчитан дважды при попадании в оба источника",
+        "Сумма выводится в рублях, обе величины (товары и с доставкой)",
+        "Пустой результат отображается понятным сообщением"
+      ],
+      "test_steps": [
+        "Шаг 1: нажать кнопку отчёта — приходит количество и суммы",
+        "Шаг 2: сверить с личным кабинетом Маркета в разделе возвратов",
+        "Шаг 3: проверить дедупликацию: заказ, присутствующий в обоих источниках, посчитан один раз",
+        "Шаг 4: проверить, что заказ с подстатусом-опечаткой не потерялся"
+      ],
+      "dependencies": ["TASK-021", "TASK-022", "TASK-018", "TASK-004"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-026",
+      "milestone": "M5",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Отчёт (г): выгрузка всего, что едет до клиента, с суммами — файлом .xlsx в чат. Статусы PROCESSING, DELIVERY и PICKUP без фильтра по дате",
+      "acceptance_criteria": [
+        "Формируется .xlsx (использовать уже имеющийся в зависимостях пакет xlsx) и отправляется документом в чат",
+        "Строка — заказ; колонки включают номер, дату создания, статус, состав товаров, сумму товаров и сумму с доставкой",
+        "Итоговая строка с общими суммами присутствует",
+        "Временный файл удаляется после отправки в любом случае, включая ошибку отправки (в старом коде на успешном пути файлы утекали)",
+        "Большое количество заказов не приводит к переполнению памяти и к превышению лимита размера файла Telegram",
+        "Пустой результат не отправляет пустой файл, а сообщает об отсутствии данных"
+      ],
+      "test_steps": [
+        "Шаг 1: нажать кнопку — приходит .xlsx, файл открывается",
+        "Шаг 2: сверить количество строк и итоговые суммы с личным кабинетом Маркета",
+        "Шаг 3: проверить static/temp после отправки — временных файлов не осталось",
+        "Шаг 4: смоделировать ошибку отправки — временный файл всё равно удалён",
+        "Шаг 5: проверить на продавце без заказов в пути — приходит сообщение, а не пустой файл"
+      ],
+      "dependencies": ["TASK-021", "TASK-018", "TASK-004"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-027",
+      "milestone": "M5",
+      "category": "ui",
+      "priority": "high",
+      "description": "Вывести четыре отчёта в интерфейс бота: отдельная кнопка на каждый отчёт, плюс обратная связь во время выполнения, поскольку обход страниц Partner API занимает заметное время",
+      "acceptance_criteria": [
+        "В главном меню по одной кнопке на каждый из четырёх отчётов, метки берутся из единого источника",
+        "Во время формирования отчёта пользователь видит индикацию, что запрос выполняется",
+        "Повторное нажатие во время выполнения не запускает второй параллельный запрос к Partner API",
+        "Ошибка получения данных показывается понятным текстом, а не молчанием",
+        "Команды в setMyCommands соответствуют актуальному набору отчётов"
+      ],
+      "test_steps": [
+        "Шаг 1: /start — в меню четыре кнопки отчётов",
+        "Шаг 2: нажать каждую — приходит соответствующий отчёт",
+        "Шаг 3: нажать кнопку дважды подряд быстро — второй запрос к API не ушёл (проверить по логам)",
+        "Шаг 4: временно испортить токен — приходит понятное сообщение об ошибке"
+      ],
+      "dependencies": ["TASK-023", "TASK-024", "TASK-025", "TASK-026", "TASK-014"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-028",
+      "milestone": "M6",
+      "category": "functional",
+      "priority": "high",
+      "description": "Добавить хранение настроек ежедневной рассылки: для каждого пользователя и каждого типа отчёта — время отправки и признак включения. Время всегда трактуется в московском часовом поясе",
+      "acceptance_criteria": [
+        "Схема расширена настройками рассылки: тип отчёта, время, признак включения",
+        "Настройки скоупятся по telegramUserId",
+        "По умолчанию рассылка выключена — бот не начинает писать сам без явного включения",
+        "Время хранится в однозначном виде и трактуется как Europe/Moscow",
+        "Некорректное время не сохраняется"
+      ],
+      "test_steps": [
+        "Шаг 1: сохранить настройку — документ в Mongo содержит корректные значения",
+        "Шаг 2: у нового пользователя рассылка выключена по умолчанию",
+        "Шаг 3: попытаться сохранить некорректное время — отклонено с понятным сообщением"
+      ],
+      "dependencies": ["TASK-017"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-029",
+      "milestone": "M6",
+      "category": "ui",
+      "priority": "high",
+      "description": "Сделать интерфейс настройки рассылки: выбор времени для каждого отчёта и переключатель включения и выключения, с явным указанием, что время московское",
+      "acceptance_criteria": [
+        "Из меню доступен раздел настройки рассылки",
+        "Для каждого из четырёх отчётов можно задать время и включить или выключить",
+        "В интерфейсе явно написано, что время указывается по Москве",
+        "Текущее состояние настроек видно пользователю",
+        "Ввод некорректного времени приводит к понятной ошибке и повторному запросу"
+      ],
+      "test_steps": [
+        "Шаг 1: открыть настройки рассылки — видно текущее состояние по всем четырём отчётам",
+        "Шаг 2: включить рассылку и задать время — состояние отображается обновлённым",
+        "Шаг 3: ввести некорректное время — понятная ошибка, повторный запрос",
+        "Шаг 4: выключить рассылку — состояние обновилось"
+      ],
+      "dependencies": ["TASK-028", "TASK-027"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-030",
+      "milestone": "M6",
+      "category": "integration",
+      "priority": "high",
+      "description": "Реализовать сам планировщик на повторяющихся задачах Bull: при включении рассылки создаётся repeatable-задача с cron и часовым поясом Europe/Moscow, при выключении — снимается. Отдельный планировщик не нужен, Redis уже есть",
+      "acceptance_criteria": [
+        "Включение рассылки создаёт repeatable-задачу с указанием часового пояса Europe/Moscow",
+        "Идентификатор задачи стабилен и выводится из пользователя и типа отчёта, чтобы повторное включение не создавало дубль",
+        "Выключение снимает повторяющуюся задачу",
+        "Изменение времени переносит задачу, не оставляя старую",
+        "Отчёт по расписанию приходит тому же пользователю, что и по кнопке, и в том же формате",
+        "Ошибка формирования отчёта по расписанию логируется и не приводит к бесконечным повторам"
+      ],
+      "test_steps": [
+        "Шаг 1: включить рассылку на время через две минуты — отчёт приходит сам",
+        "Шаг 2: проверить в Redis, что повторяющаяся задача одна, а не несколько",
+        "Шаг 3: изменить время — старая задача снята, новая создана",
+        "Шаг 4: выключить рассылку — задача снята, отчёт больше не приходит",
+        "Шаг 5: включить дважды подряд — дубля задачи не появилось"
+      ],
+      "dependencies": ["TASK-028"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-031",
+      "milestone": "M6",
+      "category": "integration",
+      "priority": "high",
+      "description": "Обеспечить переживание рестарта: при старте приложения расписания должны соответствовать сохранённым настройкам — без задвоения задач и без потери рассылок у тех, кто её включил",
+      "acceptance_criteria": [
+        "При старте приложение сверяет повторяющиеся задачи в Redis с настройками в Mongo",
+        "Отсутствующие задачи создаются, лишние снимаются",
+        "Повторный рестарт не приводит к росту количества задач",
+        "Пользователь с выключенной рассылкой не получает задачу"
+      ],
+      "test_steps": [
+        "Шаг 1: включить рассылку, перезапустить приложение — задача на месте, ровно одна",
+        "Шаг 2: перезапустить трижды — количество задач не выросло",
+        "Шаг 3: удалить задачу из Redis вручную и перезапустить — задача восстановлена",
+        "Шаг 4: выключить рассылку, перезапустить — задача не появилась снова"
+      ],
+      "dependencies": ["TASK-030"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-032",
+      "milestone": "M7",
+      "category": "unit",
+      "priority": "high",
+      "description": "Покрыть юнит-тестами денежную арифметику и маппинг статусов — именно здесь в старом коде жили самые дорогие дефекты: скрытая наценка +5 ₽ применялась только на одном из двух путей, а коэффициент по умолчанию был 2 вместо 1.2, то есть цена молча удваивалась",
+      "acceptance_criteria": [
+        "Есть тесты на подсчёт сумм: itemsTotal отдельно и itemsTotal + deliveryTotal отдельно",
+        "Есть тест, подтверждающий, что к суммам не применяется никаких скрытых надбавок и коэффициентов",
+        "Есть тесты на маппинг статусов для всех четырёх отчётов",
+        "Отдельный тест подтверждает, что ОБА варианта опечатки подстатуса попадают в отчёт о возвратах",
+        "Есть тест на дедупликацию заказа, попавшего в оба источника отчёта о возвратах",
+        "Есть тест на вычисление границ суток по Europe/Moscow при серверном времени в другом поясе"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run — все тесты зелёные",
+        "Шаг 2: намеренно внести в код надбавку к сумме — соответствующий тест краснеет",
+        "Шаг 3: убрать один из вариантов опечатки из маппинга — тест краснеет"
+      ],
+      "dependencies": ["TASK-021", "TASK-025"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-033",
+      "milestone": "M7",
+      "category": "unit",
+      "priority": "medium",
+      "description": "Закрепить тестом инвариант порядка регистрации обработчиков: catch-all должен регистрироваться последним. Нарушение этого порядка — причина того, что в старом коде все кнопки меню молча не работали, и такая поломка не видна ни компилятору, ни ревью",
+      "acceptance_criteria": [
+        "Тест проверяет, что композер регистрирует обработчики в ожидаемом порядке",
+        "Тест падает, если catch-all зарегистрирован раньше конкретных обработчиков",
+        "Тест не требует живых подключений к Telegram, Mongo и Redis"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run — тест зелёный",
+        "Шаг 2: переставить catch-all выше в композере — тест краснеет",
+        "Шаг 3: вернуть порядок — тест снова зелёный"
+      ],
+      "dependencies": ["TASK-011"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-034",
+      "milestone": "M7",
+      "category": "e2e",
+      "priority": "high",
+      "description": "Сквозной тест онбординга: от первого /start до получения отчёта, включая проверку, что до заполнения всех трёх кредов пользователя не пускают дальше",
+      "acceptance_criteria": [
+        "Тест проходит визард по шагам и проверяет, что креды спрашиваются по одному",
+        "Проверяется, что документ YandexMarket не создаётся до завершения визарда",
+        "Проверяется, что при неполных кредах отчёт не отдаётся и запрос к Partner API не уходит",
+        "После завершения визарда документ создан со всеми полями и отчёт отдаётся",
+        "Внешние вызовы Partner API и Telegram замоканы, тест не требует боевых кредов"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run — сквозной тест зелёный",
+        "Шаг 2: убрать проверку готовности конфигурации из кода — тест краснеет",
+        "Шаг 3: вернуть преждевременное создание документа-заглушки — тест краснеет"
+      ],
+      "dependencies": ["TASK-018", "TASK-023"],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-035",
+      "milestone": "M8",
+      "category": "functional",
+      "priority": "high",
+      "description": "Обновление остатков товаров через загрузку файла: пользователь присылает боту Excel, бот разбирает его и проставляет остатки в Яндекс.Маркете. Это ЕДИНСТВЕННАЯ операция записи, возвращаемая после перехода бота в read-only режим — изменение цен остаётся отключённым. Шаблон Excel заказчик пришлёт отдельно, до этого структура файла неизвестна",
+      "acceptance_criteria": [
+        "ВНИМАНИЕ на конфликт с TASK-016: там в инструкцию онбординга заложен read-only скоуп токена (inventory-and-order-processing:read-only), которого для записи остатков НЕ ХВАТИТ — нужен скоуп с правом записи inventory-and-order-processing. Перед реализацией согласовать с заказчиком: либо менять инструкцию и просить токен с записью, либо просить второй токен отдельно под остатки",
+        "ВНИМАНИЕ на пересечение с M1: TASK-008 помечает @deprecated обработчик документов, конвейер разбора файла и OfferService.updateOfferStock, а TASK-009 снимает bot.on(document). Часть этой инфраструктуры придётся вернуть — но осознанно и только под остатки, без реанимации кода изменения цен",
+        "Разбор файла реализован строго под присланный заказчиком шаблон, а не под угаданный формат",
+        "Возвращена валидация загрузки, потерянная при миграции: лимит размера, allowlist расширений и MIME-типов (в текущем FileUploadService все три проверки отсутствуют, скачивается любой файл)",
+        "Проверка подписки и готовности кредов выполняется ДО скачивания файла и постановки в очередь",
+        "Остатки обновляются батчами с соблюдением лимитов Partner API, путь запроса содержит явную версию",
+        "Пользователь получает отчёт: сколько позиций обновлено, сколько не найдено, какие строки не разобраны",
+        "Временный файл удаляется во всех случаях, включая ошибку и успешный путь (в старом коде на успешном пути файлы утекали — filePath затирался пустой строкой)",
+        "Строки с некорректными данными не роняют всю загрузку, а попадают в отчёт об ошибках",
+        "Есть юнит-тесты на разбор шаблона и на формирование батчей"
+      ],
+      "test_steps": [
+        "Шаг 1: получить от заказчика шаблон Excel и зафиксировать его структуру в описании задачи",
+        "Шаг 2: загрузить корректный файл — остатки в личном кабинете Маркета изменились на указанные значения",
+        "Шаг 3: загрузить файл с несколькими битыми строками — корректные строки применились, битые перечислены в отчёте, загрузка не упала целиком",
+        "Шаг 4: загрузить файл с неизвестными SKU — они помечены как ненайденные в отчёте",
+        "Шаг 5: загрузить файл неподдерживаемого типа и файл сверх лимита размера — оба отклонены до скачивания",
+        "Шаг 6: проверить static/temp после каждого сценария — временных файлов не осталось",
+        "Шаг 7: попробовать загрузку пользователем с read-only токеном — ошибка прав отображается понятным текстом, а не молчанием",
+        "Шаг 8: убедиться, что изменение цен по-прежнему недоступно и не вызывается"
+      ],
+      "dependencies": ["TASK-018", "TASK-019"],
+      "status": "blocked",
+      "blocked_reason": "Ожидается шаблон Excel от заказчика — без него структура файла неизвестна и парсер написать нельзя. Дополнительно требуется решение по скоупу токена (см. первый пункт acceptance_criteria)."
+    }
+  ]
+}

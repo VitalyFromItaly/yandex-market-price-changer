@@ -1,11 +1,13 @@
+import { Context } from 'telegraf';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/mongo/services/yandex-market.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
 export class CallbackQueryHandler {
   constructor(
     private bot: TTelegrafBot,
     private keyboard: ITelegramKeyboard,
+    private yandexMarketService: YandexMarketService,
   ) {}
 
   public setupHandlers() {
@@ -141,7 +143,7 @@ export class CallbackQueryHandler {
 
         case 'check_settings':
           try {
-            const settings = await YandexMarketService.getByTelegramUser(
+            const settings = await this.yandexMarketService.getByTelegramUser(
               ctx.from.id.toString(),
             );
             if (settings) {
@@ -152,7 +154,7 @@ export class CallbackQueryHandler {
 🎫 **API токен:** ${settings.token ? `\`${settings.token.substring(0, 10)}...\`` : '❌ Не заполнен'}
 💰 **Коэффициент:** x${settings.priceCoefficient || 1.0}
 
-${settings.isConfigured() ? '✅ Все настройки заполнены' : '⚠️ Требуется дозаполнение'}`;
+${await this.yandexMarketService.isConfigured(ctx.from.id.toString()) ? '✅ Все настройки заполнены' : '⚠️ Требуется дозаполнение'}`;
 
               await ctx.editMessageText(settingsText);
             } else {
@@ -213,7 +215,7 @@ ${settings.isConfigured() ? '✅ Все настройки заполнены' :
   private async handleCoefficientSet(ctx: any, coefficient: number): Promise<void> {
     try {
       // Сохраняем коэффициент в базе данных
-      await YandexMarketService.upsertByTelegramUser(
+      await this.yandexMarketService.upsertByTelegramUser(
         ctx.from.id.toString(),
         ctx.chat.id.toString(),
         { priceCoefficient: coefficient }

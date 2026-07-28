@@ -1,19 +1,28 @@
 import { EBotType, ITelegramBot, TFindBotPayload } from '../domain.telegram';
-import { BotsModel } from '../../../database/mongo';
 import { Telegraf } from 'telegraf';
 import PriceChangerBot from './price-changer-bot/price-changer.bot';
+import { Model } from 'mongoose';
+import { Bot, BotDocument, IBotSchema } from '../../../database/schemas/bot.schema';
+import { SubscriptionService } from '../../../database/services/subscription.service';
+import { YandexMarketService } from '../../../database/services/yandex-market.service';
+import { FileProcessingService } from '../queue/services/file-processing.service';
 
 export default class BotFather {
-  public bots: Map<EBotType, Map<string, ITelegramBot>>; // Map<type, Map<id, ITelegramBot>>
+  public bots: Map<string, Map<string, ITelegramBot>>; // Map<type, Map<id, ITelegramBot>>
 
-  constructor() {
-    this.bots = new Map();
+  constructor(
+    private botModel: Model<BotDocument>,
+    private subscriptionService: SubscriptionService,
+    private yandexMarketService: YandexMarketService,
+    private fileProcessingService: FileProcessingService,
+  ) {
+    this.bots = new Map<string, Map<string, ITelegramBot>>();
   }
 
   public async boot() {
-    const bots = await BotsModel.find();
+    const bots = await this.botModel.find();
     if (!bots.length) {
-      const bot = await BotsModel.create({
+      const bot = await this.botModel.create({
         type: EBotType.PRICE_CHANGER_BOT,
         token: process.env.TELEGRAM_TOKEN,
         name: 'Artem bot for changing prices in yandex market',
@@ -23,13 +32,34 @@ export default class BotFather {
     }
 
     for (const bot of bots) {
-      if (!this.bots.has(bot.type)) {
-        this.bots.set(bot.type, new Map());
+      const botType = bot.type as EBotType;
+      if (!this.bots.has(botType)) {
+        this.bots.set(botType, new Map());
       }
 
-      const botsByType = this.bots.get(bot.type);
-      const Bot = this.getBotInstanceByType(bot.type);
-      const botInstance = new Bot(new Telegraf(bot.token), bot);
+      const botsByType = this.bots.get(botType);
+      const Bot = this.getBotInstanceByType(botType);
+
+      // Создаем объект с правильными типами
+      const botInfo: IBotSchema & { _id: string } = {
+        _id: bot._id.toString(),
+        name: bot.name,
+        token: bot.token,
+        type: bot.type as EBotType,
+        description: bot.description,
+        status: bot.status,
+        created_at: bot.created_at || new Date(),
+        timezone: bot.timezone,
+      };
+
+      // Pass DI services to bot constructor
+      const botInstance = new Bot(
+        new Telegraf(bot.token),
+        botInfo,
+        this.subscriptionService,
+        this.yandexMarketService,
+        this.fileProcessingService
+      );
 
       botsByType.set(bot.id, botInstance);
     }
@@ -52,25 +82,17 @@ export default class BotFather {
     this.bots.forEach((botsByType) => {
       botsByType.forEach((bot) => {
         console.log(`Launching bot: ${bot.id}`);
-        bot.boot();
         bot.launch();
       });
     });
   }
 
   public findBot(payload: TFindBotPayload) {
-    const { id, type } = payload;
-    if (!this.bots.has(type as EBotType)) {
+    const botsByType = this.bots.get(payload.type);
+    if (!botsByType) {
       return null;
     }
 
-    const botsByType = this.bots.get(type as EBotType);
-    const bot = botsByType.get(id);
-
-    if (bot) {
-      return bot;
-    }
-
-    return null;
+    return botsByType.get(payload.id) || null;
   }
 }

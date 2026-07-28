@@ -5,7 +5,7 @@
 import { HttpClient } from '../../../transport/http';
 import { CampaignService } from '../services/campaign.service';
 import { ICreateOfferMapping, OfferService } from '../services/offer.service';
-import { IProcessingResult } from '../../../services/file-data-processor.service';
+import { IProcessingResult } from '../../types/yandex-market.types';
 import { TParsedPriceRow } from '../../parser/domain.parser';
 
 function capitalizeFirstLetter(string: string): string {
@@ -67,7 +67,6 @@ export class PriceChanger {
 
   private readonly httpClient: HttpClient;
 
-  public readonly campaignService: CampaignService;
   public readonly productsService: OfferService;
 
   constructor(token: string, campaign_id: number, business_id: number) {
@@ -82,7 +81,6 @@ export class PriceChanger {
       },
     });
 
-    this.campaignService = new CampaignService(this.httpClient);
     this.productsService = new OfferService(this.httpClient, this.campaign_id, this.business_id);
   }
 
@@ -93,7 +91,7 @@ export class PriceChanger {
       throw new Error('Missing comparison data or Yandex settings');
     }
 
-    const priceCoefficient = yandexSettings.priceCoefficient || 1.8;
+    const priceCoefficient = yandexSettings.priceCoefficient || 2;
     console.log(`🔄 Starting price update with coefficient: ${priceCoefficient}`);
 
     const results: IPriceUpdateResult = {
@@ -112,14 +110,14 @@ export class PriceChanger {
 
     try {
       // Обработка товаров для обновления цен
-      // if (comparison.toUpdate && comparison.toUpdate.length > 0) {
-      //   console.log(`📝 Updating prices for ${comparison.toUpdate.length} existing offers...`);
-      //   const updateResults = await this.updateExistingOffers(comparison.toUpdate, priceCoefficient);
-      //   results.updated = updateResults.successful;
-      //   results.errors = results.errors.concat(updateResults.errors);
-      //   results.summary.successfulUpdates = updateResults.successful;
-      //   results.summary.failedOperations += updateResults.failed;
-      // }
+      if (comparison.toUpdate && comparison.toUpdate.length > 0) {
+        console.log(`📝 Updating prices for ${comparison.toUpdate.length} existing offers...`);
+        const updateResults = await this.updateExistingOffers(comparison.toUpdate, priceCoefficient);
+        results.updated = updateResults.successful;
+        results.errors = results.errors.concat(updateResults.errors);
+        results.summary.successfulUpdates = updateResults.successful;
+        results.summary.failedOperations += updateResults.failed;
+      }
 
       // Обработка товаров для создания новых карточек
       if (comparison.toCreate && comparison.toCreate.length > 0) {

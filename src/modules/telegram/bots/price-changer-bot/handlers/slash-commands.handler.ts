@@ -1,6 +1,6 @@
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/mongo/services/yandex-market.service';
-import { TelegramUserService } from '../../shared/services/user-subscription.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { TelegramUserService } from '../../shared/services/telegram-user.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { SharedCommandsHandler } from './shared-commands.handler';
 
@@ -11,8 +11,9 @@ export class SlashCommandsHandler {
     private bot: TTelegrafBot,
     private keyboard: ITelegramKeyboard,
     private userService: TelegramUserService,
+    private yandexMarketService: YandexMarketService,
   ) {
-    this.sharedHandlers = new SharedCommandsHandler(keyboard);
+    this.sharedHandlers = new SharedCommandsHandler(keyboard, yandexMarketService);
   }
 
   public setupHandlers() {

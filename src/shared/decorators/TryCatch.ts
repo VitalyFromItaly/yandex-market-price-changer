@@ -5,7 +5,7 @@ export default function TryCatch() {
       try {
         return await originalMethod.apply(this, args);
       } catch (error) {
-        console.error('Ошибка при получении данных:', error);
+        console.error(_propertyKey, 'Ошибка при получении данных:', error);
       }
     };
 

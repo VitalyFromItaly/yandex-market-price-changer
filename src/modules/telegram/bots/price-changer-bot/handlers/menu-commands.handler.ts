@@ -1,124 +1,72 @@
+import { Context } from 'telegraf';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/mongo/services/yandex-market.service';
-import { TelegramUserService } from '../../shared/services/user-subscription.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { TelegramUserService } from '../../shared/services/telegram-user.service';
 import { SharedCommandsHandler } from './shared-commands.handler';
 
 export class MenuCommandsHandler {
-  private sharedHandlers: SharedCommandsHandler;
+  private sharedCommandsHandler: SharedCommandsHandler;
 
   constructor(
     private bot: TTelegrafBot,
     private keyboard: ITelegramKeyboard,
     private userService: TelegramUserService,
+    private yandexMarketService: YandexMarketService
   ) {
-    this.sharedHandlers = new SharedCommandsHandler(keyboard);
+    this.sharedCommandsHandler = new SharedCommandsHandler(this.keyboard, this.yandexMarketService);
   }
 
   public setupHandlers() {
-    console.log('Setting up menu commands handlers...');
-
-    // Настройки
-    this.bot.hears('⚙️ Настройки', async (ctx) => {
-      const inlineKeyboard = await this.keyboard.createInlineButtons([
-        { text: '🔧 Настройки API', callback_data: 'settings_api' },
-        { text: '💳 Подписка', callback_data: 'settings_subscription' },
-      ]);
-
-      await ctx.reply('⚙️ Выберите настройку:', inlineKeyboard);
-    });
-
-    // Установить коэффициент цены
-    this.bot.hears('💰 Установить коэффициент цены', async (ctx) => {
-      await this.sharedHandlers.handlePriceCoefficientCommand(ctx);
-    });
-
-    // Обработчики готовых значений коэффициентов (кнопки)
-    this.bot.hears(/^x(0\.\d+|[12]\.\d+)/, async (ctx) => {
-      await this.handleCoefficientInput(ctx, ctx.match[0]);
-    });
-
-    // Обработчик числового ввода коэффициента
-    this.bot.hears(/^(\d*\.?\d+)$/, async (ctx) => {
-      // Проверяем, что это похоже на коэффициент (число от 0.1 до 10)
-      const value = parseFloat(ctx.message.text);
-      if (value >= 0.1 && value <= 10) {
-        await this.handleCoefficientInput(ctx, ctx.message.text);
-      }
-    });
-
-    // Загрузить прайс-лист
-    this.bot.hears('📄 Загрузить прайс-лист', async (ctx) => {
-      await this.sharedHandlers.handleUploadPriceListCommand(ctx);
-    });
-
-    // Помощь
-    this.bot.hears('❓ Помощь', async (ctx) => {
-      const helpMessage = `❓ Справка по боту
-
-      🎯 Основные функции:
-      • Изменение цен на товары в Яндекс.Маркете
-      • Загрузка прайс-листов
-      • Массовое обновление коэффициентов
-      • Статистика продаж
-
-      🔧 Настройка:
-      1. Добавьте API-ключ от Яндекс.Маркета
-      2. Укажите ID кампании и бизнеса
-      3. Настройте коэффициенты
-      4. Загрузите прайс-лист
-
-      💬 Поддержка: @Vitality45`;
-
-      await ctx.reply(helpMessage);
-    });
-
-    // Профиль
-    this.bot.hears('👤 Профиль', async (ctx) => {
-      const user = await this.userService.handleUser(ctx.from);
-      const subscription = await this.userService.checkUserSubscription(
-        ctx.from,
-      );
-
-      const profileMessage = `👤 Ваш профиль
-
-      👨‍💼 Пользователь: ${ctx.from.first_name} ${ctx.from.last_name || ''}
-      🆔 ID: ${ctx.from.id}
-      📧 Username: @${ctx.from.username || 'не указан'}
-
-      💳 Подписка: ${subscription.hasActiveSubscription ? '✅ Активна' : '❌ Неактивна'}
-      ${subscription.subscription ? `📅 До: ${new Date(subscription.subscription.expires_at).toLocaleDateString('ru-RU')}` : ''}
-
-      📊 Статистика:
-      • Регистрация: ${new Date(user.created_at).toLocaleDateString('ru-RU')}
-      • Последняя активность: сегодня`;
-
-      const keyboard = await this.keyboard.createInlineButtons([
-        {
-          text: '💳 Управление подпиской',
-          callback_data: 'manage_subscription',
-        },
-        { text: '🔧 Настройки профиля', callback_data: 'profile_settings' },
-      ]);
-
-      await ctx.reply(profileMessage, keyboard);
-    });
-
-    // Главное меню
-    this.bot.hears('🏠 Главное меню', async (ctx) => {
-      const keyboard = await this.keyboard.createKeyboard([
-        ['📊 Статистика', '⚙️ Настройки'],
-        ['💰 Установить коэффициент цены'],
-        ['📄 Загрузить прайс-лист'],
-        ['❓ Помощь', '👤 Профиль'],
-      ]);
-      await ctx.reply('🏠 Главное меню:', keyboard);
-    });
+    this.bot.hears('🏠 Главное меню', (ctx) => this.showMainMenu(ctx));
+    this.bot.hears('⚙️ Настройки API', (ctx) => this.showApiSettings(ctx));
+    this.bot.hears('📊 Мой профиль', (ctx) => this.showProfile(ctx));
+    this.bot.hears('📈 Изменить цены', (ctx) => this.changePrices(ctx));
+    this.bot.hears('🔄 Обновить коэффициент', (ctx) => this.updateCoefficient(ctx));
   }
 
-  /**
-   * Обработка ввода коэффициента (кнопки или текст)
-   */
-  private async handleCoefficientInput(ctx: any, input: string): Promise<void> {
-    await this.sharedHandlers.handleCoefficientInput(ctx, input);
+  private async showMainMenu(ctx: Context) {
+    const keyboard = await this.keyboard.createMenuKeyboard();
+    ctx.reply('🏠 Главное меню', keyboard);
+  }
+
+  private async showApiSettings(ctx: Context) {
+    const yandexSettings = await this.yandexMarketService.findByTelegramUser(
+      ctx.from.id.toString()
+    );
+
+    const message = `⚙️ Настройки API
+
+🔑 **Campaign ID**: ${yandexSettings?.campaign_id || 'Не установлен'}
+🏢 **Business ID**: ${yandexSettings?.business_id || 'Не установлен'}
+🎫 **Token**: ${yandexSettings?.token ? '✅ Установлен' : '❌ Не установлен'}
+📊 **Коэффициент**: ${yandexSettings?.priceCoefficient || 1.2}
+
+📝 Для изменения настроек просто отправьте новые данные в формате:
+\`Campaign ID: ваш_id\`
+\`Business ID: ваш_id\`
+\`Token: ваш_токен\`
+\`Коэффициент: 1.5\``;
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+  }
+
+  private async showProfile(ctx: Context) {
+    const subscription = await this.userService.checkUserSubscription(ctx.from);
+
+    const message = `📊 Мой профиль
+
+👤 **Пользователь**: ${ctx.from.first_name} ${ctx.from.last_name || ''}
+🆔 **ID**: ${ctx.from.id}
+📅 **Подписка**: ${subscription ? '✅ Активна' : '❌ Неактивна'}`;
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+  }
+
+  private async changePrices(ctx: Context) {
+    await this.sharedCommandsHandler.handleUploadPriceListCommand(ctx);
+  }
+
+  private async updateCoefficient(ctx: Context) {
+    await this.sharedCommandsHandler.handlePriceCoefficientCommand(ctx);
   }
 }

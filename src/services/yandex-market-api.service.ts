@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
-// import { IProductData } from './excel-parser.service';
+// import { IProductData } from './excel-parser.services';
 
 // Временная заглушка для IProductData
 export interface IProductData {
@@ -94,11 +94,11 @@ export class YandexMarketApiService {
       const response = await this.axiosInstance.get(
         `/v2/campaigns/${this.config.campaign_id}/settings`
       );
-      
+
       return { success: true };
     } catch (error) {
       let errorMessage = 'Неизвестная ошибка';
-      
+
       if (axios.isAxiosError(error)) {
         if (error.response?.status === 401) {
           errorMessage = 'Неверный токен авторизации';
@@ -141,8 +141,8 @@ export class YandexMarketApiService {
    * Обновление цены одного товара
    */
   async updateSinglePrice(
-    offerId: string, 
-    price: number, 
+    offerId: string,
+    price: number,
     currencyId: string = 'RUR'
   ): Promise<IPriceUpdateResponse> {
     try {
@@ -164,7 +164,7 @@ export class YandexMarketApiService {
       );
 
       const result = response.data.result?.offers?.[0];
-      
+
       return {
         offerId,
         updated: result?.updated || false,
@@ -172,7 +172,7 @@ export class YandexMarketApiService {
       };
     } catch (error) {
       console.error(`Ошибка обновления цены для ${offerId}:`, error);
-      
+
       return {
         offerId,
         updated: false,
@@ -202,11 +202,11 @@ export class YandexMarketApiService {
 
       try {
         const batchResult = await this.processBatch(batch);
-        
+
         result.successCount += batchResult.successCount;
         result.errorCount += batchResult.errorCount;
         result.results.push(...batchResult.results);
-        
+
         // Задержка между батчами для соблюдения rate limits
         if (i < batches.length - 1) {
           await this.delay(1000); // 1 секунда
@@ -256,7 +256,7 @@ export class YandexMarketApiService {
 
       for (const apiResult of apiResults) {
         const isSuccess = apiResult.updated && (!apiResult.errors || apiResult.errors.length === 0);
-        
+
         results.push({
           offerId: apiResult.offerId,
           updated: isSuccess,
@@ -308,7 +308,7 @@ export class YandexMarketApiService {
 
     // Проверяем по 10 товаров за раз
     const chunks = this.chunkArray(skus, 10);
-    
+
     for (const chunk of chunks) {
       const promises = chunk.map(async (sku) => {
         try {
@@ -320,7 +320,7 @@ export class YandexMarketApiService {
       });
 
       const results = await Promise.all(promises);
-      
+
       for (const result of results) {
         if (result.exists) {
           existing.push(result.sku);
@@ -346,7 +346,7 @@ export class YandexMarketApiService {
   }> {
     try {
       const offer = await this.getOffer(offerId);
-      
+
       return {
         currentPrice: offer?.price?.value,
         // Другие данные могут быть недоступны через API
@@ -426,4 +426,4 @@ export class YandexMarketApiService {
       daily: { remaining: 10000, limit: 10000 },
     };
   }
-} 
+}

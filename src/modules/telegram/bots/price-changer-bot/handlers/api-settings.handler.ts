@@ -1,11 +1,13 @@
+import { Context } from 'telegraf';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/mongo/services/yandex-market.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
 export class ApiSettingsHandler {
   constructor(
     private bot: TTelegrafBot,
     private keyboard: ITelegramKeyboard,
+    private yandexMarketService: YandexMarketService,
   ) {}
 
   public setupHandlers() {
@@ -297,14 +299,14 @@ export class ApiSettingsHandler {
       updateData[type] = value;
 
       // Сохраняем в базу
-      await YandexMarketService.upsertByTelegramUser(
+      await this.yandexMarketService.upsertByTelegramUser(
         telegramUserId,
         telegramChatId,
         updateData,
       );
 
       // Получаем обновленные настройки для проверки
-      const updatedSettings = await YandexMarketService.getByTelegramUser(telegramUserId);
+      const updatedSettings = await this.yandexMarketService.getByTelegramUser(telegramUserId);
 
       console.log({ updatedSettings });
 
@@ -321,7 +323,7 @@ export class ApiSettingsHandler {
       console.log({ message });
 
       // Проверяем, все ли настройки заполнены
-      if (updatedSettings?.isConfigured()) {
+      if (await this.yandexMarketService.isConfigured(telegramUserId)) {
         message += `\n\n🎉 **Все настройки API заполнены!**\n✅ Теперь вы можете загружать прайс-листы`;
 
         const keyboard = await this.keyboard.createInlineButtons([

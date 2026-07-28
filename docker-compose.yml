@@ -12,8 +12,10 @@ services:
       - NODE_ENV=production
       - NODE_VERSION=22.12.0
       - MONGODB_URI=mongodb://root:secret@mongodb:27017/yandex-market-bot
+      - REDIS_URL=redis://redis:6379
     depends_on:
       - mongodb
+      - redis
     networks:
       - net
     volumes:
@@ -45,6 +47,17 @@ services:
       ME_CONFIG_MONGODB_URL: mongodb://root:secret@mongodb:27017/
     depends_on:
       - mongodb
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - "./volumes/common/redis_data:/data"
+    command: redis-server --appendonly yes
+    networks:
+      - net
 
 networks:
   net:

@@ -1,28 +1,35 @@
 import {
-  EBotName,
   ITelegramBot,
   ITelegramKeyboard,
   THandleUpdatePayload,
   TTelegrafBot,
   TWebHookResponse,
 } from '../../domain.telegram';
-import { IBotSchema } from '../../../../database/mongo/models/bot.model.mongo';
+import { IBotSchema } from '../../../../database/schemas';
 import TryCatch from '../../../../shared/decorators/TryCatch';
 import DecorateMethodsWith from '../../../../shared/decorators/DecorateWith';
 import { Telegraf } from 'telegraf';
-import { TelegramUserService } from './services/user-subscription.service';
+import { TelegramUserService } from './services/telegram-user.service';
+import { SubscriptionService } from '../../../../database/services';
+import { YandexMarketService } from '../../../../database/services';
 
 @DecorateMethodsWith(TryCatch())
 export default class BaseTelegramBot implements ITelegramBot {
   protected bot: TTelegrafBot;
-  protected botInfo: IBotSchema;
+  protected botInfo: IBotSchema & { _id: string };
   protected userService: TelegramUserService;
   protected keyboard: ITelegramKeyboard;
 
-  constructor(bot: TTelegrafBot, botInfo: IBotSchema, keyboard: ITelegramKeyboard) {
+  constructor(
+    bot: TTelegrafBot,
+    botInfo: IBotSchema & { _id: string },
+    keyboard: ITelegramKeyboard,
+    subscriptionService: SubscriptionService,
+    yandexMarketService: YandexMarketService
+  ) {
     this.bot = bot;
     this.botInfo = botInfo;
-    this.userService = new TelegramUserService(bot);
+    this.userService = new TelegramUserService(bot, subscriptionService, yandexMarketService);
     this.keyboard = keyboard;
   }
 
@@ -31,8 +38,7 @@ export default class BaseTelegramBot implements ITelegramBot {
   }
 
   public get id(): string {
-    // @ts-ignore
-    return this.botInfo._id.toString();
+    return this.botInfo._id;
   }
 
   private get type() {
@@ -44,12 +50,8 @@ export default class BaseTelegramBot implements ITelegramBot {
   }
 
   protected onStart(message = 'Нажми кнопку "Показать команды" (справа), чтобы увидеть список команд.') {
-    // /start
-    this.bot.start(async (ctx) => {
-      const user = await this.userService.handleUser(ctx.from);
-      console.log({ user });
-      const keyboard = await this.keyboard.createStartKeyboard();
-      ctx.reply(message, keyboard);
+    this.bot.start((ctx) => {
+      ctx.reply(message);
     });
   }
 
@@ -61,9 +63,9 @@ export default class BaseTelegramBot implements ITelegramBot {
   }
 
   protected onFinish() {
-    // Включите graceful stop
-    process.once('SIGINT', () => this.bot.stop('SIGINT'));
-    process.once('SIGTERM', () => this.bot.stop('SIGTERM'));
+    this.bot.on('message', (ctx) => {
+      ctx.reply('Неизвестная команда');
+    });
   }
 
   public boot(): void {
