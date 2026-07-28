@@ -2,7 +2,7 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 3
+    "archived_tasks": 4
   },
   "tasks": [
     {
@@ -68,6 +68,28 @@
       "dependencies": [
         "TASK-001"
       ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-008",
+      "milestone": "M1",
+      "category": "deprecation",
+      "priority": "critical",
+      "description": "Пометить весь функционал изменения цен как @deprecated, не удаляя код: продукт переходит в read-only режим. Заодно зафиксировать в комментариях известные дефекты этого кода, чтобы они не переехали в новый функционал",
+      "acceptance_criteria": [
+        "@deprecated с пояснением проставлен на PriceChanger, OfferService.updateOfferPrice, OfferService.createOfferMappings, updateOfferStock",
+        "@deprecated проставлен на обработчики очередей PARSE_FILE, COMPARE_DATA, UPDATE_YANDEX_OFFERS и на FileUploadHandler, FileUploadService, FileDataProcessorService",
+        "В комментариях зафиксированы дефекты: скрытая наценка +5 ₽ на пути обновления и её отсутствие на пути создания; fallback-коэффициент 2 вместо 1.2; compareData читает price.value вместо basicPrice; writeFileSync offers.json общий для всех тенантов",
+        "Ни одна строка этого кода не удалена",
+        "Новый код никуда его не импортирует",
+        "npx tsc --noEmit проходит"
+      ],
+      "test_steps": [
+        "Шаг 1: открыть помеченные файлы в IDE — методы отображаются зачёркнутыми",
+        "Шаг 2: npx tsc --noEmit — ошибок нет",
+        "Шаг 3: grep по новому коду — импортов deprecated-модулей нет"
+      ],
+      "dependencies": [],
       "status": "done"
     }
   ]

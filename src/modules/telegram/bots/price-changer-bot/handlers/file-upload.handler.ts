@@ -10,6 +10,15 @@ interface FileMessage {
   document?: Document & { file_name?: string; file_size?: number; file_id?: string };
 }
 
+/**
+ * @deprecated Приём документа для отключённого изменения цен. Регистрация
+ * `bot.on(message('document'))` снята (TASK-009), поэтому класс сейчас мёртв.
+ * Загрузка файла вернётся только под остатки (TASK-035) и будет написана заново.
+ *
+ * Дефект, который нельзя повторить: handleDocument скачивает файл и ставит
+ * джобу в очередь ДО проверки подписки и готовности кредов — проверка
+ * isConfigured выполняется уже в воркере, то есть после записи файла на диск.
+ */
 export class FileUploadHandler {
   private readonly uploadService: FileUploadService;
 

@@ -12,6 +12,18 @@ import { PriceChanger } from '../../../yandex/handlers/price.changer.handler';
 import { YandexMarketService } from '../../../../database/services';
 import { QUEUE_NAMES, JOB_TYPES } from '../../index';
 
+/**
+ * @deprecated UPDATE_YANDEX_OFFERS — запись цен в Маркет, отключена.
+ * FETCH_YANDEX_DATA тянет каталог товаров через deprecated OfferService по
+ * неверсионированным путям. Джобы в эту очередь больше не ставятся.
+ *
+ * Read-only слой для отчётов (TASK-019) пишется заново: версия в пути
+ * обязательна, заголовок Api-Key, пагинация через pageToken.
+ *
+ * Дефект, зафиксирован намеренно: здесь продублирован fallback-коэффициент `2`
+ * (`yandexSettings.priceCoefficient || 2`) — то же удвоение цены, что и в
+ * PriceChanger, при дефолте 1.2 в схеме и в интерфейсе.
+ */
 @Injectable()
 @Processor(QUEUE_NAMES.YANDEX_API)
 export class YandexApiProcessor {

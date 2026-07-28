@@ -4,6 +4,18 @@ import { Queue } from 'bull';
 import { QUEUE_NAMES, JOB_TYPES } from '../../index';
 import { IFileInfo, IParsingResult, IProcessingResult, IYandexApiResult } from '../../../types/yandex-market.types';
 
+/**
+ * @deprecated Продюсер джоб конвейера изменения цен
+ * (PROCESS_FILE → PARSE_FILE → FETCH_YANDEX_DATA → COMPARE_DATA →
+ * UPDATE_YANDEX_OFFERS → SEND_COMPLETION). Конвейер отключён вместе с
+ * изменением цен; из нового кода не вызывать.
+ *
+ * Дефект конвейера, который нельзя повторить: на УСПЕШНОМ пути временный файл
+ * не удаляется. FileProcessingProcessor пересобирает fileInfo с `filePath: ''`,
+ * а YandexApiProcessor удаляет файл только `if (processingResult.fileInfo.filePath)` —
+ * условие никогда не выполняется, и static/temp растёт после каждой удачной
+ * обработки. Чистится только на ветках ошибок.
+ */
 export interface FileProcessingJobData {
   userId: string;
   chatId: string;

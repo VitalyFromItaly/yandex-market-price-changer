@@ -6,6 +6,16 @@ import { YandexMarketService } from '../../../database/services';
 import { YandexMarketDocument } from '../../../database/schemas';
 import { IFileInfo, IParsingResult, IProcessingResult } from '../../types/yandex-market.types';
 
+/**
+ * @deprecated Разбор прайс-листа и сравнение с товарами Маркета для
+ * отключённого изменения цен. Из нового кода не вызывать.
+ *
+ * Известный дефект: в compareData сравнение цен читает `yandexOffer.price?.value`,
+ * тогда как в ответе Маркета поле называется `basicPrice` (см. yandex.domain.ts).
+ * В результате priceMatches всегда 0, а priceMismatches считает совпадения как
+ * расхождения. На состав toUpdate это не влияло, поэтому дефект и не заметили —
+ * он портил только статистику в отчёте.
+ */
 @Injectable()
 export class FileDataProcessorService {
   constructor(private yandexMarketService: YandexMarketService) {}

@@ -14,6 +14,16 @@ import { QUEUE_NAMES, JOB_TYPES } from '../../index';
 import { IProcessingResult } from '../../../types/yandex-market.types';
 import { v4 as uuidv4 } from 'uuid';
 
+/**
+ * @deprecated Все три обработчика этого процессора (PROCESS_FILE, PARSE_FILE,
+ * COMPARE_DATA) обслуживают отключённое изменение цен. Джобы в эту очередь
+ * больше не ставятся: приём документа снят в TASK-009.
+ *
+ * Дефект, который нельзя повторить при возврате загрузки под остатки
+ * (TASK-035): обработчик PARSE_FILE передаёт дальше fileInfo с `filePath: ''`,
+ * из-за чего YandexApiProcessor не может удалить временный файл на успешном
+ * пути — его условие `if (filePath)` никогда не срабатывает.
+ */
 @Injectable()
 @Processor(QUEUE_NAMES.FILE_PROCESSING)
 export class FileProcessingProcessor {
