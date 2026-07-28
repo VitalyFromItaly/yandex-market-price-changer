@@ -99,47 +99,22 @@ export class CallbackQueryHandler {
           break;
 
         case 'main_menu':
+          // Подписи обязаны совпадать с PriceChangerKeyboard.menuCommands и с
+          // bot.hears в MenuCommandsHandler — иначе кнопка молча не работает.
+          // Здесь это ТРЕТЬЯ копия списка; сведение в единый источник — TASK-014.
+          // Кнопки про коэффициент и прайс-лист убраны (TASK-009).
           const mainKeyboard = await this.keyboard.createKeyboard([
-            ['📊 Статистика', '⚙️ Настройки'],
-            ['💰 Установить коэффициент цены'],
-            ['📄 Загрузить прайс-лист'],
-            ['❓ Помощь', '👤 Профиль'],
+            ['⚙️ Настройки API'],
+            ['❓ Помощь', '📊 Мой профиль'],
           ]);
           await ctx.editMessageText('🏠 Главное меню:');
           await ctx.reply('Выберите действие:', mainKeyboard);
           break;
 
-        case 'download_example':
-          await ctx.editMessageText(
-            '📋 Пример файла будет отправлен вам в личные сообщения...',
-          );
-          // TODO: Реализовать отправку примера файла
-          break;
-
-        case 'change_coefficient':
-          await ctx.editMessageText(`💰 **Изменение коэффициента цены**
-
-Выберите новый коэффициент или введите свой:
-
-📝 **Варианты коэффициентов:**
-• 0.9 = скидка 10%
-• 1.0 = без изменений
-• 1.1 = наценка 10%
-• 1.2 = наценка 20%
-• 1.5 = наценка 50%
-
-💡 Введите свой коэффициент числом (например: 1.15)`);
-          break;
-
-        case 'cancel_upload':
-          await ctx.editMessageText('❌ Загрузка прайс-листа отменена.');
-          break;
-
-        case 'upload_file':
-          await ctx.editMessageText(
-            '📤 **Отправьте файл прайс-листа**\n\nПоддерживаемые форматы: Excel (.xlsx, .xls), CSV (.csv)',
-          );
-          break;
+        // Ветки download_example, change_coefficient, cancel_upload,
+        // upload_file, set_coefficient_* и input_custom_coefficient сняты
+        // (TASK-009): изменение цен по API отключено, приём файла тоже.
+        // Кнопки с этими callback_data больше не отправляются.
 
         case 'check_settings':
           try {
@@ -152,7 +127,6 @@ export class CallbackQueryHandler {
 🔑 **Campaign ID:** ${settings.campaign_id ? `\`${settings.campaign_id}\`` : '❌ Не заполнен'}
 🏢 **Business ID:** ${settings.business_id ? `\`${settings.business_id}\`` : '❌ Не заполнен'}
 🎫 **API токен:** ${settings.token ? `\`${settings.token.substring(0, 10)}...\`` : '❌ Не заполнен'}
-💰 **Коэффициент:** x${settings.priceCoefficient || 1.0}
 
 ${await this.yandexMarketService.isConfigured(ctx.from.id.toString()) ? '✅ Все настройки заполнены' : '⚠️ Требуется дозаполнение'}`;
 
@@ -165,44 +139,6 @@ ${await this.yandexMarketService.isConfigured(ctx.from.id.toString()) ? '✅ В�
           }
           break;
 
-        // Обработка установки коэффициентов
-        case 'set_coefficient_0.9':
-          await this.handleCoefficientSet(ctx, 0.9);
-          break;
-
-        case 'set_coefficient_1.0':
-          await this.handleCoefficientSet(ctx, 1.0);
-          break;
-
-        case 'set_coefficient_1.1':
-          await this.handleCoefficientSet(ctx, 1.1);
-          break;
-
-        case 'set_coefficient_1.2':
-          await this.handleCoefficientSet(ctx, 1.2);
-          break;
-
-        case 'set_coefficient_1.3':
-          await this.handleCoefficientSet(ctx, 1.3);
-          break;
-
-        case 'set_coefficient_1.5':
-          await this.handleCoefficientSet(ctx, 1.5);
-          break;
-
-        case 'input_custom_coefficient':
-          await ctx.editMessageText(`💰 **Ввод пользовательского коэффициента**
-
-📝 Отправьте числовое значение коэффициента от 0.1 до 10.0
-
-Примеры:
-• \`1.15\` - для наценки 15%
-• \`0.85\` - для скидки 15%
-• \`2.0\` - для увеличения цены в 2 раза
-
-💡 Отправьте просто число в следующем сообщении.`);
-          break;
-
         default:
           await ctx.editMessageText(`Неизвестная команда: ${callbackData}`);
       }
@@ -212,6 +148,9 @@ ${await this.yandexMarketService.isConfigured(ctx.from.id.toString()) ? '✅ В�
   /**
    * Обработка установки коэффициента цены
    */
+  /** @deprecated Кнопки set_coefficient_* сняты (TASK-009). Не вызывается.
+   *  Дефект на память: метод повторно звал answerCbQuery, хотя обработчик
+   *  callback_query уже отвечал на запрос выше — второй вызов возвращал 400. */
   private async handleCoefficientSet(ctx: any, coefficient: number): Promise<void> {
     try {
       // Сохраняем коэффициент в базе данных

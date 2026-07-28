@@ -11,6 +11,7 @@ export class SharedCommandsHandler {
   /**
    * Обработчик установки коэффициента цены
    */
+  /** @deprecated Изменение цен отключено (TASK-009). Больше не вызывается. */
   async handlePriceCoefficientCommand(ctx: Context): Promise<void> {
     try {
       // Получаем текущие настройки
@@ -56,6 +57,8 @@ export class SharedCommandsHandler {
   /**
    * Обработчик команды загрузки прайс-листа
    */
+  /** @deprecated Загрузка прайс-листа отключена (TASK-009). Не вызывается.
+   *  Загрузка вернётся под ОСТАТКИ (TASK-035) и будет написана заново. */
   async handleUploadPriceListCommand(ctx: Context): Promise<void> {
     try {
       // Проверяем настройки Яндекс Маркета
@@ -124,6 +127,7 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
   /**
    * Обработка случая когда настройки API заполнены
    */
+  /** @deprecated Часть отключённого флоу загрузки прайс-листа (TASK-009). */
   private async handleAllowedUpload(ctx: Context, yandexSettings: any): Promise<void> {
     const currentCoefficient = yandexSettings.priceCoefficient || 1.2;
     const coefficientText =
@@ -168,6 +172,7 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
   /**
    * Обработка ввода коэффициента (кнопки или текст)
    */
+  /** @deprecated Ввод коэффициента цены отключён (TASK-009). Не вызывается. */
   async handleCoefficientInput(ctx: any, input: string): Promise<void> {
     try {
       // Извлекаем число из ввода (убираем 'x' если есть)

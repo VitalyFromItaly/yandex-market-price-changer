@@ -61,13 +61,14 @@ export class ApiSettingsHandler {
    * Проверка, является ли текст кнопкой меню
    */
   private isMenuButton(text: string): boolean {
+    // Список ОБЯЗАН совпадать с актуальными подписями меню, иначе нажатие
+    // кнопки проваливается сюда и гасится без ответа — именно так и были
+    // сломаны все кнопки. Кнопки про цены и прайс-лист убраны (TASK-009).
+    // Четвёртая копия списка подписей; сведение в один источник — TASK-014.
     const menuButtons = [
-      '📊 Статистика',
-      '⚙️ Настройки',
-      '💰 Установить коэффициент цены',
-      '📄 Загрузить прайс-лист',
+      '⚙️ Настройки API',
       '❓ Помощь',
-      '👤 Профиль',
+      '📊 Мой профиль',
       '🏠 Главное меню',
     ];
 
@@ -207,14 +208,11 @@ export class ApiSettingsHandler {
 • \`campaign_id: 12345\` - ID кампании
 • \`business_id: 67890\` - ID бизнеса
 • \`token: ваш_токен\` - API токен
-• \`coefficient: 1.2\` - коэффициент цены
 
 📋 **Примеры корректного ввода:**
 • campaign_id: 123456789
 • business_id: 987654321
-• token: ACMA:bhD15nJMV71y4UZPbAFOVTZvNVGgHzkfPIH9QdWm:e0035103
-• coefficient: 1.15
-• 1.2 (коэффициент без префикса)`,
+• token: ACMA:bhD15nJMV71y4UZPbAFOVTZvNVGgHzkfPIH9QdWm:e0035103`,
     };
   }
 
@@ -262,16 +260,14 @@ export class ApiSettingsHandler {
         }
         break;
 
+      // Коэффициент цены больше не принимается (TASK-009): изменение цен
+      // по API отключено, значение всё равно никем не читается.
       case 'coefficient':
-        const coef = parseFloat(value);
-        if (isNaN(coef) || coef <= 0 || coef > 10) {
-          return {
-            isValid: false,
-            error:
-              '❌ Коэффициент должен быть числом от 0.1 до 10.\nПример: coefficient: 1.2',
-          };
-        }
-        break;
+        return {
+          isValid: false,
+          error:
+            '❌ Коэффициент цены больше не используется — бот работает только на чтение и не меняет цены в магазине.',
+        };
 
       default:
         return {
@@ -315,7 +311,6 @@ export class ApiSettingsHandler {
         campaign_id: `✅ **Campaign ID сохранен**\n🔑 ID кампании: \`${value}\``,
         business_id: `✅ **Business ID сохранен**\n🏢 ID бизнеса: \`${value}\``,
         token: `✅ **API токен сохранен**\n🎫 Токен: \`${String(value).substring(0, 10)}...\``,
-        coefficient: `✅ **Коэффициент цены обновлен**\n💰 Новый коэффициент: **x${value}** (${Number(value) > 1 ? '+' : ''}${((Number(value) - 1) * 100).toFixed(1)}%)`,
       };
 
       let message = successMessages[type];
@@ -324,10 +319,9 @@ export class ApiSettingsHandler {
 
       // Проверяем, все ли настройки заполнены
       if (await this.yandexMarketService.isConfigured(telegramUserId)) {
-        message += `\n\n🎉 **Все настройки API заполнены!**\n✅ Теперь вы можете загружать прайс-листы`;
+        message += `\n\n🎉 **Все настройки API заполнены!**`;
 
         const keyboard = await this.keyboard.createInlineButtons([
-          { text: '📄 Загрузить прайс-лист', callback_data: 'upload_file' },
           { text: '👀 Проверить настройки', callback_data: 'check_settings' },
           { text: '🏠 Главное меню', callback_data: 'main_menu' },
         ]);

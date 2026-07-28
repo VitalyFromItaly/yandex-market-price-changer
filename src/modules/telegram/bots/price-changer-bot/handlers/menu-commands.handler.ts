@@ -17,11 +17,13 @@ export class MenuCommandsHandler {
   }
 
   public setupHandlers() {
+    // Подписи должны совпадать с PriceChangerKeyboard.menuCommands —
+    // пока это два независимых списка (сведение в один источник: TASK-014).
+    // Кнопки «Изменить цены» и «Обновить коэффициент» сняты (TASK-009).
     this.bot.hears('🏠 Главное меню', (ctx) => this.showMainMenu(ctx));
     this.bot.hears('⚙️ Настройки API', (ctx) => this.showApiSettings(ctx));
     this.bot.hears('📊 Мой профиль', (ctx) => this.showProfile(ctx));
-    this.bot.hears('📈 Изменить цены', (ctx) => this.changePrices(ctx));
-    this.bot.hears('🔄 Обновить коэффициент', (ctx) => this.updateCoefficient(ctx));
+    this.bot.hears('❓ Помощь', (ctx) => this.showMainMenu(ctx));
   }
 
   private async showMainMenu(ctx: Context) {
@@ -39,13 +41,11 @@ export class MenuCommandsHandler {
 🔑 **Campaign ID**: ${yandexSettings?.campaign_id || 'Не установлен'}
 🏢 **Business ID**: ${yandexSettings?.business_id || 'Не установлен'}
 🎫 **Token**: ${yandexSettings?.token ? '✅ Установлен' : '❌ Не установлен'}
-📊 **Коэффициент**: ${yandexSettings?.priceCoefficient || 1.2}
 
 📝 Для изменения настроек просто отправьте новые данные в формате:
 \`Campaign ID: ваш_id\`
 \`Business ID: ваш_id\`
-\`Token: ваш_токен\`
-\`Коэффициент: 1.5\``;
+\`Token: ваш_токен\``;
 
     await ctx.reply(message, { parse_mode: 'Markdown' });
   }
@@ -62,10 +62,12 @@ export class MenuCommandsHandler {
     await ctx.reply(message, { parse_mode: 'Markdown' });
   }
 
+  /** @deprecated Кнопка «Изменить цены» снята (TASK-009). Не вызывается. */
   private async changePrices(ctx: Context) {
     await this.sharedCommandsHandler.handleUploadPriceListCommand(ctx);
   }
 
+  /** @deprecated Кнопка «Обновить коэффициент» снята (TASK-009). Не вызывается. */
   private async updateCoefficient(ctx: Context) {
     await this.sharedCommandsHandler.handlePriceCoefficientCommand(ctx);
   }

@@ -51,7 +51,10 @@ export default class PriceChangerBot extends BaseTelegramBot {
     this.onStart();
     this.menuCommandsHandler.setupHandlers(); // Команды меню первыми
     this.slashCommandsHandler.setupHandlers(); // Слеш команды
-    this.fileUploadHandler.init(); // Обработка файлов
+    // fileUploadHandler.init() снят (TASK-009): приём документа обслуживал
+    // загрузку прайс-листа для отключённого изменения цен. Присланный файл
+    // больше не скачивается и не ставится в очередь. Загрузка вернётся
+    // отдельной задачей под ОСТАТКИ (TASK-035) и будет написана заново.
     this.callbackQueryHandler.setupHandlers(); // Inline кнопки
     this.apiSettingsHandler.setupHandlers(); // Обработка текста (API настройки) последним
 

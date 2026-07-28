@@ -35,15 +35,9 @@ export class SlashCommandsHandler {
       await ctx.reply('⚙️ Выберите настройку:', inlineKeyboard);
     });
 
-    // /price - установить коэффициент цены
-    this.bot.command('price', async (ctx) => {
-      await this.sharedHandlers.handlePriceCoefficientCommand(ctx);
-    });
-
-    // /upload - загрузить прайс-лист
-    this.bot.command('upload', async (ctx) => {
-      await this.sharedHandlers.handleUploadPriceListCommand(ctx);
-    });
+    // /price и /upload сняты (TASK-009): изменение цен по API отключено,
+    // бот переведён в read-only режим. Обработчики в SharedCommandsHandler
+    // помечены @deprecated и оставлены как справочный материал.
 
     // /profile - профиль
     this.bot.command('profile', async (ctx) => {
@@ -88,26 +82,18 @@ ${
     this.bot.command('help', async (ctx) => {
       const helpMessage = `❓ **Справка по боту**
 
-        🎯 **Основные функции:**
-        • Изменение цен на товары в Яндекс.Маркете
-        • Загрузка и обработка прайс-листов
-        • Массовое обновление коэффициентов
-        • Статистика продаж и изменений
+        🎯 **Что умеет бот:**
+        • Показывает отчёты по заказам Яндекс.Маркета
+        • Работает только на чтение — ничего не меняет в вашем магазине
 
         🔧 **Настройка:**
         1. Добавьте API-ключ от Яндекс.Маркета
         2. Укажите ID кампании и бизнеса
-        3. Загрузите прайс-лист
-        4. Настройте коэффициенты
 
         📋 **Команды:**
         /start - Запуск бота
         /menu - Главное меню
         /settings - Настройки
-        /price - Установить коэффициент
-        /upload - Загрузить прайс-лист
-        /files - Управление файлами
-        /cleanup - Очистить старые файлы
         /profile - Профиль
         /help - Эта справка
 
@@ -129,14 +115,14 @@ ${
    */
   public async setupBotCommands() {
     try {
+      // Список должен содержать ТОЛЬКО реально зарегистрированные команды.
+      // Убраны: /price и /upload (изменение цен отключено, TASK-009),
+      // а также /files и /cleanup — их обработчики были удалены ещё при
+      // миграции, но команды продолжали рекламироваться и молча не работали.
       await this.bot.telegram.setMyCommands([
         { command: 'start', description: '🏠 Запустить бота' },
         { command: 'menu', description: '📋 Главное меню' },
         { command: 'settings', description: '⚙️ Настройки' },
-        { command: 'price', description: '💰 Установить коэффициент цены' },
-        { command: 'upload', description: '📄 Загрузить прайс-лист' },
-        { command: 'files', description: '📋 Управление файлами' },
-        { command: 'cleanup', description: '🧹 Очистить старые файлы' },
         { command: 'profile', description: '👤 Профиль' },
         { command: 'help', description: '❓ Помощь' },
       ]);
