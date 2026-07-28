@@ -2,7 +2,7 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 2
+    "archived_tasks": 3
   },
   "tasks": [
     {
@@ -46,6 +46,28 @@
         "Шаг 3: отправить боту /start — ответ приходит, регрессии нет"
       ],
       "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-002",
+      "milestone": "M0",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "Привести переменные окружения в соответствие: docker-compose передаёт MONGODB_URI и REDIS_URL, а код читает MONGODB_URL, MONGODB_DATABASE, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD; TELEGRAM_TOKEN и TELEGRAM_PROXY_URL не передаются в контейнер вообще. .env.example не содержит REDIS_* и YANDEX_MARKET_BASE_URL",
+      "acceptance_criteria": [
+        "Имена переменных в docker-compose.yml совпадают с теми, что реально читает код",
+        "TELEGRAM_TOKEN и TELEGRAM_PROXY_URL пробрасываются в сервис app",
+        ".env.example содержит полный список переменных, включая REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, YANDEX_MARKET_BASE_URL",
+        "В .env.example нет реальных секретов"
+      ],
+      "test_steps": [
+        "Шаг 1: docker compose up -d — приложение поднимается в контейнере",
+        "Шаг 2: в логах видно успешное подключение к mongodb и redis по адресам сервисов compose, а не localhost",
+        "Шаг 3: cp .env.example .env, заполнить значения — npm run dev стартует без ошибок отсутствующих переменных"
+      ],
+      "dependencies": [
+        "TASK-001"
+      ],
       "status": "done"
     }
   ]
