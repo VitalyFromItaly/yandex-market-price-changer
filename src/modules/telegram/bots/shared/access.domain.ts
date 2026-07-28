@@ -30,6 +30,9 @@ export type TUpdateKind =
 export const ONBOARDING_CALLBACKS: readonly string[] = [
   'settings_api',
   'help_api_setup',
+  // Сброс визарда — единственный способ прервать онбординг. Reply-кнопку сюда
+  // добавить нельзя: её подпись попала бы в MENU_LABELS и потребовала бы hears.
+  'onboarding_restart',
 ];
 
 /**

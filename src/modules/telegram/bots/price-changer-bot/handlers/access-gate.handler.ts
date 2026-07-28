@@ -12,6 +12,7 @@ import {
   isRejectionExpired,
   REJECTION_COOLDOWN_MS,
 } from '../../shared/access.domain';
+import { nextStep, stepPrompt } from '../onboarding';
 
 /**
  * Гейт доступа: единственная точка, где решается, пускать апдейт дальше.
@@ -129,17 +130,12 @@ export class AccessGateHandler {
           `Повторная регистрация будет доступна через ${hoursUntilRetry(access.rejectedAt, new Date())} ч.`,
         ].join('\n');
 
-      default:
-        return [
-          '🔐 Сначала нужно подать заявку на доступ.',
-          '',
-          'Пришлите три значения из личного кабинета Яндекс.Маркета — по одному',
-          'сообщению:',
-          '',
-          '<code>Campaign ID: ваш_id</code>',
-          '<code>Business ID: ваш_id</code>',
-          '<code>Token: ваш_токен</code>',
-        ].join('\n');
+      default: {
+        // Возвращаем ровно на тот шаг, где пользователь остановился, а не в
+        // начало: повторять уже введённое — верный способ его потерять.
+        const step = nextStep(access.draft) ?? 'token';
+        return `🔐 Сначала нужно подать заявку на доступ.\n\n${stepPrompt(step)}`;
+      }
     }
   }
 

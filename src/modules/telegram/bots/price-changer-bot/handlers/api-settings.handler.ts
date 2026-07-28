@@ -1,7 +1,7 @@
 import { Context } from 'telegraf';
 import { Injectable, Logger } from '@nestjs/common';
 import { MENU, MENU_LABELS } from '../menu.constants';
-import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
+import { TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import {
   UserAccessService,
@@ -11,7 +11,31 @@ import { AppConfigService } from '../../../../../config/app-config.service';
 import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import {
+  ONBOARDING_TOTAL,
+  nextStep,
+  parseLabelledValue,
+  stepNumber,
+  stepPrompt,
+  stepTitle,
+  validateStep,
+  type TOnboardingDraft,
+} from '../onboarding';
 
+/** Что ответить пользователю. */
+interface IReply {
+  message: string;
+  keyboard?: any;
+}
+
+/**
+ * Свободный текст: либо очередной шаг визарда онбординга, либо правка настройки
+ * уже одобренным пользователем. Что именно — решает СТАТУС ДОСТУПА, а не форма
+ * присланной строки.
+ *
+ * Регистрируется предпоследним (перед catch-all): слушает любой текст, поэтому
+ * обязан стоять после hears кнопок меню и слэш-команд.
+ */
 @Injectable()
 export class ApiSettingsHandler {
   private readonly logger = new Logger(ApiSettingsHandler.name);
@@ -29,35 +53,22 @@ export class ApiSettingsHandler {
       try {
         const text = ctx.message.text.trim();
 
-        // Игнорируем только команды
         if (text.startsWith('/')) return;
-
-        // Игнорируем кнопки меню - они обрабатываются в MenuCommandsHandler
         if (this.isMenuButton(text)) return;
 
         // Текст пользователя НЕ логируем: через этот обработчик проходит токен
         // продавца, а логи не место для чужих секретов.
-        this.logger.debug(`Разбор настроек API от пользователя ${ctx.from.id}`);
+        this.logger.debug(`Онбординг: сообщение от пользователя ${ctx.from.id}`);
 
-        const result = await this.parseAndSaveApiSettings(ctx, text);
-
-        if (result.success) {
-          await ctx.reply(result.message, htmlOptions(result.keyboard));
-        } else {
-          await ctx.reply(result.message, htmlOptions());
-        }
+        const reply = await this.handleText(ctx, text);
+        await ctx.reply(reply.message, htmlOptions(reply.keyboard));
       } catch (error) {
         this.logger.error('Ошибка обработки настроек API', error as Error);
-        await ctx.reply(
-          '❌ Произошла ошибка при обработке настроек. Попробуйте позже.',
-        );
+        await ctx.reply('❌ Произошла ошибка при обработке настроек. Попробуйте позже.');
       }
     });
   }
 
-  /**
-   * Проверка, является ли текст кнопкой меню
-   */
   private isMenuButton(text: string): boolean {
     // Раньше здесь был свой, ЧЕТВЁРТЫЙ по счёту список подписей. Он разъехался
     // с клавиатурой, и нажатие кнопки проваливалось сюда, где гасилось без
@@ -66,303 +77,140 @@ export class ApiSettingsHandler {
     return (MENU_LABELS as readonly string[]).includes(text);
   }
 
-  /**
-   * Парсинг и сохранение настроек API
-   */
-  private async parseAndSaveApiSettings(
-    ctx: Context,
-    text: string,
-  ): Promise<{
-    success: boolean;
-    message: string;
-    keyboard?: any;
-  }> {
-    try {
-      // Определяем тип данных и извлекаем значение
-      const parseResult = this.parseApiData(text);
-
-      if (!parseResult.success) {
-        return {
-          success: false,
-          message: parseResult.message,
-        };
-      }
-
-      // Сохраняем в базу данных
-      const saveResult = await this.saveApiSetting(
-        ctx,
-        parseResult.type!,
-        parseResult.value!,
-      );
-
-      return saveResult;
-    } catch (error) {
-      this.logger.error('Ошибка парсинга настроек API', error as Error);
-      return {
-        success: false,
-        message:
-          '❌ Ошибка обработки данных. Проверьте формат и попробуйте снова.',
-      };
-    }
-  }
-
-  /**
-   * Парсинг данных API из текста
-   */
-  private parseApiData(text: string): {
-    success: boolean;
-    type?: 'campaign_id' | 'business_id' | 'token' | 'coefficient';
-    value?: string | number;
-    message: string;
-  } {
-    const cleanText = text.trim();
-
-    // Проверяем форматированный ввод (campaign_id: 12345)
-    const formattedMatch = cleanText.match(
-      /^(campaign_id|business_id|token|coefficient)\s*:\s*(.+)$/i,
-    );
-    if (formattedMatch) {
-      const type = formattedMatch[1].toLowerCase() as
-        | 'campaign_id'
-        | 'business_id'
-        | 'token'
-        | 'coefficient';
-      const value = formattedMatch[2].trim();
-
-      const validation = this.validateApiValue(type, value);
-      if (!validation.isValid) {
-        return { success: false, message: validation.error };
-      }
-
-      return {
-        success: true,
-        type,
-        value: type === 'coefficient' ? parseFloat(value) : value,
-        message: '',
-      };
-    }
-
-    // Автоматическое определение типа данных
-
-    // Проверяем коэффициент (число от 0.1 до 10)
-    const coefficientMatch = cleanText.match(/^(x?)(\d+\.?\d*)$/);
-    if (coefficientMatch) {
-      const coefficient = parseFloat(coefficientMatch[2]);
-      if (coefficient >= 0.1 && coefficient <= 10) {
-        return {
-          success: true,
-          type: 'coefficient',
-          value: coefficient,
-          message: '',
-        };
-      }
-    }
-
-    // Проверяем Campaign ID / Business ID (только цифры, обычно 5-15 символов)
-    if (/^\d{5,15}$/.test(cleanText)) {
-      // Не можем автоматически определить campaignId или businessId, спрашиваем
-      return {
-        success: false,
-        message: `🤔 Получен ID: <b>${esc(cleanText)}</b>
-
-📋 <b>Уточните тип данных:</b>
-Отправьте сообщение в формате:
-• <code>campaign_id: ${cleanText}</code> - если это Campaign ID
-• <code>business_id: ${cleanText}</code> - если это Business ID
-
-💡 Или воспользуйтесь кнопками для уточнения.`,
-      };
-    }
-
-    // Проверяем токен (длинная строка)
-    if (cleanText.length > 20 && /^[A-Za-z0-9_:-]+$/.test(cleanText)) {
-      return {
-        success: true,
-        type: 'token',
-        value: cleanText,
-        message: '',
-      };
-    }
-
-    // Не удалось определить тип данных
-    return {
-      success: false,
-      message: `❓ <b>Не удалось определить тип данных</b>
-
-📝 <b>Получено:</b> "${esc(cleanText)}"
-
-💡 <b>Отправьте данные в правильном формате:</b>
-• <code>campaign_id: 12345</code> - ID кампании
-• <code>business_id: 67890</code> - ID бизнеса
-• <code>token: ваш_токен</code> - API токен
-
-📋 <b>Примеры корректного ввода:</b>
-• campaign_id: 123456789
-• business_id: 987654321
-• token: ACMA:bhD15nJMV71y4UZPbAFOVTZvNVGgHzkfPIH9QdWm:e0035103`,
-    };
-  }
-
-  /**
-   * Валидация значений API
-   */
-  private validateApiValue(
-    type: string,
-    value: string,
-  ): { isValid: boolean; error: string } {
-    switch (type) {
-      case 'campaign_id':
-        if (!/^\d{5,15}$/.test(value)) {
-          return {
-            isValid: false,
-            error:
-              '❌ Campaign ID должен содержать только цифры (5-15 символов).\nПример: campaign_id: 123456789',
-          };
-        }
-        break;
-
-      case 'business_id':
-        if (!/^\d{5,15}$/.test(value)) {
-          return {
-            isValid: false,
-            error:
-              '❌ Business ID должен содержать только цифры (5-15 символов).\nПример: business_id: 987654321',
-          };
-        }
-        break;
-
-      case 'token':
-        if (value.length < 10) {
-          return {
-            isValid: false,
-            error:
-              '❌ API токен должен содержать минимум 10 символов.\n',
-          };
-        }
-        if (!/^[A-Za-z0-9_:-]+$/.test(value)) {
-          return {
-            isValid: false,
-            error: '❌ API токен содержит недопустимые символы.',
-          };
-        }
-        break;
-
-      // Коэффициент цены больше не принимается (TASK-009): изменение цен
-      // по API отключено, значение всё равно никем не читается.
-      case 'coefficient':
-        return {
-          isValid: false,
-          error:
-            '❌ Коэффициент цены больше не используется — бот работает только на чтение и не меняет цены в магазине.',
-        };
-
-      default:
-        return {
-          isValid: false,
-          error: '❌ Неизвестный тип данных.',
-        };
-    }
-
-    return { isValid: true, error: '' };
-  }
-
-  /**
-   * Сохранение настройки API.
-   *
-   * Ветки различает СТАТУС ДОСТУПА, а не наличие документа YandexMarket:
-   *
-   * 1. approved — пользователь правит свою настройку. Пишем напрямую,
-   *    администратора не трогаем.
-   * 2. иначе — идёт регистрация. Креды копятся в черновике UserAccess, потому
-   *    что три поля YandexMarket объявлены required, а пользователь вводит их
-   *    по одному: попытка создать документ с одним полем падала ValidationError,
-   *    и первый же ввод креда выдавал «Ошибка сохранения данных в базу».
-   *
-   * Различать ветки по наличию документа нельзя: документ может существовать у
-   * НЕодобренного пользователя — он остаётся от прежней версии бота, а также
-   * после отката недоставленной заявки. Такой пользователь попадал в тупик:
-   * ввод креда молча обновлял магазин, статус навсегда оставался new, и заявка
-   * не уходила никогда.
-   */
-  private async saveApiSetting(
-    ctx: Context,
-    type: 'campaign_id' | 'business_id' | 'token' | 'coefficient',
-    value: string | number,
-  ): Promise<{ success: boolean; message: string; keyboard?: any }> {
-    // Коэффициент распознаётся автоопределением (голое число), но не проходит
-    // валидацию форматированного ввода. Без этой ветки для него не находилось
-    // текста ответа и пользователь получал сообщение "undefined".
-    if (type === 'coefficient') {
-      return {
-        success: false,
-        message:
-          '❌ Коэффициент цены больше не используется — бот работает только на чтение и не меняет цены в магазине.',
-      };
-    }
-
+  private async handleText(ctx: Context, text: string): Promise<IReply> {
     const telegramUserId = ctx.from.id.toString();
     const botId = ctx.botInfo.id.toString();
 
-    try {
-      // Администраторы гейт не проходят, поэтому записи доступа у них может не
-      // быть — заводим её здесь.
-      const access = await this.accessService.ensure({
-        telegramUserId,
-        botId,
-        telegramChatId: ctx.chat.id.toString(),
-        username: ctx.from.username,
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-      });
+    // Администраторы гейт не проходят, поэтому записи доступа у них может не
+    // быть — заводим её здесь.
+    const access = await this.accessService.ensure({
+      telegramUserId,
+      botId,
+      telegramChatId: ctx.chat.id.toString(),
+      username: ctx.from.username,
+      firstName: ctx.from.first_name,
+      lastName: ctx.from.last_name,
+    });
 
-      if (access.status === 'approved') {
-        const updated = await this.yandexMarketService.updateByTelegramUser(
-          telegramUserId,
-          { [type]: value },
-        );
-        // Одобренный без магазина — редкий случай (доступ выдан вручную);
-        // тогда проваливаемся в сбор черновика ниже.
-        if (updated) {
-          return {
-            success: true,
-            message: `${this.savedLabel(type, value)}\n\n✅ Настройка обновлена.`,
-            keyboard: await this.keyboard.createInlineButtons([
-              { text: '👀 Проверить настройки', callback_data: 'check_settings' },
-              { text: MENU.MAIN, callback_data: 'main_menu' },
-            ]),
-          };
-        }
-      }
+    if (access.status === 'approved') {
+      return await this.editSetting(ctx, text);
+    }
 
-      const withDraft = await this.accessService.saveDraftField(
-        telegramUserId,
-        botId,
-        type as TDraftField,
-        String(value),
-      );
-      const draft = withDraft?.draft ?? {};
+    return await this.wizardStep(ctx, access.draft, text);
+  }
 
-      const missing = this.missingFields(draft);
-      if (missing.length) {
-        return {
-          success: true,
-          message:
-            `${this.savedLabel(type, value)}\n\n📋 <b>Осталось заполнить:</b>\n` +
-            missing.map((field) => `• ${field}`).join('\n'),
-          keyboard: await this.keyboard.createInlineButtons([
-            { text: '⚙️ Продолжить настройку', callback_data: 'settings_api' },
-          ]),
-        };
-      }
+  /**
+   * Один шаг визарда.
+   *
+   * Тип значения определяется ТЕКУЩИМ ШАГОМ, а не формой строки. Раньше бот
+   * угадывал: длинная строка — токен, число из 5–15 цифр — «не знаю, уточните
+   * сами», всё остальное — «не удалось определить тип данных». Пользователь
+   * получал встречный вопрос вместо ответа.
+   */
+  private async wizardStep(
+    ctx: Context,
+    draft: TOnboardingDraft | undefined,
+    text: string,
+  ): Promise<IReply> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
 
-      return await this.submitApplication(ctx, access.status, draft, type, value);
-    } catch (error) {
-      this.logger.error('Ошибка сохранения настройки API', error as Error);
+    const current = nextStep(draft);
+    if (!current) {
+      // Черновик полон, но заявка не подана — например, предыдущая попытка
+      // упала после сохранения последнего креда.
+      return await this.submitApplication(ctx, draft ?? {});
+    }
+
+    // Явно подписанное значение относим к названному полю: тип назвал сам
+    // пользователь, догадки по форме строки здесь нет.
+    const labelled = parseLabelledValue(text);
+    const field: TDraftField = labelled?.field ?? current;
+    const value = labelled?.value ?? text;
+
+    const validation = validateStep(field, value);
+    if (!validation.ok) {
+      // Переспрашиваем ТОТ ЖЕ шаг — с объяснением, что не так.
       return {
-        success: false,
-        message: '❌ Ошибка сохранения данных в базу. Попробуйте позже.',
+        message: `❌ ${esc(validation.error)}\n\n${stepPrompt(field)}`,
+        keyboard: await this.restartKeyboard(),
       };
     }
+
+    const updated = await this.accessService.saveDraftField(
+      telegramUserId,
+      botId,
+      field,
+      value,
+    );
+    const newDraft = updated?.draft ?? {};
+    const following = nextStep(newDraft);
+
+    if (!following) {
+      return await this.submitApplication(ctx, newDraft);
+    }
+
+    return {
+      message: `${this.acceptedLabel(field, value)}\n\n${stepPrompt(following)}`,
+      keyboard: await this.restartKeyboard(),
+    };
+  }
+
+  /** Приглашение к первому шагу — используется и при старте, и при сбросе. */
+  public async firstStepReply(draft?: TOnboardingDraft): Promise<IReply> {
+    const step = nextStep(draft) ?? 'token';
+    return {
+      message: stepPrompt(step),
+      keyboard: await this.restartKeyboard(),
+    };
+  }
+
+  private async restartKeyboard() {
+    return await this.keyboard.createInlineButtons([
+      { text: '🔄 Начать заново', callback_data: 'onboarding_restart' },
+    ]);
+  }
+
+  /** Уже одобренный пользователь правит одну настройку. */
+  private async editSetting(ctx: Context, text: string): Promise<IReply> {
+    const telegramUserId = ctx.from.id.toString();
+    const labelled = parseLabelledValue(text);
+
+    if (!labelled) {
+      return {
+        message: [
+          '❓ Не понял, что именно нужно изменить.',
+          '',
+          'Пришлите значение с подписью:',
+          '<code>token: ваш_токен</code>',
+          '<code>campaign_id: 12345678</code>',
+          '<code>business_id: 87654321</code>',
+        ].join('\n'),
+      };
+    }
+
+    const validation = validateStep(labelled.field, labelled.value);
+    if (!validation.ok) {
+      return { message: `❌ ${esc(validation.error)}` };
+    }
+
+    const updated = await this.yandexMarketService.updateByTelegramUser(telegramUserId, {
+      [labelled.field]: labelled.value,
+    });
+
+    // Одобренный без магазина — редкий случай (доступ выдан вручную);
+    // заводим документ через обычный черновик.
+    if (!updated) {
+      return await this.wizardStep(ctx, undefined, text);
+    }
+
+    return {
+      message: `${this.acceptedLabel(labelled.field, labelled.value)}\n\n✅ Настройка обновлена.`,
+      keyboard: await this.keyboard.createInlineButtons([
+        { text: '👀 Проверить настройки', callback_data: 'check_settings' },
+        { text: MENU.MAIN, callback_data: 'main_menu' },
+      ]),
+    };
   }
 
   /**
@@ -376,14 +224,10 @@ export class ApiSettingsHandler {
    */
   private async submitApplication(
     ctx: Context,
-    status: string,
-    draft: { token?: string; campaign_id?: string; business_id?: string },
-    type: string,
-    value: string | number,
-  ): Promise<{ success: boolean; message: string; keyboard?: any }> {
+    draft: TOnboardingDraft,
+  ): Promise<IReply> {
     const telegramUserId = ctx.from.id.toString();
     const botId = ctx.botInfo.id.toString();
-    const saved = this.savedLabel(type, value);
 
     /**
      * Документ мог остаться от прежней версии бота или от отката заявки —
@@ -406,9 +250,8 @@ export class ApiSettingsHandler {
           });
     };
 
-    // Администратор-продавец не должен присылать заявку сам себе. Уже
-    // одобренный без магазина — тоже: доступ у него есть, заявка не нужна.
-    if (this.config.isAdmin(ctx.from.id) || status === 'approved') {
+    // Администратор-продавец не должен присылать заявку сам себе.
+    if (this.config.isAdmin(ctx.from.id)) {
       await saveStore();
       await this.accessService.grant({
         telegramUserId,
@@ -419,8 +262,7 @@ export class ApiSettingsHandler {
         lastName: ctx.from.last_name,
       });
       return {
-        success: true,
-        message: `${saved}\n\n🎉 <b>Все настройки API заполнены!</b>`,
+        message: '🎉 <b>Все настройки API заполнены!</b>',
         keyboard: await this.keyboard.createInlineButtons([
           { text: '👀 Проверить настройки', callback_data: 'check_settings' },
           { text: MENU.MAIN, callback_data: 'main_menu' },
@@ -431,10 +273,7 @@ export class ApiSettingsHandler {
     const applied = await this.accessService.tryApply(telegramUserId, botId);
     if (!applied) {
       // Заявка уже подана параллельным апдейтом — второй карточки быть не должно.
-      return {
-        success: true,
-        message: `${saved}\n\n⏳ Заявка уже отправлена администратору, ожидайте решения.`,
-      };
+      return { message: '⏳ Заявка уже отправлена администратору, ожидайте решения.' };
     }
 
     const store = await saveStore();
@@ -449,39 +288,28 @@ export class ApiSettingsHandler {
       // документ, а статус останется new — пользователь застрянет навсегда.
       await this.yandexMarketService.deleteByTelegramUser(telegramUserId);
       return {
-        success: false,
         message:
-          `${saved}\n\n⚠️ Не удалось отправить заявку администратору. ` +
-          'Попробуйте позже или свяжитесь с поддержкой.',
+          '⚠️ Не удалось отправить заявку администратору. Попробуйте позже или свяжитесь с поддержкой.',
       };
     }
 
     return {
-      success: true,
-      message: `${saved}\n\n✅ <b>Заявка отправлена администратору.</b>\n\nКак только он примет решение, бот пришлёт сообщение сюда.`,
+      message: [
+        '✅ <b>Заявка отправлена администратору.</b>',
+        '',
+        'Как только он примет решение, бот пришлёт сообщение сюда.',
+      ].join('\n'),
     };
   }
 
-  private savedLabel(type: string, value: string | number): string {
-    switch (type) {
-      case 'campaign_id':
-        return `✅ <b>Campaign ID сохранён</b>\n🔑 ID кампании: <code>${esc(value)}</code>`;
-      case 'business_id':
-        return `✅ <b>Business ID сохранён</b>\n🏢 ID бизнеса: <code>${esc(value)}</code>`;
-      default:
-        return `✅ <b>API токен сохранён</b>\n🎫 Токен: <code>${esc(String(value).substring(0, 10))}...</code>`;
-    }
-  }
-
-  private missingFields(draft: {
-    token?: string;
-    campaign_id?: string;
-    business_id?: string;
-  }): string[] {
-    const missing: string[] = [];
-    if (!draft.campaign_id) missing.push('🔑 Campaign ID');
-    if (!draft.business_id) missing.push('🏢 Business ID');
-    if (!draft.token) missing.push('🎫 API токен');
-    return missing;
+  /**
+   * Подтверждение принятого значения. Токен показывается ОБРЕЗАННЫМ: полностью
+   * его не должно быть ни в логах, ни в переписке.
+   */
+  private acceptedLabel(field: TDraftField, value: string): string {
+    const shown =
+      field === 'token' ? `${esc(value.slice(0, 10))}…` : esc(value);
+    const step = stepNumber(field);
+    return `✅ ${stepTitle(field)} принят (${step} из ${ONBOARDING_TOTAL}): <code>${shown}</code>`;
   }
 }

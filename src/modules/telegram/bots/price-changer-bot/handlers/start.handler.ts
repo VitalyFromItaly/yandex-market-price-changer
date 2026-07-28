@@ -6,6 +6,7 @@ import { htmlOptions } from '../../../formatting/telegram-format';
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { hoursUntilRetry, isRejectionExpired } from '../../shared/access.domain';
+import { nextStep, stepPrompt, type TOnboardingDraft } from '../onboarding';
 
 /**
  * Обработчик /start — единственная команда, доступная при любом статусе
@@ -67,7 +68,7 @@ export class StartHandler {
           // проверки — иначе пользователь час видел бы «отказано» после того,
           // как запрет уже истёк.
           if (isRejectionExpired(access.rejectedAt, new Date())) {
-            await this.replyOnboarding(ctx);
+            await this.replyOnboarding(ctx, access.draft);
             return;
           }
           const hours = hoursUntilRetry(access.rejectedAt, new Date());
@@ -83,7 +84,7 @@ export class StartHandler {
         }
 
         default:
-          await this.replyOnboarding(ctx);
+          await this.replyOnboarding(ctx, access.draft);
       }
     });
   }
@@ -102,20 +103,20 @@ export class StartHandler {
     await ctx.reply(welcomeMessage, htmlOptions(kb));
   }
 
-  private async replyOnboarding(ctx: Context) {
-    const message = [
+  /**
+   * Приглашение в визард. Если пользователь уже что-то ввёл, продолжаем с того
+   * шага, где он остановился, — переспрашивать введённое незачем.
+   */
+  private async replyOnboarding(ctx: Context, draft?: TOnboardingDraft) {
+    const step = nextStep(draft) ?? 'token';
+    const intro = [
       '👋 Добро пожаловать!',
       '',
-      'Доступ к боту выдаёт администратор. Чтобы подать заявку, пришлите три',
-      'значения из личного кабинета Яндекс.Маркета — по одному сообщению:',
+      'Доступ к боту выдаёт администратор. Заполните три значения из личного',
+      'кабинета Яндекс.Маркета — бот спросит их по одному.',
       '',
-      '<code>Campaign ID: ваш_id</code>',
-      '<code>Business ID: ваш_id</code>',
-      '<code>Token: ваш_токен</code>',
-      '',
-      'Как только все три будут заполнены, заявка уйдёт администратору.',
     ].join('\n');
 
-    await ctx.reply(message, htmlOptions());
+    await ctx.reply(intro + stepPrompt(step), htmlOptions());
   }
 }

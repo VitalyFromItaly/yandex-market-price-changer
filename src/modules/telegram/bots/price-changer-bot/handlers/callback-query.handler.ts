@@ -3,6 +3,8 @@ import { Injectable } from '@nestjs/common';
 import { MENU, menuLayout } from '../menu.constants';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { UserAccessService } from '../../../../../database/services/user-access.service';
+import { nextStep, stepPrompt } from '../onboarding';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 
@@ -11,6 +13,7 @@ export class CallbackQueryHandler {
   constructor(
     private keyboard: PriceChangerKeyboard,
     private yandexMarketService: YandexMarketService,
+    private accessService: UserAccessService,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -36,55 +39,37 @@ export class CallbackQueryHandler {
         // сообщение ценником, ничего не сохраняя и ничего не списывая.
         // Доступ теперь выдаёт администратор — см. AdminApprovalHandler.
 
+        case 'onboarding_restart': {
+          // Единственный способ прервать визард. Reply-кнопкой это сделать
+          // нельзя: её подпись попала бы в MENU_LABELS и потребовала hears.
+          await this.accessService.clearDraft(
+            ctx.from.id.toString(),
+            ctx.botInfo.id.toString(),
+          );
+          await ctx.editMessageText(
+            `🔄 <b>Начинаем заново.</b>\n\n${stepPrompt('token')}`,
+            htmlOptions(),
+          );
+          break;
+        }
+
         case 'settings_api':
-          await ctx.editMessageText(`
-            🔧 <b>Настройка API Яндекс Маркета</b>
-
-            📋 <b>Для настройки потребуется:</b>
-
-            🔑 <b>Campaign ID</b> - ID кампании в Яндекс.Маркете
-            🏢 <b>Business ID</b> - ID бизнеса в Яндекс.Маркете
-            🎫 <b>API токен</b> - токен авторизации
-
-            📍 <b>Где найти:</b>
-            1. Войдите в личный кабинет partner.market.yandex.ru
-            2. Campaign ID: в URL кабинета после /campaigns/
-            3. Business ID: в разделе "Настройки" → "Общие"
-            4. API токен: "Настройки" → "API" → "Создать токен"
-
-            💡 <b>Отправьте данные в формате:</b>
-            <code>campaign_id: 12345</code>
-<code>business_id: 67890</code>
-            <code>token: ваш_токен_здесь</code>
-
-            Или по отдельности, бот автоматически определит тип данных.`, htmlOptions());
+        case 'help_api_setup': {
+          // Обе кнопки ведут в одно и то же: подробную инструкцию к текущему
+          // шагу визарда. Раньше это были два разных текста, и оба обещали, что
+          // «бот автоматически определит тип данных» — после перехода на визард
+          // это неправда, тип определяется шагом.
+          const access = await this.accessService.findByUserAndBot(
+            ctx.from.id.toString(),
+            ctx.botInfo.id.toString(),
+          );
+          const step = nextStep(access?.draft) ?? 'token';
+          await ctx.editMessageText(
+            `🔧 <b>Настройка доступа к Яндекс.Маркету</b>\n\n${stepPrompt(step)}`,
+            htmlOptions(),
+          );
           break;
-
-        case 'help_api_setup':
-          await ctx.editMessageText(`❓ <b>Подробная инструкция настройки API</b>
-
-            📋 <b>Шаг 1: Получение Campaign ID</b>
-            • Откройте partner.market.yandex.ru
-            • В URL после /campaigns/ будет ваш Campaign ID
-            • Пример: partner.market.yandex.ru/campaigns/12345
-
-            🏢 <b>Шаг 2: Получение Business ID</b>
-            • В кабинете: "Настройки" → "Общие настройки"
-            • Найдите "ID бизнеса" или "Business ID"
-
-            🔑 <b>Шаг 3: Создание API токена</b>
-            • "Настройки" → "API и веб-сервисы"
-            • "Создать токен" → выберите нужные права
-            • Скопируйте созданный токен
-
-            📤 <b>Отправка данных:</b>
-            Отправьте каждый параметр отдельным сообщением:
-            1. Campaign ID: 12345
-            2. Business ID: 67890
-            3. Token: ваш_длинный_токен
-
-✅ Бот автоматически сохранит настройки.`, htmlOptions());
-          break;
+        }
 
         case 'main_menu':
           // Раскладка — из menu.constants (TASK-014). Раньше здесь была

@@ -100,11 +100,66 @@ describe('ApiSettingsHandler: подача заявки', () => {
     // Прежде это был create() с одним полем → ValidationError → пользователь
     // видел «Ошибка сохранения данных в базу» и не мог зарегистрироваться.
     const { handler, yandexMarketService } = await build({});
-    const { reply } = await send(handler, `token: ${FULL.token}`);
+    const { reply } = await send(handler, FULL.token);
 
     expect(yandexMarketService.create).not.toHaveBeenCalled();
-    expect(reply()).toContain('Осталось заполнить');
+    expect(reply()).toContain('Шаг 2 из 3');
     expect(reply()).toContain('Campaign ID');
+  });
+
+  it('визард спрашивает креды ПО ОДНОМУ, а не все три сразу', async () => {
+    const { handler } = await build({});
+    const first = await send(handler, 'привет');
+
+    // На первом шаге в сообщении есть только токен — Campaign/Business ID
+    // упоминаться не должны, иначе это снова «пришлите три значения».
+    expect(first.reply()).toContain('Шаг 1 из 3');
+    expect(first.reply()).not.toContain('Business ID');
+  });
+
+  it('неверное значение переспрашивает ТОТ ЖЕ шаг с объяснением', async () => {
+    // Раньше на непопадание в шаблон бот отвечал «Не удалось определить тип
+    // данных» — пользователь не понимал, что именно у него не так.
+    const { handler, accessService } = await build({});
+    const { reply } = await send(handler, 'кор');
+
+    expect(accessService.saveDraftField).not.toHaveBeenCalled();
+    expect(reply()).toContain('слишком короткий');
+    expect(reply()).toContain('Шаг 1 из 3');
+    expect(reply()).not.toContain('undefined');
+  });
+
+  it('число из 5–15 цифр больше не вызывает встречный вопрос «уточните тип»', async () => {
+    // Это и был главный симптом отсутствия состояния: бот не знал, что спросил,
+    // и переспрашивал пользователя, campaign это или business.
+    const { handler, accessService } = await build({
+      draft: { token: FULL.token },
+    });
+    const { reply } = await send(handler, '12345678');
+
+    expect(accessService.saveDraftField).toHaveBeenCalledWith(
+      String(USER_ID), '999', 'campaign_id', '12345678',
+    );
+    expect(reply()).not.toContain('Уточните');
+    expect(reply()).toContain('Шаг 3 из 3');
+  });
+
+  it('подписанное значение уходит в НАЗВАННОЕ поле, даже если спрошено другое', async () => {
+    // Это не догадка по форме строки — тип назвал сам пользователь.
+    const { handler, accessService } = await build({});
+    await send(handler, 'business_id: 87654321');
+
+    expect(accessService.saveDraftField).toHaveBeenCalledWith(
+      String(USER_ID), '999', 'business_id', '87654321',
+    );
+  });
+
+  it('токен не отображается пользователю целиком', async () => {
+    const { handler } = await build({});
+    const { reply } = await send(handler, FULL.token);
+
+    expect(reply()).not.toContain(FULL.token);
+    expect(reply()).toContain(FULL.token.slice(0, 10));
   });
 
   it('третий кред подаёт заявку и создаёт магазин целиком', async () => {
@@ -189,13 +244,15 @@ describe('ApiSettingsHandler: подача заявки', () => {
     expect(reply()).toContain('Все настройки API заполнены');
   });
 
-  it('голое число не выдаёт «undefined» вместо текста ответа', async () => {
-    // Автоопределение распознаёт его как коэффициент, а для коэффициента
-    // текста успеха не существует — раньше пользователь получал "undefined".
-    const { handler } = await build({});
-    const { reply } = await send(handler, '5');
+  it('одобренному без подписи объясняют формат, а не молчат', async () => {
+    const { handler, yandexMarketService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    const { reply } = await send(handler, 'просто текст');
 
+    expect(yandexMarketService.updateByTelegramUser).not.toHaveBeenCalled();
+    expect(reply()).toContain('token:');
     expect(reply()).not.toContain('undefined');
-    expect(reply()).toContain('Коэффициент');
   });
 });

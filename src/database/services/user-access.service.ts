@@ -100,6 +100,20 @@ export class UserAccessService {
       .exec();
   }
 
+  /** Сбросить черновик — пользователь начинает визард заново. */
+  async clearDraft(
+    telegramUserId: string,
+    botId: string,
+  ): Promise<UserAccessDocument | null> {
+    return await this.model
+      .findOneAndUpdate(
+        { telegramUserId, botId },
+        { $unset: { draft: '' } },
+        { new: true },
+      )
+      .exec();
+  }
+
   /**
    * Подать заявку: new → pending.
    *
