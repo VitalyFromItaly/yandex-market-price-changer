@@ -26,8 +26,8 @@
       "M7": "Тесты — юниты на денежную арифметику и маппинг статусов, e2e онбординга",
       "M8": "Обновление остатков через загрузку файла — единственная write-операция, возвращаемая после перехода в read-only"
     },
-    "active_tasks": 28,
-    "archived_tasks": 7,
+    "active_tasks": 27,
+    "archived_tasks": 8,
     "archive_file": "tasks.archive.json"
   },
   "agent_instructions": {
@@ -187,27 +187,6 @@
         "Шаг 4: попытаться создать дубль по (telegramUserId, telegramChatId) — получаем ошибку уникальности"
       ],
       "dependencies": [],
-      "status": "pending"
-    },
-    {
-      "id": "TASK-007",
-      "milestone": "M0",
-      "category": "unit",
-      "priority": "medium",
-      "description": "Привести в порядок тестовую инфраструктуру: __tests__/unit/main.test.ts импортирует несуществующие Delays и greeter из src/main.js и является мёртвым кодом, при этом vitest настроен и никакой код Nest тестами не покрыт",
-      "acceptance_criteria": [
-        "Мёртвый тест удалён",
-        "npx vitest run выполняется успешно и находит тесты",
-        "Добавлен минимальный smoke-тест, проверяющий, что AppModule компилируется через Test.createTestingModule (внешние подключения замоканы)",
-        "В package.json есть скрипт test"
-      ],
-      "test_steps": [
-        "Шаг 1: npx vitest run — прогон зелёный, мёртвого теста нет",
-        "Шаг 2: smoke-тест на AppModule проходит без живых Mongo и Redis"
-      ],
-      "dependencies": [
-        "TASK-003"
-      ],
       "status": "pending"
     },
     {
