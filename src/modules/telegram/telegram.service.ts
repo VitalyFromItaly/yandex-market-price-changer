@@ -8,7 +8,6 @@ import { Response } from 'express';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Bot, BotDocument } from '../../database/schemas/bot.schema';
-import { SubscriptionService } from '../../database/services/subscription.service';
 import { YandexMarketService } from '../../database/services/yandex-market.service';
 import { BotRegistry } from './bots/bot-registry.service';
 
@@ -27,7 +26,6 @@ export class TelegramService {
 
   constructor(
     @InjectModel(Bot.name) private botModel: Model<BotDocument>,
-    private subscriptionService: SubscriptionService,
     private yandexMarketService: YandexMarketService,
     private readonly registry: BotRegistry,
   ) {}
@@ -61,18 +59,6 @@ export class TelegramService {
       this.logger.error(`Ошибка обработки вебхука ${type}/${id}`, error as Error);
       throw new BadRequestException(error);
     }
-  }
-
-  async createUserSubscription(
-    user_id: number,
-    chat_id: number,
-    plan: 'day' | 'week' | 'month' | 'year' = 'week',
-  ) {
-    return await this.subscriptionService.createSubscription({ user_id, chat_id, plan });
-  }
-
-  async checkUserSubscription(user_id: number, chat_id: number): Promise<boolean> {
-    return await this.subscriptionService.isSubscriptionActive(user_id, chat_id);
   }
 
   async createYandexMarketConfig(

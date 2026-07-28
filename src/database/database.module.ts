@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { DatabaseService } from './database.service';
-import { SubscriptionService } from './services/subscription.service';
+import { UserAccessService } from './services/user-access.service';
 import { YandexMarketService } from './services/yandex-market.service';
 import { Bot, BotSchema } from './schemas/bot.schema';
 import { User, UserSchema } from './schemas/user.schema';
-import { Subscription, SubscriptionSchema } from './schemas/subscription.schema';
+import { UserAccess, UserAccessSchema } from './schemas/user-access.schema';
 import { YandexMarket, YandexMarketSchema } from './schemas/yandex-market.schema';
 import { AppConfigService } from '../config/app-config.service';
 
@@ -29,19 +29,19 @@ import { AppConfigService } from '../config/app-config.service';
     MongooseModule.forFeature([
       { name: Bot.name, schema: BotSchema },
       { name: User.name, schema: UserSchema },
-      { name: Subscription.name, schema: SubscriptionSchema },
+      { name: UserAccess.name, schema: UserAccessSchema },
       { name: YandexMarket.name, schema: YandexMarketSchema },
     ]),
   ],
   providers: [
     DatabaseService,
-    SubscriptionService,
+    UserAccessService,
     YandexMarketService,
   ],
   exports: [
     DatabaseService,
     MongooseModule,
-    SubscriptionService,
+    UserAccessService,
     YandexMarketService,
   ],
 })

@@ -38,6 +38,11 @@ export class BotRegistry implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // Опечатку в id администратора Joi не поймает — она пройдёт валидацию как
+    // валидное число, и заявки будут молча уходить в никуда. Печатаем список
+    // при старте, чтобы её было видно глазами. Id не секретны.
+    this.logger.log(`Администраторы: ${this.config.telegramAdminIds.join(', ')}`);
+
     const docs = await this.loadOrSeedBots();
     // Раньше launchBots() вызывался БЕЗ await — промис не джойнился, и ошибки
     // запуска терялись. Здесь дожидаемся каждого бота.

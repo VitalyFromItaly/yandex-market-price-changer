@@ -137,19 +137,6 @@ export class TelegramKeyboard implements ITelegramKeyboard {
   }
 
   /**
-   * Меню тарифных планов
-   */
-  public async createSubscriptionPlansMenu() {
-    return Markup.inlineKeyboard([
-      [Markup.button.callback('📅 День - 100₽', 'plan_day')],
-      [Markup.button.callback('📅 Неделя - 500₽', 'plan_week')],
-      [Markup.button.callback('📅 Месяц - 1500₽', 'plan_month')],
-      [Markup.button.callback('📅 Год - 15000₽', 'plan_year')],
-      [Markup.button.callback('❌ Отмена', 'plan_cancel')]
-    ]);
-  }
-
-  /**
    * Стартовая клавиатура (переопределяем базовый метод)
    */
   public async createStartKeyboard() {

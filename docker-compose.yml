@@ -21,6 +21,7 @@ services:
       # соединение. Если включите auth — добавьте и сюда, и в команду redis.
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:?нужно задать TELEGRAM_TOKEN в .env}
       - TELEGRAM_PROXY_URL=${TELEGRAM_PROXY_URL:?нужно задать TELEGRAM_PROXY_URL в .env}
+      - TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS:?нужно задать TELEGRAM_ADMIN_IDS в .env}
       - YANDEX_MARKET_BASE_URL=${YANDEX_MARKET_BASE_URL:-https://api.partner.market.yandex.ru}
     depends_on:
       - mongodb

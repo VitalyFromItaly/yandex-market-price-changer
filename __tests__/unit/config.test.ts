@@ -11,6 +11,7 @@ const VALID_ENV = {
   REDIS_HOST: 'localhost',
   TELEGRAM_TOKEN: '123456:AAbbCC',
   TELEGRAM_PROXY_URL: 'https://example.ngrok-free.app',
+  TELEGRAM_ADMIN_IDS: '123456789,987654321',
 };
 
 describe('envValidationSchema', () => {
@@ -25,6 +26,7 @@ describe('envValidationSchema', () => {
     'REDIS_HOST',
     'TELEGRAM_TOKEN',
     'TELEGRAM_PROXY_URL',
+    'TELEGRAM_ADMIN_IDS',
   ])('падает, если не задан %s', (key) => {
     const env = { ...VALID_ENV };
     delete (env as Record<string, string>)[key];
@@ -76,6 +78,28 @@ describe('envValidationSchema', () => {
     expect(error).toBeUndefined();
   });
 
+  it.each(['abc', '@vasya', '123;456', 'https://t.me/vasya', ''])(
+    'TELEGRAM_ADMIN_IDS отвергает %o — это не список числовых id',
+    (value) => {
+      const { error } = envValidationSchema.validate({
+        ...VALID_ENV,
+        TELEGRAM_ADMIN_IDS: value,
+      });
+      expect(error).toBeDefined();
+    },
+  );
+
+  it.each(['123456789', '123456789,987654321', '123456789, 987654321', ' 123 , 456 '])(
+    'TELEGRAM_ADMIN_IDS принимает %o',
+    (value) => {
+      const { error } = envValidationSchema.validate({
+        ...VALID_ENV,
+        TELEGRAM_ADMIN_IDS: value,
+      });
+      expect(error).toBeUndefined();
+    },
+  );
+
   it('NODE_ENV принимает только известные значения', () => {
     const { error } = envValidationSchema.validate({ ...VALID_ENV, NODE_ENV: 'staging' });
     expect(error).toBeDefined();
@@ -120,6 +144,20 @@ describe('AppConfigService (smoke: модуль собирается через 
   it('непустой пароль Redis пробрасывается как есть', async () => {
     const config = await build({ ...VALID_ENV, REDIS_PASSWORD: 'secret' });
     expect(config.redisPassword).toBe('secret');
+  });
+
+  it('TELEGRAM_ADMIN_IDS разбирается в числа, а не в строки', async () => {
+    // Если оставить строки, сравнение с ctx.from.id (число) всегда даёт false,
+    // и ни один администратор не будет опознан — молча, без единой ошибки.
+    const config = await build(VALID_ENV);
+    expect(config.telegramAdminIds).toEqual([123456789, 987654321]);
+  });
+
+  it('isAdmin опознаёт администратора и отсекает остальных', async () => {
+    const config = await build({ ...VALID_ENV, TELEGRAM_ADMIN_IDS: ' 111 , 222 ' });
+    expect(config.isAdmin(111)).toBe(true);
+    expect(config.isAdmin(222)).toBe(true);
+    expect(config.isAdmin(333)).toBe(false);
   });
 
   it('isProduction отражает NODE_ENV', async () => {

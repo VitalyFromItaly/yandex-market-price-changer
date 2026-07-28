@@ -31,25 +31,10 @@ export class CallbackQueryHandler {
           await ctx.editMessageText('❌ Операция отменена.');
           break;
 
-        case 'plan_day':
-          await ctx.editMessageText('📅 Выбран тарифный план: День (100₽)');
-          break;
-
-        case 'plan_week':
-          await ctx.editMessageText('📅 Выбран тарифный план: Неделя (500₽)');
-          break;
-
-        case 'plan_month':
-          await ctx.editMessageText('📅 Выбран тарифный план: Месяц (1500₽)');
-          break;
-
-        case 'plan_year':
-          await ctx.editMessageText('📅 Выбран тарифный план: Год (15000₽)');
-          break;
-
-        case 'plan_cancel':
-          await ctx.editMessageText('❌ Выбор тарифного плана отменен.');
-          break;
+        // Ветки plan_day / plan_week / plan_month / plan_year / plan_cancel
+        // сняты вместе с системой подписок (TASK-036): они лишь перерисовывали
+        // сообщение ценником, ничего не сохраняя и ничего не списывая.
+        // Доступ теперь выдаёт администратор — см. AdminApprovalHandler.
 
         case 'settings_api':
           await ctx.editMessageText(`

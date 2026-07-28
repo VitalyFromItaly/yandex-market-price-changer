@@ -9,8 +9,8 @@ Telegram bot that bulk-updates prices and stock on Yandex Market from a user-upl
 `campaign_id`, `business_id`) and a `priceCoefficient`; uploads are processed asynchronously
 through a Bull/Redis job chain. UI text and most code comments are Russian.
 
-Currently **mid-migration from Express to NestJS** on branch `nest.js`. Read "Migration state"
-below before changing anything — a large share of files in `src` are dead code that does not compile.
+Migrated from Express to NestJS on branch `nest.js`. The Express layer is gone and `tsc` is clean,
+but `src` still holds unreachable leftovers — read "Dead code map" below before changing anything.
 
 ## Commands
 
@@ -24,77 +24,77 @@ npm run tunnel         # vk-tunnel on :3004; tunnel:ngrok for ngrok. Webhook mod
 docker compose up -d mongodb redis   # mongo on :27018, redis on :6379, mongo-express on :8083
 ```
 
-Typecheck with `npx tsc --noEmit`. Baseline as of this writing: **6 pre-existing `TS2307` errors**,
-all in dead files (`bots/shared/services/user-subscription.service.ts` ×4, `src/routes/index.ts`,
-`src/services/UserService.ts`) importing the deleted `src/database/mongo/**` and
-`src/modules/telegram/api/**` paths. Anything beyond those six is yours.
+Typecheck with `npx tsc --noEmit` — currently **clean**. (Earlier revisions of this file mention
+six pre-existing `TS2307` errors in dead files; those files are gone.)
 
-There is **no working build or test command**:
+`npm test` works: **Vitest** (not Jest), config at the repo **root** `vitest.config.ts`, transform is
+**swc via `unplugin-swc`** — chosen because esbuild does not emit `emitDecoratorMetadata`, so
+`@nestjs/mongoose` `@Prop()` could not infer types and every Nest-DI test died with *"Cannot
+determine a type for the Bot.name field"*. `@nestjs/testing` **is** installed; `Test.createTestingModule`
+works. Run a single file with `npx vitest run <file>` (or `-t "<name>"`). Note
+`__tests__/vitest.config.ts` still exists but is **dead** — nothing references it.
 
-- `npm run build` is `ts-node src/main.ts`, i.e. it *runs* the app. `npm start` (`build && node
-  dist/main.js`) and the Dockerfile `CMD` therefore never work; `dist/` is never emitted.
-  `rootDir: "."` also means plain `tsc` emits `dist/src/main.js`, not `dist/main.js`.
-- There is no `test` script and effectively no test suite. The runner is **Vitest** (not Jest) with
-  its config at the non-default path `__tests__/vitest.config.ts`. Invocation is
-  `npx vitest run --config __tests__/vitest.config.ts <file>` (or `-t "<name>"`), but both existing
-  files fail to collect: `__tests__/unit/main.test.ts` imports `{ Delays, greeter }` from
-  `src/main.js` (ts-starter leftovers that no longer exist), and pulling in `src/main.ts` drags in
-  the Nest graph, which dies with *"Cannot determine a type for the Bot.name field"* — Vitest's
-  esbuild transform does not emit `emitDecoratorMetadata`, so `@nestjs/mongoose` `@Prop()` cannot
-  infer types. **Before writing tests that touch anything Nest-decorated, either switch the
-  transform (`@swc/core` via `unplugin-swc`, or ts-jest + `@nestjs/testing`) or give every `@Prop()`
-  an explicit `{ type: … }`.** `@nestjs/testing` is not installed.
-- `npm run lint` currently crashes: `eslint.config.js` imports `@eslint/compat` and
-  `eslint-plugin-import`, neither of which is in `package.json`.
-- `.github/workflows/nodejs.yml` calls `npm test` and `npm run prettier:check` — both missing, so CI
-  is red/no-op. Don't take CI as a signal.
+Still broken, and not worth taking as a signal:
+
+- `npm run lint` crashes: `eslint.config.js` imports `@eslint/compat` and `eslint-plugin-import`,
+  neither of which is in `package.json`.
+- `.github/workflows/nodejs.yml` calls `npm run prettier:check`, which does not exist, so CI is
+  red/no-op.
 
 ## Runtime architecture
 
 `src/main.ts` → `NestFactory.create(AppModule)`, global prefix `/api`, global `LoggerInterceptor`,
-`listen(process.env.PORT || 3000)` (note: `.env` sets `PORT=3004`). `dotenv/config` is imported
-directly — there is no `@nestjs/config`/`ConfigService`; everything reads `process.env` inline.
+`listen(AppConfigService.port)`.
 
-`AppModule` → `CqrsModule.forRoot()` (imported but **no commands/queries exist**),
-`BullModule.forRoot({redis})`, `DatabaseModule`, `TelegramModule`.
+Configuration goes through `@nestjs/config` with Joi validation — **never `process.env` directly, and
+never `config.get('KEY')` outside `src/config/app-config.service.ts`**. Adding a variable means: a
+rule in `src/config/env.validation.ts`, a typed getter in `app-config.service.ts`, plus `.env.example`
+and `docker-compose.yml`.
 
-### Bots start from a Nest lifecycle hook, then leave DI
+`AppModule` → `AppConfigModule` (first, and deliberately so — Bull's factory needs config resolved),
+`CqrsModule.forRoot()` (imported but **no commands/queries exist**), `BullModule.forRootAsync`,
+`DatabaseModule`, `TelegramModule`.
 
-`TelegramService.onModuleInit()` → `BotFather.boot()` → `launchBots()`.
-`TelegramService` is the last DI-aware layer: it injects `Model<BotDocument>`, `SubscriptionService`,
-`YandexMarketService`, `FileProcessingService` and then does `new BotFather(...)` by hand.
+### Bots are wired by Nest DI
 
-```
-BotFather (src/modules/telegram/bots/bot.father.ts)
-  Map<botType, Map<botId, ITelegramBot>>; loads all Bot docs from Mongo, seeding one from
-  process.env.TELEGRAM_TOKEN if the collection is empty. getBotInstanceByType() always falls
-  back to PriceChangerBot.
-    └─ BaseTelegramBot (bots/shared/BaseTelegramBot.ts) — owns Telegraf instance, keyboard,
-       TelegramUserService; boot() throws "not implemented"; launch() configures WEBHOOK mode:
-       domain = TELEGRAM_PROXY_URL, hookPath = /api/telegram/webhooks/:type/:id
-        └─ PriceChangerBot (bots/price-changer-bot/price-changer.bot.ts) — composes 5 handlers
-```
+`BotRegistry` (`src/modules/telegram/bots/bot-registry.service.ts`, `OnApplicationBootstrap`) loads
+`Bot` docs from Mongo — seeding one from `AppConfigService.telegramToken` if the collection is empty —
+then per bot: `new Telegraf(doc.token)` → `telegraf.catch(...)` → `PriceChangerComposer.compose()` →
+`telegram.setWebhook(url)`. **No `bot.launch()`**: telegraf 4.16's `launch({webhook})` starts a stray
+HTTP server per bot that nothing routes to. `OnApplicationBootstrap` rather than `OnModuleInit` so the
+HTTP listener is already accepting when Telegram sends the first update.
 
 Webhook updates arrive at `TelegramController` (`POST /api/telegram/webhooks/:type/:id`) →
-`TelegramService.handleWebhook` → `bot.handleUpdate`. Note telegraf's `launch({webhook})` without a
-`port` still starts its own `http.Server` on a random port; nothing routes to it — the Nest
-controller is the real receiver.
+`TelegramService.handleWebhook` → `BotRegistry.handleUpdate`.
 
-**Handler pattern** (`price-changer-bot/handlers/*.handler.ts`): plain non-Nest classes, constructor
-args `(bot, keyboard, [userService], service…)`, each exposing `setupHandlers()` that registers
-telegraf listeners. `PriceChangerBot.boot()` calls them in a **deliberate, order-sensitive**
-sequence (menu `hears` → slash `command` → `on(message('document'))` → `on('callback_query')` →
-`ApiSettingsHandler`'s catch-all `on('text')` last). Preserve that order.
+> The earlier `BotFather` / `BaseTelegramBot` / `PriceChangerBot` hierarchy with its manual `new`
+> graph is **gone** (TASK-011). Don't reintroduce it.
 
-Routing is not table-driven: reply-keyboard buttons via `bot.hears('<emoji> <label>')`, inline
-buttons via one large `switch (callbackData)` in `callback-query.handler.ts`, free text via
-`ApiSettingsHandler` which self-filters (`text.startsWith('/')`, `isMenuButton(text)`).
+**Handler pattern** (`price-changer-bot/handlers/*.handler.ts`): `@Injectable()` singletons that do
+**not** store the Telegraf instance — they receive it in `register(bot)`, so one handler instance
+serves any number of bots.
+
+**Registration order is a load-bearing invariant.** `PriceChangerComposer.pipeline` is the single
+source of truth and `__tests__/unit/composer-order.test.ts` pins it:
+
+```
+accessGate → start → menu → slash → adminCallbacks → callbacks → apiSettings → fallback
+```
+
+- `accessGate` is a `bot.use` and must stay **first** — a gate registered after handlers guards
+  nothing, because the update never reaches it.
+- `adminCallbacks` (`bot.action(/^adm:(ap|rj):\d+$/)`) must stay **before** `callbacks`: the general
+  handler switches on exact callback strings and its `default:` branch overwrites the message.
+- `apiSettings` is a catch-all `on('text')`, so it must stay after `menu`/`slash`; `fallback` last.
+
+Routing is not table-driven: reply-keyboard buttons via `bot.hears(MENU.X)`, inline buttons via one
+large `switch (callbackData)` in `callback-query.handler.ts`, free text via `ApiSettingsHandler`
+which self-filters (`text.startsWith('/')`, `isMenuButton(text)`). Menu labels live in exactly one
+place, `price-changer-bot/menu.constants.ts`, enforced by `__tests__/unit/menu-labels.test.ts`.
 `shared-commands.handler.ts` holds logic reused by the menu and slash handlers.
 
-**To add a bot:** extend `EBotType` in `domain.telegram.ts`, add
-`bots/<x>-bot/<x>.bot.ts extends BaseTelegramBot` + a keyboard, add a branch in
-`BotFather.getBotInstanceByType`, and thread any new service manually through
-`TelegramService` → `BotFather` → bot constructor → handler constructors (DI does not reach here).
+**To add a bot:** extend `EBotType` in `domain.telegram.ts`, add a composer + keyboard, add a branch
+in `BotRegistry`, and register any new service as a normal Nest provider.
 
 ### The upload pipeline is a 4-hop Bull chain
 
@@ -132,40 +132,68 @@ excluded from tsconfig, imported nowhere, and its `core/request.ts` only emits
 
 ### Data layer
 
-Mongoose via `@nestjs/mongoose`. `database/database.module.ts` does `MongooseModule.forRoot(MONGODB_URL,
-{dbName: MONGODB_DATABASE})` + `forFeature([Bot, User, Subscription, YandexMarket])` and re-exports
-`MongooseModule` so feature modules can `@InjectModel`. Schemas are decorator classes in
+Mongoose via `@nestjs/mongoose`. `database/database.module.ts` does `MongooseModule.forRootAsync`
+(uri/dbName from `AppConfigService`) + `forFeature([Bot, User, UserAccess, YandexMarket])` and
+re-exports `MongooseModule` so feature modules can `@InjectModel`. Schemas are decorator classes in
 `database/schemas/*.schema.ts` with imperative `schema.index/methods/statics` appended after
 `SchemaFactory.createForClass`.
 
 There are **no Mongoose refs** — relations are implicit:
 
-- `Subscription` is keyed by `(user_id, chat_id)` where **`chat_id` is the bot's id**
-  (`telegram.getMe().id`), so a subscription is per (telegram user × bot).
-- `YandexMarket` is keyed by `telegramUserId` (typed `string` in the schema).
+- `UserAccess` is keyed by `(telegramUserId, botId)` — unique compound index. It also carries
+  `telegramChatId`, which is a **different thing**: `botId` is the tenant, `telegramChatId` is
+  `ctx.chat.id` and the only value you may pass to `sendMessage`. Do not conflate them —
+  `YandexMarket.telegramChatId` historically holds the *bot's* id and is useless for messaging.
+- `YandexMarket` is keyed by `telegramUserId` (typed `string`). Its `campaign_id`/`business_id`/`token`
+  are `required`, so the document is created **once, complete** — partial writes throw.
 - `User` has no service and is unreachable from the live code path.
 
-Gate logic lives in `bots/shared/services/telegram-user.service.ts`: `handleUser` find-or-creates a
-`Subscription` with default `plan: 'week'` (every new user gets a free week);
-`checkUserSubscription` is enforced **only in `PriceChangerBot.onStart`** — the upload path and the
-queue processors check nothing, so an expired user who avoids `/start` can keep uploading. Plan
-prices in `callback-query.handler.ts` are display strings only; nothing charges or extends anything.
+### Access control: admin approval, not subscriptions
 
-### Error handling: two coexisting strategies
+Every user has a `UserAccess` record with status `new` → `pending` → `approved` | `rejected`.
 
-`src/shared/decorators/TryCatch.ts` + `DecorateWith.ts` implement the pre-Nest approach:
-`@DecorateMethodsWith(TryCatch())` on a class wraps every own-prototype method in
-`try/catch → console.error`, **swallowing the error and returning `undefined`**. Applied to
-`BaseTelegramBot` and `TelegramUserService`. Consequences to know:
+```
+new        entering credentials IS the registration; only /start + credential text allowed
+pending    application sent to admins; only /start
+approved   full access
+rejected   credentials wiped; 24h during which even entering credentials is refused,
+           then the status lazily resets to `new` on the user's next update
+```
 
-- It neutralizes `TelegramService.handleWebhook`'s `BadRequestException` (`handleUpdate` never throws).
-- It only walks the decorated class's own prototype, so subclass overrides
-  (`PriceChangerBot.launch/onStart/boot`) are **not** wrapped.
-- `TelegramUserService.handleUser` throws deliberately, the decorator eats it, and
-  `PriceChangerBot.onStart`'s `if (!userSubscription)` branch depends on that swallowed throw.
+- **The gate is one `bot.use`** (`handlers/access-gate.handler.ts`), registered first. Its allow-list
+  is pure logic in `bots/shared/access.domain.ts` (`canPass`, `classifyUpdate`, `isRejectionExpired`,
+  `formatAdminCallback`/`parseAdminCallback`) and is unit-tested without telegraf or Mongo.
+- **Admins** come from `TELEGRAM_ADMIN_IDS` (comma-separated ids). They bypass the gate; use
+  `AppConfigService.isAdmin(id)`, never a hand-rolled `includes`.
+- **Every status transition is one `findOneAndUpdate` with the expected status in the filter.**
+  That is what makes "first admin decision wins" and application idempotency work without locks —
+  the loser simply gets `null`. `__tests__/unit/user-access.service.test.ts` asserts those filters,
+  because the type system cannot.
+- **The application fires on the `new → pending` transition**, not on "credentials are complete" —
+  completeness stays true on every subsequent save, which is why the old
+  "🎉 Все настройки API заполнены!" branch fired every time.
+- Credentials are accumulated in `UserAccess.draft` during registration and only then written to
+  `YandexMarket` as one complete document.
+- The admin card carries the applicant's `@username`; the admin taps it and writes to the user
+  **directly in Telegram**. There is deliberately **no message relay** through the bot, hence no
+  conversation state to store.
 
-Nest's `LoggerInterceptor` (`src/common/interceptors/logger.interceptor.ts`, `console.log`-based)
-sits alongside it. There is no exception filter. Logging everywhere is `console.*`, not Nest `Logger`.
+> The previous subscription system is **gone** (TASK-036) — it granted every new user a free week,
+> its plan buttons charged nothing, and its only check sat in `/start`, so uploads bypassed it.
+> `__tests__/unit/subscription-removed.test.ts` fails if the concept creeps back.
+
+### Error handling
+
+`telegraf.catch()` in `BotRegistry` logs the error with a Nest `Logger` and replies to the user.
+
+`src/shared/decorators/TryCatch.ts` + `DecorateWith.ts` are the **pre-Nest** approach:
+`@DecorateMethodsWith(TryCatch())` wrapped every own-prototype method in `try/catch → console.error`,
+**swallowing the error and returning `undefined`**. It is `@deprecated` and applied to nothing
+(TASK-013) — kept as a monument, because it produced errors that surfaced as `TypeError` far from
+their cause. Do not reapply it.
+
+Nest's `LoggerInterceptor` (`src/common/interceptors/logger.interceptor.ts`) covers HTTP. There is no
+exception filter. Logging in newer code is Nest `Logger`; older handlers still use `console.*`.
 
 ## Conventions
 
@@ -184,47 +212,53 @@ sits alongside it. There is no exception filter. Logging everywhere is `console.
 
 ## Environment
 
-`.env` (gitignored) is loaded by `dotenv/config`. `.env.example` is incomplete. Names the code
-actually reads: `PORT`, `MONGODB_URL`, `MONGODB_DATABASE`, `TELEGRAM_TOKEN`, `TELEGRAM_PROXY_URL`,
-`YANDEX_MARKET_BASE_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`.
+`.env` (gitignored) is loaded by `ConfigModule`. `src/config/env.validation.ts` is the authoritative
+list; `.env.example` documents every key. Required: `MONGODB_URL`, `MONGODB_DATABASE`, `REDIS_HOST`,
+`TELEGRAM_TOKEN`, `TELEGRAM_PROXY_URL`, `TELEGRAM_ADMIN_IDS`. Defaulted: `PORT`, `NODE_ENV`,
+`REDIS_PORT`, `YANDEX_MARKET_BASE_URL`. Optional: `REDIS_PASSWORD` (empty means "no auth").
 
-Beware three sources of drift: `README.md` documents `TELEGRAM_BOT_TOKEN`/`MONGODB_URI` (wrong);
-`docker-compose.yml` supplies `MONGODB_URI` and `REDIS_URL` (neither is read by the code, so the
-`app` service is misconfigured); `.env.example` omits the Redis and Yandex vars.
+A missing or malformed variable now fails at startup with a Russian message naming it, instead of
+surfacing later as a connection timeout.
 
-## Migration state — dead code map
+`TELEGRAM_ADMIN_IDS` is a comma-separated list of numeric Telegram ids. **Each admin must press
+`/start` on the bot themselves** — Telegram forbids a bot from writing first, so otherwise the
+application card is rejected with 403 and the applicant waits forever.
 
-`src/` mixes the new Nest layout with the pre-Nest tree. These are unreachable from `main.ts` and
-several do not compile (nothing typechecks the repo, so it goes unnoticed). Do not "fix" them
-without deciding to revive them:
+Remaining drift: `README.md` documents `TELEGRAM_BOT_TOKEN`/`MONGODB_URI`, which the code does not
+read.
 
-- Legacy Express layer: `src/routes/`, `src/middleware/`, `src/controllers/`, `src/services/UserService.ts`,
-  `src/transport/http/test-post.ts`, `src/types/express/`. Several import deleted
-  `src/database/mongo/**` or `src/modules/telegram/api/**` paths.
-- `bots/shared/services/user-subscription.service.ts` — stale duplicate of
-  `telegram-user.service.ts` exporting the **same class name** `TelegramUserService`, with dead
-  `database/mongo` imports. The live file is `telegram-user.service.ts`.
+## Dead code map
+
+The Express layer (`src/routes/`, `src/middleware/`, `src/controllers/`, `src/types/express/`) is
+**gone** (TASK-003), and so is the `BotFather` hierarchy (TASK-011). What remains unreachable from
+`main.ts` — do not "fix" it without deciding to revive it:
+
 - `src/services/yandex-market-api.service.ts`, `src/modules/yandex/api/**` — dead Yandex clients (above).
 - `FileDataProcessorService.processFile()` — remnant of the synchronous pre-queue flow; the pipeline
   calls `parseFile`/`fetchYandexData`/`compareData` individually.
+- `handlers/file-upload.handler.ts` — orphaned since TASK-009: still has the pre-DI constructor
+  `(bot, botToken, service)`, is in no module, and is imported nowhere.
 - `bots/shared/{BaseScene,BaseService}.ts`, `src/shared/helpers/throttle/*` — referenced nowhere.
+- `src/shared/decorators/{TryCatch,DecorateWith}.ts` — `@deprecated`, applied to nothing.
 - `ui/keyboard.ui.telegram.ts` — base `createMenuKeyboard()` returns `Promise.resolve(undefined)` and
   imports `Promise` **from mongoose**; only works because `PriceChangerKeyboard` overrides it.
+  `createMainMenu`/`createBackMenu` are `@deprecated` (labels outside `menu.constants`).
+- `__tests__/vitest.config.ts` — superseded by the root `vitest.config.ts`.
 - `src/modules/yandex/index.ts` is empty. Unused deps left from templates: `@clickhouse/client`,
-  `technicalindicators`, `bcrypt`, `joi`, `mitt`, `express`, `body-parser`.
+  `technicalindicators`, `bcrypt`, `mitt`, `express`, `body-parser`.
 
 ## Known correctness bugs (verify before relying on these paths)
 
-- `database/services/subscription.service.ts` reads/writes an `isActive` field **absent from the
-  schema**, so `getActiveSubscriptions()` always returns `[]`; some updates write `updatedAt` while
-  the schema declares `updated_at`.
-- `createSubscription`'s plan switch has no `'day'` case → a `day` plan expires immediately.
 - `priceCoefficient` default disagrees in four places: schema `1.2`, `PriceChanger` fallback `|| 2`,
   `yandex-api.processor.ts` `2`, and the notification/menu text treats `2` vs `1.0` as "no change".
   `updateExistingOffers` also adds a hardcoded `+ 5 ₽` that `createNewOffers` does not.
 - Upload validation was lost in the migration: the new
   `modules/telegram/services/file-upload.service.ts` dropped the 10 MB cap, extension/MIME
   allow-lists, and the 24h temp-file cleanup that `src/modules/telegram/README.md` still documents.
+- `YandexMarketService.upsertByTelegramUser` is find-then-create, not a real upsert — race-prone.
+  Don't copy the pattern; `UserAccessService` uses `upsert: true` deliberately.
+- `api-settings.handler.ts` passes `ctx.botInfo.id` as `telegramChatId` when writing `YandexMarket`,
+  so that column holds the **bot's** id, not a chat. Use `UserAccess.telegramChatId` for messaging.
 - Product creation hardcodes the watch domain (`'Наручные часы ' + offer.name`) in
   `price.changer.handler.ts`.
 

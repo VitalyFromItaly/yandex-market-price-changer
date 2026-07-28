@@ -1,50 +1,45 @@
 import { Context } from 'telegraf';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { MENU, MENU_LABELS } from '../menu.constants';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import {
+  UserAccessService,
+  type TDraftField,
+} from '../../../../../database/services/user-access.service';
+import { AppConfigService } from '../../../../../config/app-config.service';
+import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
 @Injectable()
 export class ApiSettingsHandler {
+  private readonly logger = new Logger(ApiSettingsHandler.name);
+
   constructor(
     private keyboard: PriceChangerKeyboard,
     private yandexMarketService: YandexMarketService,
+    private accessService: UserAccessService,
+    private adminNotifier: AdminNotifierService,
+    private config: AppConfigService,
   ) {}
 
   public register(bot: TTelegrafBot) {
-    console.log('Setting up API settings handler...');
-
     bot.on('text', async (ctx) => {
       try {
         const text = ctx.message.text.trim();
-        console.log(
-          `🔄 Text received in ApiSettingsHandler: "${text}" from user ${ctx.from.id}`,
-        );
 
         // Игнорируем только команды
-        if (text.startsWith('/')) {
-          console.log(`⚡ Ignoring command: ${text}`);
-          return;
-        }
+        if (text.startsWith('/')) return;
 
         // Игнорируем кнопки меню - они обрабатываются в MenuCommandsHandler
-        if (this.isMenuButton(text)) {
-          console.log(`🔘 Ignoring menu button: ${text}`);
-          return;
-        }
+        if (this.isMenuButton(text)) return;
 
-        console.log(
-          `📝 Processing API settings text from user ${ctx.from.id}: "${text}"`,
-        );
+        // Текст пользователя НЕ логируем: через этот обработчик проходит токен
+        // продавца, а логи не место для чужих секретов.
+        this.logger.debug(`Разбор настроек API от пользователя ${ctx.from.id}`);
 
-        // Парсим и сохраняем настройки API
-        const result = await this.parseAndSaveApiSettings(
-          ctx.from.id.toString(),
-          ctx.botInfo.id.toString(),
-          text,
-        );
+        const result = await this.parseAndSaveApiSettings(ctx, text);
 
         if (result.success) {
           await ctx.reply(result.message, htmlOptions(result.keyboard));
@@ -52,7 +47,7 @@ export class ApiSettingsHandler {
           await ctx.reply(result.message, htmlOptions());
         }
       } catch (error) {
-        console.error('Ошибка обработки настроек API:', error);
+        this.logger.error('Ошибка обработки настроек API', error as Error);
         await ctx.reply(
           '❌ Произошла ошибка при обработке настроек. Попробуйте позже.',
         );
@@ -75,8 +70,7 @@ export class ApiSettingsHandler {
    * Парсинг и сохранение настроек API
    */
   private async parseAndSaveApiSettings(
-    telegramUserId: string,
-    telegramChatId: string,
+    ctx: Context,
     text: string,
   ): Promise<{
     success: boolean;
@@ -87,8 +81,6 @@ export class ApiSettingsHandler {
       // Определяем тип данных и извлекаем значение
       const parseResult = this.parseApiData(text);
 
-      console.log({ parseResult });
-
       if (!parseResult.success) {
         return {
           success: false,
@@ -98,15 +90,14 @@ export class ApiSettingsHandler {
 
       // Сохраняем в базу данных
       const saveResult = await this.saveApiSetting(
-        telegramUserId,
-        telegramChatId,
+        ctx,
         parseResult.type!,
         parseResult.value!,
       );
 
       return saveResult;
     } catch (error) {
-      console.error('Ошибка парсинга настроек API:', error);
+      this.logger.error('Ошибка парсинга настроек API', error as Error);
       return {
         success: false,
         message:
@@ -276,83 +267,221 @@ export class ApiSettingsHandler {
   }
 
   /**
-   * Сохранение настройки API в базу данных
+   * Сохранение настройки API.
+   *
+   * Ветки различает СТАТУС ДОСТУПА, а не наличие документа YandexMarket:
+   *
+   * 1. approved — пользователь правит свою настройку. Пишем напрямую,
+   *    администратора не трогаем.
+   * 2. иначе — идёт регистрация. Креды копятся в черновике UserAccess, потому
+   *    что три поля YandexMarket объявлены required, а пользователь вводит их
+   *    по одному: попытка создать документ с одним полем падала ValidationError,
+   *    и первый же ввод креда выдавал «Ошибка сохранения данных в базу».
+   *
+   * Различать ветки по наличию документа нельзя: документ может существовать у
+   * НЕодобренного пользователя — он остаётся от прежней версии бота, а также
+   * после отката недоставленной заявки. Такой пользователь попадал в тупик:
+   * ввод креда молча обновлял магазин, статус навсегда оставался new, и заявка
+   * не уходила никогда.
    */
   private async saveApiSetting(
-    telegramUserId: string,
-    telegramChatId: string,
+    ctx: Context,
     type: 'campaign_id' | 'business_id' | 'token' | 'coefficient',
     value: string | number,
   ): Promise<{ success: boolean; message: string; keyboard?: any }> {
-    try {
-      console.log({ telegramUserId, telegramChatId, type, value });
-      // Подготавливаем данные для обновления
-      const updateData: any = {};
-      updateData[type] = value;
-
-      // Сохраняем в базу
-      await this.yandexMarketService.upsertByTelegramUser(
-        telegramUserId,
-        telegramChatId,
-        updateData,
-      );
-
-      // Получаем обновленные настройки для проверки
-      const updatedSettings = await this.yandexMarketService.getByTelegramUser(telegramUserId);
-
-      console.log({ updatedSettings });
-
-      // Формируем сообщение об успехе
-      const successMessages = {
-        campaign_id: `✅ <b>Campaign ID сохранен</b>\n🔑 ID кампании: <code>${value}</code>`,
-        business_id: `✅ <b>Business ID сохранен</b>\n🏢 ID бизнеса: <code>${value}</code>`,
-        token: `✅ <b>API токен сохранен</b>\n🎫 Токен: <code>${String(value).substring(0, 10)}...</code>`,
+    // Коэффициент распознаётся автоопределением (голое число), но не проходит
+    // валидацию форматированного ввода. Без этой ветки для него не находилось
+    // текста ответа и пользователь получал сообщение "undefined".
+    if (type === 'coefficient') {
+      return {
+        success: false,
+        message:
+          '❌ Коэффициент цены больше не используется — бот работает только на чтение и не меняет цены в магазине.',
       };
+    }
 
-      let message = successMessages[type];
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
 
-      console.log({ message });
+    try {
+      // Администраторы гейт не проходят, поэтому записи доступа у них может не
+      // быть — заводим её здесь.
+      const access = await this.accessService.ensure({
+        telegramUserId,
+        botId,
+        telegramChatId: ctx.chat.id.toString(),
+        username: ctx.from.username,
+        firstName: ctx.from.first_name,
+        lastName: ctx.from.last_name,
+      });
 
-      // Проверяем, все ли настройки заполнены
-      if (await this.yandexMarketService.isConfigured(telegramUserId)) {
-        message += `\n\n🎉 <b>Все настройки API заполнены!</b>`;
-
-        const keyboard = await this.keyboard.createInlineButtons([
-          { text: '👀 Проверить настройки', callback_data: 'check_settings' },
-          { text: MENU.MAIN, callback_data: 'main_menu' },
-        ]);
-
-        return { success: true, message, keyboard };
-      } else {
-        // Показываем какие настройки еще нужно заполнить
-        const missingFields = [];
-        if (!updatedSettings?.campaign_id) {
-          missingFields.push('🔑 Campaign ID');
+      if (access.status === 'approved') {
+        const updated = await this.yandexMarketService.updateByTelegramUser(
+          telegramUserId,
+          { [type]: value },
+        );
+        // Одобренный без магазина — редкий случай (доступ выдан вручную);
+        // тогда проваливаемся в сбор черновика ниже.
+        if (updated) {
+          return {
+            success: true,
+            message: `${this.savedLabel(type, value)}\n\n✅ Настройка обновлена.`,
+            keyboard: await this.keyboard.createInlineButtons([
+              { text: '👀 Проверить настройки', callback_data: 'check_settings' },
+              { text: MENU.MAIN, callback_data: 'main_menu' },
+            ]),
+          };
         }
-        if (!updatedSettings?.business_id) {
-          missingFields.push('🏢 Business ID');
-        }
-        if (!updatedSettings?.token) {
-          missingFields.push('🎫 API токен');
-        }
-
-        if (missingFields.length > 0) {
-          message += `\n\n📋 <b>Осталось заполнить:</b>\n${missingFields.map((field) => `• ${field}`).join('\n')}`;
-        }
-
-        const keyboard = await this.keyboard.createInlineButtons([
-          { text: '⚙️ Продолжить настройку', callback_data: 'settings_api' },
-          { text: MENU.MAIN, callback_data: 'main_menu' },
-        ]);
-
-        return { success: true, message, keyboard };
       }
+
+      const withDraft = await this.accessService.saveDraftField(
+        telegramUserId,
+        botId,
+        type as TDraftField,
+        String(value),
+      );
+      const draft = withDraft?.draft ?? {};
+
+      const missing = this.missingFields(draft);
+      if (missing.length) {
+        return {
+          success: true,
+          message:
+            `${this.savedLabel(type, value)}\n\n📋 <b>Осталось заполнить:</b>\n` +
+            missing.map((field) => `• ${field}`).join('\n'),
+          keyboard: await this.keyboard.createInlineButtons([
+            { text: '⚙️ Продолжить настройку', callback_data: 'settings_api' },
+          ]),
+        };
+      }
+
+      return await this.submitApplication(ctx, access.status, draft, type, value);
     } catch (error) {
-      console.error('Ошибка сохранения настройки API:', error);
+      this.logger.error('Ошибка сохранения настройки API', error as Error);
       return {
         success: false,
         message: '❌ Ошибка сохранения данных в базу. Попробуйте позже.',
       };
     }
+  }
+
+  /**
+   * Все три креда собраны — создаём документ магазина и подаём заявку.
+   *
+   * Признаком НОВОЙ заявки служит атомарный переход статуса new → pending, а не
+   * факт заполненности кредов: заполненность истинна и при каждом следующем
+   * сохранении, из-за чего прежняя ветка «Все настройки API заполнены»
+   * срабатывала на каждое сообщение. Проверка живёт в базе, поэтому переживает
+   * рестарт и параллельную обработку двух вебхуков.
+   */
+  private async submitApplication(
+    ctx: Context,
+    status: string,
+    draft: { token?: string; campaign_id?: string; business_id?: string },
+    type: string,
+    value: string | number,
+  ): Promise<{ success: boolean; message: string; keyboard?: any }> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+    const saved = this.savedLabel(type, value);
+
+    /**
+     * Документ мог остаться от прежней версии бота или от отката заявки —
+     * тогда обновляем его, а не заводим второй: unique-индекса на
+     * telegramUserId у YandexMarket нет, дубли база не отсечёт.
+     */
+    const saveStore = async () => {
+      const fields = {
+        campaign_id: draft.campaign_id,
+        business_id: draft.business_id,
+        token: draft.token,
+      };
+      const existing = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+      return existing
+        ? await this.yandexMarketService.updateByTelegramUser(telegramUserId, fields)
+        : await this.yandexMarketService.create({
+            ...fields,
+            telegramUserId,
+            telegramChatId: ctx.chat.id.toString(),
+          });
+    };
+
+    // Администратор-продавец не должен присылать заявку сам себе. Уже
+    // одобренный без магазина — тоже: доступ у него есть, заявка не нужна.
+    if (this.config.isAdmin(ctx.from.id) || status === 'approved') {
+      await saveStore();
+      await this.accessService.grant({
+        telegramUserId,
+        botId,
+        telegramChatId: ctx.chat.id.toString(),
+        username: ctx.from.username,
+        firstName: ctx.from.first_name,
+        lastName: ctx.from.last_name,
+      });
+      return {
+        success: true,
+        message: `${saved}\n\n🎉 <b>Все настройки API заполнены!</b>`,
+        keyboard: await this.keyboard.createInlineButtons([
+          { text: '👀 Проверить настройки', callback_data: 'check_settings' },
+          { text: MENU.MAIN, callback_data: 'main_menu' },
+        ]),
+      };
+    }
+
+    const applied = await this.accessService.tryApply(telegramUserId, botId);
+    if (!applied) {
+      // Заявка уже подана параллельным апдейтом — второй карточки быть не должно.
+      return {
+        success: true,
+        message: `${saved}\n\n⏳ Заявка уже отправлена администратору, ожидайте решения.`,
+      };
+    }
+
+    const store = await saveStore();
+    const delivered = await this.adminNotifier.sendApplication(ctx, applied, store);
+
+    if (!delivered) {
+      // Ни один администратор карточку не получил (типовая причина — админ не
+      // нажимал /start и Telegram отвечает 403). Без отката пользователь навсегда
+      // завис бы в pending, и узнать об этом было бы некому.
+      await this.accessService.revertApply(telegramUserId, botId);
+      // Магазин тоже убираем: иначе следующий ввод креда увидит существующий
+      // документ, а статус останется new — пользователь застрянет навсегда.
+      await this.yandexMarketService.deleteByTelegramUser(telegramUserId);
+      return {
+        success: false,
+        message:
+          `${saved}\n\n⚠️ Не удалось отправить заявку администратору. ` +
+          'Попробуйте позже или свяжитесь с поддержкой.',
+      };
+    }
+
+    return {
+      success: true,
+      message: `${saved}\n\n✅ <b>Заявка отправлена администратору.</b>\n\nКак только он примет решение, бот пришлёт сообщение сюда.`,
+    };
+  }
+
+  private savedLabel(type: string, value: string | number): string {
+    switch (type) {
+      case 'campaign_id':
+        return `✅ <b>Campaign ID сохранён</b>\n🔑 ID кампании: <code>${esc(value)}</code>`;
+      case 'business_id':
+        return `✅ <b>Business ID сохранён</b>\n🏢 ID бизнеса: <code>${esc(value)}</code>`;
+      default:
+        return `✅ <b>API токен сохранён</b>\n🎫 Токен: <code>${esc(String(value).substring(0, 10))}...</code>`;
+    }
+  }
+
+  private missingFields(draft: {
+    token?: string;
+    campaign_id?: string;
+    business_id?: string;
+  }): string[] {
+    const missing: string[] = [];
+    if (!draft.campaign_id) missing.push('🔑 Campaign ID');
+    if (!draft.business_id) missing.push('🏢 Business ID');
+    if (!draft.token) missing.push('🎫 API токен');
+    return missing;
   }
 }

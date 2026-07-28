@@ -2,7 +2,7 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 13
+    "archived_tasks": 14
   },
   "tasks": [
     {
@@ -299,6 +299,28 @@
         "TASK-011"
       ],
       "status": "done"
+    },
+    {
+      "id": "TASK-005",
+      "milestone": "M0",
+      "category": "functional",
+      "priority": "high",
+      "description": "Починить SubscriptionService: методы getActiveSubscriptions, cancelSubscription и updateExpiredSubscriptions фильтруют и пишут по полю isActive, которого нет ни в текущей схеме Subscription, ни в домиграционной — чтения всегда возвращают 0 документов, записи молча отбрасываются strict-режимом",
+      "acceptance_criteria": [
+        "Запросы переведены на реально существующие поля схемы (статус и срок действия подписки)",
+        "getActiveSubscriptions возвращает действительно активные подписки",
+        "updateExpiredSubscriptions переводит просроченные подписки в неактивный статус и изменения сохраняются в базе",
+        "Логика активности согласована с isSubscriptionActive, которая уже используется при /start"
+      ],
+      "test_steps": [
+        "Шаг 1: создать в базе две подписки — одну действующую, одну с истёкшим сроком",
+        "Шаг 2: вызвать getActiveSubscriptions — возвращается ровно одна, действующая",
+        "Шаг 3: вызвать updateExpiredSubscriptions — просроченная сменила статус, проверить документ в Mongo",
+        "Шаг 4: вызвать cancelSubscription — статус изменился в базе, а не отброшен"
+      ],
+      "dependencies": [],
+      "status": "obsolete",
+      "resolution": "Снята: система подписок удалена целиком в TASK-036 и заменена approval-гейтом администратора. Чинить isActive больше не в чем — схемы и сервиса подписок не существует."
     }
   ]
 }

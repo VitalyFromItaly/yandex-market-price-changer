@@ -53,6 +53,18 @@ export const envValidationSchema = Joi.object({
       'TELEGRAM_PROXY_URL обязателен: публичный HTTPS-домен для вебхука (например, ngrok)',
     'string.uri': 'TELEGRAM_PROXY_URL должен быть полным URL со схемой https://',
   }),
+  // Обязателен, а не «пустой список по умолчанию»: без единого администратора
+  // ни одну заявку невозможно одобрить, и каждый новый пользователь навсегда
+  // повисает в статусе pending — молча, без единой ошибки в логах.
+  TELEGRAM_ADMIN_IDS: Joi.string()
+    .pattern(/^\s*\d+(\s*,\s*\d+)*\s*$/)
+    .required()
+    .messages({
+      'any.required':
+        'TELEGRAM_ADMIN_IDS обязателен: Telegram id администраторов через запятую, например 123456789,987654321',
+      'string.pattern.base':
+        'TELEGRAM_ADMIN_IDS: только числовые id через запятую (не @username и не ссылка). Свой id можно узнать у @userinfobot',
+    }),
 
   // --- Yandex Market Partner API ---
   // Токен продавца здесь НЕ хранится: каждый пользователь вводит свой через

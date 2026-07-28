@@ -14,6 +14,9 @@ import { ConfigService } from '@nestjs/config';
  */
 @Injectable()
 export class AppConfigService {
+  /** Разобранный TELEGRAM_ADMIN_IDS — см. геттер telegramAdminIds. */
+  private adminIds?: number[];
+
   constructor(private readonly config: ConfigService) {}
 
   get nodeEnv(): string {
@@ -60,6 +63,33 @@ export class AppConfigService {
   /** Публичный HTTPS-домен, на который Telegram шлёт вебхуки. */
   get telegramProxyUrl(): string {
     return this.config.get<string>('TELEGRAM_PROXY_URL');
+  }
+
+  /**
+   * Telegram id администраторов, которым уходит карточка новой регистрации.
+   *
+   * Разбор кэшируется: геттер дёргается на КАЖДОМ апдейте телеграма (гейт
+   * доступа спрашивает isAdmin первым делом), а split/map на каждое сообщение
+   * — бессмысленная работа. Формат уже проверен Joi, поэтому здесь только
+   * разбор, без валидации.
+   */
+  get telegramAdminIds(): number[] {
+    this.adminIds ??= this.config
+      .get<string>('TELEGRAM_ADMIN_IDS')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .map(Number);
+    return this.adminIds;
+  }
+
+  /**
+   * Единственный способ проверить админа. Метод есть, чтобы по хендлерам не
+   * расползался `includes` — и, главное, чтобы никто не сравнил число
+   * `ctx.from.id` со строкой из окружения (`'123' === 123` — false).
+   */
+  isAdmin(telegramUserId: number): boolean {
+    return this.telegramAdminIds.includes(telegramUserId);
   }
 
   get yandexMarketBaseUrl(): string {

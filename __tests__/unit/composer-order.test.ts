@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { PriceChangerComposer } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.composer';
+import { AccessGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/access-gate.handler';
+import { AdminApprovalHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-approval.handler';
 import { StartHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/start.handler';
 import { MenuCommandsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/menu-commands.handler';
 import { SlashCommandsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/slash-commands.handler';
@@ -47,6 +49,8 @@ describe('PriceChangerComposer: порядок регистрации', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         PriceChangerComposer,
+        { provide: AccessGateHandler, useValue: stub('accessGate', order) },
+        { provide: AdminApprovalHandler, useValue: stub('adminCallbacks', order) },
         { provide: StartHandler, useValue: stub('start', order) },
         { provide: MenuCommandsHandler, useValue: stub('menu', order) },
         {
@@ -93,6 +97,31 @@ describe('PriceChangerComposer: порядок регистрации', () => {
     const { composer } = await buildComposer();
     const order = composer.registrationOrder;
     expect(new Set(order).size).toBe(order.length);
-    expect(order).toEqual(['start', 'menu', 'slash', 'callbacks', 'apiSettings', 'fallback']);
+    expect(order).toEqual([
+      'accessGate',
+      'start',
+      'menu',
+      'slash',
+      'adminCallbacks',
+      'callbacks',
+      'apiSettings',
+      'fallback',
+    ]);
+  });
+
+  it('гейт доступа зарегистрирован ПЕРВЫМ', async () => {
+    // bot.use, поставленный после хендлеров, ничего не защищает: до него
+    // апдейт просто не дойдёт — конкретный обработчик заберёт его раньше.
+    const { composer } = await buildComposer();
+    expect(composer.registrationOrder[0]).toBe('accessGate');
+  });
+
+  it('админские колбэки идут ДО общего обработчика callback_query', async () => {
+    // Общий обработчик разбирает callback_data точным switch и на неизвестной
+    // строке перезаписывает сообщение «Неизвестной командой» — карточка заявки
+    // была бы затёрта вместо одобрения.
+    const { composer } = await buildComposer();
+    const order = composer.registrationOrder;
+    expect(order.indexOf('adminCallbacks')).toBeLessThan(order.indexOf('callbacks'));
   });
 });

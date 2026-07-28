@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { MENU } from '../menu.constants';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
-import { TelegramUserService } from '../../shared/services/telegram-user.service';
+import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { SharedCommandsHandler } from './shared-commands.handler';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
@@ -11,7 +11,7 @@ import { esc, htmlOptions } from '../../../formatting/telegram-format';
 export class SlashCommandsHandler {
   constructor(
     private keyboard: PriceChangerKeyboard,
-    private userService: TelegramUserService,
+    private accessService: UserAccessService,
     private yandexMarketService: YandexMarketService,
     private sharedHandlers: SharedCommandsHandler,
   ) {}
@@ -41,39 +41,37 @@ export class SlashCommandsHandler {
 
     // /profile - профиль
     bot.command('profile', async (ctx) => {
-      const user = await this.userService.handleUser(ctx.from, ctx.botInfo.id);
-      const subscription = await this.userService.checkUserSubscription(
-        ctx.from,
-        ctx.botInfo.id,
+      const access = await this.accessService.findByUserAndBot(
+        ctx.from.id.toString(),
+        ctx.botInfo.id.toString(),
+      );
+      const settings = await this.yandexMarketService.findByTelegramUser(
+        ctx.from.id.toString(),
+      );
+      const configured = !!(
+        settings?.campaign_id &&
+        settings?.business_id &&
+        settings?.token
       );
 
+      // Блок «Статистика» убран вместе с подпиской: «Обновлений цен: 156» было
+      // зашитым числом, одинаковым для всех пользователей.
       const profileMessage = `👤 <b>Ваш профиль</b>
 
 👨‍💼 <b>Пользователь:</b> ${esc(ctx.from.first_name)} ${esc(ctx.from.last_name || '')}
 🆔 <b>ID:</b> <code>${ctx.from.id}</code>
 📧 <b>Username:</b> @${esc(ctx.from.username || 'не указан')}
 
-💳 <b>Подписка:</b> ${
-        subscription.hasActiveSubscription ? '✅ Активна' : '❌ Неактивна'
-      }
-${
-  subscription.subscription
-    ? `📅 <b>До:</b> ${new Date(subscription.subscription.expires_at).toLocaleDateString('ru-RU')}`
-    : ''
-}
-
-    📊 <b>Статистика:</b>
-    • <b>Регистрация:</b> ${new Date(user.created_at).toLocaleDateString('ru-RU')}
-    • <b>Последняя активность:</b> сегодня
-    • <b>Обновлений цен:</b> 156`;
+✅ <b>Доступ:</b> ${this.accessLabel(access?.status)}
+⚙️ <b>Настройки API:</b> ${configured ? '✅ Заполнены' : '❌ Не заполнены'}${
+        access?.createdAt
+          ? `\n📅 <b>Регистрация:</b> ${new Date(access.createdAt).toLocaleDateString('ru-RU')}`
+          : ''
+      }`;
 
       const keyboard = await this.keyboard.createInlineButtons([
-        {
-          text: '💳 Управление подпиской',
-          callback_data: 'manage_subscription',
-        },
-        { text: '🔧 Настройки профиля', callback_data: 'profile_settings' },
-        { text: '📊 Подробная статистика', callback_data: 'detailed_stats' },
+        { text: MENU.SETTINGS, callback_data: 'settings_api' },
+        { text: MENU.MAIN, callback_data: 'main_menu' },
       ]);
 
       await ctx.reply(profileMessage, htmlOptions(keyboard));
@@ -109,6 +107,19 @@ ${
 
       await ctx.reply(helpMessage, htmlOptions(keyboard));
     });
+  }
+
+  private accessLabel(status: string | undefined): string {
+    switch (status) {
+      case 'approved':
+        return '✅ Выдан';
+      case 'pending':
+        return '⏳ Заявка на рассмотрении';
+      case 'rejected':
+        return '⛔ Отклонена';
+      default:
+        return '❌ Заявка не подана';
+    }
   }
 
   /**

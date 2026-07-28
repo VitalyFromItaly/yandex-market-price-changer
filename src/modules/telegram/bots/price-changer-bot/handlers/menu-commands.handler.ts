@@ -5,14 +5,12 @@ import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
-import { TelegramUserService } from '../../shared/services/telegram-user.service';
 import { SharedCommandsHandler } from './shared-commands.handler';
 
 @Injectable()
 export class MenuCommandsHandler {
   constructor(
     private keyboard: PriceChangerKeyboard,
-    private userService: TelegramUserService,
     private yandexMarketService: YandexMarketService,
     private sharedCommandsHandler: SharedCommandsHandler,
   ) {}
@@ -50,13 +48,22 @@ export class MenuCommandsHandler {
   }
 
   private async showProfile(ctx: Context) {
-    const subscription = await this.userService.checkUserSubscription(ctx.from, ctx.botInfo.id);
+    // Имя и фамилия — произвольный текст от пользователя: один символ `<`
+    // в имени ломал разметку всего сообщения и давал 400 от Telegram.
+    const settings = await this.yandexMarketService.findByTelegramUser(
+      ctx.from.id.toString(),
+    );
+    const configured = !!(
+      settings?.campaign_id &&
+      settings?.business_id &&
+      settings?.token
+    );
 
     const message = `📊 Мой профиль
 
-👤 <b>Пользователь</b>: ${ctx.from.first_name} ${ctx.from.last_name || ''}
+👤 <b>Пользователь</b>: ${esc(ctx.from.first_name)} ${esc(ctx.from.last_name || '')}
 🆔 <b>ID</b>: ${ctx.from.id}
-📅 <b>Подписка</b>: ${subscription ? '✅ Активна' : '❌ Неактивна'}`;
+⚙️ <b>Настройки API</b>: ${configured ? '✅ Заполнены' : '❌ Не заполнены'}`;
 
     await ctx.reply(message, htmlOptions());
   }

@@ -12,7 +12,9 @@ import { QUEUE_NAMES } from './index';
 import { BotRegistry } from './bots/bot-registry.service';
 import { PriceChangerComposer } from './bots/price-changer-bot/price-changer.composer';
 import { PriceChangerKeyboard } from './bots/price-changer-bot/price-changer.keyboard';
-import { TelegramUserService } from './bots/shared/services/telegram-user.service';
+import { AdminNotifierService } from './bots/shared/services/admin-notifier.service';
+import { AccessGateHandler } from './bots/price-changer-bot/handlers/access-gate.handler';
+import { AdminApprovalHandler } from './bots/price-changer-bot/handlers/admin-approval.handler';
 import { StartHandler } from './bots/price-changer-bot/handlers/start.handler';
 import { MenuCommandsHandler } from './bots/price-changer-bot/handlers/menu-commands.handler';
 import { SlashCommandsHandler } from './bots/price-changer-bot/handlers/slash-commands.handler';
@@ -70,7 +72,9 @@ import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.hand
     BotRegistry,
     PriceChangerComposer,
     PriceChangerKeyboard,
-    TelegramUserService,
+    AdminNotifierService,
+    AccessGateHandler,
+    AdminApprovalHandler,
     StartHandler,
     MenuCommandsHandler,
     SlashCommandsHandler,

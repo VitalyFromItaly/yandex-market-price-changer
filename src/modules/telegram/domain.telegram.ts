@@ -48,7 +48,6 @@ export interface ITelegramKeyboard extends ITelegramCustomKeyboard {
   createMainMenu?(): Promise<TTelegramKeyboard>;
   createConfirmationMenu?(): Promise<TTelegramKeyboard>;
   createBackMenu?(): Promise<TTelegramKeyboard>;
-  createSubscriptionPlansMenu?(): Promise<TTelegramKeyboard>;
 }
 
 export interface ITelegramCustomKeyboard {
