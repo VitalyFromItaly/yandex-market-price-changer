@@ -95,6 +95,11 @@ export class PriceChanger {
     this.business_id = business_id;
 
     this.httpClient = new HttpClient({
+      // ЕДИНСТВЕННОЕ оставшееся прямое чтение process.env в репозитории.
+      // Оставлено намеренно: класс помечен @deprecated и не вызывается из
+      // живого кода, а протаскивание сюда AppConfigService потянуло бы правки
+      // в цепочку тоже deprecated-процессоров. Новый read-only клиент
+      // (TASK-019) получает базовый URL через AppConfigService.
       baseURL: process.env.YANDEX_MARKET_BASE_URL,
       headers: {
         'Api-Key': `${token}`,

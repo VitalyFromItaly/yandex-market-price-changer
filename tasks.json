@@ -26,8 +26,8 @@
       "M7": "Тесты — юниты на денежную арифметику и маппинг статусов, e2e онбординга",
       "M8": "Обновление остатков через загрузку файла — единственная write-операция, возвращаемая после перехода в read-only"
     },
-    "active_tasks": 29,
-    "archived_tasks": 6,
+    "active_tasks": 28,
+    "archived_tasks": 7,
     "archive_file": "tasks.archive.json"
   },
   "agent_instructions": {
@@ -207,29 +207,6 @@
       ],
       "dependencies": [
         "TASK-003"
-      ],
-      "status": "pending"
-    },
-    {
-      "id": "TASK-010",
-      "milestone": "M2",
-      "category": "infrastructure",
-      "priority": "critical",
-      "description": "Ввести @nestjs/config с валидацией через Joi: сейчас process.env читается напрямую и в момент вычисления декораторов модулей, из-за чего BullModule.forRoot в app.module.ts работает только благодаря случайному порядку импортов (dotenv подгружается в database.module.ts раньше). Отсутствие переменной обнаруживается не при старте, а в рантайме",
-      "acceptance_criteria": [
-        "Установлен @nestjs/config, ConfigModule подключён глобально",
-        "Написана Joi-схема валидации всех переменных (joi уже в зависимостях), приложение падает на старте с внятным сообщением при отсутствии обязательной переменной",
-        "MongooseModule.forRootAsync и BullModule.forRootAsync получают значения через ConfigService, а не из process.env в декораторе",
-        "Разрозненные import 'dotenv/config' убраны, загрузка .env централизована",
-        "В коде приложения не осталось прямых обращений к process.env"
-      ],
-      "test_steps": [
-        "Шаг 1: убрать MONGODB_URL из .env и запустить — приложение падает на старте с понятной ошибкой валидации, а не с невнятной ошибкой подключения",
-        "Шаг 2: вернуть переменную — приложение стартует, подключается к Mongo и Redis",
-        "Шаг 3: grep process.env по src — обращений в коде приложения нет"
-      ],
-      "dependencies": [
-        "TASK-002"
       ],
       "status": "pending"
     },

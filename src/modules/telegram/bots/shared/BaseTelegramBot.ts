@@ -12,6 +12,7 @@ import { Telegraf } from 'telegraf';
 import { TelegramUserService } from './services/telegram-user.service';
 import { SubscriptionService } from '../../../../database/services';
 import { YandexMarketService } from '../../../../database/services';
+import { AppConfigService } from '../../../../config/app-config.service';
 
 @DecorateMethodsWith(TryCatch())
 export default class BaseTelegramBot implements ITelegramBot {
@@ -19,18 +20,21 @@ export default class BaseTelegramBot implements ITelegramBot {
   protected botInfo: IBotSchema & { _id: string };
   protected userService: TelegramUserService;
   protected keyboard: ITelegramKeyboard;
+  protected config: AppConfigService;
 
   constructor(
     bot: TTelegrafBot,
     botInfo: IBotSchema & { _id: string },
     keyboard: ITelegramKeyboard,
     subscriptionService: SubscriptionService,
-    yandexMarketService: YandexMarketService
+    yandexMarketService: YandexMarketService,
+    config: AppConfigService,
   ) {
     this.bot = bot;
     this.botInfo = botInfo;
     this.userService = new TelegramUserService(bot, subscriptionService, yandexMarketService);
     this.keyboard = keyboard;
+    this.config = config;
   }
 
   protected get instanceName(): string {
@@ -83,7 +87,7 @@ export default class BaseTelegramBot implements ITelegramBot {
 
     const payload: Telegraf.LaunchOptions = {
       webhook: {
-        domain: process.env.TELEGRAM_PROXY_URL,
+        domain: this.config.telegramProxyUrl,
         hookPath: `/api/telegram/webhooks/${this.type}/${this.id}`
       }
     };

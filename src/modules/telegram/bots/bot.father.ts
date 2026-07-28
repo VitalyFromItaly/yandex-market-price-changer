@@ -6,6 +6,7 @@ import { Bot, BotDocument, IBotSchema } from '../../../database/schemas/bot.sche
 import { SubscriptionService } from '../../../database/services/subscription.service';
 import { YandexMarketService } from '../../../database/services/yandex-market.service';
 import { FileProcessingService } from '../queue/services/file-processing.service';
+import { AppConfigService } from '../../../config/app-config.service';
 
 export default class BotFather {
   public bots: Map<string, Map<string, ITelegramBot>>; // Map<type, Map<id, ITelegramBot>>
@@ -15,6 +16,10 @@ export default class BotFather {
     private subscriptionService: SubscriptionService,
     private yandexMarketService: YandexMarketService,
     private fileProcessingService: FileProcessingService,
+    // Конфиг прокидывается сверху: здесь Nest DI ещё не работает — класс
+    // создаётся вручную через new. Прямое чтение process.env убрано, чтобы
+    // значение проходило Joi-валидацию на старте (TASK-010).
+    private config: AppConfigService,
   ) {
     this.bots = new Map<string, Map<string, ITelegramBot>>();
   }
@@ -24,7 +29,7 @@ export default class BotFather {
     if (!bots.length) {
       const bot = await this.botModel.create({
         type: EBotType.PRICE_CHANGER_BOT,
-        token: process.env.TELEGRAM_TOKEN,
+        token: this.config.telegramToken,
         name: 'Artem bot for changing prices in yandex market',
         description: 'this is a bot for changing prices',
       });
@@ -58,7 +63,8 @@ export default class BotFather {
         botInfo,
         this.subscriptionService,
         this.yandexMarketService,
-        this.fileProcessingService
+        this.fileProcessingService,
+        this.config,
       );
 
       botsByType.set(bot.id, botInstance);

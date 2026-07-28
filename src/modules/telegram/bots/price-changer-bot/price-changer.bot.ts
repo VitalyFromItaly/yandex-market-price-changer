@@ -11,6 +11,7 @@ import { SubscriptionService } from '../../../../database/services/subscription.
 import { YandexMarketService } from '../../../../database/services/yandex-market.service';
 import { ITelegramBot } from '../../domain.telegram';
 import { FileProcessingService } from '../../queue/services/file-processing.service';
+import { AppConfigService } from '../../../../config/app-config.service';
 
 export default class PriceChangerBot extends BaseTelegramBot {
   private menuCommandsHandler: MenuCommandsHandler;
@@ -25,10 +26,11 @@ export default class PriceChangerBot extends BaseTelegramBot {
     subscriptionService: SubscriptionService,
     yandexMarketService: YandexMarketService,
     fileProcessingService: FileProcessingService,
+    config: AppConfigService,
     // Больше не нужен fileDataProcessorService
   ) {
     const keyboard = new PriceChangerKeyboard();
-    super(bot, botInfo, keyboard, subscriptionService, yandexMarketService);
+    super(bot, botInfo, keyboard, subscriptionService, yandexMarketService, config);
 
     // Инициализируем handlers с сервисами
     this.menuCommandsHandler = new MenuCommandsHandler(this.bot, this.keyboard, this.userService, yandexMarketService);

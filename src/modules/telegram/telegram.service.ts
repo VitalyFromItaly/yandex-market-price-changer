@@ -14,6 +14,7 @@ import BotFather from './bots/bot.father';
 import { EBotType } from './domain.telegram';
 import { FileUploadService } from './services/file-upload.service';
 import { FileProcessingService } from './queue/services/file-processing.service';
+import { AppConfigService } from '../../config/app-config.service';
 
 @Injectable()
 export class TelegramService implements OnModuleInit {
@@ -24,12 +25,14 @@ export class TelegramService implements OnModuleInit {
     private subscriptionService: SubscriptionService,
     private yandexMarketService: YandexMarketService,
     private fileProcessingService: FileProcessingService,
+    private appConfig: AppConfigService,
   ) {
     this.botFather = new BotFather(
       this.botModel,
       this.subscriptionService,
       this.yandexMarketService,
       this.fileProcessingService,
+      this.appConfig,
     );
   }
 
