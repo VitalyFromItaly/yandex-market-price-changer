@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AppConfigService } from '../../config/app-config.service';
 import type { YandexMarketDocument } from '../../database/schemas/yandex-market.schema';
-import { IYandexTenantCredentials, YandexApiClient } from './yandex-api.client';
+import {
+  IYandexTenantCredentials,
+  YandexApiClient,
+  type IYandexClientOptions,
+} from './yandex-api.client';
 
 /**
  * Фабрика клиентов Partner API.
@@ -22,9 +26,12 @@ export class YandexClientFactory {
 
   constructor(private readonly config: AppConfigService) {}
 
-  public forTenant(credentials: IYandexTenantCredentials): YandexApiClient {
+  public forTenant(
+    credentials: IYandexTenantCredentials,
+    options?: IYandexClientOptions,
+  ): YandexApiClient {
     this.assertComplete(credentials);
-    return new YandexApiClient(credentials, this.config.yandexMarketBaseUrl);
+    return new YandexApiClient(credentials, this.config.yandexMarketBaseUrl, options);
   }
 
   /**
@@ -32,12 +39,18 @@ export class YandexClientFactory {
    * `campaign_id`/`business_id` перекладывались в camelCase ровно один раз, а
    * не в каждом вызывающем месте.
    */
-  public forStore(store: YandexMarketDocument): YandexApiClient {
-    return this.forTenant({
-      token: store?.token,
-      campaignId: store?.campaign_id,
-      businessId: store?.business_id,
-    });
+  public forStore(
+    store: YandexMarketDocument,
+    options?: IYandexClientOptions,
+  ): YandexApiClient {
+    return this.forTenant(
+      {
+        token: store?.token,
+        campaignId: store?.campaign_id,
+        businessId: store?.business_id,
+      },
+      options,
+    );
   }
 
   /**

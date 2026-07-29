@@ -2,6 +2,18 @@ import { Logger } from '@nestjs/common';
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { toYandexApiError, YandexApiError } from './yandex-api.errors';
 import { campaignsPath, ordersPath, PAGE_LIMITS, returnsPath } from './yandex-api.paths';
+import {
+  assertWithinHistoryWindow,
+  toDateParam,
+  type IDateRange,
+} from './yandex-date-window';
+import {
+  DEFAULT_RETRY,
+  realSleep,
+  withRetry,
+  type IRetryOptions,
+  type TSleep,
+} from './yandex-retry';
 
 /** Креды КОНКРЕТНОГО продавца. Общих кредов у сервиса нет. */
 export interface IYandexTenantCredentials {
@@ -27,6 +39,20 @@ export interface IPagedResult<T> {
   nextPageToken?: string;
 }
 
+/** Настройки клиента, которые нужно уметь подменять в тестах. */
+export interface IYandexClientOptions {
+  timeoutMs?: number;
+  retry?: IRetryOptions;
+  sleep?: TSleep;
+  /**
+   * Предохранитель от бесконечной пагинации: битый nextPageToken, который
+   * указывает сам на себя, иначе крутил бы запросы, пока не кончится квота.
+   */
+  maxPages?: number;
+}
+
+export const DEFAULT_MAX_PAGES = 200;
+
 /**
  * Клиент Partner API одного продавца.
  *
@@ -41,14 +67,22 @@ export class YandexApiClient {
   private readonly logger = new Logger(YandexApiClient.name);
   private readonly http: AxiosInstance;
 
+  private readonly retry: IRetryOptions;
+  private readonly sleep: TSleep;
+  private readonly maxPages: number;
+
   constructor(
     private readonly credentials: IYandexTenantCredentials,
     baseUrl: string,
-    timeoutMs = 30_000,
+    options: IYandexClientOptions = {},
   ) {
+    this.retry = options.retry ?? DEFAULT_RETRY;
+    this.sleep = options.sleep ?? realSleep;
+    this.maxPages = options.maxPages ?? DEFAULT_MAX_PAGES;
+
     this.http = axios.create({
       baseURL: baseUrl,
-      timeout: timeoutMs,
+      timeout: options.timeoutMs ?? 30_000,
       headers: {
         // Именно Api-Key. Authorization: Bearer, который ставил прежний
         // HttpClient и генерированный OpenAPI-клиент, Partner API не понимает.
@@ -73,9 +107,9 @@ export class YandexApiClient {
   }
 
   /**
-   * Одна страница заказов. Постраничный обход, ретраи на 420 и разбиение
-   * диапазона по 30-дневному окну — отдельная задача (TASK-020); здесь
-   * pageToken просто пробрасывается, чтобы обход можно было построить сверху.
+   * ОДНА страница заказов. Для полного обхода есть iterateOrders — этот метод
+   * оставлен публичным, потому что отчётам за сегодня одной страницы хватает,
+   * а лишний запрос жжёт часовую квоту.
    */
   public async getOrders(query: IOrdersQuery = {}): Promise<IPagedResult<unknown>> {
     const limit = Math.min(query.limit ?? PAGE_LIMITS.orders.default, PAGE_LIMITS.orders.max);
@@ -111,6 +145,80 @@ export class YandexApiClient {
     return { items: data.returns ?? [], nextPageToken: data.paging?.nextPageToken };
   }
 
+  /**
+   * Постраничный обход заказов.
+   *
+   * Генератор, а не массив: продавец с тысячами заказов — это десятки страниц,
+   * и держать их все в памяти незачем, потребителю нужна агрегация. Вызывающий
+   * код решает сам, копить ли результат.
+   */
+  public async *iterateOrders(
+    query: IOrdersQuery = {},
+  ): AsyncGenerator<unknown[], void, void> {
+    let pageToken = query.pageToken;
+    let pages = 0;
+
+    do {
+      const page = await this.getOrders({ ...query, pageToken });
+      pages += 1;
+      if (page.items.length) yield page.items;
+
+      pageToken = page.nextPageToken;
+
+      if (pageToken && pages >= this.maxPages) {
+        // Молча оборвать обход — значит отдать неполный отчёт, выдав его за
+        // полный. Про обрыв должно быть видно.
+        this.logger.error(
+          `Обход заказов прерван на ${pages} страницах (кампания ${this.credentials.campaignId}): ` +
+            'достигнут предел страниц, отчёт неполный',
+        );
+        return;
+      }
+    } while (pageToken);
+  }
+
+  /** Постраничный обход возвратов. */
+  public async *iterateReturns(
+    query: { pageToken?: string; limit?: number } = {},
+  ): AsyncGenerator<unknown[], void, void> {
+    let pageToken = query.pageToken;
+    let pages = 0;
+
+    do {
+      const page = await this.getReturns({ ...query, pageToken });
+      pages += 1;
+      if (page.items.length) yield page.items;
+
+      pageToken = page.nextPageToken;
+
+      if (pageToken && pages >= this.maxPages) {
+        this.logger.error(
+          `Обход возвратов прерван на ${pages} страницах (кампания ${this.credentials.campaignId}): ` +
+            'достигнут предел страниц, отчёт неполный',
+        );
+        return;
+      }
+    } while (pageToken);
+  }
+
+  /**
+   * Заказы за период. Диапазон проверяется ДО отправки — не тратим квоту на
+   * запрос, который Яндекс всё равно отклонит или отдаст пустым.
+   */
+  public async *iterateOrdersInRange(
+    range: IDateRange,
+    query: Omit<IOrdersQuery, 'fromDate' | 'toDate'> = {},
+    now: Date = new Date(),
+  ): AsyncGenerator<unknown[], void, void> {
+    assertWithinHistoryWindow(range, now);
+
+    yield* this.iterateOrders({
+      ...query,
+      fromDate: toDateParam(range.from),
+      toDate: toDateParam(range.to),
+    });
+  }
+
   /** Список кампаний токена — самая дешёвая проверка, что кред живой. */
   public async getCampaigns(): Promise<unknown[]> {
     const data = await this.get<{ campaigns?: unknown[] }>(campaignsPath(), {});
@@ -120,8 +228,19 @@ export class YandexApiClient {
   private async get<T>(path: string, params: Record<string, unknown>): Promise<T> {
     // Логируем путь и кампанию, но НИКОГДА заголовки: там токен продавца.
     this.logger.debug(`GET ${path} (кампания ${this.credentials.campaignId})`);
-    const response = await this.http.get<T>(path, { params: prune(params) });
-    return response.data;
+
+    return await withRetry(
+      async () => {
+        const response = await this.http.get<T>(path, { params: prune(params) });
+        return response.data;
+      },
+      this.retry,
+      this.sleep,
+      (error, attempt, delayMs) =>
+        this.logger.warn(
+          `Partner API ${error.status} на ${path}: повтор ${attempt}/${this.retry.attempts - 1} через ${delayMs} мс`,
+        ),
+    );
   }
 
   private toDomainError(error: AxiosError): YandexApiError {

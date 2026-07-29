@@ -177,10 +177,13 @@ describe('YandexApiClient: формирование запроса', () => {
     vi.restoreAllMocks();
   });
 
+  // sleep подменён: клиент повторяет 420/5xx/сеть с паузами (TASK-020), и без
+  // подмены эти тесты ждали бы настоящие секунды.
   const client = () =>
     new YandexApiClient(
       { token: 'ACMA:secret', campaignId: '12345', businessId: '67890' },
       BASE_URL,
+      { sleep: async () => undefined },
     );
 
   it('авторизуется заголовком Api-Key, а не Authorization: Bearer', async () => {
