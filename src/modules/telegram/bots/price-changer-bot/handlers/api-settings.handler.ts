@@ -266,12 +266,13 @@ export class ApiSettingsHandler {
         firstName: ctx.from.first_name,
         lastName: ctx.from.last_name,
       });
+      // Отдаём именно REPLY-клавиатуру, а не inline: до этого момента у
+      // пользователя была сокращённая раскладка без отчётов, и её нужно
+      // заменить прямо сейчас. Inline-кнопки живут в сообщении и меню под
+      // полем ввода не меняют — пришлось бы жать «Главное меню» отдельно.
       return {
-        message: '🎉 <b>Все настройки API заполнены!</b>',
-        keyboard: await this.keyboard.createInlineButtons([
-          { text: '👀 Проверить настройки', callback_data: 'check_settings' },
-          { text: MENU.MAIN, callback_data: 'main_menu' },
-        ]),
+        message: '🎉 <b>Все настройки API заполнены!</b>\n\nОтчёты появились в меню ниже.',
+        keyboard: await this.keyboard.createMenuKeyboard(),
       };
     }
 

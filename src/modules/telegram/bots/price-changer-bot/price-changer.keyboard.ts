@@ -3,10 +3,15 @@ import { Markup } from 'telegraf';
 
 import { TelegramKeyboard } from '../../ui/keyboard.ui.telegram';
 
-import { menuLayout } from './menu.constants';
+import { menuLayout, unconfiguredMenuLayout } from './menu.constants';
 
 @Injectable()
 export class PriceChangerKeyboard extends TelegramKeyboard {
+  /** Сокращённое меню: только настройки и помощь, пока креды не заполнены. */
+  public async createUnconfiguredKeyboard(): Promise<Markup.Markup<any>> {
+    return await this.createKeyboard(unconfiguredMenuLayout());
+  }
+
   public async createMenuKeyboard(): Promise<Markup.Markup<any>> {
     // Подписи берутся из menu.constants — единственного источника (TASK-014).
     return await this.createKeyboard(menuLayout());

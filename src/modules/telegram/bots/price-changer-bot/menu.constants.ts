@@ -48,7 +48,24 @@ export const MENU_LAYOUT: readonly (readonly TMenuLabel[])[] = [
   [MENU.HELP, MENU.PROFILE],
 ];
 
+/**
+ * Раскладка для того, кто ещё не заполнил креды.
+ *
+ * Показывать кнопки отчётов до настройки — значит вести пользователя в тупик:
+ * нажатие упирается в «Сначала заполните настройки API». Интерфейс не должен
+ * предлагать то, что заведомо не сработает.
+ */
+export const MENU_LAYOUT_UNCONFIGURED: readonly (readonly TMenuLabel[])[] = [
+  [MENU.SETTINGS],
+  [MENU.HELP],
+];
+
 /** Раскладка в виде обычного массива — телеграф ждёт мутабельный тип. */
 export function menuLayout(): string[][] {
   return MENU_LAYOUT.map((row) => [...row]);
+}
+
+/** Сокращённая раскладка — пока креды не заполнены. */
+export function unconfiguredMenuLayout(): string[][] {
+  return MENU_LAYOUT_UNCONFIGURED.map((row) => [...row]);
 }

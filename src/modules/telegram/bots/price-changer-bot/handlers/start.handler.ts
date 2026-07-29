@@ -3,6 +3,7 @@ import { Context } from 'telegraf';
 
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { hoursUntilRetry, isRejectionExpired } from '../../shared/access.domain';
@@ -26,6 +27,7 @@ export class StartHandler {
     private readonly keyboard: PriceChangerKeyboard,
     private readonly accessService: UserAccessService,
     private readonly config: AppConfigService,
+    private readonly yandexMarketService: YandexMarketService,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -90,18 +92,38 @@ export class StartHandler {
     });
   }
 
+  /**
+   * Приветствие одобренного пользователя.
+   *
+   * Клавиатура зависит от готовности кредов. Показывать кнопки отчётов при
+   * пустых настройках — значит вести в тупик: нажатие упирается в «Сначала
+   * заполните настройки API». Раньше меню было одно на все случаи, и
+   * администратор, минующий проверку доступа, видел все восемь кнопок сразу
+   * после /start при пустом токене.
+   *
+   * Текст держим КОРОТКИМ: разворачиваясь, клавиатура на четыре ряда
+   * закрывает собой длинное сообщение, и пользователь его просто не видит.
+   * Подробности живут в /help, где клавиатуры нет.
+   */
   private async replyApproved(ctx: Context) {
-    const welcomeMessage = [
-      '🎉 Добро пожаловать!',
-      '',
-      'Бот показывает отчёты по заказам Яндекс.Маркета и работает только на чтение —',
-      'он ничего не меняет в вашем магазине.',
-      '',
-      'Выберите действие из меню ниже:',
-    ].join('\n');
+    const configured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
+
+    if (!configured) {
+      const kb = await this.keyboard.createUnconfiguredKeyboard();
+      await ctx.reply(
+        [
+          '👋 Осталось подключить магазин.',
+          '',
+          'Нажмите «⚙️ Настройки API» и введите три значения из личного кабинета',
+          'Яндекс.Маркета. После этого появятся отчёты.',
+        ].join('\n'),
+        htmlOptions(kb),
+      );
+      return;
+    }
 
     const kb = await this.keyboard.createMenuKeyboard();
-    await ctx.reply(welcomeMessage, htmlOptions(kb));
+    await ctx.reply('🎉 С возвращением! Выберите отчёт:', htmlOptions(kb));
   }
 
   /**
