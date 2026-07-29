@@ -4,7 +4,7 @@
     "prd_source": "аудит ветки nest.js + требования заказчика от 2026-07-28 (в т.ч. замена системы подписок на approval-гейт администратора)",
     "prd_version": "1.2",
     "generated_at": "2026-07-28",
-    "total_tasks": 48,
+    "total_tasks": 49,
     "categories": [
       "infrastructure",
       "functional",
@@ -27,7 +27,7 @@
       "M8": "Обновление остатков через загрузку файла — единственная write-операция, возвращаемая после перехода в read-only"
     },
     "active_tasks": 0,
-    "archived_tasks": 48,
+    "archived_tasks": 49,
     "archive_file": "tasks.archive.json"
   },
   "agent_instructions": {
@@ -144,7 +144,7 @@
       "report_g_format": "Файл .xlsx документом в чат",
       "amounts_shown": "Оба числа: itemsTotal (товары) и itemsTotal + deliveryTotal (с доставкой)",
       "keep_as_is": "Сгенерированный OpenAPI-клиент src/modules/yandex/api/** и CqrsModule оставляем — удалять не решено",
-      "token_scope": "РЕШЕНО 2026-07-29: один токен с правом записи. В инструкции онбординга просить скоуп inventory-and-order-processing (БЕЗ :read-only) — иначе обновление остатков (TASK-035) вернёт 403. Прежняя рекомендация read-only отменена. Уже выданные read-only токены придётся перевыпустить.",
+      "token_scope": "ПРИМЕНЕНО 2026-07-29: инструкция онбординга требует доступ «Обработка заказов и учёт товаров» (inventory-and-order-processing, БЕЗ :read-only) — с read-only обновление остатков вернёт 403.",
       "task_035_scope": "Задачу не дробим — делаем целиком, когда придёт шаблон Excel (решение заказчика 2026-07-29)."
     },
     "price_template": {

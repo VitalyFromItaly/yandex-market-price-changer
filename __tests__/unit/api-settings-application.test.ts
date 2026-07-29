@@ -88,6 +88,8 @@ describe('ApiSettingsHandler: подача заявки', () => {
       on: (event: string, fn: never) => {
         if (event === 'text') onText = fn;
       },
+      // register вешает ещё и action — подсказку «Как получить?» по шагу.
+      action: () => undefined,
     } as never);
 
     const ctx = {

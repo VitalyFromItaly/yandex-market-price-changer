@@ -37,6 +37,22 @@ export const ONBOARDING_CALLBACKS: readonly string[] = [
 ];
 
 /**
+ * Префиксы onboarding-колбэков, у которых в данных есть «хвост».
+ *
+ * Справка по шагу приходит как `onboarding_help:token` — сверять такие
+ * точным равенством нельзя, иначе гейт не пропустит их на этапе регистрации,
+ * то есть подсказка не откроется ровно тому, кому она нужна.
+ */
+export const ONBOARDING_CALLBACK_PREFIXES: readonly string[] = ['onboarding_help:'];
+
+function isOnboardingCallback(data: string): boolean {
+  return (
+    ONBOARDING_CALLBACKS.includes(data) ||
+    ONBOARDING_CALLBACK_PREFIXES.some((prefix) => data.startsWith(prefix))
+  );
+}
+
+/**
  * Таблица допуска. Свежий пользователь может вводить креды — это и есть
  * регистрация; всё остальное закрыто до решения администратора.
  */
@@ -88,7 +104,7 @@ export function classifyUpdate(input: {
   hasDocument?: boolean;
 }): TUpdateKind {
   if (input.callbackData !== undefined) {
-    return ONBOARDING_CALLBACKS.includes(input.callbackData) ? 'onboardingCallback' : 'callback';
+    return isOnboardingCallback(input.callbackData) ? 'onboardingCallback' : 'callback';
   }
   const text = input.text;
   if (text === undefined) return 'other';

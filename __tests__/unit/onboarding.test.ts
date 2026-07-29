@@ -6,6 +6,7 @@ import {
   parseLabelledValue,
   stepNumber,
   stepPrompt,
+  stepHelp,
   stepTitle,
   validateStep,
 } from '../../src/modules/telegram/bots/price-changer-bot/onboarding';
@@ -43,14 +44,28 @@ describe('Порядок шагов', () => {
 });
 
 describe('Подсказки', () => {
-  it('в инструкции к токену указан ТОЛЬКО read-only скоуп', () => {
-    // Боту не нужны права на запись: он ничего не меняет в магазине, а токен
-    // с записью в чужих руках — это чужой прайс-лист.
-    const prompt = stepPrompt('token');
-    expect(prompt).toContain('read-only');
-    expect(prompt).toContain('только на чтение');
-    // Скоупа с записью в инструкции быть не должно.
-    expect(prompt).not.toMatch(/inventory-and-order-processing(?!:read-only)/);
+  it('инструкция требует доступ С ПРАВОМ ЗАПИСИ, а не read-only', () => {
+    // Тест раньше закреплял ОБРАТНОЕ — read-only, с доводом «бот ничего не
+    // меняет». Довод перестал быть верным: обновление остатков (TASK-035) —
+    // это PUT, и с read-only токеном он вернёт 403, а продавцу придётся
+    // выпускать токен заново, уже пройдя онбординг.
+    const help = stepHelp('token');
+    expect(help).toContain('Обработка заказов и учёт товаров');
+    // И предупреждение, чтобы не выбрали доступ только на чтение.
+    expect(help).toContain('Просмотр информации о заказах');
+    expect(help).toContain('не сможет обновлять');
+  });
+
+  it('на каждый шаг есть развёрнутая инструкция', () => {
+    for (const step of ['token', 'campaign_id', 'business_id'] as const) {
+      expect(stepHelp(step).length).toBeGreaterThan(100);
+    }
+  });
+
+  it('инструкция по Campaign ID предупреждает не путать с id магазина', () => {
+    // Документация Яндекса выделяет это отдельным предупреждением: с
+    // идентификатором магазина запросы к API работать не будут.
+    expect(stepHelp('campaign_id')).toContain('идентификатором магазина');
   });
 
   it('каждый шаг спрашивает ровно одно значение', () => {

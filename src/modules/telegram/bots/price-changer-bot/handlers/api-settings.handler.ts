@@ -14,6 +14,7 @@ import { MENU, MENU_LABELS } from '../menu.constants';
 import {
   ONBOARDING_TOTAL,
   nextStep,
+  stepHelp,
   parseLabelledValue,
   stepNumber,
   stepPrompt,
@@ -24,6 +25,9 @@ import {
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
 import { ScheduleHandler } from './schedule.handler';
+
+/** Префикс callback_data подсказки. Дальше идёт название шага. */
+export const HELP_PREFIX = 'onboarding_help:';
 
 /** Что ответить пользователю. */
 interface IReply {
@@ -53,6 +57,19 @@ export class ApiSettingsHandler {
   ) {}
 
   public register(bot: TTelegrafBot) {
+    // Подсказка по текущему шагу. Регистрируется здесь же, где живёт визард:
+    // разносить вопрос и справку к нему по разным обработчикам значит
+    // разложить один диалог на два места.
+    bot.action(new RegExp(`^${HELP_PREFIX}`), async (ctx) => {
+      const data = (ctx.callbackQuery as { data?: string } | undefined)?.data ?? '';
+      const step = data.slice(HELP_PREFIX.length) as TDraftField;
+
+      await ctx.answerCbQuery();
+      // Состояние визарда НЕ трогаем: справка не продвигает и не сбрасывает
+      // шаг, бот по-прежнему ждёт значение того же поля.
+      await ctx.reply(stepHelp(step), htmlOptions());
+    });
+
     bot.on('text', async (ctx) => {
       try {
         const text = ctx.message.text.trim();
@@ -146,7 +163,7 @@ export class ApiSettingsHandler {
       // Переспрашиваем ТОТ ЖЕ шаг — с объяснением, что не так.
       return {
         message: `❌ ${esc(validation.error)}\n\n${stepPrompt(field)}`,
-        keyboard: await this.restartKeyboard(),
+        keyboard: await this.restartKeyboard(field),
       };
     }
 
@@ -160,7 +177,7 @@ export class ApiSettingsHandler {
 
     return {
       message: `${this.acceptedLabel(field, value)}\n\n${stepPrompt(following)}`,
-      keyboard: await this.restartKeyboard(),
+      keyboard: await this.restartKeyboard(following),
     };
   }
 
@@ -169,14 +186,25 @@ export class ApiSettingsHandler {
     const step = nextStep(draft) ?? 'token';
     return {
       message: stepPrompt(step),
-      keyboard: await this.restartKeyboard(),
+      keyboard: await this.restartKeyboard(step),
     };
   }
 
-  private async restartKeyboard() {
-    return await this.keyboard.createInlineButtons([
-      { text: '🔄 Начать заново', callback_data: 'onboarding_restart' },
-    ]);
+  /**
+   * Клавиатура под вопросом визарда.
+   *
+   * «Как получить?» ведёт себя как справка, а не как шаг: показывает
+   * инструкцию и НЕ трогает состояние — бот по-прежнему ждёт значение того же
+   * поля. Кнопка привязана к конкретному шагу, поэтому подсказка приходит
+   * ровно про то, что спрашивают сейчас.
+   */
+  private async restartKeyboard(step?: TDraftField) {
+    const buttons = [];
+    if (step) {
+      buttons.push({ text: '❓ Как получить?', callback_data: `${HELP_PREFIX}${step}` });
+    }
+    buttons.push({ text: '🔄 Начать заново', callback_data: 'onboarding_restart' });
+    return await this.keyboard.createInlineButtons(buttons);
   }
 
   /** Уже одобренный пользователь правит одну настройку. */
