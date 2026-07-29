@@ -1,6 +1,8 @@
-import { TelegramKeyboard } from '../../ui/keyboard.ui.telegram';
-import { Markup } from 'telegraf';
 import { Injectable } from '@nestjs/common';
+import { Markup } from 'telegraf';
+
+import { TelegramKeyboard } from '../../ui/keyboard.ui.telegram';
+
 import { menuLayout } from './menu.constants';
 
 @Injectable()

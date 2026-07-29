@@ -107,8 +107,9 @@ export function splitMessage(text: string, limit = TELEGRAM_MESSAGE_LIMIT): stri
         chunks.push(current);
         current = '';
       }
-      for (let i = 0; i < line.length; i += limit) {
-        chunks.push(line.slice(i, i + limit));
+      // offset, а не i: имя i занято экспортируемым хелпером курсива.
+      for (let offset = 0; offset < line.length; offset += limit) {
+        chunks.push(line.slice(offset, offset + limit));
       }
       continue;
     }

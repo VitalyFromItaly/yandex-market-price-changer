@@ -1,7 +1,6 @@
-import * as XLSX from 'xlsx';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as iconv from 'iconv-lite';
+import * as XLSX from 'xlsx';
 
 /**
  * Интерфейс для конфигурации парсера
@@ -80,7 +79,7 @@ export class XlsxParser {
         codepage: 65001, // UTF-8 кодировка для русских символов
         cellText: false,
         cellDates: true,
-        raw: false // Преобразовывать числа и строки корректно
+        raw: false, // Преобразовывать числа и строки корректно
       });
       this.filePath = filePath;
       return this;
@@ -94,12 +93,12 @@ export class XlsxParser {
    */
   public loadBuffer(buffer: Buffer, fileName: string = 'buffer.xlsx'): this {
     try {
-      this.workbook = XLSX.read(buffer, { 
+      this.workbook = XLSX.read(buffer, {
         type: 'buffer',
         codepage: 65001,
         cellText: false,
         cellDates: true,
-        raw: false
+        raw: false,
       });
       this.filePath = fileName;
       return this;
@@ -136,7 +135,6 @@ export class XlsxParser {
       customHeaders = [],
       skipEmptyRows = true,
       dateNF,
-      includeSheetInfo = true
     } = options;
 
     // Выбираем лист
@@ -144,7 +142,9 @@ export class XlsxParser {
     const worksheet = this.workbook.Sheets[targetSheetName];
 
     if (!worksheet) {
-      throw new Error(`Sheet "${targetSheetName}" not found. Available sheets: ${this.workbook.SheetNames.join(', ')}`);
+      throw new Error(
+        `Sheet "${targetSheetName}" not found. Available sheets: ${this.workbook.SheetNames.join(', ')}`,
+      );
     }
 
     // Получаем информацию о диапазоне
@@ -155,18 +155,20 @@ export class XlsxParser {
     // Создаем новый диапазон с учетом параметров
     const newRange = {
       s: { r: startRow, c: startCol },
-      e: { r: actualEndRow, c: actualEndCol }
+      e: { r: actualEndRow, c: actualEndCol },
     };
 
     // Парсим данные
     const jsonData = XLSX.utils.sheet_to_json(worksheet, {
       range: newRange,
-      header: header ? 1 : customHeaders.length > 0 ? customHeaders : 1,
+      // Вложенный тернарник развёрнут: «1 или заголовки, но если header —
+      // то всегда 1» читается только через строчку кода.
+      header: resolveHeader(header, customHeaders),
       defval: null,
       blankrows: !skipEmptyRows,
       dateNF: dateNF,
       raw: false,
-      rawNumbers: false
+      rawNumbers: false,
     });
 
     // Получаем заголовки
@@ -178,13 +180,15 @@ export class XlsxParser {
     } else {
       // Генерируем заголовки как A, B, C...
       headers = Array.from({ length: actualEndCol - startCol + 1 }, (_, i) =>
-        String.fromCharCode(65 + i)
+        String.fromCharCode(65 + i),
       );
     }
 
     // Фильтруем пустые строки если нужно
     const filteredData = skipEmptyRows
-      ? jsonData.filter(row => Object.values(row as object).some(value => value !== null && value !== ''))
+      ? jsonData.filter((row) =>
+          Object.values(row as object).some((value) => value !== null && value !== ''),
+        )
       : jsonData;
 
     // Получаем информацию о файле
@@ -196,15 +200,15 @@ export class XlsxParser {
         name: targetSheetName,
         range: XLSX.utils.encode_range(newRange),
         rowCount: actualEndRow - startRow + 1,
-        colCount: actualEndCol - startCol + 1
+        colCount: actualEndCol - startCol + 1,
       },
       headers,
       fileInfo: {
         fileName: path.basename(this.filePath),
         fileSize: fileStats?.size || 0,
         sheets: this.workbook.SheetNames,
-        parsedAt: new Date()
-      }
+        parsedAt: new Date(),
+      },
     };
 
     return result;
@@ -213,7 +217,9 @@ export class XlsxParser {
   /**
    * Парсит все листы файла
    */
-  public parseAllSheets<T = any>(options: Omit<XlsxParseOptions, 'sheetName'> = {}): Record<string, ParseResult<T>> {
+  public parseAllSheets<T = any>(
+    options: Omit<XlsxParseOptions, 'sheetName'> = {},
+  ): Record<string, ParseResult<T>> {
     if (!this.workbook) {
       throw new Error('No workbook loaded. Call loadFile() first.');
     }
@@ -265,9 +271,7 @@ export class XlsxParser {
    */
   public saveToJson(result: ParseResult, outputPath: string, pretty: boolean = true): void {
     try {
-      const jsonString = pretty
-        ? JSON.stringify(result, null, 2)
-        : JSON.stringify(result);
+      const jsonString = pretty ? JSON.stringify(result, null, 2) : JSON.stringify(result);
 
       fs.writeFileSync(outputPath, jsonString, 'utf-8');
     } catch (error) {
@@ -292,32 +296,34 @@ export class XlsxParser {
       return {
         totalRows: 0,
         nonEmptyRows: 0,
-        columns: []
+        columns: [],
       };
     }
 
     const columns = Object.keys(data[0] as object);
-    const columnStats = columns.map(colName => {
-      const values = data.map(row => (row as any)[colName]).filter(val => val !== null && val !== '');
+    const columnStats = columns.map((colName) => {
+      const values = data
+        .map((row) => (row as any)[colName])
+        .filter((val) => val !== null && val !== '');
       const uniqueValues = [...new Set(values)];
-      const dataTypes = [...new Set(values.map(val => typeof val))];
+      const dataTypes = [...new Set(values.map((val) => typeof val))];
 
       return {
         name: colName,
         nonEmptyCount: values.length,
         uniqueCount: uniqueValues.length,
-        dataTypes
+        dataTypes,
       };
     });
 
-    const nonEmptyRows = data.filter(row =>
-      Object.values(row as object).some(val => val !== null && val !== '')
+    const nonEmptyRows = data.filter((row) =>
+      Object.values(row as object).some((val) => val !== null && val !== ''),
     ).length;
 
     return {
       totalRows: data.length,
       nonEmptyRows,
-      columns: columnStats
+      columns: columnStats,
     };
   }
 
@@ -334,9 +340,13 @@ export class XlsxParser {
   public static fromBuffer(buffer: Buffer, fileName?: string): XlsxParser {
     return new XlsxParser().loadBuffer(buffer, fileName);
   }
-
-
 }
 
 // Экспорт для удобного использования
 export const xlsxParser = new XlsxParser();
+
+/** Как трактовать первую строку листа: как заголовок или как данные. */
+function resolveHeader(header: unknown, customHeaders: string[]): 1 | string[] {
+  if (header) return 1;
+  return customHeaders.length > 0 ? customHeaders : 1;
+}

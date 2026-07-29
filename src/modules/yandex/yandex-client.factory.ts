@@ -1,6 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { AppConfigService } from '../../config/app-config.service';
 import type { YandexMarketDocument } from '../../database/schemas/yandex-market.schema';
+
+import { Injectable, Logger } from '@nestjs/common';
+
+import { AppConfigService } from '../../config/app-config.service';
+
 import {
   IYandexTenantCredentials,
   YandexApiClient,
@@ -39,10 +42,7 @@ export class YandexClientFactory {
    * `campaign_id`/`business_id` перекладывались в camelCase ровно один раз, а
    * не в каждом вызывающем месте.
    */
-  public forStore(
-    store: YandexMarketDocument,
-    options?: IYandexClientOptions,
-  ): YandexApiClient {
+  public forStore(store: YandexMarketDocument, options?: IYandexClientOptions): YandexApiClient {
     return this.forTenant(
       {
         token: store?.token,
@@ -63,9 +63,7 @@ export class YandexClientFactory {
       (field) => !credentials?.[field],
     );
     if (missing.length) {
-      throw new Error(
-        `Нельзя создать клиент Яндекс.Маркета: не заполнено ${missing.join(', ')}`,
-      );
+      throw new Error(`Нельзя создать клиент Яндекс.Маркета: не заполнено ${missing.join(', ')}`);
     }
   }
 }

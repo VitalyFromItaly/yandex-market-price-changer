@@ -1,16 +1,17 @@
 import { Process, Processor } from '@nestjs/bull';
-import { Job } from 'bull';
 import { Injectable } from '@nestjs/common';
-import { 
-  FetchYandexDataJobData, 
-  UpdateYandexOffersJobData,
-  FileProcessingService 
-} from '../services/file-processing.service';
+import { Job } from 'bull';
+
+import { YandexMarketService } from '../../../../database/services';
+import { PriceChanger } from '../../../yandex/handlers/price.changer.handler';
+import { QUEUE_NAMES, JOB_TYPES } from '../../index';
 import { FileDataProcessorService } from '../../services/file-data-processor.service';
 import { FileUploadService } from '../../services/file-upload.service';
-import { PriceChanger } from '../../../yandex/handlers/price.changer.handler';
-import { YandexMarketService } from '../../../../database/services';
-import { QUEUE_NAMES, JOB_TYPES } from '../../index';
+import {
+  FetchYandexDataJobData,
+  UpdateYandexOffersJobData,
+  FileProcessingService,
+} from '../services/file-processing.service';
 
 /**
  * @deprecated UPDATE_YANDEX_OFFERS — запись цен в Маркет, отключена.
@@ -36,7 +37,7 @@ export class YandexApiProcessor {
   @Process({ name: JOB_TYPES.FETCH_YANDEX_DATA, concurrency: 3 })
   async handleFetchYandexData(job: Job<FetchYandexDataJobData>) {
     const { userId, chatId, parsingResult, botToken, sessionId } = job.data;
-    
+
     try {
       await job.progress(10);
       await this.fileProcessingService.addProgressNotification({
@@ -99,8 +100,8 @@ export class YandexApiProcessor {
 
   @Process({ name: JOB_TYPES.UPDATE_YANDEX_OFFERS, concurrency: 3 })
   async handleUpdateYandexOffers(job: Job<UpdateYandexOffersJobData>) {
-    const { userId, chatId, processingResult, botToken, sessionId } = job.data;
-    
+    const { chatId, processingResult, botToken, sessionId } = job.data;
+
     try {
       await job.progress(10);
       await this.fileProcessingService.addProgressNotification({
@@ -154,4 +155,4 @@ export class YandexApiProcessor {
       throw error;
     }
   }
-} 
+}

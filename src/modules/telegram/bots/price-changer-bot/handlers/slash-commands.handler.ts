@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { MENU } from '../menu.constants';
-import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+
 import { UserAccessService } from '../../../../../database/services/user-access.service';
-import { PriceChangerKeyboard } from '../price-changer.keyboard';
-import { SharedCommandsHandler } from './shared-commands.handler';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
+import { MENU } from '../menu.constants';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
+
+import { SharedCommandsHandler } from './shared-commands.handler';
 
 @Injectable()
 export class SlashCommandsHandler {
@@ -45,14 +47,8 @@ export class SlashCommandsHandler {
         ctx.from.id.toString(),
         ctx.botInfo.id.toString(),
       );
-      const settings = await this.yandexMarketService.findByTelegramUser(
-        ctx.from.id.toString(),
-      );
-      const configured = !!(
-        settings?.campaign_id &&
-        settings?.business_id &&
-        settings?.token
-      );
+      const settings = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+      const configured = !!(settings?.campaign_id && settings?.business_id && settings?.token);
 
       // Блок «Статистика» убран вместе с подпиской: «Обновлений цен: 156» было
       // зашитым числом, одинаковым для всех пользователей.

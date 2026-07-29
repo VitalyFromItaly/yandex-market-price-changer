@@ -30,13 +30,9 @@ export const DEFAULT_RETRY: IRetryOptions = {
 
 export type TSleep = (ms: number) => Promise<void>;
 
-export const realSleep: TSleep = (ms) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+export const realSleep: TSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export function backoffDelay(
-  attempt: number,
-  options: IRetryOptions = DEFAULT_RETRY,
-): number {
+export function backoffDelay(attempt: number, options: IRetryOptions = DEFAULT_RETRY): number {
   const delay = options.baseDelayMs * 2 ** (attempt - 1);
   return Math.min(delay, options.maxDelayMs);
 }

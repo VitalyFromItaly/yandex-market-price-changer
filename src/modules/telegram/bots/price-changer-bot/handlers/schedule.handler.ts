@@ -1,18 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
-import { TTelegrafBot } from '../../../domain.telegram';
-import { esc, htmlOptions } from '../../../formatting/telegram-format';
-import { PriceChangerKeyboard } from '../price-changer.keyboard';
-import { UserAccessService } from '../../../../../database/services/user-access.service';
+
 import { ReportScheduleService } from '../../../../../database/services/report-schedule.service';
-import { ReportSchedulerService } from '../../../queue/services/report-scheduler.service';
+import { UserAccessService } from '../../../../../database/services/user-access.service';
 import {
   REPORT,
   reportDefinition,
   type TReportKey,
 } from '../../../../../modules/yandex/reports/report-status-map';
 import { DEFAULT_SCHEDULE_TIME } from '../../../../../modules/yandex/reports/schedule-time';
+import { TTelegrafBot } from '../../../domain.telegram';
+import { esc, htmlOptions } from '../../../formatting/telegram-format';
+import { ReportSchedulerService } from '../../../queue/services/report-scheduler.service';
 import { MENU } from '../menu.constants';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
 /**
  * callback_data раздела рассылки. Формирование и разбор рядом — чтобы формат не
@@ -20,10 +21,7 @@ import { MENU } from '../menu.constants';
  */
 export const SCHEDULE_CB_PATTERN = /^sch:(menu|on|off|time):([a-z_]*)$/;
 
-export function scheduleCallback(
-  action: 'menu' | 'on' | 'off' | 'time',
-  reportKey = '',
-): string {
+export function scheduleCallback(action: 'menu' | 'on' | 'off' | 'time', reportKey = ''): string {
   return `sch:${action}:${reportKey}`;
 }
 

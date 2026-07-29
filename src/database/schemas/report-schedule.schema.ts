@@ -44,10 +44,7 @@ export class ReportSchedule {
 export const ReportScheduleSchema = SchemaFactory.createForClass(ReportSchedule);
 
 // Одна настройка на отчёт: дубли отсекает база, а не проверка в коде.
-ReportScheduleSchema.index(
-  { telegramUserId: 1, botId: 1, reportKey: 1 },
-  { unique: true },
-);
+ReportScheduleSchema.index({ telegramUserId: 1, botId: 1, reportKey: 1 }, { unique: true });
 
 // Под сверку расписаний при старте (TASK-031).
 ReportScheduleSchema.index({ enabled: 1 });

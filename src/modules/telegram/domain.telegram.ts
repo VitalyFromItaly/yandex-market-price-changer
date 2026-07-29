@@ -1,8 +1,7 @@
-import { Context, Markup, Telegraf } from 'telegraf';
-import { Update } from 'telegraf/types';
-import http from 'http';
-import { SceneContextScene, WizardContextWizard, WizardSessionData } from 'telegraf/scenes';
-import { KeyboardBuilder } from './bots/shared/KeyboardBuilder';
+import type http from 'http';
+import type { Context, Markup, Telegraf } from 'telegraf';
+import type { SceneContextScene, WizardContextWizard, WizardSessionData } from 'telegraf/scenes';
+import type { Update } from 'telegraf/types';
 
 export type THandleUpdatePayload = Update;
 export type TWebHookResponse = http.ServerResponse;
@@ -40,8 +39,12 @@ export type TTelegramKeyboard = Markup.Markup<any>;
 
 export interface ITelegramKeyboard extends ITelegramCustomKeyboard {
   createInlineButton(text: string, callback_data: string): Promise<TTelegramKeyboard>;
-  createInlineButtons(buttons: { text: string; callback_data: string }[]): Promise<TTelegramKeyboard>;
-  createInlineKeyboardMatrix(buttons: { text: string; callback_data: string }[][]): Promise<TTelegramKeyboard>;
+  createInlineButtons(
+    buttons: { text: string; callback_data: string }[],
+  ): Promise<TTelegramKeyboard>;
+  createInlineKeyboardMatrix(
+    buttons: { text: string; callback_data: string }[][],
+  ): Promise<TTelegramKeyboard>;
   createKeyboard(keyboard: string[] | string[][]): Promise<TTelegramKeyboard>;
 
   // Новые методы для меню
@@ -62,8 +65,12 @@ export type TFindBotPayload = {
 };
 
 export type TTelegrafBot = Telegraf<Context<any>>;
-// @ts-ignore
-export type TSceneWizardContext = Context<Update> & { scene: SceneContextScene<any, WizardSessionData>;   wizard: WizardContextWizard<any>; };
+// Директива @ts-ignore, стоявшая здесь, ничего не подавляла: tsc сообщает,
+// что подавлять нечего. Убрана как мёртвая.
+export type TSceneWizardContext = Context<Update> & {
+  scene: SceneContextScene<any, WizardSessionData>;
+  wizard: WizardContextWizard<any>;
+};
 
 export interface IMessageSorter<Item = any> {
   sort: (items: Item[]) => Item[];

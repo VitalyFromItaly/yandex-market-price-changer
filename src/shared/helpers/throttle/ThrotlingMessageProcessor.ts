@@ -1,5 +1,6 @@
+import type { IMessageSorter } from '../../../modules/telegram/domain.telegram';
+
 import { MAX_MESSAGE_LENGTH } from '../../../modules/telegram/bots/shared/constants';
-import { IMessageSorter } from '../../../modules/telegram/domain.telegram';
 
 export default class ThrottlingMessageProcessor {
   private bufferMap: Map<number, string[]>; // ключ - user_id, значение - буфер сообщений
@@ -8,7 +9,7 @@ export default class ThrottlingMessageProcessor {
   constructor(
     private throttleTime: number = 1000,
     private handleAction: (id: number, message: string) => Promise<void>,
-    private messageSorter?: IMessageSorter
+    private messageSorter?: IMessageSorter,
   ) {
     this.bufferMap = new Map();
     this.isProcessing = false;
@@ -70,7 +71,6 @@ export default class ThrottlingMessageProcessor {
         }
       }
     });
-
 
     // Ждем установленное время перед следующей отправкой
     setTimeout(() => {

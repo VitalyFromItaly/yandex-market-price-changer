@@ -1,17 +1,16 @@
-import { Context } from 'telegraf';
 import { Injectable, Logger } from '@nestjs/common';
-import { MENU, MENU_LABELS } from '../menu.constants';
-import { TTelegrafBot } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { Context } from 'telegraf';
+
+import { AppConfigService } from '../../../../../config/app-config.service';
 import {
   UserAccessService,
   type TDraftField,
 } from '../../../../../database/services/user-access.service';
-import { AppConfigService } from '../../../../../config/app-config.service';
-import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
-import { PriceChangerKeyboard } from '../price-changer.keyboard';
-import { ScheduleHandler } from './schedule.handler';
+import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
+import { MENU, MENU_LABELS } from '../menu.constants';
 import {
   ONBOARDING_TOTAL,
   nextStep,
@@ -22,6 +21,9 @@ import {
   validateStep,
   type TOnboardingDraft,
 } from '../onboarding';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
+
+import { ScheduleHandler } from './schedule.handler';
 
 /** Что ответить пользователю. */
 interface IReply {
@@ -148,12 +150,7 @@ export class ApiSettingsHandler {
       };
     }
 
-    const updated = await this.accessService.saveDraftField(
-      telegramUserId,
-      botId,
-      field,
-      value,
-    );
+    const updated = await this.accessService.saveDraftField(telegramUserId, botId, field, value);
     const newDraft = updated?.draft ?? {};
     const following = nextStep(newDraft);
 
@@ -233,10 +230,7 @@ export class ApiSettingsHandler {
    * срабатывала на каждое сообщение. Проверка живёт в базе, поэтому переживает
    * рестарт и параллельную обработку двух вебхуков.
    */
-  private async submitApplication(
-    ctx: Context,
-    draft: TOnboardingDraft,
-  ): Promise<IReply> {
+  private async submitApplication(ctx: Context, draft: TOnboardingDraft): Promise<IReply> {
     const telegramUserId = ctx.from.id.toString();
     const botId = ctx.botInfo.id.toString();
 
@@ -318,8 +312,7 @@ export class ApiSettingsHandler {
    * его не должно быть ни в логах, ни в переписке.
    */
   private acceptedLabel(field: TDraftField, value: string): string {
-    const shown =
-      field === 'token' ? `${esc(value.slice(0, 10))}…` : esc(value);
+    const shown = field === 'token' ? `${esc(value.slice(0, 10))}…` : esc(value);
     const step = stepNumber(field);
     return `✅ ${stepTitle(field)} принят (${step} из ${ONBOARDING_TOTAL}): <code>${shown}</code>`;
   }

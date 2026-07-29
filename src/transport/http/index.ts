@@ -1,10 +1,12 @@
-import axios, {
+import type {
   AxiosInstance,
   AxiosRequestConfig,
   AxiosResponse,
   AxiosError,
   InternalAxiosRequestConfig,
 } from 'axios';
+
+import axios from 'axios';
 
 /**
  * Конфигурация для HTTP клиента
@@ -39,33 +41,15 @@ export interface IHttpClient {
 
   removeAuthToken(): void;
 
-  get<T = any>(
-    url: string,
-    config?: AxiosRequestConfig,
-  ): Promise<HttpResponse<T>>;
+  get<T = any>(url: string, config?: AxiosRequestConfig): Promise<HttpResponse<T>>;
 
-  post<T = any>(
-    url: string,
-    data?: any,
-    config?: AxiosRequestConfig,
-  ): Promise<HttpResponse<T>>;
+  post<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<HttpResponse<T>>;
 
-  put<T = any>(
-    url: string,
-    data?: any,
-    config?: AxiosRequestConfig,
-  ): Promise<HttpResponse<T>>;
+  put<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<HttpResponse<T>>;
 
-  patch<T = any>(
-    url: string,
-    data?: any,
-    config?: AxiosRequestConfig,
-  ): Promise<HttpResponse<T>>;
+  patch<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<HttpResponse<T>>;
 
-  delete<T = any>(
-    url: string,
-    config?: AxiosRequestConfig,
-  ): Promise<HttpResponse<T>>;
+  delete<T = any>(url: string, config?: AxiosRequestConfig): Promise<HttpResponse<T>>;
 
   head(url: string, config?: AxiosRequestConfig): Promise<HttpResponse>;
 
@@ -109,11 +93,9 @@ export class HttpClient implements IHttpClient {
     this.axiosInstance.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
         // Логирование запросов
-        console.log(
-          `🚀 HTTP Request: ${config.method?.toUpperCase()} ${config.url}`,
-        );
+        console.log(`🚀 HTTP Request: ${config.method?.toUpperCase()} ${config.url}`);
 
-        console.log('Request Data',  config.data);
+        console.log('Request Data', config.data);
         return config;
       },
       (error: AxiosError) => {
@@ -125,9 +107,7 @@ export class HttpClient implements IHttpClient {
     // Интерцептор ответов
     this.axiosInstance.interceptors.response.use(
       (response: AxiosResponse) => {
-        console.log(
-          `✅ HTTP Response: ${response.status} ${response.config.url}`,
-        );
+        console.log(`✅ HTTP Response: ${response.status} ${response.config.url}`);
         return response;
       },
       async (error: AxiosError) => {
@@ -203,9 +183,7 @@ export class HttpClient implements IHttpClient {
       );
     } else if (error.request) {
       // Запрос был отправлен, но ответа не получено
-      return new Error(
-        `Network Error: No response received - ${error.message}`,
-      );
+      return new Error(`Network Error: No response received - ${error.message}`);
     } else {
       // Ошибка при настройке запроса
       return new Error(`Request Error: ${error.message}`);
@@ -229,12 +207,8 @@ export class HttpClient implements IHttpClient {
   /**
    * Установка токена авторизации
    */
-  public setAuthToken(
-    token: string,
-    type: 'Bearer' | 'Basic' = 'Bearer',
-  ): void {
-    this.axiosInstance.defaults.headers.common['Authorization'] =
-      `${type} ${token}`;
+  public setAuthToken(token: string, type: 'Bearer' | 'Basic' = 'Bearer'): void {
+    this.axiosInstance.defaults.headers.common['Authorization'] = `${type} ${token}`;
   }
 
   /**
@@ -247,10 +221,7 @@ export class HttpClient implements IHttpClient {
   /**
    * GET запрос
    */
-  public async get<T = any>(
-    url: string,
-    config?: AxiosRequestConfig,
-  ): Promise<HttpResponse<T>> {
+  public async get<T = any>(url: string, config?: AxiosRequestConfig): Promise<HttpResponse<T>> {
     const response = await this.axiosInstance.get<T>(url, config);
     return {
       data: response.data,
@@ -288,18 +259,18 @@ export class HttpClient implements IHttpClient {
   ): Promise<HttpResponse<T>> {
     // Подготавливаем конфигурацию
     const requestConfig = { ...config };
-    
+
     // Убеждаемся, что для JSON данных установлен правильный Content-Type
     if (data && typeof data === 'object' && !Buffer.isBuffer(data)) {
       if (!requestConfig.headers) {
         requestConfig.headers = {};
       }
-      
+
       if (!requestConfig.headers['Content-Type'] && !requestConfig.headers['content-type']) {
         requestConfig.headers['Content-Type'] = 'application/json';
       }
     }
-    
+
     const response = await this.axiosInstance.put<T>(url, data, requestConfig);
     return {
       data: response.data,
@@ -319,18 +290,18 @@ export class HttpClient implements IHttpClient {
   ): Promise<HttpResponse<T>> {
     // Подготавливаем конфигурацию
     const requestConfig = { ...config };
-    
+
     // Убеждаемся, что для JSON данных установлен правильный Content-Type
     if (data && typeof data === 'object' && !Buffer.isBuffer(data)) {
       if (!requestConfig.headers) {
         requestConfig.headers = {};
       }
-      
+
       if (!requestConfig.headers['Content-Type'] && !requestConfig.headers['content-type']) {
         requestConfig.headers['Content-Type'] = 'application/json';
       }
     }
-    
+
     const response = await this.axiosInstance.patch<T>(url, data, requestConfig);
     return {
       data: response.data,
@@ -343,10 +314,7 @@ export class HttpClient implements IHttpClient {
   /**
    * DELETE запрос
    */
-  public async delete<T = any>(
-    url: string,
-    config?: AxiosRequestConfig,
-  ): Promise<HttpResponse<T>> {
+  public async delete<T = any>(url: string, config?: AxiosRequestConfig): Promise<HttpResponse<T>> {
     const response = await this.axiosInstance.delete<T>(url, config);
     return {
       data: response.data,
@@ -359,10 +327,7 @@ export class HttpClient implements IHttpClient {
   /**
    * HEAD запрос
    */
-  public async head(
-    url: string,
-    config?: AxiosRequestConfig,
-  ): Promise<HttpResponse> {
+  public async head(url: string, config?: AxiosRequestConfig): Promise<HttpResponse> {
     const response = await this.axiosInstance.head(url, config);
     return {
       data: response.data,
@@ -375,10 +340,7 @@ export class HttpClient implements IHttpClient {
   /**
    * OPTIONS запрос
    */
-  public async options(
-    url: string,
-    config?: AxiosRequestConfig,
-  ): Promise<HttpResponse> {
+  public async options(url: string, config?: AxiosRequestConfig): Promise<HttpResponse> {
     const response = await this.axiosInstance.options(url, config);
     return {
       data: response.data,
@@ -410,7 +372,7 @@ export class HttpClient implements IHttpClient {
     console.log('Data content:', data);
     console.log('Config provided:', !!config);
     console.log('Config content:', config);
-    
+
     return this.post<T, P>(url, data, config);
   }
 
@@ -419,13 +381,13 @@ export class HttpClient implements IHttpClient {
    */
   public async testPost(): Promise<void> {
     console.log('🧪 Testing POST functionality...');
-    
+
     const testData = {
       test: true,
       message: 'Test POST request',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
-    
+
     try {
       // Тест с httpbin.org для проверки POST запроса
       const response = await this.post('https://httpbin.org/post', testData);

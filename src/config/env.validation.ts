@@ -17,9 +17,7 @@ import * as Joi from 'joi';
  * Теперь приложение падает на старте с указанием конкретной переменной.
  */
 export const envValidationSchema = Joi.object({
-  NODE_ENV: Joi.string()
-    .valid('development', 'production', 'test')
-    .default('development'),
+  NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
 
   PORT: Joi.number().port().default(3000),
 
@@ -37,8 +35,7 @@ export const envValidationSchema = Joi.object({
   // Без явного хоста Bull молча уходит на localhost:6379, что внутри
   // контейнера означает «сам в себя».
   REDIS_HOST: Joi.string().required().messages({
-    'any.required':
-      'REDIS_HOST обязателен: без него Bull молча подключится к localhost',
+    'any.required': 'REDIS_HOST обязателен: без него Bull молча подключится к localhost',
   }),
   REDIS_PORT: Joi.number().port().default(6379),
   // Пустая строка — валидное значение: redis в docker-compose поднят без auth.
@@ -69,9 +66,7 @@ export const envValidationSchema = Joi.object({
   // --- Yandex Market Partner API ---
   // Токен продавца здесь НЕ хранится: каждый пользователь вводит свой через
   // бота, и он лежит в БД, скоупленный по telegramUserId.
-  YANDEX_MARKET_BASE_URL: Joi.string()
-    .uri()
-    .default('https://api.partner.market.yandex.ru'),
+  YANDEX_MARKET_BASE_URL: Joi.string().uri().default('https://api.partner.market.yandex.ru'),
 })
   // Неизвестные переменные пропускаем: в окружении полно посторонних (PATH,
   // HOME и прочее), плюс в .env остались неиспользуемые ключи от прежних задач.

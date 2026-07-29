@@ -1,18 +1,19 @@
 import { Process, Processor } from '@nestjs/bull';
-import { Job } from 'bull';
 import { Injectable } from '@nestjs/common';
-import { 
-  FileProcessingJobData, 
-  ParseFileJobData, 
-  CompareDataJobData,
-  FileProcessingService 
-} from '../services/file-processing.service';
+import { Job } from 'bull';
+import { v4 as uuidv4 } from 'uuid';
+
+import { YandexMarketService } from '../../../../database/services';
+import { IProcessingResult } from '../../../types/yandex-market.types';
+import { QUEUE_NAMES, JOB_TYPES } from '../../index';
 import { FileDataProcessorService } from '../../services/file-data-processor.service';
 import { FileUploadService } from '../../services/file-upload.service';
-import { YandexMarketService } from '../../../../database/services';
-import { QUEUE_NAMES, JOB_TYPES } from '../../index';
-import { IProcessingResult } from '../../../types/yandex-market.types';
-import { v4 as uuidv4 } from 'uuid';
+import {
+  FileProcessingJobData,
+  ParseFileJobData,
+  CompareDataJobData,
+  FileProcessingService,
+} from '../services/file-processing.service';
 
 /**
  * @deprecated Все три обработчика этого процессора (PROCESS_FILE, PARSE_FILE,
@@ -37,10 +38,10 @@ export class FileProcessingProcessor {
   async handleFileProcessing(job: Job<FileProcessingJobData>) {
     const { userId, chatId, fileInfo, botToken } = job.data;
     const sessionId = uuidv4();
-    
+
     try {
       await job.progress(10);
-      
+
       // Проверяем настройки API
       const yandexMarketModel = await this.yandexMarketService.findByTelegramUser(userId);
       if (!yandexMarketModel || !(await this.yandexMarketService.isConfigured(userId))) {
@@ -82,7 +83,7 @@ export class FileProcessingProcessor {
   @Process({ name: JOB_TYPES.PARSE_FILE, concurrency: 3 })
   async handleParseFile(job: Job<ParseFileJobData>) {
     const { userId, chatId, fileInfo, botToken, sessionId } = job.data;
-    
+
     try {
       await job.progress(10);
       await this.fileProcessingService.addProgressNotification({
@@ -141,7 +142,7 @@ export class FileProcessingProcessor {
   @Process({ name: JOB_TYPES.COMPARE_DATA, concurrency: 3 })
   async handleCompareData(job: Job<CompareDataJobData>) {
     const { userId, chatId, parsingResult, yandexApiResult, botToken, sessionId } = job.data;
-    
+
     try {
       await job.progress(10);
       await this.fileProcessingService.addProgressNotification({

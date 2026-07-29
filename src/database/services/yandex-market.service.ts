@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+
 import { YandexMarket, YandexMarketDocument } from '../schemas/yandex-market.schema';
 
 export interface CreateYandexMarketDto {
@@ -25,7 +26,7 @@ export interface UpdateYandexMarketDto {
 export class YandexMarketService {
   constructor(
     @InjectModel(YandexMarket.name)
-    private readonly yandexMarketModel: Model<YandexMarketDocument>
+    private readonly yandexMarketModel: Model<YandexMarketDocument>,
   ) {}
 
   /**
@@ -74,16 +75,18 @@ export class YandexMarketService {
    */
   async updateByTelegramUser(
     telegramUserId: string,
-    data: UpdateYandexMarketDto
+    data: UpdateYandexMarketDto,
   ): Promise<YandexMarketDocument | null> {
-    return await this.yandexMarketModel.findOneAndUpdate(
-      { telegramUserId },
-      {
-        ...data,
-        updated_at: new Date(),
-      },
-      { new: true }
-    ).exec();
+    return await this.yandexMarketModel
+      .findOneAndUpdate(
+        { telegramUserId },
+        {
+          ...data,
+          updated_at: new Date(),
+        },
+        { new: true },
+      )
+      .exec();
   }
 
   /**
@@ -92,13 +95,16 @@ export class YandexMarketService {
   async upsertByTelegramUser(
     telegramUserId: string,
     telegramChatId: string,
-    data: UpdateYandexMarketDto
+    data: UpdateYandexMarketDto,
   ): Promise<YandexMarketDocument> {
     const existing = await this.findByTelegramUser(telegramUserId);
 
     if (existing) {
+      // Без non-null assertion: документ только что был найден, но между
+      // find и update его мог удалить параллельный запрос — тогда честнее
+      // вернуть найденный ранее, чем утверждать, что null не бывает.
       const updated = await this.updateByTelegramUser(telegramUserId, data);
-      return updated!;
+      return updated ?? existing;
     } else {
       return await this.create({
         ...data,
@@ -113,7 +119,7 @@ export class YandexMarketService {
    */
   async updatePriceCoefficient(
     telegramUserId: string,
-    coefficient: number
+    coefficient: number,
   ): Promise<YandexMarketDocument | null> {
     return await this.updateByTelegramUser(telegramUserId, {
       priceCoefficient: coefficient,

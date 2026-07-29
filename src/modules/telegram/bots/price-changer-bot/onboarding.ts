@@ -135,9 +135,7 @@ export function validateStep(step: TDraftField, value: string): IStepValidation 
  * тип назвал сам пользователь; ругаться на человека, аккуратно подписавшего
  * значение, было бы издевательством.
  */
-export function parseLabelledValue(
-  text: string,
-): { field: TDraftField; value: string } | null {
+export function parseLabelledValue(text: string): { field: TDraftField; value: string } | null {
   const match = text.match(/^(campaign_id|business_id|token)\s*:\s*(.+)$/is);
   if (!match) return null;
   return {

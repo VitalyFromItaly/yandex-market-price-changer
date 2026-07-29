@@ -1,14 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import {
-  ReportSchedule,
-  ReportScheduleDocument,
-} from '../schemas/report-schedule.schema';
+
 import {
   DEFAULT_SCHEDULE_TIME,
   parseScheduleTime,
 } from '../../modules/yandex/reports/schedule-time';
+import { ReportSchedule, ReportScheduleDocument } from '../schemas/report-schedule.schema';
 
 export interface IScheduleKey {
   telegramUserId: string;
@@ -32,10 +30,7 @@ export class ReportScheduleService {
   ) {}
 
   /** Все настройки пользователя. Отсутствующие означают «выключено». */
-  async listForUser(
-    telegramUserId: string,
-    botId: string,
-  ): Promise<ReportScheduleDocument[]> {
+  async listForUser(telegramUserId: string, botId: string): Promise<ReportScheduleDocument[]> {
     return await this.model.find({ telegramUserId, botId }).exec();
   }
 
@@ -71,10 +66,7 @@ export class ReportScheduleService {
   }
 
   /** Включить или выключить. Время по умолчанию — если его ещё не задавали. */
-  async setEnabled(
-    key: IScheduleKey,
-    enabled: boolean,
-  ): Promise<ReportScheduleDocument> {
+  async setEnabled(key: IScheduleKey, enabled: boolean): Promise<ReportScheduleDocument> {
     return await this.model
       .findOneAndUpdate(
         key,

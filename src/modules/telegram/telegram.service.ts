@@ -1,14 +1,11 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
-import { Response } from 'express';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { Response } from 'express';
 import { Model } from 'mongoose';
+
 import { Bot, BotDocument } from '../../database/schemas/bot.schema';
 import { YandexMarketService } from '../../database/services/yandex-market.service';
+
 import { BotRegistry } from './bots/bot-registry.service';
 
 /**

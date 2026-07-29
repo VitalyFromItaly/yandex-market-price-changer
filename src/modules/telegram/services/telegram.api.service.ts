@@ -11,11 +11,7 @@ import { TELEGRAM_PARSE_MODE, splitMessage } from '../formatting/telegram-format
  * теперь берётся из единого источника (telegram-format.ts).
  */
 export default class TelegramApiService {
-  public static async sendMessage(
-    botToken: string,
-    chatId: string,
-    text: string,
-  ): Promise<void> {
+  public static async sendMessage(botToken: string, chatId: string, text: string): Promise<void> {
     // Длинный отчёт не влезает в лимит Telegram (4096) и тоже даёт 400 —
     // режем на части и шлём по порядку.
     for (const chunk of splitMessage(text)) {

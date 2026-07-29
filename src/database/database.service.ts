@@ -17,4 +17,4 @@ export class DatabaseService implements OnModuleInit {
   async isConnected(): Promise<boolean> {
     return this.connection.readyState === 1;
   }
-} 
+}

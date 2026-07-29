@@ -1,12 +1,12 @@
+import type { YandexApiError } from './yandex-api.errors';
+import type { AxiosInstance, AxiosError } from 'axios';
+
 import { Logger } from '@nestjs/common';
-import axios, { AxiosInstance, AxiosError } from 'axios';
-import { toYandexApiError, YandexApiError } from './yandex-api.errors';
+import axios from 'axios';
+
+import { toYandexApiError } from './yandex-api.errors';
 import { campaignsPath, ordersPath, PAGE_LIMITS, returnsPath } from './yandex-api.paths';
-import {
-  assertWithinHistoryWindow,
-  toDateParam,
-  type IDateRange,
-} from './yandex-date-window';
+import { assertWithinHistoryWindow, toDateParam, type IDateRange } from './yandex-date-window';
 import {
   DEFAULT_RETRY,
   realSleep,
@@ -189,9 +189,7 @@ export class YandexApiClient {
    * и держать их все в памяти незачем, потребителю нужна агрегация. Вызывающий
    * код решает сам, копить ли результат.
    */
-  public async *iterateOrders(
-    query: IOrdersQuery = {},
-  ): AsyncGenerator<unknown[], void, void> {
+  public async *iterateOrders(query: IOrdersQuery = {}): AsyncGenerator<unknown[], void, void> {
     let pageToken = query.pageToken;
     let pages = 0;
 

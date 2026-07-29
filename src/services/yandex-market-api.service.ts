@@ -1,4 +1,6 @@
-import axios, { AxiosInstance, AxiosResponse } from 'axios';
+import type { AxiosInstance } from 'axios';
+
+import axios, { AxiosResponse } from 'axios';
 // import { IProductData } from './excel-parser.services';
 
 // Временная заглушка для IProductData
@@ -56,7 +58,7 @@ export class YandexMarketApiService {
     this.axiosInstance = axios.create({
       baseURL: 'https://api.partner.market.yandex.ru',
       headers: {
-        'Authorization': `Bearer ${config.token}`,
+        Authorization: `Bearer ${config.token}`,
         'Content-Type': 'application/json',
       },
       timeout: 30000, // 30 секунд
@@ -71,7 +73,7 @@ export class YandexMarketApiService {
       (error) => {
         console.error('❌ Yandex API Request Error:', error);
         return Promise.reject(error);
-      }
+      },
     );
 
     this.axiosInstance.interceptors.response.use(
@@ -80,9 +82,13 @@ export class YandexMarketApiService {
         return response;
       },
       (error) => {
-        console.error('❌ Yandex API Response Error:', error.response?.status, error.response?.data);
+        console.error(
+          '❌ Yandex API Response Error:',
+          error.response?.status,
+          error.response?.data,
+        );
         return Promise.reject(error);
-      }
+      },
     );
   }
 
@@ -92,7 +98,7 @@ export class YandexMarketApiService {
   async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
       const response = await this.axiosInstance.get(
-        `/v2/campaigns/${this.config.campaign_id}/settings`
+        `/v2/campaigns/${this.config.campaign_id}/settings`,
       );
 
       return { success: true };
@@ -127,7 +133,7 @@ export class YandexMarketApiService {
             limit,
             page_token: '',
           },
-        }
+        },
       );
 
       return response.data.result?.offers || [];
@@ -143,7 +149,7 @@ export class YandexMarketApiService {
   async updateSinglePrice(
     offerId: string,
     price: number,
-    currencyId: string = 'RUR'
+    currencyId: string = 'RUR',
   ): Promise<IPriceUpdateResponse> {
     try {
       const requestData = {
@@ -160,7 +166,7 @@ export class YandexMarketApiService {
 
       const response = await this.axiosInstance.post(
         `/v2/campaigns/${this.config.campaign_id}/offers/prices`,
-        requestData
+        requestData,
       );
 
       const result = response.data.result?.offers?.[0];
@@ -225,8 +231,8 @@ export class YandexMarketApiService {
    */
   private async processBatch(products: IProductData[]): Promise<IBatchPriceUpdateResult> {
     const offers = products
-      .filter(product => product.sku) // Только товары с SKU
-      .map(product => ({
+      .filter((product) => product.sku) // Только товары с SKU
+      .map((product) => ({
         offerId: product.sku!,
         price: {
           value: Math.round(product.price),
@@ -246,7 +252,7 @@ export class YandexMarketApiService {
     try {
       const response = await this.axiosInstance.post(
         `/v2/campaigns/${this.config.campaign_id}/offers/prices`,
-        { offers }
+        { offers },
       );
 
       const apiResults = response.data.result?.offers || [];
@@ -277,7 +283,9 @@ export class YandexMarketApiService {
         errors: [],
       };
     } catch (error) {
-      throw new Error(`Ошибка API: ${axios.isAxiosError(error) ? error.message : 'Неизвестная ошибка'}`);
+      throw new Error(
+        `Ошибка API: ${axios.isAxiosError(error) ? error.message : 'Неизвестная ошибка'}`,
+      );
     }
   }
 
@@ -287,7 +295,7 @@ export class YandexMarketApiService {
   async getOffer(offerId: string): Promise<IOfferInfo | null> {
     try {
       const response = await this.axiosInstance.get(
-        `/v2/campaigns/${this.config.campaign_id}/offers/${encodeURIComponent(offerId)}`
+        `/v2/campaigns/${this.config.campaign_id}/offers/${encodeURIComponent(offerId)}`,
       );
 
       return response.data.result?.offer || null;
@@ -395,7 +403,7 @@ export class YandexMarketApiService {
    * Задержка выполнения
    */
   private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -403,9 +411,7 @@ export class YandexMarketApiService {
    */
   async getCampaignInfo(): Promise<any> {
     try {
-      const response = await this.axiosInstance.get(
-        `/v2/campaigns/${this.config.campaign_id}`
-      );
+      const response = await this.axiosInstance.get(`/v2/campaigns/${this.config.campaign_id}`);
       return response.data.result;
     } catch (error) {
       throw new Error('Не удалось получить информацию о кампании');

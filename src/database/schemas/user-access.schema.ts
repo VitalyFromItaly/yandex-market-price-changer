@@ -13,12 +13,7 @@ export type UserAccessDocument = UserAccess & Document;
  */
 export type TAccessStatus = 'new' | 'pending' | 'approved' | 'rejected';
 
-export const ACCESS_STATUSES: TAccessStatus[] = [
-  'new',
-  'pending',
-  'approved',
-  'rejected',
-];
+export const ACCESS_STATUSES: TAccessStatus[] = ['new', 'pending', 'approved', 'rejected'];
 
 /** Куда именно ушла карточка заявки — чтобы отредактировать её после решения. */
 export interface IAdminCard {

@@ -1,6 +1,6 @@
+import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
-import axios from 'axios';
 
 export interface IFileInfo {
   filename: string;

@@ -76,17 +76,17 @@ export function buildOrdersWorkbook(orders: readonly IReportOrder[]): IWorkbookR
   }
 
   rows.push([]);
-  rows.push(['ИТОГО', '', '', `Заказов: ${exported.length}`, round(totalItems), round(totalWithDelivery)]);
+  rows.push([
+    'ИТОГО',
+    '',
+    '',
+    `Заказов: ${exported.length}`,
+    round(totalItems),
+    round(totalWithDelivery),
+  ]);
 
   const sheet = XLSX.utils.aoa_to_sheet(rows);
-  sheet['!cols'] = [
-    { wch: 14 },
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 50 },
-    { wch: 18 },
-    { wch: 20 },
-  ];
+  sheet['!cols'] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 50 }, { wch: 18 }, { wch: 20 }];
 
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, 'Заказы');

@@ -9,28 +9,28 @@ export type TCampaign = {
 export type TCampaignBusiness = {
   id: number;
   name: string;
-}
+};
 
 export type TPaging = {
   nextPageToken: string;
 };
 
 export type TBasicPrice = {
-  value: number,
-  currencyId: string,
-  updatedAt: string // '2025-05-02T11:12:24+03:00'
-}
+  value: number;
+  currencyId: string;
+  updatedAt: string; // '2025-05-02T11:12:24+03:00'
+};
 
 export type TWarning = {
   message: string;
   comment: string;
-}
+};
 
-export type TOffer  = {
-  offerId: string,
+export type TOffer = {
+  offerId: string;
   basicPrice: TBasicPrice;
-  status: TOfferStatus,
-  warnings: TWarning[]
+  status: TOfferStatus;
+  warnings: TWarning[];
 };
 
 export type TUpdateOfferPrice = {
@@ -65,7 +65,7 @@ export const VAT_DICTIONARY = {
   6: 6, // НДС не облагается, используется только для отдельных видов услуг.
   7: 7, // НДС 20%. Основной НДС с 2019 года.
   10: 10, // НДС 5%. НДС для упрощенной системы налогообложения (УСН).
-  11: 11 // НДС 7%. НДС для упрощенной системы налогообложения (УСН).
+  11: 11, // НДС 7%. НДС для упрощенной системы налогообложения (УСН).
 } as const;
 
 export type TVatValue = keyof typeof VAT_DICTIONARY;

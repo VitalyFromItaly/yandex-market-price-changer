@@ -1,5 +1,6 @@
 import { Controller, Post, Body, Param, Res } from '@nestjs/common';
 import { Response } from 'express';
+
 import { TelegramService } from './telegram.service';
 
 @Controller('telegram')
@@ -7,13 +8,16 @@ export class TelegramController {
   constructor(private readonly telegramService: TelegramService) {}
 
   @Post('bots/create')
-  async createBot(@Body() body: {
-    token: string;
-    type: string;
-    name: string;
-    status?: string;
-    description?: string;
-  }) {
+  async createBot(
+    @Body()
+    body: {
+      token: string;
+      type: string;
+      name: string;
+      status?: string;
+      description?: string;
+    },
+  ) {
     return this.telegramService.createBot(body);
   }
 

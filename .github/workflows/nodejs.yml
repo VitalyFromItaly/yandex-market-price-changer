@@ -1,6 +1,10 @@
 name: Node.js CI
 
-on: [push]
+# Не только push: без pull_request проверка не успевает сработать до слияния,
+# то есть приходит уже к тому, что исправлять поздно.
+on:
+  push:
+  pull_request:
 
 jobs:
   build:
@@ -10,7 +14,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: volta-cli/action@v4
       - run: npm ci --no-audit
-      - run: npm run lint --if-present
-      - run: npm run prettier:check --if-present
-      - run: npm test
-      - run: npm run build --if-present
+
+      # --if-present снят намеренно. Он молча пропускает шаг, если скрипта нет,
+      # — именно так CI и оставался зелёным при отсутствующем prettier:check и
+      # при 374 тестах, которые никто не запускал. Отсутствие проверки должно
+      # ломать сборку, а не выглядеть как пройденная проверка.
+      - name: Типы
+        run: npm run typecheck
+
+      - name: Линт
+        run: npm run lint
+
+      - name: Форматирование
+        run: npm run prettier:check
+
+      - name: Тесты
+        run: npm test
+
+      - name: Сборка
+        run: npm run build

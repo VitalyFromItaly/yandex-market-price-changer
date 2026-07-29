@@ -52,8 +52,7 @@ export const RETURN_SUBSTATUS = {
   FULL_NOT_RANSOM: 'FULL_NOT_RANSOM',
 } as const;
 
-export type TReturnSubstatus =
-  (typeof RETURN_SUBSTATUS)[keyof typeof RETURN_SUBSTATUS];
+export type TReturnSubstatus = (typeof RETURN_SUBSTATUS)[keyof typeof RETURN_SUBSTATUS];
 
 /** Статус отгрузки возврата — для GET v2/campaigns/{id}/returns. */
 export const RETURN_SHIPMENT_STATUS = {

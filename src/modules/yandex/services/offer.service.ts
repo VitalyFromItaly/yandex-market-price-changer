@@ -1,13 +1,7 @@
-import { log } from 'console';
+import type { IHttpClient } from '../../../transport/http';
+import type { TOffer, TPaging, TUpdateOffer, TUpdateStocksRequest } from '../yandex.domain';
+
 import * as fs from 'fs';
-import { IHttpClient } from '../../../transport/http';
-import {
-  OFFER_STATUSES,
-  TOffer,
-  TPaging,
-  TUpdateOffer,
-  TUpdateStocksRequest,
-} from '../yandex.domain';
 
 export type TOffersResponse = {
   status: string;
@@ -111,8 +105,8 @@ export class OfferService {
 
       do {
         const url = nextPageToken
-                  ? `/campaigns/${this.campaign_id}/offers?limit=${this.MAX_LIMIT}&page_token=${nextPageToken}`
-        : `/campaigns/${this.campaign_id}/offers?limit=${this.MAX_LIMIT}`;
+          ? `/campaigns/${this.campaign_id}/offers?limit=${this.MAX_LIMIT}&page_token=${nextPageToken}`
+          : `/campaigns/${this.campaign_id}/offers?limit=${this.MAX_LIMIT}`;
 
         console.log(`Loading offers page with URL: ${url}`);
 
@@ -126,7 +120,6 @@ export class OfferService {
         }
 
         nextPageToken = paging?.nextPageToken;
-
       } while (nextPageToken);
 
       console.log(`Loaded all offers. Total count: ${allOffers.length}`);
@@ -175,7 +168,7 @@ export class OfferService {
    */
   public async createOfferMappings(
     offerMappings: ICreateOfferMapping[],
-    onlyPartnerMediaContent: boolean = false
+    onlyPartnerMediaContent: boolean = false,
   ): Promise<ICreateOfferMappingsResponse> {
     try {
       if (!offerMappings || offerMappings.length === 0) {
@@ -188,34 +181,43 @@ export class OfferService {
 
       const requestBody: ICreateOfferMappingsRequest = {
         offerMappings,
-        onlyPartnerMediaContent
+        onlyPartnerMediaContent,
       };
 
-      console.log(`Creating ${offerMappings.length} offer mappings for business ${this.business_id}`);
-      console.log('Request body sample:', JSON.stringify({
-        ...requestBody,
-        offerMappings: requestBody.offerMappings.slice(0, 2) // Показываем только первые 2 для логирования
-      }, null, 2));
+      console.log(
+        `Creating ${offerMappings.length} offer mappings for business ${this.business_id}`,
+      );
+      console.log(
+        'Request body sample:',
+        JSON.stringify(
+          {
+            ...requestBody,
+            offerMappings: requestBody.offerMappings.slice(0, 2), // Показываем только первые 2 для логирования
+          },
+          null,
+          2,
+        ),
+      );
 
       const response = await this.httpClient.post<ICreateOfferMappingsResponse>(
         `businesses/${this.business_id}/offer-mappings/update`,
-        requestBody
+        requestBody,
       );
 
       console.log('Create offer mappings response status:', response.data.status);
 
       if (response.data.result?.offerMappings) {
         const successCount = response.data.result.offerMappings.filter(
-          offer => !offer.errors || offer.errors.length === 0
+          (offer) => !offer.errors || offer.errors.length === 0,
         ).length;
         const errorCount = response.data.result.offerMappings.filter(
-          offer => offer.errors && offer.errors.length > 0
+          (offer) => offer.errors && offer.errors.length > 0,
         ).length;
 
         console.log(`Offer mappings created - Success: ${successCount}, Errors: ${errorCount}`);
 
         // Логируем ошибки, если есть
-        response.data.result.offerMappings.forEach(offer => {
+        response.data.result.offerMappings.forEach((offer) => {
           if (offer.errors && offer.errors.length > 0) {
             console.error(`Errors for offer ${offer.offer.offerId}:`, offer.errors);
           }
@@ -242,7 +244,9 @@ export class OfferService {
         throw new Error('offerIds array cannot be empty');
       }
 
-      console.log(`Fetching offers by IDs (${offerIds.length} total): ${offerIds.slice(0, 5).join(', ')}${offerIds.length > 5 ? '...' : ''}`);
+      console.log(
+        `Fetching offers by IDs (${offerIds.length} total): ${offerIds.slice(0, 5).join(', ')}${offerIds.length > 5 ? '...' : ''}`,
+      );
 
       const allOffers: TOffer[] = [];
       let nextPageToken: string | undefined;
@@ -272,7 +276,9 @@ export class OfferService {
 
         if (offers && offers.length > 0) {
           allOffers.push(...offers);
-          console.log(`Loaded ${offers.length} offers on page ${pageCount}. Total found: ${allOffers.length}`);
+          console.log(
+            `Loaded ${offers.length} offers on page ${pageCount}. Total found: ${allOffers.length}`,
+          );
         } else {
           console.log(`No offers found on page ${pageCount}`);
         }
@@ -284,18 +290,21 @@ export class OfferService {
           console.warn('Breaking pagination loop: too many pages (>100)');
           break;
         }
-
       } while (nextPageToken);
 
-      console.log(`Completed fetching offers by IDs. Pages processed: ${pageCount}, Total offers found: ${allOffers.length}`);
+      console.log(
+        `Completed fetching offers by IDs. Pages processed: ${pageCount}, Total offers found: ${allOffers.length}`,
+      );
 
       // Дополнительная фильтрация на клиенте для гарантии соответствия
-      const filteredOffers = allOffers.filter(offer =>
-        offerIds.some(id => id.toLowerCase() === offer.offerId.toLowerCase())
+      const filteredOffers = allOffers.filter((offer) =>
+        offerIds.some((id) => id.toLowerCase() === offer.offerId.toLowerCase()),
       );
 
       if (filteredOffers.length !== allOffers.length) {
-        console.log(`Filtered ${allOffers.length - filteredOffers.length} offers that didn't match requested IDs`);
+        console.log(
+          `Filtered ${allOffers.length - filteredOffers.length} offers that didn't match requested IDs`,
+        );
       }
 
       console.log(`Final result: ${filteredOffers.length} offers matching requested IDs`);

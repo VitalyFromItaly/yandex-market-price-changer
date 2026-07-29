@@ -1,8 +1,14 @@
-import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
+import { Injectable } from '@nestjs/common';
 import { Queue } from 'bull';
+
+import {
+  IFileInfo,
+  IParsingResult,
+  IProcessingResult,
+  IYandexApiResult,
+} from '../../../types/yandex-market.types';
 import { QUEUE_NAMES, JOB_TYPES } from '../../index';
-import { IFileInfo, IParsingResult, IProcessingResult, IYandexApiResult } from '../../../types/yandex-market.types';
 
 /**
  * @deprecated Продюсер джоб конвейера изменения цен
@@ -174,7 +180,7 @@ export class FileProcessingService {
 
   async cleanAllQueues(): Promise<void> {
     const queues = [this.fileProcessingQueue, this.yandexApiQueue, this.notificationsQueue];
-    
+
     for (const queue of queues) {
       await queue.clean(0, 'completed');
       await queue.clean(0, 'wait');

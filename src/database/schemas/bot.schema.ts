@@ -39,4 +39,4 @@ export class Bot {
   timezone?: string;
 }
 
-export const BotSchema = SchemaFactory.createForClass(Bot); 
+export const BotSchema = SchemaFactory.createForClass(Bot);

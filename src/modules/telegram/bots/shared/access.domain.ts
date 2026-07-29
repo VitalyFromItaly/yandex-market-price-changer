@@ -1,4 +1,5 @@
 import type { TAccessStatus } from '../../../../database/schemas/user-access.schema';
+
 import { MENU_LABELS } from '../price-changer-bot/menu.constants';
 
 /**
@@ -87,9 +88,7 @@ export function classifyUpdate(input: {
   hasDocument?: boolean;
 }): TUpdateKind {
   if (input.callbackData !== undefined) {
-    return ONBOARDING_CALLBACKS.includes(input.callbackData)
-      ? 'onboardingCallback'
-      : 'callback';
+    return ONBOARDING_CALLBACKS.includes(input.callbackData) ? 'onboardingCallback' : 'callback';
   }
   const text = input.text;
   if (text === undefined) return 'other';

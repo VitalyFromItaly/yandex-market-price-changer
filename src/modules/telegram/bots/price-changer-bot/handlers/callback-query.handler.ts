@@ -1,12 +1,12 @@
-import { Context } from 'telegraf';
 import { Injectable } from '@nestjs/common';
-import { MENU, menuLayout } from '../menu.constants';
-import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+
 import { UserAccessService } from '../../../../../database/services/user-access.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { TTelegrafBot } from '../../../domain.telegram';
+import { esc, htmlOptions } from '../../../formatting/telegram-format';
+import { MENU, menuLayout } from '../menu.constants';
 import { nextStep, stepPrompt } from '../onboarding';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
-import { esc, htmlOptions } from '../../../formatting/telegram-format';
 
 @Injectable()
 export class CallbackQueryHandler {
@@ -42,10 +42,7 @@ export class CallbackQueryHandler {
         case 'onboarding_restart': {
           // Единственный способ прервать визард. Reply-кнопкой это сделать
           // нельзя: её подпись попала бы в MENU_LABELS и потребовала hears.
-          await this.accessService.clearDraft(
-            ctx.from.id.toString(),
-            ctx.botInfo.id.toString(),
-          );
+          await this.accessService.clearDraft(ctx.from.id.toString(), ctx.botInfo.id.toString());
           await ctx.editMessageText(
             `🔄 <b>Начинаем заново.</b>\n\n${stepPrompt('token')}`,
             htmlOptions(),
@@ -71,13 +68,14 @@ export class CallbackQueryHandler {
           break;
         }
 
-        case 'main_menu':
+        case 'main_menu': {
           // Раскладка — из menu.constants (TASK-014). Раньше здесь была
           // третья независимая копия списка подписей.
           const mainKeyboard = await this.keyboard.createKeyboard(menuLayout());
           await ctx.editMessageText('🏠 Главное меню:');
           await ctx.reply('Выберите действие:', mainKeyboard);
           break;
+        }
 
         // Ветки download_example, change_coefficient, cancel_upload,
         // upload_file, set_coefficient_* и input_custom_coefficient сняты
@@ -96,13 +94,13 @@ export class CallbackQueryHandler {
 🏢 <b>Business ID:</b> ${settings.business_id ? `<code>${esc(settings.business_id)}</code>` : '❌ Не заполнен'}
 🎫 <b>API токен:</b> ${settings.token ? `<code>${esc(settings.token.substring(0, 10))}...</code>` : '❌ Не заполнен'}
 
-${await this.yandexMarketService.isConfigured(ctx.from.id.toString()) ? '✅ Все настройки заполнены' : '⚠️ Требуется дозаполнение'}`;
+${(await this.yandexMarketService.isConfigured(ctx.from.id.toString())) ? '✅ Все настройки заполнены' : '⚠️ Требуется дозаполнение'}`;
 
               await ctx.editMessageText(settingsText, htmlOptions());
             } else {
               await ctx.editMessageText('❌ Настройки не найдены.');
             }
-          } catch (error) {
+          } catch {
             await ctx.editMessageText('❌ Ошибка получения настроек.');
           }
           break;
@@ -125,20 +123,21 @@ ${await this.yandexMarketService.isConfigured(ctx.from.id.toString()) ? '✅ В�
       await this.yandexMarketService.upsertByTelegramUser(
         ctx.from.id.toString(),
         ctx.chat.id.toString(),
-        { priceCoefficient: coefficient }
+        { priceCoefficient: coefficient },
       );
 
       // Формируем сообщение об успехе
-      const percentageText = coefficient === 1.0 
-        ? 'без изменений'
-        : `${coefficient > 1 ? '+' : ''}${((coefficient - 1) * 100).toFixed(1)}%`;
+      const percentageText =
+        coefficient === 1.0
+          ? 'без изменений'
+          : `${coefficient > 1 ? '+' : ''}${((coefficient - 1) * 100).toFixed(1)}%`;
 
       const successMessage = `✅ <b>Коэффициент цены установлен!</b>
 
 💰 Новый коэффициент: <b>x${coefficient}</b> (${percentageText})
 
 📊 Это означает:
-${coefficient > 1 ? '• Цены будут увеличены' : coefficient < 1 ? '• Цены будут уменьшены' : '• Цены останутся без изменений'}
+${describeCoefficient(coefficient)}
 
 🔄 Коэффициент будет применен к следующим загруженным прайс-листам.`;
 
@@ -150,14 +149,20 @@ ${coefficient > 1 ? '• Цены будут увеличены' : coefficient <
 
       await ctx.editMessageText(successMessage, { reply_markup: keyboard.reply_markup });
       await ctx.answerCbQuery('Коэффициент обновлен!');
-
     } catch (error) {
       console.error('Ошибка при сохранении коэффициента:', error);
       await ctx.editMessageText(
         '❌ Ошибка при сохранении коэффициента.\n\n' +
-        '💡 Попробуйте позже или обратитесь к администратору.'
+          '💡 Попробуйте позже или обратитесь к администратору.',
       );
       await ctx.answerCbQuery('Ошибка!');
     }
   }
+}
+
+/** Пояснение к коэффициенту. Вынесено из вложенного тернарника. */
+function describeCoefficient(coefficient: number): string {
+  if (coefficient > 1) return '• Цены будут увеличены';
+  if (coefficient < 1) return '• Цены будут уменьшены';
+  return '• Цены останутся без изменений';
 }

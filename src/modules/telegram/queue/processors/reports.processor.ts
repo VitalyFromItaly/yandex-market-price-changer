@@ -1,15 +1,17 @@
+import type { IScheduledReportJob } from '../services/report-scheduler.service';
+
 import { Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
-import { JOB_TYPES, QUEUE_NAMES } from '../../index';
-import type { IScheduledReportJob } from '../services/report-scheduler.service';
-import { BotRegistry } from '../../bots/bot-registry.service';
+
 import { UserAccessService } from '../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../database/services/yandex-market.service';
 import { OrderReportsService } from '../../../yandex/reports/order-reports.service';
 import { formatReport } from '../../../yandex/reports/report-message';
 import { REPORT, type TReportKey } from '../../../yandex/reports/report-status-map';
+import { BotRegistry } from '../../bots/bot-registry.service';
 import { htmlOptions } from '../../formatting/telegram-format';
+import { JOB_TYPES, QUEUE_NAMES } from '../../index';
 
 /**
  * Отправка отчёта по расписанию.

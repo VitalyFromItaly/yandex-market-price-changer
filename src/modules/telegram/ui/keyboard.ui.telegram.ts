@@ -1,9 +1,9 @@
-import { Markup } from 'telegraf';
 import { Injectable } from '@nestjs/common';
-import { ITelegramKeyboard, TTelegramKeyboard } from '../domain.telegram';
-import { KeyboardBuilder } from '../bots/shared/KeyboardBuilder';
 import { Promise } from 'mongoose';
-import { keyboard } from 'telegraf/markup';
+import { Markup } from 'telegraf';
+
+import { KeyboardBuilder } from '../bots/shared/KeyboardBuilder';
+import { ITelegramKeyboard, TTelegramKeyboard } from '../domain.telegram';
 
 @Injectable()
 export class TelegramKeyboard implements ITelegramKeyboard {
@@ -25,9 +25,11 @@ export class TelegramKeyboard implements ITelegramKeyboard {
   /**
    * Создать несколько inline кнопок в ряд
    */
-  public async createInlineButtons(buttons: { text: string; callback_data: string }[]): Promise<Markup.Markup<any>> {
+  public async createInlineButtons(
+    buttons: { text: string; callback_data: string }[],
+  ): Promise<Markup.Markup<any>> {
     return Markup.inlineKeyboard(
-      buttons.map((button) => Markup.button.callback(button.text, button.callback_data))
+      buttons.map((button) => Markup.button.callback(button.text, button.callback_data)),
     );
   }
 
@@ -36,9 +38,9 @@ export class TelegramKeyboard implements ITelegramKeyboard {
    */
   public async createInlineKeyboardMatrix(buttons: { text: string; callback_data: string }[][]) {
     return Markup.inlineKeyboard(
-      buttons.map(row =>
-        row.map(button => Markup.button.callback(button.text, button.callback_data))
-      )
+      buttons.map((row) =>
+        row.map((button) => Markup.button.callback(button.text, button.callback_data)),
+      ),
     );
   }
 
@@ -54,15 +56,15 @@ export class TelegramKeyboard implements ITelegramKeyboard {
   /**
    * Создать обычную клавиатуру
    */
-  public async createKeyboard(keyboard: string[][]) {
-    return Markup.keyboard(keyboard).resize();
+  public async createKeyboard(rows: string[][]) {
+    return Markup.keyboard(rows).resize();
   }
 
   /**
    * Создать клавиатуру с одноразовыми кнопками (исчезают после нажатия)
    */
-  public async createOneTimeKeyboard(keyboard: string[][]) {
-    return Markup.keyboard(keyboard).oneTime().resize();
+  public async createOneTimeKeyboard(rows: string[][]) {
+    return Markup.keyboard(rows).oneTime().resize();
   }
 
   /**
@@ -78,18 +80,14 @@ export class TelegramKeyboard implements ITelegramKeyboard {
    * Создать клавиатуру с кнопкой "Поделиться контактом"
    */
   public async createContactKeyboard(text: string = 'Поделиться контактом') {
-    return Markup.keyboard([
-      [Markup.button.contactRequest(text)]
-    ]).resize();
+    return Markup.keyboard([[Markup.button.contactRequest(text)]]).resize();
   }
 
   /**
    * Создать клавиатуру с кнопкой "Поделиться местоположением"
    */
   public async createLocationKeyboard(text: string = 'Поделиться местоположением') {
-    return Markup.keyboard([
-      [Markup.button.locationRequest(text)]
-    ]).resize();
+    return Markup.keyboard([[Markup.button.locationRequest(text)]]).resize();
   }
 
   // === ГОТОВЫЕ ШАБЛОНЫ ===
@@ -109,7 +107,7 @@ export class TelegramKeyboard implements ITelegramKeyboard {
       ['📊 Статистика', '⚙️ Настройки'],
       ['💰 Установить коэффициент цены'],
       ['📄 Загрузить прайс-лист'],
-      ['❓ Помощь', '👤 Профиль']
+      ['❓ Помощь', '👤 Профиль'],
     ]).resize();
   }
 
@@ -120,8 +118,8 @@ export class TelegramKeyboard implements ITelegramKeyboard {
     return Markup.inlineKeyboard([
       [
         Markup.button.callback('✅ Да', 'confirm_yes'),
-        Markup.button.callback('❌ Нет', 'confirm_no')
-      ]
+        Markup.button.callback('❌ Нет', 'confirm_no'),
+      ],
     ]);
   }
 
@@ -131,9 +129,7 @@ export class TelegramKeyboard implements ITelegramKeyboard {
    * «⬅️ Назад» не существует.
    */
   public async createBackMenu() {
-    return Markup.keyboard([
-      ['⬅️ Назад', '🏠 Главное меню']
-    ]).resize();
+    return Markup.keyboard([['⬅️ Назад', '🏠 Главное меню']]).resize();
   }
 
   /**

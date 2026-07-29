@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
-import { YandexClientFactory } from './yandex-client.factory';
+
 import { OrderReportsService } from './reports/order-reports.service';
+import { YandexClientFactory } from './yandex-client.factory';
 
 /**
  * Доступ к Partner API Яндекс.Маркета.

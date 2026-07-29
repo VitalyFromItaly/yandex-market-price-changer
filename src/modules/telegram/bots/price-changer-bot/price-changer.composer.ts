@@ -1,14 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
+
 import { TTelegrafBot } from '../../domain.telegram';
+
 import { AccessGateHandler } from './handlers/access-gate.handler';
 import { AdminApprovalHandler } from './handlers/admin-approval.handler';
-import { ScheduleHandler } from './handlers/schedule.handler';
-import { StartHandler } from './handlers/start.handler';
-import { MenuCommandsHandler } from './handlers/menu-commands.handler';
-import { SlashCommandsHandler } from './handlers/slash-commands.handler';
-import { CallbackQueryHandler } from './handlers/callback-query.handler';
 import { ApiSettingsHandler } from './handlers/api-settings.handler';
+import { CallbackQueryHandler } from './handlers/callback-query.handler';
 import { FallbackHandler } from './handlers/fallback.handler';
+import { MenuCommandsHandler } from './handlers/menu-commands.handler';
+import { ScheduleHandler } from './handlers/schedule.handler';
+import { SlashCommandsHandler } from './handlers/slash-commands.handler';
+import { StartHandler } from './handlers/start.handler';
 
 /**
  * Собирает бота из синглтон-обработчиков.

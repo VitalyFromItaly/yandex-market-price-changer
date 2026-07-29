@@ -1,5 +1,5 @@
-import { HISTORY_WINDOW_DAYS } from './yandex-api.paths';
 import { YandexApiError } from './yandex-api.errors';
+import { HISTORY_WINDOW_DAYS } from './yandex-api.paths';
 
 /**
  * Окно истории Partner API.

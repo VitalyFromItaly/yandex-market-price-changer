@@ -1,12 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
-import { TTelegrafBot } from '../../../domain.telegram';
-import { PriceChangerKeyboard } from '../price-changer.keyboard';
-import { htmlOptions } from '../../../formatting/telegram-format';
+
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
+import { TTelegrafBot } from '../../../domain.telegram';
+import { htmlOptions } from '../../../formatting/telegram-format';
 import { hoursUntilRetry, isRejectionExpired } from '../../shared/access.domain';
 import { nextStep, stepPrompt, type TOnboardingDraft } from '../onboarding';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
 /**
  * Обработчик /start — единственная команда, доступная при любом статусе

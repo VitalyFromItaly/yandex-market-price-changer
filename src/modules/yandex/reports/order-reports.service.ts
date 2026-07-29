@@ -9,13 +9,7 @@ import {
   reportDefinition,
   type TReportKey,
 } from './report-status-map';
-import {
-  addTotals,
-  amountValue,
-  orderTotals,
-  ZERO_TOTALS,
-  type IMoneyTotals,
-} from './money';
+import { addTotals, amountValue, orderTotals, ZERO_TOTALS, type IMoneyTotals } from './money';
 import { moscowDateParam, moscowDayBounds } from './moscow-day';
 import { buildOrdersWorkbook, workbookFileName } from './report-workbook';
 import { formatReport } from './report-message';

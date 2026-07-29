@@ -1,32 +1,35 @@
-import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
-import { TelegramService } from './telegram.service';
-import { TelegramController } from './telegram.controller';
+import { Module } from '@nestjs/common';
+
 import { DatabaseModule } from '../../database/database.module';
-import { FileProcessingService } from './queue/services/file-processing.service';
-import { FileDataProcessorService } from './services/file-data-processor.service';
-import { FileProcessingProcessor } from './queue/processors/file-processing.processor';
-import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
-import { NotificationsProcessor } from './queue/processors/notifications.processor';
-import { ReportsProcessor } from './queue/processors/reports.processor';
-import { ReportSchedulerService } from './queue/services/report-scheduler.service';
-import { QUEUE_NAMES } from './index';
+import { YandexModule } from '../yandex/yandex.module';
+
 import { BotRegistry } from './bots/bot-registry.service';
+import { AccessGateHandler } from './bots/price-changer-bot/handlers/access-gate.handler';
+import { AdminApprovalHandler } from './bots/price-changer-bot/handlers/admin-approval.handler';
+import { ApiSettingsHandler } from './bots/price-changer-bot/handlers/api-settings.handler';
+import { CallbackQueryHandler } from './bots/price-changer-bot/handlers/callback-query.handler';
+import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.handler';
+import { MenuCommandsHandler } from './bots/price-changer-bot/handlers/menu-commands.handler';
+import { ReportsHandler } from './bots/price-changer-bot/handlers/reports.handler';
+import { ScheduleHandler } from './bots/price-changer-bot/handlers/schedule.handler';
+import { SharedCommandsHandler } from './bots/price-changer-bot/handlers/shared-commands.handler';
+import { SlashCommandsHandler } from './bots/price-changer-bot/handlers/slash-commands.handler';
+import { StartHandler } from './bots/price-changer-bot/handlers/start.handler';
 import { PriceChangerComposer } from './bots/price-changer-bot/price-changer.composer';
 import { PriceChangerKeyboard } from './bots/price-changer-bot/price-changer.keyboard';
 import { AdminNotifierService } from './bots/shared/services/admin-notifier.service';
-import { AccessGateHandler } from './bots/price-changer-bot/handlers/access-gate.handler';
-import { AdminApprovalHandler } from './bots/price-changer-bot/handlers/admin-approval.handler';
-import { ReportsHandler } from './bots/price-changer-bot/handlers/reports.handler';
-import { ScheduleHandler } from './bots/price-changer-bot/handlers/schedule.handler';
-import { YandexModule } from '../yandex/yandex.module';
-import { StartHandler } from './bots/price-changer-bot/handlers/start.handler';
-import { MenuCommandsHandler } from './bots/price-changer-bot/handlers/menu-commands.handler';
-import { SlashCommandsHandler } from './bots/price-changer-bot/handlers/slash-commands.handler';
-import { CallbackQueryHandler } from './bots/price-changer-bot/handlers/callback-query.handler';
-import { ApiSettingsHandler } from './bots/price-changer-bot/handlers/api-settings.handler';
-import { SharedCommandsHandler } from './bots/price-changer-bot/handlers/shared-commands.handler';
-import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.handler';
+import { FileProcessingProcessor } from './queue/processors/file-processing.processor';
+import { NotificationsProcessor } from './queue/processors/notifications.processor';
+import { ReportsProcessor } from './queue/processors/reports.processor';
+import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
+import { FileProcessingService } from './queue/services/file-processing.service';
+import { ReportSchedulerService } from './queue/services/report-scheduler.service';
+import { FileDataProcessorService } from './services/file-data-processor.service';
+import { TelegramController } from './telegram.controller';
+import { TelegramService } from './telegram.service';
+
+import { QUEUE_NAMES } from './index';
 
 @Module({
   imports: [

@@ -1,11 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import {
-  IAdminCard,
-  UserAccess,
-  UserAccessDocument,
-} from '../schemas/user-access.schema';
+
+import { IAdminCard, UserAccess, UserAccessDocument } from '../schemas/user-access.schema';
 
 /** Кто обратился к боту — всё, что нужно, чтобы завести запись доступа. */
 export interface IAccessIdentity {
@@ -29,11 +26,7 @@ export type TDraftField = 'token' | 'campaign_id' | 'business_id';
  * Белый список полей черновика. Имя поля попадает в ключ $set (`draft.<field>`),
  * поэтому оно НЕ может браться из пользовательского ввода напрямую.
  */
-export const DRAFT_FIELDS: TDraftField[] = [
-  'token',
-  'campaign_id',
-  'business_id',
-];
+export const DRAFT_FIELDS: TDraftField[] = ['token', 'campaign_id', 'business_id'];
 
 /**
  * Доступ к боту.
@@ -101,16 +94,9 @@ export class UserAccessService {
   }
 
   /** Сбросить черновик — пользователь начинает визард заново. */
-  async clearDraft(
-    telegramUserId: string,
-    botId: string,
-  ): Promise<UserAccessDocument | null> {
+  async clearDraft(telegramUserId: string, botId: string): Promise<UserAccessDocument | null> {
     return await this.model
-      .findOneAndUpdate(
-        { telegramUserId, botId },
-        { $unset: { draft: '' } },
-        { new: true },
-      )
+      .findOneAndUpdate({ telegramUserId, botId }, { $unset: { draft: '' } }, { new: true })
       .exec();
   }
 
@@ -138,10 +124,7 @@ export class UserAccessService {
    * сохранении). Проверка живёт в базе, поэтому переживает и рестарт, и
    * параллельную обработку двух вебхуков.
    */
-  async tryApply(
-    telegramUserId: string,
-    botId: string,
-  ): Promise<UserAccessDocument | null> {
+  async tryApply(telegramUserId: string, botId: string): Promise<UserAccessDocument | null> {
     return await this.model
       .findOneAndUpdate(
         { telegramUserId, botId, status: 'new' },
@@ -159,10 +142,7 @@ export class UserAccessService {
    * одному администратору — иначе пользователь навсегда зависнет в pending, а
    * узнать об этом будет некому.
    */
-  async revertApply(
-    telegramUserId: string,
-    botId: string,
-  ): Promise<UserAccessDocument | null> {
+  async revertApply(telegramUserId: string, botId: string): Promise<UserAccessDocument | null> {
     return await this.model
       .findOneAndUpdate(
         { telegramUserId, botId, status: 'pending' },
@@ -178,9 +158,7 @@ export class UserAccessService {
     botId: string,
     cards: IAdminCard[],
   ): Promise<void> {
-    await this.model
-      .updateOne({ telegramUserId, botId }, { $set: { adminCards: cards } })
-      .exec();
+    await this.model.updateOne({ telegramUserId, botId }, { $set: { adminCards: cards } }).exec();
   }
 
   /**
@@ -212,11 +190,7 @@ export class UserAccessService {
           };
 
     return await this.model
-      .findOneAndUpdate(
-        { telegramUserId, botId, status: 'pending' },
-        { $set },
-        { new: true },
-      )
+      .findOneAndUpdate({ telegramUserId, botId, status: 'pending' }, { $set }, { new: true })
       .exec();
   }
 

@@ -41,4 +41,4 @@ export interface IProcessingResult {
   comparison?: IComparisonResult;
   yandexSettings?: any; // YandexMarketDocument
   hasApiSettings: boolean;
-} 
+}

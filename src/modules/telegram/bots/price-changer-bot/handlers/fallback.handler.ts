@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+
 import { TTelegrafBot } from '../../../domain.telegram';
 
 /**
@@ -14,9 +15,7 @@ import { TTelegrafBot } from '../../../domain.telegram';
 export class FallbackHandler {
   public register(bot: TTelegrafBot) {
     bot.on('message', async (ctx) => {
-      await ctx.reply(
-        'Не понимаю эту команду. Откройте меню или отправьте /help.',
-      );
+      await ctx.reply('Не понимаю эту команду. Откройте меню или отправьте /help.');
     });
   }
 }

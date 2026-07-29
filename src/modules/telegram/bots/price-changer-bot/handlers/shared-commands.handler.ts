@@ -1,15 +1,15 @@
-import { Context } from 'telegraf';
 import { Injectable } from '@nestjs/common';
-import { MENU } from '../menu.constants';
-import { ITelegramKeyboard } from '../../../domain.telegram';
-import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { Context } from 'telegraf';
+
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { MENU } from '../menu.constants';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
 @Injectable()
 export class SharedCommandsHandler {
   constructor(
     private keyboard: PriceChangerKeyboard,
-    private yandexMarketService: YandexMarketService
+    private yandexMarketService: YandexMarketService,
   ) {}
 
   /**
@@ -20,13 +20,14 @@ export class SharedCommandsHandler {
     try {
       // Получаем текущие настройки
       const yandexSettings = await this.yandexMarketService.getByTelegramUser(
-        ctx.from.id.toString()
+        ctx.from.id.toString(),
       );
 
       const currentCoefficient = yandexSettings?.priceCoefficient || 1.2;
-      const coefficientText = currentCoefficient === 1.0
-        ? 'без изменений'
-        : `x${currentCoefficient} (${currentCoefficient > 1 ? '+' : ''}${((currentCoefficient - 1) * 100).toFixed(1)}%)`;
+      const coefficientText =
+        currentCoefficient === 1.0
+          ? 'без изменений'
+          : `x${currentCoefficient} (${currentCoefficient > 1 ? '+' : ''}${((currentCoefficient - 1) * 100).toFixed(1)}%)`;
 
       const message = `💰 Установка коэффициента цены
 
@@ -37,15 +38,15 @@ export class SharedCommandsHandler {
       const keyboard = await this.keyboard.createInlineKeyboardMatrix([
         [
           { text: 'x0.9 (-10%)', callback_data: 'set_coefficient_0.9' },
-          { text: 'x1.0 (без изменений)', callback_data: 'set_coefficient_1.0' }
+          { text: 'x1.0 (без изменений)', callback_data: 'set_coefficient_1.0' },
         ],
         [
           { text: 'x1.1 (+10%)', callback_data: 'set_coefficient_1.1' },
-          { text: 'x1.2 (+20%)', callback_data: 'set_coefficient_1.2' }
+          { text: 'x1.2 (+20%)', callback_data: 'set_coefficient_1.2' },
         ],
         [
           { text: 'x1.3 (+30%)', callback_data: 'set_coefficient_1.3' },
-          { text: 'x1.5 (+50%)', callback_data: 'set_coefficient_1.5' }
+          { text: 'x1.5 (+50%)', callback_data: 'set_coefficient_1.5' },
         ],
         [{ text: '📝 Ввести свой коэффициент', callback_data: 'input_custom_coefficient' }],
         [{ text: '❌ Отмена', callback_data: 'main_menu' }],
@@ -67,7 +68,7 @@ export class SharedCommandsHandler {
     try {
       // Проверяем настройки Яндекс Маркета
       const yandexSettings = await this.yandexMarketService.getByTelegramUser(
-        ctx.from.id.toString()
+        ctx.from.id.toString(),
       );
 
       // Если настройки не найдены или не заполнены
@@ -81,9 +82,7 @@ export class SharedCommandsHandler {
       await this.handleAllowedUpload(ctx, yandexSettings);
     } catch (error) {
       console.error('Ошибка при проверке настроек:', error);
-      await ctx.reply(
-        '❌ Произошла ошибка при проверке настроек. Пожалуйста, попробуйте позже.',
-      );
+      await ctx.reply('❌ Произошла ошибка при проверке настроек. Пожалуйста, попробуйте позже.');
     }
   }
 
@@ -186,8 +185,8 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
       if (isNaN(coefficientValue) || coefficientValue <= 0 || coefficientValue > 10) {
         await ctx.reply(
           '❌ Некорректный коэффициент!\n\n' +
-          '💡 Коэффициент должен быть числом от 0.1 до 10\n' +
-          'Примеры: 1.2, 0.9, 1.5'
+            '💡 Коэффициент должен быть числом от 0.1 до 10\n' +
+            'Примеры: 1.2, 0.9, 1.5',
         );
         return;
       }
@@ -196,13 +195,14 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
       await this.yandexMarketService.upsertByTelegramUser(
         ctx.from.id.toString(),
         ctx.chat.id.toString(),
-        { priceCoefficient: coefficientValue }
+        { priceCoefficient: coefficientValue },
       );
 
       // Формируем сообщение об успехе
-      const percentageText = coefficientValue === 1.0 
-        ? 'без изменений'
-        : `${coefficientValue > 1 ? '+' : ''}${((coefficientValue - 1) * 100).toFixed(1)}%`;
+      const percentageText =
+        coefficientValue === 1.0
+          ? 'без изменений'
+          : `${coefficientValue > 1 ? '+' : ''}${((coefficientValue - 1) * 100).toFixed(1)}%`;
 
       const successMessage = `✅ <b>Коэффициент цены обновлен!</b>
 
@@ -222,13 +222,12 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
       ]);
 
       await ctx.reply(successMessage, keyboard);
-
     } catch (error) {
       console.error('Ошибка при сохранении коэффициента:', error);
       await ctx.reply(
         '❌ Ошибка при сохранении коэффициента.\n\n' +
-        '💡 Попробуйте позже или обратитесь к администратору.'
+          '💡 Попробуйте позже или обратитесь к администратору.',
       );
     }
   }
-} 
+}

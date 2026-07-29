@@ -1,12 +1,14 @@
+import type { YandexMarketDocument } from '../../../../../database/schemas/yandex-market.schema';
+
 import { Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
-import { htmlOptions } from '../../../formatting/telegram-format';
+
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
-import type { YandexMarketDocument } from '../../../../../database/schemas/yandex-market.schema';
 import { OrderReportsService } from '../../../../../modules/yandex/reports/order-reports.service';
 import { formatReport } from '../../../../../modules/yandex/reports/report-message';
 import { REPORT, type TReportKey } from '../../../../../modules/yandex/reports/report-status-map';
 import { YandexApiError } from '../../../../../modules/yandex/yandex-api.errors';
+import { htmlOptions } from '../../../formatting/telegram-format';
 import { MENU } from '../menu.constants';
 
 /** Кнопка меню → отчёт. Единственное место, где они связаны. */
@@ -57,9 +59,7 @@ export class ReportsHandler {
     this.inFlight.add(lock);
 
     try {
-      const store = await this.yandexMarketService.findByTelegramUser(
-        ctx.from.id.toString(),
-      );
+      const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
       if (!store) {
         await ctx.reply('⚠️ Сначала заполните настройки API.', htmlOptions());
         return;

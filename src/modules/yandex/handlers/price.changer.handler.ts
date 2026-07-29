@@ -2,11 +2,13 @@
 //   private compaignId = 134874104,
 //   private businessId = 182608006,
 
+import type { TParsedPriceRow } from '../../parser/domain.parser';
+import type { IProcessingResult } from '../../types/yandex-market.types';
+import type { ICreateOfferMapping } from '../services/offer.service';
+
 import { HttpClient } from '../../../transport/http';
 import { CampaignService } from '../services/campaign.service';
-import { ICreateOfferMapping, OfferService } from '../services/offer.service';
-import { IProcessingResult } from '../../types/yandex-market.types';
-import { TParsedPriceRow } from '../../parser/domain.parser';
+import { OfferService } from '../services/offer.service';
 
 function capitalizeFirstLetter(string: string): string {
   if (!string) return ''; // Check for empty string
@@ -37,7 +39,7 @@ function extractBrandFromName(productName: string): string {
  * @param ms - количество миллисекунд для ожидания
  */
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export interface IPriceUpdateResult {
@@ -130,15 +132,18 @@ export class PriceChanger {
         successfulUpdates: 0,
         successfulCreations: 0,
         successfulZeroing: 0,
-        failedOperations: 0
-      }
+        failedOperations: 0,
+      },
     };
 
     try {
       // Обработка товаров для обновления цен
       if (comparison.toUpdate && comparison.toUpdate.length > 0) {
         console.log(`📝 Updating prices for ${comparison.toUpdate.length} existing offers...`);
-        const updateResults = await this.updateExistingOffers(comparison.toUpdate, priceCoefficient);
+        const updateResults = await this.updateExistingOffers(
+          comparison.toUpdate,
+          priceCoefficient,
+        );
         results.updated = updateResults.successful;
         results.errors = results.errors.concat(updateResults.errors);
         results.summary.successfulUpdates = updateResults.successful;
@@ -157,7 +162,9 @@ export class PriceChanger {
 
       // Обработка товаров для обнуления остатков (есть в Yandex, но нет в файле)
       if (comparison.toZeroStock && comparison.toZeroStock.length > 0) {
-        console.log(`🔴 Zeroing stock for ${comparison.toZeroStock.length} offers not present in file...`);
+        console.log(
+          `🔴 Zeroing stock for ${comparison.toZeroStock.length} offers not present in file...`,
+        );
         const zeroResults = await this.zeroStockForMissingOffers(comparison.toZeroStock);
         results.zeroed = zeroResults.successful;
         results.errors = results.errors.concat(zeroResults.errors);
@@ -165,7 +172,8 @@ export class PriceChanger {
         results.summary.failedOperations += zeroResults.failed;
       }
 
-      results.summary.totalProcessed = comparison.toUpdate.length + comparison.toCreate.length + comparison.toZeroStock.length;
+      results.summary.totalProcessed =
+        comparison.toUpdate.length + comparison.toCreate.length + comparison.toZeroStock.length;
 
       console.log('✅ Price update completed:');
       console.log(`   • Updated: ${results.updated} offers`);
@@ -174,7 +182,6 @@ export class PriceChanger {
       console.log(`   • Errors: ${results.errors.length}`);
 
       return results;
-
     } catch (error) {
       console.error('❌ Error in updateOrCreateOffers:', error);
       throw error;
@@ -184,29 +191,38 @@ export class PriceChanger {
   /**
    * Обновление цен существующих товаров
    */
-  private async updateExistingOffers(offers: TParsedPriceRow[], priceCoefficient: number): Promise<{ successful: number; failed: number; errors: Array<{ type: string; batch?: number; error: string; offers?: string[] }> }> {
+  private async updateExistingOffers(
+    offers: TParsedPriceRow[],
+    priceCoefficient: number,
+  ): Promise<{
+    successful: number;
+    failed: number;
+    errors: Array<{ type: string; batch?: number; error: string; offers?: string[] }>;
+  }> {
     const errors: Array<{ type: string; batch?: number; error: string; offers?: string[] }> = [];
     let successful = 0;
     let failed = 0;
 
     try {
       // Подготавливаем данные для обновления цен
-      const updateOffers = offers.map(offer => ({
+      const updateOffers = offers.map((offer) => ({
         offerId: offer.sku,
         price: {
           value: Math.round(offer.price * priceCoefficient * 100) / 100 + 5, // Округляем до копеек
-          currencyId: 'RUR' as const
-        }
+          currencyId: 'RUR' as const,
+        },
       }));
 
       // Подготавливаем данные для обновления остатков
       const updateStocks = {
-        skus: offers.map(offer => ({
+        skus: offers.map((offer) => ({
           sku: offer.sku,
-          items: [{
-            count: offer.count || 0
-          }]
-        }))
+          items: [
+            {
+              count: offer.count || 0,
+            },
+          ],
+        })),
       };
 
       console.log({ updateOffers });
@@ -223,13 +239,15 @@ export class PriceChanger {
       for (let i = 0; i < priceBatches.length; i++) {
         const priceBatch = priceBatches[i];
         const stockSkuBatch = stockSkuBatches[i];
-        console.log(`🔄 Processing batch ${i + 1}/${priceBatches.length} (${priceBatch.length} offers)`);
+        console.log(
+          `🔄 Processing batch ${i + 1}/${priceBatches.length} (${priceBatch.length} offers)`,
+        );
 
         try {
           // Параллельно обновляем цены и остатки
           const [priceResult, stockResult] = await Promise.allSettled([
             this.productsService.updateOfferPrice({ offers: priceBatch }),
-            this.productsService.updateOfferStock({ skus: stockSkuBatch })
+            this.productsService.updateOfferStock({ skus: stockSkuBatch }),
           ]);
 
           let batchSuccessful = 0;
@@ -245,7 +263,7 @@ export class PriceChanger {
               type: 'batch_price_update_error',
               batch: i + 1,
               error: priceResult.reason.message || priceResult.reason,
-              offers: priceBatch.map(o => o.offerId)
+              offers: priceBatch.map((o) => o.offerId),
             });
             batchFailed++;
           }
@@ -256,12 +274,12 @@ export class PriceChanger {
             batchSuccessful++;
           } else {
             console.error(`❌ Stock update failed for batch ${i + 1}:`, stockResult.reason);
-                         errors.push({
-               type: 'batch_stock_update_error',
-               batch: i + 1,
-               error: stockResult.reason.message || stockResult.reason,
-               offers: stockSkuBatch.map(o => o.sku)
-             });
+            errors.push({
+              type: 'batch_stock_update_error',
+              batch: i + 1,
+              error: stockResult.reason.message || stockResult.reason,
+              offers: stockSkuBatch.map((o) => o.sku),
+            });
             batchFailed++;
           }
 
@@ -276,7 +294,7 @@ export class PriceChanger {
 
           // Задержка между батчами
           if (i < priceBatches.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise((resolve) => setTimeout(resolve, 1000));
           }
         } catch (batchError) {
           console.error(`❌ Error in batch ${i + 1}:`, batchError);
@@ -285,17 +303,16 @@ export class PriceChanger {
             type: 'batch_update_error',
             batch: i + 1,
             error: (batchError as Error).message || String(batchError),
-            offers: priceBatch.map(o => o.offerId)
+            offers: priceBatch.map((o) => o.offerId),
           });
         }
       }
-
     } catch (error) {
       console.error('❌ Error updating existing offers:', error);
       failed += offers.length;
       errors.push({
         type: 'update_preparation_error',
-        error: (error as Error).message || String(error)
+        error: (error as Error).message || String(error),
       });
     }
 
@@ -307,16 +324,37 @@ export class PriceChanger {
    * После создания карточек ожидает 7 секунд для их полной обработки системой Yandex Market
    * перед обновлением остатков
    */
-  private async createNewOffers(offers: TParsedPriceRow[], priceCoefficient: number): Promise<{ successful: number; failed: number; errors: Array<{ type: string; batch?: number; error: string; offers?: string[]; offerId?: string; errors?: any[] }> }> {
-    const errors: Array<{ type: string; batch?: number; error: string; offers?: string[]; offerId?: string; errors?: any[] }> = [];
+  private async createNewOffers(
+    offers: TParsedPriceRow[],
+    priceCoefficient: number,
+  ): Promise<{
+    successful: number;
+    failed: number;
+    errors: Array<{
+      type: string;
+      batch?: number;
+      error: string;
+      offers?: string[];
+      offerId?: string;
+      errors?: any[];
+    }>;
+  }> {
+    const errors: Array<{
+      type: string;
+      batch?: number;
+      error: string;
+      offers?: string[];
+      offerId?: string;
+      errors?: any[];
+    }> = [];
     let successful = 0;
     let failed = 0;
 
     try {
-              console.log(`📦 Preparing ${offers.length} offers for creation...`);
+      console.log(`📦 Preparing ${offers.length} offers for creation...`);
 
-              // Подготавливаем данные для создания карточек
-        const createOffers = offers.map(offer => {
+      // Подготавливаем данные для создания карточек
+      const createOffers = offers.map((offer) => {
         const detectedBrand = extractBrandFromName(offer.name);
 
         const offerData = {
@@ -325,7 +363,7 @@ export class PriceChanger {
           vendor: detectedBrand, // Бренд товара (извлекается из названия)
           basicPrice: {
             value: Math.round(offer.price * priceCoefficient * 100) / 100, // Округляем до копеек
-            currencyId: 'RUR' as const
+            currencyId: 'RUR' as const,
           },
           vendorCode: offer.sku,
           description: `Качественные наручные часы ${offer.name}. Бренд ${detectedBrand}. Оригинальная продукция с гарантией качества.`,
@@ -346,10 +384,14 @@ export class PriceChanger {
 
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
-        console.log(`🔄 Processing creation batch ${i + 1}/${batches.length} (${batch.length} offers)`);
+        console.log(
+          `🔄 Processing creation batch ${i + 1}/${batches.length} (${batch.length} offers)`,
+        );
 
         try {
-          const response = await this.productsService.createOfferMappings(batch as ICreateOfferMapping[]);
+          const response = await this.productsService.createOfferMappings(
+            batch as ICreateOfferMapping[],
+          );
 
           // Анализируем результат создания
           if (response.status === 'OK') {
@@ -359,14 +401,16 @@ export class PriceChanger {
 
             successful += batchSuccessful;
 
-            console.log(`✅ Creation batch ${i + 1} completed: ${batchSuccessful} successful, ${batchFailed} failed`);
+            console.log(
+              `✅ Creation batch ${i + 1} completed: ${batchSuccessful} successful, ${batchFailed} failed`,
+            );
 
             // Если есть успешно созданные товары, обновляем их остатки
             if (batchSuccessful > 0) {
               try {
                 // Подготавливаем данные для обновления остатков только успешно созданных товаров
                 const stocksToUpdate = {
-                  skus: batch.map(offerMapping => {
+                  skus: batch.map((offerMapping) => {
                     return {
                       sku: offerMapping.offer.offerId,
                       items: [
@@ -376,29 +420,33 @@ export class PriceChanger {
                         },
                       ],
                     };
-                  })
+                  }),
                 };
 
-                console.log(`📤 Sending stock update request with ${stocksToUpdate.skus.length} items:`);
+                console.log(
+                  `📤 Sending stock update request with ${stocksToUpdate.skus.length} items:`,
+                );
                 console.log('Stock update data:', JSON.stringify(stocksToUpdate, null, 2));
 
                 // Обновляем остатки для успешно созданных товаров
                 console.log({ stocksToUpdate });
                 const stockResponse = await this.productsService.updateOfferStock(stocksToUpdate);
-                console.log(`✅ Stock update completed for batch ${i + 1}. Response:`, stockResponse);
-
+                console.log(
+                  `✅ Stock update completed for batch ${i + 1}. Response:`,
+                  stockResponse,
+                );
               } catch (stockError) {
                 console.error(`❌ Error updating stocks for batch ${i + 1}:`, stockError);
                 console.error('Stock error details:', {
                   message: (stockError as Error).message,
                   stack: (stockError as Error).stack,
-                  response: (stockError as any)?.response?.data
+                  response: (stockError as any)?.response?.data,
                 });
                 errors.push({
                   type: 'batch_stock_update_after_creation_error',
                   batch: i + 1,
                   error: (stockError as Error).message || String(stockError),
-                  offers: batch.map(o => o.offer.offerId)
+                  offers: batch.map((o) => o.offer.offerId),
                 });
               }
             } else {
@@ -415,13 +463,13 @@ export class PriceChanger {
               type: 'batch_creation_failed',
               batch: i + 1,
               error: `Batch creation failed with status: ${response.status}`,
-              offers: batch.map(o => o.offer.offerId)
+              offers: batch.map((o) => o.offer.offerId),
             });
           }
 
           // Задержка между батчами
           if (i < batches.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Увеличиваем задержку для создания
+            await new Promise((resolve) => setTimeout(resolve, 2000)); // Увеличиваем задержку для создания
           }
         } catch (batchError) {
           console.error(`❌ Error in creation batch ${i + 1}:`, batchError);
@@ -430,29 +478,30 @@ export class PriceChanger {
             type: 'batch_creation_error',
             batch: i + 1,
             error: (batchError as Error).message || String(batchError),
-            offers: batch.map(o => o.offer.offerId)
+            offers: batch.map((o) => o.offer.offerId),
           });
         }
       }
-
     } catch (error) {
       console.error('❌ Error creating new offers:', error);
       failed += offers.length;
       errors.push({
         type: 'creation_preparation_error',
-        error: (error as Error).message || String(error)
+        error: (error as Error).message || String(error),
       });
     }
 
     return { successful, failed, errors };
   }
 
-
-
   /**
    * Обнуление остатков для товаров, которые есть в Yandex, но отсутствуют в файле
    */
-  private async zeroStockForMissingOffers(yandexOffers: any[]): Promise<{ successful: number; failed: number; errors: Array<{ type: string; batch?: number; error: string; offers?: string[] }> }> {
+  private async zeroStockForMissingOffers(yandexOffers: any[]): Promise<{
+    successful: number;
+    failed: number;
+    errors: Array<{ type: string; batch?: number; error: string; offers?: string[] }>;
+  }> {
     const errors: Array<{ type: string; batch?: number; error: string; offers?: string[] }> = [];
     let successful = 0;
     let failed = 0;
@@ -460,13 +509,15 @@ export class PriceChanger {
     try {
       // Подготавливаем данные для обнуления остатков
       const zeroStocks = {
-        skus: yandexOffers.map(offer => ({
+        skus: yandexOffers.map((offer) => ({
           sku: offer.offerId,
-          items: [{
-            count: 0,
-            updatedAt: new Date().toISOString()
-          }]
-        }))
+          items: [
+            {
+              count: 0,
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+        })),
       };
 
       console.log(`📊 Prepared ${zeroStocks.skus.length} offers for stock zeroing`);
@@ -477,7 +528,9 @@ export class PriceChanger {
 
       for (let i = 0; i < stockBatches.length; i++) {
         const batch = stockBatches[i];
-        console.log(`🔄 Processing zeroing batch ${i + 1}/${stockBatches.length} (${batch.length} offers)`);
+        console.log(
+          `🔄 Processing zeroing batch ${i + 1}/${stockBatches.length} (${batch.length} offers)`,
+        );
 
         try {
           const stockResult = await this.productsService.updateOfferStock({ skus: batch });
@@ -486,7 +539,7 @@ export class PriceChanger {
 
           // Задержка между батчами
           if (i < stockBatches.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise((resolve) => setTimeout(resolve, 1000));
           }
         } catch (batchError) {
           console.error(`❌ Error zeroing stocks in batch ${i + 1}:`, batchError);
@@ -495,17 +548,16 @@ export class PriceChanger {
             type: 'batch_zero_stock_error',
             batch: i + 1,
             error: (batchError as Error).message || String(batchError),
-            offers: batch.map(o => o.sku)
+            offers: batch.map((o) => o.sku),
           });
         }
       }
-
     } catch (error) {
       console.error('❌ Error zeroing stocks for missing offers:', error);
       failed += yandexOffers.length;
       errors.push({
         type: 'zero_stock_preparation_error',
-        error: (error as Error).message || String(error)
+        error: (error as Error).message || String(error),
       });
     }
 

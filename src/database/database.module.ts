@@ -1,15 +1,17 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { DatabaseService } from './database.service';
-import { UserAccessService } from './services/user-access.service';
-import { ReportScheduleService } from './services/report-schedule.service';
-import { YandexMarketService } from './services/yandex-market.service';
-import { Bot, BotSchema } from './schemas/bot.schema';
-import { User, UserSchema } from './schemas/user.schema';
-import { UserAccess, UserAccessSchema } from './schemas/user-access.schema';
-import { ReportSchedule, ReportScheduleSchema } from './schemas/report-schedule.schema';
-import { YandexMarket, YandexMarketSchema } from './schemas/yandex-market.schema';
+
 import { AppConfigService } from '../config/app-config.service';
+
+import { DatabaseService } from './database.service';
+import { Bot, BotSchema } from './schemas/bot.schema';
+import { ReportSchedule, ReportScheduleSchema } from './schemas/report-schedule.schema';
+import { UserAccess, UserAccessSchema } from './schemas/user-access.schema';
+import { User, UserSchema } from './schemas/user.schema';
+import { YandexMarket, YandexMarketSchema } from './schemas/yandex-market.schema';
+import { ReportScheduleService } from './services/report-schedule.service';
+import { UserAccessService } from './services/user-access.service';
+import { YandexMarketService } from './services/yandex-market.service';
 
 @Module({
   imports: [
@@ -36,12 +38,7 @@ import { AppConfigService } from '../config/app-config.service';
       { name: YandexMarket.name, schema: YandexMarketSchema },
     ]),
   ],
-  providers: [
-    DatabaseService,
-    UserAccessService,
-    ReportScheduleService,
-    YandexMarketService,
-  ],
+  providers: [DatabaseService, UserAccessService, ReportScheduleService, YandexMarketService],
   exports: [
     DatabaseService,
     MongooseModule,

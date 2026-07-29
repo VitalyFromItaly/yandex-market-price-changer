@@ -33,15 +33,15 @@ export class User {
 export const UserSchema = SchemaFactory.createForClass(User);
 
 // Добавляем методы к схеме
-UserSchema.methods.generateToken = function() {
+UserSchema.methods.generateToken = function () {
   const crypto = require('crypto');
   this.apiToken = crypto.randomBytes(32).toString('hex');
   return this.apiToken;
 };
 
-UserSchema.statics.findByToken = async function(token: string) {
+UserSchema.statics.findByToken = async function (token: string) {
   if (!token) {
     return null;
   }
   return this.findOne({ apiToken: token });
-}; 
+};

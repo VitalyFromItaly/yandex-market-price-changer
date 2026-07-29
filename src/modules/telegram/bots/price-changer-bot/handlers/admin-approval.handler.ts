@@ -1,17 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
-import { TTelegrafBot } from '../../../domain.telegram';
-import { htmlOptions } from '../../../formatting/telegram-format';
+
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { TTelegrafBot } from '../../../domain.telegram';
+import { htmlOptions } from '../../../formatting/telegram-format';
+import { ADMIN_CB_PATTERN, hoursUntilRetry, parseAdminCallback } from '../../shared/access.domain';
 import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
-import {
-  ADMIN_CB_PATTERN,
-  hoursUntilRetry,
-  parseAdminCallback,
-} from '../../shared/access.domain';
 
 /**
  * Кнопки «Одобрить» / «Отклонить» на карточке заявки.
@@ -68,18 +65,14 @@ export class AdminApprovalHandler {
 
       // Отвечаем на callback ровно один раз: повторный ответ на тот же
       // callback_query Telegram встречает четырёхсотой.
-      await ctx.answerCbQuery(
-        parsed.decision === 'approve' ? 'Одобрено' : 'Отклонено',
-      );
+      await ctx.answerCbQuery(parsed.decision === 'approve' ? 'Одобрено' : 'Отклонено');
 
       if (parsed.decision === 'reject') {
         // Отклонённые креды не храним.
         await this.yandexMarketService.deleteByTelegramUser(parsed.telegramUserId);
       }
 
-      const store = await this.yandexMarketService.findByTelegramUser(
-        parsed.telegramUserId,
-      );
+      const store = await this.yandexMarketService.findByTelegramUser(parsed.telegramUserId);
       await this.adminNotifier.finalizeCards(ctx, decided, store);
       await this.notifyApplicant(ctx, decided);
     });
@@ -137,9 +130,7 @@ export class AdminApprovalHandler {
         htmlOptions(),
       );
     } catch (error) {
-      this.logger.warn(
-        `Не удалось уведомить пользователя ${access.telegramUserId}: ${error}`,
-      );
+      this.logger.warn(`Не удалось уведомить пользователя ${access.telegramUserId}: ${error}`);
     }
   }
 }

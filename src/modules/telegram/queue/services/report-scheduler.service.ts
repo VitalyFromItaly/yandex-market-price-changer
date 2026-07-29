@@ -1,10 +1,11 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Queue } from 'bull';
-import { QUEUE_NAMES, JOB_TYPES } from '../../index';
+
 import { ReportScheduleService } from '../../../../database/services/report-schedule.service';
 import { MOSCOW_TIME_ZONE } from '../../../yandex/reports/moscow-day';
 import { toCron } from '../../../yandex/reports/schedule-time';
+import { QUEUE_NAMES, JOB_TYPES } from '../../index';
 
 export interface IScheduleKey {
   telegramUserId: string;

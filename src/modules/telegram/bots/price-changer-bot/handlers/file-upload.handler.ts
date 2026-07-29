@@ -1,10 +1,12 @@
-import { Context, Telegraf } from 'telegraf';
+import type { FileProcessingService } from '../../../queue/services/file-processing.service';
+import type { Context, Telegraf } from 'telegraf';
+import type { Document } from 'telegraf/types';
+
 import { message } from 'telegraf/filters';
+
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
-import { FileUploadService, IFileInfo } from '../../../services/file-upload.service';
-import { FileProcessingService } from '../../../queue/services/file-processing.service';
 import { ITelegramKeyboard } from '../../../domain.telegram';
-import { Document } from 'telegraf/types';
+import { FileUploadService, IFileInfo } from '../../../services/file-upload.service';
 
 interface FileMessage {
   document?: Document & { file_name?: string; file_size?: number; file_id?: string };
@@ -63,7 +65,9 @@ export class FileUploadHandler {
       });
     } catch (error) {
       console.error('Error handling document:', error);
-      await ctx.reply('Произошла ошибка при обработке вашего файла. Пожалуйста, попробуйте еще раз.');
+      await ctx.reply(
+        'Произошла ошибка при обработке вашего файла. Пожалуйста, попробуйте еще раз.',
+      );
     }
   }
 }

@@ -1,13 +1,15 @@
-import { Context } from 'telegraf';
 import { Injectable } from '@nestjs/common';
-import { MENU } from '../menu.constants';
-import { esc, htmlOptions } from '../../../formatting/telegram-format';
-import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
-import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { Context } from 'telegraf';
+
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
-import { SharedCommandsHandler } from './shared-commands.handler';
+import { TTelegrafBot } from '../../../domain.telegram';
+import { esc, htmlOptions } from '../../../formatting/telegram-format';
+import { MENU } from '../menu.constants';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
+
 import { MENU_TO_REPORT, ReportsHandler } from './reports.handler';
 import { ScheduleHandler } from './schedule.handler';
+import { SharedCommandsHandler } from './shared-commands.handler';
 
 @Injectable()
 export class MenuCommandsHandler {
@@ -45,12 +47,14 @@ export class MenuCommandsHandler {
 
   private async showMainMenu(ctx: Context) {
     const keyboard = await this.keyboard.createMenuKeyboard();
-    ctx.reply('🏠 Главное меню', keyboard);
+    // await обязателен: без него ошибка отправки теряется мимо bot.catch, и
+    // кнопка «Главное меню» молча не срабатывает.
+    await ctx.reply('🏠 Главное меню', keyboard);
   }
 
   private async showApiSettings(ctx: Context) {
     const yandexSettings = await this.yandexMarketService.findByTelegramUser(
-      ctx.from.id.toString()
+      ctx.from.id.toString(),
     );
 
     const message = `⚙️ Настройки API
@@ -70,14 +74,8 @@ export class MenuCommandsHandler {
   private async showProfile(ctx: Context) {
     // Имя и фамилия — произвольный текст от пользователя: один символ `<`
     // в имени ломал разметку всего сообщения и давал 400 от Telegram.
-    const settings = await this.yandexMarketService.findByTelegramUser(
-      ctx.from.id.toString(),
-    );
-    const configured = !!(
-      settings?.campaign_id &&
-      settings?.business_id &&
-      settings?.token
-    );
+    const settings = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    const configured = !!(settings?.campaign_id && settings?.business_id && settings?.token);
 
     const message = `📊 Мой профиль
 

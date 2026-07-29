@@ -1,7 +1,8 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { envValidationSchema } from './env.validation';
+
 import { AppConfigService } from './app-config.service';
+import { envValidationSchema } from './env.validation';
 
 /**
  * Единственная точка загрузки и валидации конфигурации.

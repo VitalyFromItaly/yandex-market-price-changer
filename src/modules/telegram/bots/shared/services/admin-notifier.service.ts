@@ -1,14 +1,16 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Context } from 'telegraf';
-import { AppConfigService } from '../../../../../config/app-config.service';
-import { UserAccessService } from '../../../../../database/services/user-access.service';
 import type {
   IAdminCard,
   UserAccessDocument,
 } from '../../../../../database/schemas/user-access.schema';
 import type { YandexMarketDocument } from '../../../../../database/schemas/yandex-market.schema';
-import { PriceChangerKeyboard } from '../../price-changer-bot/price-changer.keyboard';
+
+import { Injectable, Logger } from '@nestjs/common';
+import { Context } from 'telegraf';
+
+import { AppConfigService } from '../../../../../config/app-config.service';
+import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
+import { PriceChangerKeyboard } from '../../price-changer-bot/price-changer.keyboard';
 import { formatAdminCallback } from '../access.domain';
 
 /**
@@ -73,19 +75,12 @@ export class AdminNotifierService {
         // Типовая причина — администратор не нажимал /start у бота, и Telegram
         // отвечает 403: бот не может написать первым. Один недоступный админ
         // не должен срывать доставку остальным.
-        this.logger.error(
-          `Не удалось отправить заявку администратору ${adminId}`,
-          error as Error,
-        );
+        this.logger.error(`Не удалось отправить заявку администратору ${adminId}`, error as Error);
       }
     }
 
     if (cards.length) {
-      await this.accessService.attachAdminCards(
-        access.telegramUserId,
-        access.botId,
-        cards,
-      );
+      await this.accessService.attachAdminCards(access.telegramUserId, access.botId, cards);
     }
 
     return cards.length;
@@ -122,9 +117,7 @@ export class AdminNotifierService {
       } catch (error) {
         // «message is not modified» и «message to edit not found» (админ удалил
         // сообщение) — штатные исходы, а не сбой обработки решения.
-        this.logger.warn(
-          `Не удалось обновить карточку у администратора ${card.adminId}: ${error}`,
-        );
+        this.logger.warn(`Не удалось обновить карточку у администратора ${card.adminId}: ${error}`);
       }
     }
   }
@@ -133,10 +126,7 @@ export class AdminNotifierService {
    * Тело карточки. Всё, что пришло от пользователя, экранируется: символ `<`
    * в имени ломает разметку всего сообщения и даёт 400 от Telegram.
    */
-  public renderCard(
-    access: UserAccessDocument,
-    store: YandexMarketDocument | null,
-  ): string {
+  public renderCard(access: UserAccessDocument, store: YandexMarketDocument | null): string {
     const name = [access.firstName, access.lastName].filter(Boolean).join(' ');
 
     // Telegram сам делает @ник кликабельным — это и есть весь механизм связи

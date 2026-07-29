@@ -1,0 +1,26 @@
+# Сгенерированный клиент OpenAPI — не наш код. Он уже исключён из tsconfig
+# и из покрытия тестами; форматировать его бессмысленно, а перегенерация
+# всё равно затрёт правки.
+src/modules/yandex/api/
+src/modules/yandex/api-docs/
+
+# Бинарные файлы. Prettier пытался разобрать prices.xlsx как исходник и
+# падал с «SyntaxError: Invalid character» на сигнатуре ZIP-архива (PK\x03\x04).
+*.xlsx
+*.xls
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.pdf
+
+# Артефакты сборки и зависимости
+dist/
+coverage/
+node_modules/
+volumes/
+static/
+
+package-lock.json

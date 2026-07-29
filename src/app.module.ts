@@ -1,13 +1,14 @@
+import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
+import { CqrsModule } from '@nestjs/cqrs';
+
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { TelegramModule } from './modules/telegram/telegram.module';
-import { YandexModule } from './modules/yandex/yandex.module';
-import { DatabaseModule } from './database/database.module';
-import { CqrsModule } from '@nestjs/cqrs';
-import { BullModule } from '@nestjs/bull';
 import { AppConfigModule } from './config/app-config.module';
 import { AppConfigService } from './config/app-config.service';
+import { DatabaseModule } from './database/database.module';
+import { TelegramModule } from './modules/telegram/telegram.module';
+import { YandexModule } from './modules/yandex/yandex.module';
 
 @Module({
   imports: [

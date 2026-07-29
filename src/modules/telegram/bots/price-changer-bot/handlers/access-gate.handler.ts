@@ -1,10 +1,12 @@
+import type { UserAccessDocument } from '../../../../../database/schemas/user-access.schema';
+
 import { Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
-import { TTelegrafBot } from '../../../domain.telegram';
-import { htmlOptions } from '../../../formatting/telegram-format';
+
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
-import type { UserAccessDocument } from '../../../../../database/schemas/user-access.schema';
+import { TTelegrafBot } from '../../../domain.telegram';
+import { htmlOptions } from '../../../formatting/telegram-format';
 import {
   canPass,
   classifyUpdate,

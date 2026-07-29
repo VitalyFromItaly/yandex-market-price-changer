@@ -1,14 +1,15 @@
 import { Process, Processor } from '@nestjs/bull';
-import { Job } from 'bull';
 import { Injectable } from '@nestjs/common';
+import { Job } from 'bull';
+
+import { esc } from '../../formatting/telegram-format';
+import { QUEUE_NAMES, JOB_TYPES } from '../../index';
+import TelegramApiService from '../../services/telegram.api.service';
 import {
   ProgressNotificationJobData,
   CompletionNotificationJobData,
   ErrorNotificationJobData,
 } from '../services/file-processing.service';
-import TelegramApiService from '../../services/telegram.api.service';
-import { QUEUE_NAMES, JOB_TYPES } from '../../index';
-import { esc } from '../../formatting/telegram-format';
 
 @Injectable()
 @Processor(QUEUE_NAMES.NOTIFICATIONS)
@@ -74,7 +75,10 @@ export class NotificationsProcessor {
    */
   private formatPriceUpdateReport(results: any, priceCoefficient: number): string {
     const { updated, created, zeroed, errors, summary } = results;
-    const coefficientText = priceCoefficient === 2 ? 'без изменений' : `x${priceCoefficient} (${priceCoefficient > 1 ? '+' : ''}${((priceCoefficient - 1) * 100).toFixed(1)}%)`;
+    const coefficientText =
+      priceCoefficient === 2
+        ? 'без изменений'
+        : `x${priceCoefficient} (${priceCoefficient > 1 ? '+' : ''}${((priceCoefficient - 1) * 100).toFixed(1)}%)`;
 
     let message = `✅ <b>Обработка завершена!</b>\n\n`;
     message += `💰 <b>Коэффициент:</b> ${coefficientText}\n\n`;
@@ -92,9 +96,14 @@ export class NotificationsProcessor {
       message += `• ❌ Ошибок: <b>${errors.length}</b>\n`;
     }
 
-    const successRate = summary.totalProcessed > 0
-      ? Math.round(((summary.successfulUpdates + summary.successfulCreations + summary.successfulZeroing) / summary.totalProcessed) * 100)
-      : 0;
+    const successRate =
+      summary.totalProcessed > 0
+        ? Math.round(
+            ((summary.successfulUpdates + summary.successfulCreations + summary.successfulZeroing) /
+              summary.totalProcessed) *
+              100,
+          )
+        : 0;
 
     message += `\n📈 <b>Успешность:</b> ${successRate}%\n`;
 

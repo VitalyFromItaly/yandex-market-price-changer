@@ -1,5 +1,5 @@
-import { HttpClient } from '../../../transport/http';
-import { TCampaign } from '../yandex.domain';
+import type { HttpClient } from '../../../transport/http';
+import type { TCampaign } from '../yandex.domain';
 
 /**
  * Сервис для работы с кампаниями в Яндекс Маркете

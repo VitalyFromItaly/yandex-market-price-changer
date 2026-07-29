@@ -2,15 +2,12 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Telegraf } from 'telegraf';
-import { Bot, BotDocument } from '../../../database/schemas/bot.schema';
+
 import { AppConfigService } from '../../../config/app-config.service';
+import { Bot, BotDocument } from '../../../database/schemas/bot.schema';
+import { EBotType, THandleUpdatePayload, TTelegrafBot, TWebHookResponse } from '../domain.telegram';
+
 import { PriceChangerComposer } from './price-changer-bot/price-changer.composer';
-import {
-  EBotType,
-  THandleUpdatePayload,
-  TTelegrafBot,
-  TWebHookResponse,
-} from '../domain.telegram';
 
 export interface RegisteredBot {
   /** _id документа Bot в Mongo — по нему приходит вебхук. */
