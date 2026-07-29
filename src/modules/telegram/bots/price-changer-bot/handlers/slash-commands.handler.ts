@@ -137,6 +137,8 @@ export class SlashCommandsHandler {
         { command: 'settings', description: '⚙️ Настройки' },
         { command: 'profile', description: '👤 Профиль' },
         { command: 'help', description: '❓ Помощь' },
+        // /users намеренно НЕ здесь: список команд общий для всех, а раздел
+        // администратора не должен светиться у обычных пользователей.
       ]);
       console.log('Bot commands set successfully');
     } catch (error) {

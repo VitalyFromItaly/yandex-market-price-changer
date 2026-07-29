@@ -26,6 +26,8 @@ export const MENU = {
   SETTINGS: '⚙️ Настройки API',
   PROFILE: '📊 Мой профиль',
   HELP: '❓ Помощь',
+  /** Видна ТОЛЬКО администраторам — в общей раскладке её нет. */
+  USERS: '👥 Пользователи',
 } as const;
 
 export type TMenuLabel = (typeof MENU)[keyof typeof MENU];
@@ -68,4 +70,16 @@ export function menuLayout(): string[][] {
 /** Сокращённая раскладка — пока креды не заполнены. */
 export function unconfiguredMenuLayout(): string[][] {
   return MENU_LAYOUT_UNCONFIGURED.map((row) => [...row]);
+}
+
+/**
+ * Та же раскладка плюс ряд администратора.
+ *
+ * Reply-клавиатура своя у каждого пользователя, поэтому кнопку достаточно не
+ * добавлять — обычный пользователь её не увидит. Но на одном этом полагаться
+ * нельзя: сам обработчик тоже проверяет права, иначе доступ зависел бы от
+ * того, что нарисовано на экране.
+ */
+export function withAdminRow(layout: string[][]): string[][] {
+  return [...layout, [MENU.USERS]];
 }

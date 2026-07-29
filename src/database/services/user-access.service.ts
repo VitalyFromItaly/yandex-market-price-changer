@@ -230,6 +230,53 @@ export class UserAccessService {
       .exec();
   }
 
+  /** Все записи по боту — для админского списка. Сортировка: свежие сверху. */
+  async listByBot(botId: string): Promise<UserAccessDocument[]> {
+    return await this.model.find({ botId }).sort({ approvedAt: -1, appliedAt: -1, _id: -1 }).exec();
+  }
+
+  /** Счётчики по статусам одним запросом, а не пятью. */
+  async countByStatus(botId: string): Promise<Record<string, number>> {
+    const rows = await this.model
+      .aggregate<{
+        _id: string;
+        n: number;
+      }>([{ $match: { botId } }, { $group: { _id: '$status', n: { $sum: 1 } } }])
+      .exec();
+
+    return Object.fromEntries(rows.map((r) => [r._id, r.n]));
+  }
+
+  /**
+   * Отзыв ранее выданного доступа: approved → rejected.
+   *
+   * `status: 'approved'` в фильтре — та же защита, что и в decide(): два
+   * администратора, нажавшие одновременно, не создают гонку, проигравший
+   * получает null. Отзыв кладётся в тот же статус `rejected`, что и отказ по
+   * заявке, поэтому суточный запрет на повторную регистрацию действует и здесь
+   * — отозванный не сможет тут же подать заявку снова.
+   */
+  async revoke(
+    telegramUserId: string,
+    botId: string,
+    admin: IAdminIdentity,
+  ): Promise<UserAccessDocument | null> {
+    return await this.model
+      .findOneAndUpdate(
+        { telegramUserId, botId, status: 'approved' },
+        {
+          $set: {
+            status: 'rejected',
+            rejectedAt: new Date(),
+            decidedBy: admin.id,
+            decidedByUsername: admin.username,
+          },
+        },
+        { new: true },
+      )
+      .exec();
+  }
+
   /** Выдать доступ без заявки — для администраторов, которые сами продавцы. */
   async grant(identity: IAccessIdentity): Promise<UserAccessDocument> {
     const { telegramUserId, botId, ...profile } = identity;

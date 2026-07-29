@@ -4,6 +4,7 @@ import { TTelegrafBot } from '../../domain.telegram';
 
 import { AccessGateHandler } from './handlers/access-gate.handler';
 import { AdminApprovalHandler } from './handlers/admin-approval.handler';
+import { AdminUsersHandler } from './handlers/admin-users.handler';
 import { ApiSettingsHandler } from './handlers/api-settings.handler';
 import { CallbackQueryHandler } from './handlers/callback-query.handler';
 import { FallbackHandler } from './handlers/fallback.handler';
@@ -42,6 +43,10 @@ export class PriceChangerComposer {
       // Админские колбэки — ДО общего обработчика: тот разбирает callback_data
       // точным switch и на неизвестной строке затирает сообщение.
       { name: 'adminCallbacks', register: (b) => this.adminCallbacks.register(b) },
+      // Список пользователей и отзыв доступа — тоже до общего callback_query:
+      // тот разбирает данные точным switch и на неизвестной строке затирает
+      // сообщение «Неизвестная команда».
+      { name: 'adminUsers', register: (b) => this.adminUsers.register(b) },
       { name: 'scheduleCallbacks', register: (b) => this.scheduleCallbacks.register(b) },
       { name: 'callbacks', register: (b) => this.callbacks.register(b) },
       { name: 'apiSettings', register: (b) => this.apiSettings.register(b) },
@@ -53,12 +58,19 @@ export class PriceChangerComposer {
     ];
   }
 
+  // Правило max-params отключено осознанно. Композер — это и есть список
+  // обработчиков: его единственная задача — держать их и знать порядок.
+  // «Сгруппировать» их в объект-контейнер значит спрятать состав пайплайна
+  // за лишним слоем, а порядок регистрации — тот самый инвариант, который
+  // ломался и стоил неработающих кнопок, — должен читаться прямо здесь.
+  // eslint-disable-next-line max-params
   constructor(
     private readonly accessGate: AccessGateHandler,
     private readonly start: StartHandler,
     private readonly menu: MenuCommandsHandler,
     private readonly slash: SlashCommandsHandler,
     private readonly adminCallbacks: AdminApprovalHandler,
+    private readonly adminUsers: AdminUsersHandler,
     private readonly scheduleCallbacks: ScheduleHandler,
     private readonly callbacks: CallbackQueryHandler,
     private readonly apiSettings: ApiSettingsHandler,

@@ -15,6 +15,7 @@ import { ScheduleHandler } from '../../src/modules/telegram/bots/price-changer-b
 import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
 import { StockUploadHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
+import { AdminUsersHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-users.handler';
 import { StockSyncService } from '../../src/modules/yandex/stocks/stock-sync.service';
 import { FallbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/fallback.handler';
 import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
@@ -100,6 +101,7 @@ describe('Онбординг: от /start до отчёта', () => {
         ReportsHandler,
         ApiSettingsHandler,
         StockUploadHandler,
+        AdminUsersHandler,
         // Загрузка остатков в этом сценарии не участвует, но обработчик —
         // часть пайплайна, и без заглушки его зависимость не резолвится.
         { provide: StockSyncService, useValue: { sync: async () => ({}) } },

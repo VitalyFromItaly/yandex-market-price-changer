@@ -106,10 +106,11 @@ export class StartHandler {
    * Подробности живут в /help, где клавиатуры нет.
    */
   private async replyApproved(ctx: Context) {
+    const isAdmin = this.config.isAdmin(ctx.from.id);
     const configured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
 
     if (!configured) {
-      const kb = await this.keyboard.createUnconfiguredKeyboard();
+      const kb = await this.keyboard.createUnconfiguredKeyboard(isAdmin);
       await ctx.reply(
         [
           '👋 Осталось подключить магазин.',
@@ -122,7 +123,7 @@ export class StartHandler {
       return;
     }
 
-    const kb = await this.keyboard.createMenuKeyboard();
+    const kb = await this.keyboard.createMenuKeyboard(isAdmin);
     await ctx.reply('🎉 С возвращением! Выберите отчёт:', htmlOptions(kb));
   }
 

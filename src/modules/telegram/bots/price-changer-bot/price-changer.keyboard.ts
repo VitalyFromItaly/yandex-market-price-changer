@@ -3,18 +3,21 @@ import { Markup } from 'telegraf';
 
 import { TelegramKeyboard } from '../../ui/keyboard.ui.telegram';
 
-import { menuLayout, unconfiguredMenuLayout } from './menu.constants';
+import { menuLayout, unconfiguredMenuLayout, withAdminRow } from './menu.constants';
 
 @Injectable()
 export class PriceChangerKeyboard extends TelegramKeyboard {
   /** Сокращённое меню: только настройки и помощь, пока креды не заполнены. */
-  public async createUnconfiguredKeyboard(): Promise<Markup.Markup<any>> {
-    return await this.createKeyboard(unconfiguredMenuLayout());
+  public async createUnconfiguredKeyboard(isAdmin = false): Promise<Markup.Markup<any>> {
+    const layout = unconfiguredMenuLayout();
+    return await this.createKeyboard(isAdmin ? withAdminRow(layout) : layout);
   }
 
-  public async createMenuKeyboard(): Promise<Markup.Markup<any>> {
+  /** Меню с рядом администратора. */
+  public async createMenuKeyboard(isAdmin = false): Promise<Markup.Markup<any>> {
     // Подписи берутся из menu.constants — единственного источника (TASK-014).
-    return await this.createKeyboard(menuLayout());
+    const layout = menuLayout();
+    return await this.createKeyboard(isAdmin ? withAdminRow(layout) : layout);
   }
 
   public async createStartKeyboard(commands: string[][] = []): Promise<Markup.Markup<any>> {

@@ -11,6 +11,7 @@ import { CallbackQueryHandler } from '../../src/modules/telegram/bots/price-chan
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
 import { FallbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/fallback.handler';
 import { StockUploadHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
+import { AdminUsersHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-users.handler';
 
 /**
  * Порядок регистрации обработчиков telegraf — значимый инвариант, который
@@ -63,6 +64,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
         },
         { provide: CallbackQueryHandler, useValue: stub('callbacks', order) },
         { provide: ApiSettingsHandler, useValue: stub('apiSettings', order) },
+        { provide: AdminUsersHandler, useValue: stub('adminUsers', order) },
         { provide: StockUploadHandler, useValue: stub('stockUpload', order) },
         { provide: FallbackHandler, useValue: stub('fallback', order) },
       ],
@@ -105,6 +107,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
       'menu',
       'slash',
       'adminCallbacks',
+      'adminUsers',
       'scheduleCallbacks',
       'callbacks',
       'apiSettings',

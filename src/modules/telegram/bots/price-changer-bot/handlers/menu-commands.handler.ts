@@ -7,6 +7,7 @@ import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
+import { AdminUsersHandler } from './admin-users.handler';
 import { MENU_TO_REPORT, ReportsHandler } from './reports.handler';
 import { ScheduleHandler } from './schedule.handler';
 import { SharedCommandsHandler } from './shared-commands.handler';
@@ -17,6 +18,7 @@ export class MenuCommandsHandler {
     private keyboard: PriceChangerKeyboard,
     private yandexMarketService: YandexMarketService,
     private sharedCommandsHandler: SharedCommandsHandler,
+    private adminUsers: AdminUsersHandler,
     private reportsHandler: ReportsHandler,
     private scheduleHandler: ScheduleHandler,
   ) {}
@@ -42,6 +44,13 @@ export class MenuCommandsHandler {
     bot.hears(MENU.SCHEDULE, (ctx) => this.scheduleHandler.showMenu(ctx));
     bot.hears(MENU.SETTINGS, (ctx) => this.showApiSettings(ctx));
     bot.hears(MENU.PROFILE, (ctx) => this.showProfile(ctx));
+    // Раздел администратора. Кнопки нет в общей раскладке, но проверка прав
+    // всё равно внутри обработчика: полагаться на то, что нарисовано на
+    // экране, нельзя — callback можно послать и вручную.
+    bot.hears(MENU.USERS, async (ctx) => {
+      if (!this.adminUsers.isAdmin(ctx.from.id)) return;
+      await this.adminUsers.sendList(ctx);
+    });
     bot.hears(MENU.HELP, (ctx) => this.showMainMenu(ctx));
   }
 
