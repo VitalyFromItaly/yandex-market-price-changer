@@ -58,9 +58,7 @@ async function main(): Promise<void> {
     if (!dropped.length && !created.length) console.log('  без изменений');
 
     for (const index of await model.collection.indexes()) {
-      const flags = [index.unique && 'UNIQUE', index.sparse && 'SPARSE']
-        .filter(Boolean)
-        .join(' ');
+      const flags = [index.unique && 'UNIQUE', index.sparse && 'SPARSE'].filter(Boolean).join(' ');
       console.log(`    ${JSON.stringify(index.key)}${flags ? '  ' + flags : ''}`);
     }
     console.log('');

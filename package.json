@@ -23,6 +23,7 @@
     "api": "openapi --input src/modules/yandex/api-docs/openapi/openapi.yaml --output src/modules/yandex/api",
     "parser:run": "npx ts-node src/modules/parser/run-simple-parser.ts",
     "db:sync-indexes": "ts-node scripts/sync-indexes.ts",
+    "db:clean": "ts-node scripts/clean-db.ts",
     "prettier:check": "prettier --check ./src",
     "typecheck": "tsc --noEmit"
   },
