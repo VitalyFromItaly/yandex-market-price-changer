@@ -157,12 +157,15 @@ describe('Постраничный обход', () => {
   });
 
   it('возвраты обходятся так же и со своим лимитом', async () => {
+    // Возвраты приходят объектами и разбираются в IReturnRecord — см.
+    // yandex-returns.test.ts; здесь проверяется только обход и лимит.
     const { instance, calls } = client([
-      { data: { returns: [1], paging: { nextPageToken: 'p2' } } },
-      { data: { returns: [2] } },
+      { data: { returns: [{ returnId: 1 }], paging: { nextPageToken: 'p2' } } },
+      { data: { returns: [{ returnId: 2 }] } },
     ]);
 
-    expect(await collect(instance.iterateReturns({ limit: 999 }))).toEqual([1, 2]);
+    const items = await collect(instance.iterateReturns({ limit: 999 }));
+    expect(items.map((r) => (r as { returnId: number }).returnId)).toEqual([1, 2]);
     expect(calls.every((c) => c.limit === PAGE_LIMITS.returns.max)).toBe(true);
   });
 

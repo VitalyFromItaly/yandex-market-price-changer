@@ -316,7 +316,7 @@
       "dependencies": [
         "TASK-019"
       ],
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": "TASK-022",
@@ -341,7 +341,7 @@
       "dependencies": [
         "TASK-019"
       ],
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": "TASK-023",

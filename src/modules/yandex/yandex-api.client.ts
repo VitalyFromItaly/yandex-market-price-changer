@@ -34,6 +34,31 @@ export interface IOrdersQuery {
   limit?: number;
 }
 
+/**
+ * Возврат в терминах отчёта. Денежные поля — только актуальные:
+ * `refundAmount` и `partnerCompensation` объявлены Яндексом устаревшими и
+ * заменены объектами `amount` и `partnerCompensationAmount`. Старые поля до сих
+ * пор приходят в ответе, поэтому прочитать их легко по привычке — и получить
+ * сумму без валюты, которая когда-нибудь просто исчезнет.
+ */
+export interface IReturnRecord {
+  returnId?: number;
+  orderId?: number;
+  shipmentStatus?: string;
+  /** Сумма возврата: значение + валюта. */
+  amount?: { value?: number; currencyId?: string };
+  /** Компенсация партнёру. */
+  partnerCompensationAmount?: { value?: number; currencyId?: string };
+  raw: unknown;
+}
+
+export interface IReturnsQuery {
+  /** Отбор возвратов по статусу отгрузки, например «в пути». */
+  shipmentStatuses?: string[];
+  pageToken?: string;
+  limit?: number;
+}
+
 export interface IPagedResult<T> {
   items: T[];
   nextPageToken?: string;
@@ -132,17 +157,24 @@ export class YandexApiClient {
   }
 
   /** Одна страница возвратов. */
-  public async getReturns(
-    query: { pageToken?: string; limit?: number } = {},
-  ): Promise<IPagedResult<unknown>> {
+  public async getReturns(query: IReturnsQuery = {}): Promise<IPagedResult<IReturnRecord>> {
     const limit = Math.min(query.limit ?? PAGE_LIMITS.returns.default, PAGE_LIMITS.returns.max);
 
     const data = await this.get<{ returns?: unknown[]; paging?: { nextPageToken?: string } }>(
       returnsPath(this.credentials.campaignId),
-      { pageToken: query.pageToken, limit },
+      {
+        pageToken: query.pageToken,
+        limit,
+        shipmentStatuses: query.shipmentStatuses,
+      },
     );
 
-    return { items: data.returns ?? [], nextPageToken: data.paging?.nextPageToken };
+    // Пустой список возвратов — нормальный ответ, а не ошибка: у продавца
+    // просто может не быть возвратов.
+    return {
+      items: (data.returns ?? []).map(toReturnRecord),
+      nextPageToken: data.paging?.nextPageToken,
+    };
   }
 
   /**
@@ -179,8 +211,8 @@ export class YandexApiClient {
 
   /** Постраничный обход возвратов. */
   public async *iterateReturns(
-    query: { pageToken?: string; limit?: number } = {},
-  ): AsyncGenerator<unknown[], void, void> {
+    query: IReturnsQuery = {},
+  ): AsyncGenerator<IReturnRecord[], void, void> {
     let pageToken = query.pageToken;
     let pages = 0;
 
@@ -251,6 +283,24 @@ export class YandexApiClient {
     );
     return domain;
   }
+}
+
+/**
+ * Разбор одного возврата. Читаем ТОЛЬКО актуальные денежные поля: устаревшие
+ * refundAmount и partnerCompensation Яндекс всё ещё присылает, но они без
+ * валюты и однажды исчезнут. Сырой объект сохраняем — отчётам нужны и другие
+ * поля, а перечислять их все здесь смысла нет.
+ */
+function toReturnRecord(raw: unknown): IReturnRecord {
+  const item = (raw ?? {}) as IReturnRecord;
+  return {
+    returnId: item.returnId,
+    orderId: item.orderId,
+    shipmentStatus: item.shipmentStatus,
+    amount: item.amount,
+    partnerCompensationAmount: item.partnerCompensationAmount,
+    raw,
+  };
 }
 
 /** undefined-параметры убираем: axios иначе шлёт `?limit=50&status=`. */
