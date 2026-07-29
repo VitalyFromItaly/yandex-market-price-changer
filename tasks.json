@@ -167,7 +167,7 @@
         "Шаг 4: попытаться создать дубль по (telegramUserId, telegramChatId) — получаем ошибку уникальности"
       ],
       "dependencies": [],
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": "TASK-016",

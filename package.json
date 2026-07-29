@@ -21,7 +21,8 @@
     "tunnel:ngrok": "ngrok http http://localhost:3004",
     "prettier-fix": "prettier --write ./src",
     "api": "openapi --input src/modules/yandex/api-docs/openapi/openapi.yaml --output src/modules/yandex/api",
-    "parser:run": "npx ts-node src/modules/parser/run-simple-parser.ts"
+    "parser:run": "npx ts-node src/modules/parser/run-simple-parser.ts",
+    "db:sync-indexes": "ts-node scripts/sync-indexes.ts"
   },
   "devDependencies": {
     "@eslint/js": "~9.17",

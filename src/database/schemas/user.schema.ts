@@ -8,13 +8,16 @@ export class User {
   @Prop({ required: true, unique: true })
   username: string;
 
-  @Prop({ unique: true })
+  // sparse на всех НЕОБЯЗАТЕЛЬНЫХ unique-полях. Без него Mongo считает
+  // отсутствующее значение обычным null и одинаковым у всех документов:
+  // второй пользователь без email ловил бы ошибку дубликата по ключу null.
+  @Prop({ unique: true, sparse: true })
   telegramId?: string;
 
-  @Prop({ unique: true })
+  @Prop({ unique: true, sparse: true })
   email?: string;
 
-  @Prop({ unique: true })
+  @Prop({ unique: true, sparse: true })
   apiToken?: string;
 
   @Prop({ default: true })
