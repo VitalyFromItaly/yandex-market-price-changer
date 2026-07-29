@@ -1,6 +1,4 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
 import axios from 'axios';
 import { YandexApiClient } from '../../src/modules/yandex/yandex-api.client';
 import { API_VERSIONS } from '../../src/modules/yandex/yandex-api.paths';
@@ -137,39 +135,7 @@ describe('Метод возвратов', () => {
   });
 });
 
-describe('Устаревшие денежные поля не используются', () => {
-  const SRC = resolve(__dirname, '../../src/modules/yandex');
-
-  function tsFiles(dir: string): string[] {
-    if (dir.includes('/api')) return [];
-    return readdirSync(dir).flatMap((entry) => {
-      const full = join(dir, entry);
-      if (statSync(full).isDirectory()) return tsFiles(full);
-      return full.endsWith('.ts') ? [full] : [];
-    });
-  }
-
-  it.each(['refundAmount', 'partnerCompensation'])(
-    'обращений к %s в коде нет',
-    (field) => {
-      const offenders: string[] = [];
-
-      for (const file of tsFiles(SRC)) {
-        const lines = readFileSync(file, 'utf8').split('\n');
-        lines.forEach((line, index) => {
-          const trimmed = line.trimStart();
-          if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) {
-            return;
-          }
-          // partnerCompensationAmount содержит partnerCompensation как подстроку —
-          // ищем поле именно целиком.
-          if (new RegExp(`\\b${field}\\b(?!Amount)`).test(line)) {
-            offenders.push(`${file.slice(SRC.length + 1)}:${index + 1}`);
-          }
-        });
-      }
-
-      expect(offenders).toEqual([]);
-    },
-  );
-});
+// Инвариант «устаревшие денежные поля не используются» живёт в
+// report-money-day.test.ts — единым списком DEPRECATED_MONEY_FIELDS и с
+// единственным исключением для money.ts, где этот список и объявлен.
+// Дублировать его здесь значило бы поддерживать две расходящиеся проверки.

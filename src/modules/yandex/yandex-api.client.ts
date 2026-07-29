@@ -29,6 +29,9 @@ export interface IOrdersQuery {
   /** DD-MM-YYYY — дата создания заказа. */
   fromDate?: string;
   toDate?: string;
+  /** DD-MM-YYYY — дата ОТГРУЗКИ в службу доставки. Не путать с созданием. */
+  supplierShipmentDateFrom?: string;
+  supplierShipmentDateTo?: string;
   status?: string[];
   pageToken?: string;
   limit?: number;
@@ -149,6 +152,8 @@ export class YandexApiClient {
         updatedAtTo: query.updatedAtTo,
         fromDate: query.fromDate,
         toDate: query.toDate,
+        supplierShipmentDateFrom: query.supplierShipmentDateFrom,
+        supplierShipmentDateTo: query.supplierShipmentDateTo,
         status: query.status,
       },
     );
