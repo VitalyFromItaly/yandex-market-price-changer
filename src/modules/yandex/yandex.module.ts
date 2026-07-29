@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { OrderReportsService } from './reports/order-reports.service';
+import { StockSyncService } from './stocks/stock-sync.service';
 import { YandexClientFactory } from './yandex-client.factory';
 
 /**
@@ -16,7 +17,7 @@ import { YandexClientFactory } from './yandex-client.factory';
  * AppConfigService приходит из глобального AppConfigModule, импорты не нужны.
  */
 @Module({
-  providers: [YandexClientFactory, OrderReportsService],
-  exports: [YandexClientFactory, OrderReportsService],
+  providers: [YandexClientFactory, OrderReportsService, StockSyncService],
+  exports: [YandexClientFactory, OrderReportsService, StockSyncService],
 })
 export class YandexModule {}

@@ -5,7 +5,14 @@ import { Logger } from '@nestjs/common';
 import axios from 'axios';
 
 import { toYandexApiError } from './yandex-api.errors';
-import { campaignsPath, ordersPath, PAGE_LIMITS, returnsPath } from './yandex-api.paths';
+import {
+  campaignsPath,
+  offerMappingsPath,
+  ordersPath,
+  PAGE_LIMITS,
+  returnsPath,
+  stocksPath,
+} from './yandex-api.paths';
 import { assertWithinHistoryWindow, toDateParam, type IDateRange } from './yandex-date-window';
 import {
   DEFAULT_RETRY,
@@ -60,6 +67,14 @@ export interface IReturnsQuery {
   shipmentStatuses?: string[];
   pageToken?: string;
   limit?: number;
+}
+
+/** Одна позиция для записи остатка. */
+export interface IStockUpdate {
+  /** Артикул в каталоге Яндекса (offerId). */
+  sku: string;
+  /** Остаток. 0 — валидное значение: означает «нет в наличии». */
+  count: number;
 }
 
 export interface IPagedResult<T> {
@@ -260,6 +275,79 @@ export class YandexApiClient {
     return data.campaigns ?? [];
   }
 
+  /**
+   * Полный обход каталога продавца. Возвращает артикулы (offerId) — именно с
+   * ними сверяется прайс.
+   *
+   * Каталог реального магазина — 5.6k позиций, то есть 28 страниц. Держать всё
+   * в памяти нормально: это строки, а не объекты товаров.
+   */
+  public async loadCatalogOfferIds(): Promise<Set<string>> {
+    const ids = new Set<string>();
+    let pageToken: string | undefined;
+    let page = 0;
+
+    do {
+      const data = await this.post<{
+        result?: {
+          offerMappings?: Array<{ offer?: { offerId?: string } }>;
+          paging?: { nextPageToken?: string };
+        };
+      }>(
+        offerMappingsPath(this.credentials.businessId),
+        { limit: PAGE_LIMITS.offerMappings.default, page_token: pageToken },
+        {},
+      );
+
+      for (const m of data.result?.offerMappings ?? []) {
+        if (m.offer?.offerId) ids.add(m.offer.offerId);
+      }
+
+      pageToken = data.result?.paging?.nextPageToken;
+    } while (pageToken && ++page < this.maxPages);
+
+    this.logger.log(`Каталог загружен: ${ids.size} артикулов`);
+    return ids;
+  }
+
+  /**
+   * ЗАПИСЬ остатков — единственная операция изменения во всём приложении.
+   *
+   * Один вызов = один батч. Разбиением на батчи и паузами занимается
+   * вызывающий код: только он знает про общий объём и умеет собрать отчёт,
+   * какие именно позиции не прошли.
+   */
+  public async updateStocks(items: IStockUpdate[], warehouseId: number): Promise<void> {
+    if (!items.length) return;
+
+    // Время отгрузки: Яндекс требует ISO 8601. Один момент на весь батч —
+    // иначе позиции внутри одной загрузки получат разное время без причины.
+    const updatedAt = new Date().toISOString();
+
+    await this.put(stocksPath(this.credentials.campaignId), {
+      skus: items.map((item) => ({
+        sku: item.sku,
+        warehouseId,
+        items: [{ count: item.count, type: 'FIT', updatedAt }],
+      })),
+    });
+
+    this.logger.log(`Остатки обновлены: ${items.length} позиций (склад ${warehouseId})`);
+  }
+
+  /** Идентификатор склада продавца — нужен для записи остатков. */
+  public async getWarehouseId(): Promise<number> {
+    const data = await this.post<{
+      result?: { warehouses?: Array<{ warehouseId?: number }> };
+    }>(stocksPath(this.credentials.campaignId), { limit: 1 }, {});
+
+    const id = data.result?.warehouses?.[0]?.warehouseId;
+    if (!id) {
+      throw new Error('Не удалось определить склад: Partner API не вернул warehouseId');
+    }
+    return id;
+  }
+
   private async get<T>(path: string, params: Record<string, unknown>): Promise<T> {
     // Логируем путь и кампанию, но НИКОГДА заголовки: там токен продавца.
     this.logger.debug(`GET ${path} (кампания ${this.credentials.campaignId})`);
@@ -276,6 +364,38 @@ export class YandexApiClient {
           `Partner API ${error.status} на ${path}: повтор ${attempt}/${this.retry.attempts - 1} через ${delayMs} мс`,
         ),
     );
+  }
+
+  private async post<T>(path: string, params: Record<string, unknown>, body: unknown): Promise<T> {
+    this.logger.debug(`POST ${path} (кампания ${this.credentials.campaignId})`);
+
+    return await withRetry(
+      async () => {
+        const response = await this.http.post<T>(path, body, { params: prune(params) });
+        return response.data;
+      },
+      this.retry,
+      this.sleep,
+      (error, attempt, delayMs) =>
+        this.logger.warn(
+          `Partner API ${error.status} на ${path}: повтор ${attempt}/${this.retry.attempts - 1} через ${delayMs} мс`,
+        ),
+    );
+  }
+
+  /**
+   * PUT идёт БЕЗ повторов намеренно.
+   *
+   * withRetry повторяет запрос при 5xx и 420. Для чтения это безопасно, для
+   * записи — нет: Яндекс мог применить изменение и не успеть ответить, и
+   * повтор наложился бы поверх. Остатки — не идемпотентная операция в смысле
+   * «повторить вслепую»: при ошибке лучше показать её в отчёте, чтобы
+   * пользователь перезапустил загрузку осознанно.
+   */
+  private async put<T>(path: string, body: unknown): Promise<T> {
+    this.logger.debug(`PUT ${path} (кампания ${this.credentials.campaignId})`);
+    const response = await this.http.put<T>(path, body);
+    return response.data;
   }
 
   private toDomainError(error: AxiosError): YandexApiError {
