@@ -14,6 +14,8 @@ import { AdminApprovalHandler } from '../../src/modules/telegram/bots/price-chan
 import { ScheduleHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/schedule.handler';
 import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
+import { StockUploadHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
+import { StockSyncService } from '../../src/modules/yandex/stocks/stock-sync.service';
 import { FallbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/fallback.handler';
 import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
 import { AdminNotifierService } from '../../src/modules/telegram/bots/shared/services/admin-notifier.service';
@@ -68,9 +70,7 @@ describe('Онбординг: от /start до отчёта', () => {
             apiCalls.push({ path, params: opts?.params ?? {} });
             return {
               data: {
-                orders: [
-                  { id: 1, status: 'DELIVERED', itemsTotal: 1000, deliveryTotal: 200 },
-                ],
+                orders: [{ id: 1, status: 'DELIVERED', itemsTotal: 1000, deliveryTotal: 200 }],
               },
             };
           },
@@ -99,6 +99,10 @@ describe('Онбординг: от /start до отчёта', () => {
         ScheduleHandler,
         ReportsHandler,
         ApiSettingsHandler,
+        StockUploadHandler,
+        // Загрузка остатков в этом сценарии не участвует, но обработчик —
+        // часть пайплайна, и без заглушки его зависимость не резолвится.
+        { provide: StockSyncService, useValue: { sync: async () => ({}) } },
         FallbackHandler,
         PriceChangerKeyboard,
         AdminNotifierService,
@@ -133,8 +137,7 @@ describe('Онбординг: от /start до отчёта', () => {
   const admin = { id: ADMIN_ID, username: 'boss', first_name: 'Босс' };
 
   const send = (text: string, from = user) => harness.fake.dispatch({ from, text });
-  const tap = (callbackData: string, from = user) =>
-    harness.fake.dispatch({ from, callbackData });
+  const tap = (callbackData: string, from = user) => harness.fake.dispatch({ from, callbackData });
 
   beforeEach(async () => {
     harness = await build();
@@ -293,5 +296,4 @@ describe('Онбординг: от /start до отчёта', () => {
     expect(harness.fake.lastTextTo(USER_ID)).toContain('рассмотрении');
     expect(apiCalls).toHaveLength(0);
   });
-
 });

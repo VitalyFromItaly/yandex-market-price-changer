@@ -7,23 +7,26 @@ import {
 import { OrderReportsService } from '../../src/modules/yandex/reports/order-reports.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { REPORT } from '../../src/modules/yandex/reports/report-status-map';
-import { MENU, MENU_LABELS } from '../../src/modules/telegram/bots/price-changer-bot/menu.constants';
 import {
-  YandexAuthError,
-  YandexRateLimitError,
-} from '../../src/modules/yandex/yandex-api.errors';
+  MENU,
+  MENU_LABELS,
+} from '../../src/modules/telegram/bots/price-changer-bot/menu.constants';
+import { YandexAuthError, YandexRateLimitError } from '../../src/modules/yandex/yandex-api.errors';
 
 const STORE = { token: 'ACMA:x', campaign_id: '1', business_id: '2' };
 
 async function build(opts: { store?: unknown; build?: () => Promise<unknown> } = {}) {
   const reports = {
-    build: vi.fn(opts.build ?? (async () => ({
-      key: REPORT.REDEEMED,
-      title: 'Выкуплено',
-      count: 1,
-      totals: { items: 100, withDelivery: 120 },
-      orders: [],
-    }))),
+    build: vi.fn(
+      opts.build ??
+        (async () => ({
+          key: REPORT.REDEEMED,
+          title: 'Выкуплено',
+          count: 1,
+          totals: { items: 100, withDelivery: 120 },
+          orders: [],
+        })),
+    ),
     exportInTransit: vi.fn(async () => ({ empty: true, message: 'нет данных' })),
   };
   const yandexMarketService = {
@@ -85,7 +88,14 @@ describe('ReportsHandler', () => {
     const { handler, reports } = await build({
       build: () =>
         new Promise((resolve) => {
-          release = () => resolve({ key: REPORT.REDEEMED, title: 'x', count: 0, totals: { items: 0, withDelivery: 0 }, orders: [] });
+          release = () =>
+            resolve({
+              key: REPORT.REDEEMED,
+              title: 'x',
+              count: 0,
+              totals: { items: 0, withDelivery: 0 },
+              orders: [],
+            });
         }),
     });
     const ctx = fakeCtx();

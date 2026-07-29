@@ -66,11 +66,7 @@ describe('Составные unique новых схем', () => {
   });
 
   it('расписание уникально по (пользователь, бот, отчёт)', () => {
-    const index = findIndex(ReportScheduleSchema, [
-      'telegramUserId',
-      'botId',
-      'reportKey',
-    ]);
+    const index = findIndex(ReportScheduleSchema, ['telegramUserId', 'botId', 'reportKey']);
 
     expect(index).toBeDefined();
     expect(index[1].unique).toBe(true);

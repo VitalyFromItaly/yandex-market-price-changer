@@ -10,6 +10,7 @@ import { SlashCommandsHandler } from '../../src/modules/telegram/bots/price-chan
 import { CallbackQueryHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/callback-query.handler';
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
 import { FallbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/fallback.handler';
+import { StockUploadHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
 
 /**
  * Порядок регистрации обработчиков telegraf — значимый инвариант, который
@@ -30,9 +31,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
       start: (..._a: unknown[]) => (calls.push('start'), bot),
       hears: (..._a: unknown[]) => (calls.push('hears'), bot),
       command: (..._a: unknown[]) => (calls.push('command'), bot),
-      on: (event: unknown, ..._a: unknown[]) => (
-        calls.push(`on:${String(event)}`), bot
-      ),
+      on: (event: unknown, ..._a: unknown[]) => (calls.push(`on:${String(event)}`), bot),
       use: noop,
       catch: noop,
       telegram: { setMyCommands: async () => undefined },
@@ -64,6 +63,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
         },
         { provide: CallbackQueryHandler, useValue: stub('callbacks', order) },
         { provide: ApiSettingsHandler, useValue: stub('apiSettings', order) },
+        { provide: StockUploadHandler, useValue: stub('stockUpload', order) },
         { provide: FallbackHandler, useValue: stub('fallback', order) },
       ],
     }).compile();
@@ -108,6 +108,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
       'scheduleCallbacks',
       'callbacks',
       'apiSettings',
+      'stockUpload',
       'fallback',
     ]);
   });

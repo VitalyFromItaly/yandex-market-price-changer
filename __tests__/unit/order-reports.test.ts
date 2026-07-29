@@ -33,10 +33,7 @@ function buildService(opts: { orders?: unknown[]; returns?: unknown[] } = {}) {
 async function service(opts: Parameters<typeof buildService>[0] = {}) {
   const { factory, queries, returnQueries } = buildService(opts);
   const moduleRef = await Test.createTestingModule({
-    providers: [
-      OrderReportsService,
-      { provide: YandexClientFactory, useValue: factory },
-    ],
+    providers: [OrderReportsService, { provide: YandexClientFactory, useValue: factory }],
   }).compile();
   return {
     reports: moduleRef.get(OrderReportsService),

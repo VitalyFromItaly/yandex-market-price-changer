@@ -95,9 +95,7 @@ describe('matchesReport', () => {
   it('пустой список подстатусов означает «подстатус не важен»', () => {
     // А не «подстатус должен отсутствовать» — иначе отчёт «выкуплено» терял бы
     // все заказы, у которых подстатус проставлен.
-    expect(matchesReport(REPORT.REDEEMED, { status: 'DELIVERED', substatus: 'ANY' })).toBe(
-      true,
-    );
+    expect(matchesReport(REPORT.REDEEMED, { status: 'DELIVERED', substatus: 'ANY' })).toBe(true);
     expect(matchesReport(REPORT.REDEEMED, { status: 'DELIVERED' })).toBe(true);
   });
 
@@ -107,7 +105,10 @@ describe('matchesReport', () => {
     ).toBe(true);
     // Статус подходит, подстатус — нет: обычная доставка, не возврат.
     expect(
-      matchesReport(REPORT.RETURNING, { status: 'DELIVERY', substatus: 'DELIVERY_SERVICE_RECEIVED' }),
+      matchesReport(REPORT.RETURNING, {
+        status: 'DELIVERY',
+        substatus: 'DELIVERY_SERVICE_RECEIVED',
+      }),
     ).toBe(false);
     // Подстатус возвратный, но статус не из списка.
     expect(

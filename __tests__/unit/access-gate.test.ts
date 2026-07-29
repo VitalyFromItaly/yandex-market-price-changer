@@ -56,8 +56,7 @@ describe('AccessGateHandler', () => {
       chat: { id: 555, type: update.chatType ?? 'private' },
       botInfo: { id: BOT_ID },
       message: update.text === undefined ? undefined : { text: update.text },
-      callbackQuery:
-        update.callbackData === undefined ? undefined : { data: update.callbackData },
+      callbackQuery: update.callbackData === undefined ? undefined : { data: update.callbackData },
       reply: vi.fn(async () => undefined),
       answerCbQuery: vi.fn(async () => undefined),
     };

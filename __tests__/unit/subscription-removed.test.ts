@@ -46,8 +46,7 @@ describe('Система подписок удалена (TASK-036)', () => {
       .join('\n'),
   }));
 
-  const hitsFor = (pattern: RegExp) =>
-    files.filter((f) => pattern.test(f.code)).map((f) => f.path);
+  const hitsFor = (pattern: RegExp) => files.filter((f) => pattern.test(f.code)).map((f) => f.path);
 
   it.each([
     'SubscriptionService',
@@ -75,8 +74,6 @@ describe('Система подписок удалена (TASK-036)', () => {
     const paths = files.map((f) => f.path);
     expect(paths).not.toContain('database/schemas/subscription.schema.ts');
     expect(paths).not.toContain('database/services/subscription.service.ts');
-    expect(paths).not.toContain(
-      'modules/telegram/bots/shared/services/telegram-user.service.ts',
-    );
+    expect(paths).not.toContain('modules/telegram/bots/shared/services/telegram-user.service.ts');
   });
 });

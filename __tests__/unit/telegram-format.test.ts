@@ -32,9 +32,7 @@ describe('telegram-format', () => {
     it('название товара со спецсимволами не ломает разметку', () => {
       const name = 'Часы <Casio> G-Shock & Co. (модель 1.5)';
       const message = `Товар: ${b(name)}`;
-      expect(message).toBe(
-        'Товар: <b>Часы &lt;Casio&gt; G-Shock &amp; Co. (модель 1.5)</b>',
-      );
+      expect(message).toBe('Товар: <b>Часы &lt;Casio&gt; G-Shock &amp; Co. (модель 1.5)</b>');
       // Ни одного неэкранированного < или > вне собственных тегов разметки
       expect(message.replace(/<\/?b>/g, '')).not.toMatch(/[<>]/);
     });
@@ -57,9 +55,7 @@ describe('telegram-format', () => {
 
     it('html-тег экранирует ВСЕ подстановки, оставляя статику как есть', () => {
       const evil = '<script>alert(1)</script>';
-      expect(html`Привет, ${evil}!`).toBe(
-        'Привет, &lt;script&gt;alert(1)&lt;/script&gt;!',
-      );
+      expect(html`Привет, ${evil}!`).toBe('Привет, &lt;script&gt;alert(1)&lt;/script&gt;!');
     });
 
     it('raw отключает экранирование для готовой разметки', () => {

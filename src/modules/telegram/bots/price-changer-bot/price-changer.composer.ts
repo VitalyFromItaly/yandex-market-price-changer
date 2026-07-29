@@ -11,6 +11,7 @@ import { MenuCommandsHandler } from './handlers/menu-commands.handler';
 import { ScheduleHandler } from './handlers/schedule.handler';
 import { SlashCommandsHandler } from './handlers/slash-commands.handler';
 import { StartHandler } from './handlers/start.handler';
+import { StockUploadHandler } from './handlers/stock-upload.handler';
 
 /**
  * Собирает бота из синглтон-обработчиков.
@@ -44,6 +45,9 @@ export class PriceChangerComposer {
       { name: 'scheduleCallbacks', register: (b) => this.scheduleCallbacks.register(b) },
       { name: 'callbacks', register: (b) => this.callbacks.register(b) },
       { name: 'apiSettings', register: (b) => this.apiSettings.register(b) },
+      // Приём прайса. После apiSettings (тот слушает текст, а не документы),
+      // но строго ДО catch-all, иначе документ уйдёт в «не понимаю команду».
+      { name: 'stockUpload', register: (b) => this.stockUpload.register(b) },
       // catch-all — строго последним
       { name: 'fallback', register: (b) => this.fallback.register(b) },
     ];
@@ -58,6 +62,7 @@ export class PriceChangerComposer {
     private readonly scheduleCallbacks: ScheduleHandler,
     private readonly callbacks: CallbackQueryHandler,
     private readonly apiSettings: ApiSettingsHandler,
+    private readonly stockUpload: StockUploadHandler,
     private readonly fallback: FallbackHandler,
   ) {}
 

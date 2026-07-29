@@ -84,11 +84,7 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
       return { exec: async () => documents.filter((d) => matches(d, filter)) };
     }
 
-    static findOneAndUpdate(
-      filter: TDoc,
-      update: TDoc,
-      options: { upsert?: boolean } = {},
-    ) {
+    static findOneAndUpdate(filter: TDoc, update: TDoc, options: { upsert?: boolean } = {}) {
       return {
         exec: async () => {
           let doc = documents.find((d) => matches(d, filter));
@@ -144,8 +140,7 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
 function stripOperators(filter: TDoc): TDoc {
   return Object.fromEntries(
     Object.entries(filter ?? {}).filter(
-      ([, value]) =>
-        !(value && typeof value === 'object' && !(value instanceof Date)),
+      ([, value]) => !(value && typeof value === 'object' && !(value instanceof Date)),
     ),
   );
 }

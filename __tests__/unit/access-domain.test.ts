@@ -148,18 +148,12 @@ describe('callback_data админских кнопок', () => {
     expect(ADMIN_CB_PATTERN.test(data)).toBe(true);
   });
 
-  it.each([
-    'adm:xx:1',
-    'adm:ap:abc',
-    'adm:ap:',
-    'admx:ap:1',
-    'ap:1',
-    'main_menu',
-    '',
-    undefined,
-  ])('не разбирает мусор: %o', (data) => {
-    expect(parseAdminCallback(data as string | undefined)).toBeNull();
-  });
+  it.each(['adm:xx:1', 'adm:ap:abc', 'adm:ap:', 'admx:ap:1', 'ap:1', 'main_menu', '', undefined])(
+    'не разбирает мусор: %o',
+    (data) => {
+      expect(parseAdminCallback(data as string | undefined)).toBeNull();
+    },
+  );
 
   it('шаблон не цепляет обычные callback_data приложения', () => {
     for (const data of ['settings_api', 'check_settings', 'main_menu', 'confirm_yes']) {

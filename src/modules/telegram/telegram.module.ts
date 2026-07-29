@@ -16,6 +16,7 @@ import { ScheduleHandler } from './bots/price-changer-bot/handlers/schedule.hand
 import { SharedCommandsHandler } from './bots/price-changer-bot/handlers/shared-commands.handler';
 import { SlashCommandsHandler } from './bots/price-changer-bot/handlers/slash-commands.handler';
 import { StartHandler } from './bots/price-changer-bot/handlers/start.handler';
+import { StockUploadHandler } from './bots/price-changer-bot/handlers/stock-upload.handler';
 import { PriceChangerComposer } from './bots/price-changer-bot/price-changer.composer';
 import { PriceChangerKeyboard } from './bots/price-changer-bot/price-changer.keyboard';
 import { AdminNotifierService } from './bots/shared/services/admin-notifier.service';
@@ -101,6 +102,7 @@ import { QUEUE_NAMES } from './index';
     SlashCommandsHandler,
     CallbackQueryHandler,
     ApiSettingsHandler,
+    StockUploadHandler,
     SharedCommandsHandler,
     FallbackHandler,
     FileProcessingService,

@@ -2,15 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
 import { YandexApiClient } from '../../src/modules/yandex/yandex-api.client';
 import { PAGE_LIMITS, HISTORY_WINDOW_DAYS } from '../../src/modules/yandex/yandex-api.paths';
-import {
-  YandexAuthError,
-  YandexRateLimitError,
-} from '../../src/modules/yandex/yandex-api.errors';
-import {
-  backoffDelay,
-  withRetry,
-  DEFAULT_RETRY,
-} from '../../src/modules/yandex/yandex-retry';
+import { YandexAuthError, YandexRateLimitError } from '../../src/modules/yandex/yandex-api.errors';
+import { backoffDelay, withRetry, DEFAULT_RETRY } from '../../src/modules/yandex/yandex-retry';
 import {
   YandexDateRangeError,
   assertWithinHistoryWindow,
@@ -129,9 +122,12 @@ describe('Постраничный обход', () => {
 
   it('битый nextPageToken, указывающий сам на себя, не крутится вечно', async () => {
     // Иначе обход жёг бы часовую квоту до победного.
-    const { instance, calls } = client([{ data: { orders: [1], paging: { nextPageToken: 'same' } } }], {
-      maxPages: 5,
-    });
+    const { instance, calls } = client(
+      [{ data: { orders: [1], paging: { nextPageToken: 'same' } } }],
+      {
+        maxPages: 5,
+      },
+    );
 
     await collect(instance.iterateOrders());
     expect(calls).toHaveLength(5);
@@ -264,9 +260,7 @@ describe('Окно истории в 30 дней', () => {
   const daysAgo = (n: number) => new Date(now.getTime() - n * 24 * 3600_000);
 
   it('обычный период проходит', () => {
-    expect(() =>
-      assertWithinHistoryWindow({ from: daysAgo(7), to: now }, now),
-    ).not.toThrow();
+    expect(() => assertWithinHistoryWindow({ from: daysAgo(7), to: now }, now)).not.toThrow();
   });
 
   it('период ровно в 30 дней ещё допустим', () => {
@@ -298,12 +292,10 @@ describe('Окно истории в 30 дней', () => {
   });
 
   it('перевёрнутый и битый диапазон отклоняются', () => {
-    expect(() => assertWithinHistoryWindow({ from: now, to: daysAgo(5) }, now)).toThrow(
-      /позже/,
+    expect(() => assertWithinHistoryWindow({ from: now, to: daysAgo(5) }, now)).toThrow(/позже/);
+    expect(() => assertWithinHistoryWindow({ from: new Date('нет'), to: now }, now)).toThrow(
+      /Некорректная/,
     );
-    expect(() =>
-      assertWithinHistoryWindow({ from: new Date('нет'), to: now }, now),
-    ).toThrow(/Некорректная/);
   });
 
   it('проверка происходит ДО сетевого запроса — квота не тратится', async () => {

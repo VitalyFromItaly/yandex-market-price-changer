@@ -105,9 +105,7 @@ describe('UserAccessService: атомарность переходов', () => {
     await service.saveDraftField('1', '2', 'token', 'ACMA:xxx');
     expect(call()[update].$set).toEqual({ 'draft.token': 'ACMA:xxx' });
 
-    await expect(
-      service.saveDraftField('1', '2', 'status' as never, 'approved'),
-    ).rejects.toThrow();
+    await expect(service.saveDraftField('1', '2', 'status' as never, 'approved')).rejects.toThrow();
   });
 
   it('grant выдаёт доступ без заявки — для администратора-продавца', async () => {

@@ -39,7 +39,9 @@ describe('ApiSettingsHandler: подача заявки', () => {
         state.draft[field] = value;
         return { draft: { ...state.draft } };
       }),
-      tryApply: vi.fn(async () => (state.status === 'new' ? { ...state, status: 'pending' } : null)),
+      tryApply: vi.fn(async () =>
+        state.status === 'new' ? { ...state, status: 'pending' } : null,
+      ),
       revertApply: vi.fn(async () => ({ ...state, status: 'new' })),
       grant: vi.fn(async () => ({ ...state, status: 'approved' })),
     };
@@ -141,7 +143,10 @@ describe('ApiSettingsHandler: подача заявки', () => {
     const { reply } = await send(handler, '12345678');
 
     expect(accessService.saveDraftField).toHaveBeenCalledWith(
-      String(USER_ID), '999', 'campaign_id', '12345678',
+      String(USER_ID),
+      '999',
+      'campaign_id',
+      '12345678',
     );
     expect(reply()).not.toContain('Уточните');
     expect(reply()).toContain('Шаг 3 из 3');
@@ -153,7 +158,10 @@ describe('ApiSettingsHandler: подача заявки', () => {
     await send(handler, 'business_id: 87654321');
 
     expect(accessService.saveDraftField).toHaveBeenCalledWith(
-      String(USER_ID), '999', 'business_id', '87654321',
+      String(USER_ID),
+      '999',
+      'business_id',
+      '87654321',
     );
   });
 
@@ -229,10 +237,9 @@ describe('ApiSettingsHandler: подача заявки', () => {
     const { reply } = await send(handler, `campaign_id: 55555`);
 
     expect(adminNotifier.sendApplication).not.toHaveBeenCalled();
-    expect(yandexMarketService.updateByTelegramUser).toHaveBeenCalledWith(
-      String(USER_ID),
-      { campaign_id: '55555' },
-    );
+    expect(yandexMarketService.updateByTelegramUser).toHaveBeenCalledWith(String(USER_ID), {
+      campaign_id: '55555',
+    });
     expect(reply()).toContain('обновлена');
   });
 

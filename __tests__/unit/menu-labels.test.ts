@@ -8,10 +8,7 @@ import {
   menuLayout,
 } from '../../src/modules/telegram/bots/price-changer-bot/menu.constants';
 
-const HANDLERS = join(
-  process.cwd(),
-  'src/modules/telegram/bots/price-changer-bot',
-);
+const HANDLERS = join(process.cwd(), 'src/modules/telegram/bots/price-changer-bot');
 
 const read = (rel: string) => readFileSync(join(HANDLERS, rel), 'utf8');
 

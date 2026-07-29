@@ -87,9 +87,7 @@ describe('stripBrand: отсечение бренда', () => {
 
   it('ORIENT STAR проверяется раньше ORIENT', () => {
     expect(stripBrand('ORIENT STAR RE-AU0001S')).toBe('RE-AU0001S');
-    expect(BRAND_PREFIXES.indexOf('ORIENT STAR')).toBeLessThan(
-      BRAND_PREFIXES.indexOf('ORIENT'),
-    );
+    expect(BRAND_PREFIXES.indexOf('ORIENT STAR')).toBeLessThan(BRAND_PREFIXES.indexOf('ORIENT'));
   });
 
   it('хвост сохраняется ДОСЛОВНО — суффиксы часть артикула', () => {
@@ -131,11 +129,7 @@ describe('stripBrand: отсечение бренда', () => {
 
 describe('resolveSku: перебор кандидатов по неоднородному каталогу', () => {
   it('порядок кандидатов: без бренда, как в прайсе, с приставкой', () => {
-    expect(skuCandidates('CASIO A158')).toEqual([
-      'A158',
-      'CASIO A158',
-      'Наручные часы CASIO A158',
-    ]);
+    expect(skuCandidates('CASIO A158')).toEqual(['A158', 'CASIO A158', 'Наручные часы CASIO A158']);
   });
 
   it('голый код — основной случай (5312 из 5599 в каталоге)', () => {
@@ -144,10 +138,7 @@ describe('resolveSku: перебор кандидатов по неодноро�
   });
 
   it('приставка «Наручные часы» — так заведены 285 Daniel Klein', () => {
-    const r = resolveSku(
-      'Daniel Klein 14273-2',
-      new Set(['Наручные часы Daniel Klein 14273-2']),
-    );
+    const r = resolveSku('Daniel Klein 14273-2', new Set(['Наручные часы Daniel Klein 14273-2']));
     expect(r.sku).toBe('Наручные часы Daniel Klein 14273-2');
     expect(r.matchedBy).toBe('приставка «Наручные часы»');
   });

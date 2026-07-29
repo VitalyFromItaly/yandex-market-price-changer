@@ -135,11 +135,7 @@ describe('YandexClientFactory', () => {
     const paths = axiosStub.calls.map((c) => c.path);
 
     expect(tokens).toEqual(['ACMA:token-1', 'ACMA:token-2', 'ACMA:token-1']);
-    expect(paths).toEqual([
-      ordersPath('10001'),
-      ordersPath('10002'),
-      ordersPath('10001'),
-    ]);
+    expect(paths).toEqual([ordersPath('10001'), ordersPath('10002'), ordersPath('10001')]);
   });
 
   it('падает внятно, если кред не заполнен', async () => {
