@@ -131,9 +131,13 @@ export class SlashCommandsHandler {
       // Убраны: /price и /upload (изменение цен отключено, TASK-009),
       // а также /files и /cleanup — их обработчики были удалены ещё при
       // миграции, но команды продолжали рекламироваться и молча не работали.
+      // Список содержит ТОЛЬКО реально зарегистрированные команды. Отчёты
+      // вызываются кнопками меню, а не слэш-командами, поэтому в setMyCommands
+      // их нет: команда, которую бот рекламирует, но не обрабатывает, молча не
+      // работает — так уже случилось с /files и /cleanup.
       await bot.telegram.setMyCommands([
         { command: 'start', description: '🏠 Запустить бота' },
-        { command: 'menu', description: '📋 Главное меню' },
+        { command: 'menu', description: '📋 Меню и отчёты' },
         { command: 'settings', description: '⚙️ Настройки' },
         { command: 'profile', description: '👤 Профиль' },
         { command: 'help', description: '❓ Помощь' },

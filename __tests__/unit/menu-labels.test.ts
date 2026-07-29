@@ -46,9 +46,15 @@ describe('меню: единственный источник подписей',
   });
 
   it('menuLayout() отдаёт мутабельную копию, не ломая константу', () => {
-    const a = menuLayout();
-    a[0][0] = 'испорчено';
-    expect(menuLayout()[0][0]).toBe(MENU.SETTINGS);
+    // Конкретная метка тут не важна — важно, что порча копии не задевает
+    // константу. Раньше здесь стояла MENU.SETTINGS, и тест краснел при любой
+    // перестановке рядов, хотя проверяет он совсем другое.
+    const original = menuLayout()[0][0];
+    const copy = menuLayout();
+    copy[0][0] = 'испорчено';
+
+    expect(menuLayout()[0][0]).toBe(original);
+    expect(menuLayout()[0][0]).not.toBe('испорчено');
   });
 
   it('на каждую подпись из справочника есть bot.hears', () => {

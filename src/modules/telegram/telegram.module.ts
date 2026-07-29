@@ -15,6 +15,8 @@ import { PriceChangerKeyboard } from './bots/price-changer-bot/price-changer.key
 import { AdminNotifierService } from './bots/shared/services/admin-notifier.service';
 import { AccessGateHandler } from './bots/price-changer-bot/handlers/access-gate.handler';
 import { AdminApprovalHandler } from './bots/price-changer-bot/handlers/admin-approval.handler';
+import { ReportsHandler } from './bots/price-changer-bot/handlers/reports.handler';
+import { YandexModule } from '../yandex/yandex.module';
 import { StartHandler } from './bots/price-changer-bot/handlers/start.handler';
 import { MenuCommandsHandler } from './bots/price-changer-bot/handlers/menu-commands.handler';
 import { SlashCommandsHandler } from './bots/price-changer-bot/handlers/slash-commands.handler';
@@ -26,6 +28,7 @@ import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.hand
 @Module({
   imports: [
     DatabaseModule,
+    YandexModule,
     BullModule.registerQueue(
       {
         name: QUEUE_NAMES.FILE_PROCESSING,
@@ -75,6 +78,7 @@ import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.hand
     AdminNotifierService,
     AccessGateHandler,
     AdminApprovalHandler,
+    ReportsHandler,
     StartHandler,
     MenuCommandsHandler,
     SlashCommandsHandler,

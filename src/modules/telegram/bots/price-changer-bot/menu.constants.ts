@@ -16,6 +16,12 @@
 
 export const MENU = {
   MAIN: '🏠 Главное меню',
+  // Четыре отчёта. Подписи здесь же, чтобы кнопка и её hears не разъехались —
+  // ровно та беда, ради которой файл и появился.
+  SHIPPED_TODAY: '🚚 Уехало клиенту',
+  REDEEMED: '✅ Выкуплено',
+  RETURNING: '↩️ Едет обратно',
+  IN_TRANSIT: '📦 Едет до клиента',
   SETTINGS: '⚙️ Настройки API',
   PROFILE: '📊 Мой профиль',
   HELP: '❓ Помощь',
@@ -35,6 +41,8 @@ export const MENU_LABELS: readonly TMenuLabel[] = Object.values(MENU);
  * в MENU_LABELS, но отсутствует в раскладке.
  */
 export const MENU_LAYOUT: readonly (readonly TMenuLabel[])[] = [
+  [MENU.SHIPPED_TODAY, MENU.REDEEMED],
+  [MENU.RETURNING, MENU.IN_TRANSIT],
   [MENU.SETTINGS],
   [MENU.HELP, MENU.PROFILE],
 ];

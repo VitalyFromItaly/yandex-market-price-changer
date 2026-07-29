@@ -31,10 +31,22 @@ export interface IReportOrder {
   items?: Array<{ offerName?: string; count?: number }>;
 }
 
-/** Результат выгрузки: либо файл, либо объяснение, почему файла нет. */
-export type IReportExport =
-  | { empty: true; message: string }
-  | { empty: false; buffer: Buffer; filename: string; caption: string };
+/**
+ * Результат выгрузки: либо файл, либо объяснение, почему файла нет.
+ *
+ * Плоская структура, а не дискриминированное объединение: в проекте выключен
+ * strictNullChecks, и сужение по литеральному `empty: true` не работает —
+ * компилятор просто не даст обратиться к полям файла.
+ */
+export interface IReportExport {
+  empty: boolean;
+  /** Заполнено при empty === true. */
+  message?: string;
+  /** Заполнены при empty === false. */
+  buffer?: Buffer;
+  filename?: string;
+  caption?: string;
+}
 
 export interface IReportResult {
   key: TReportKey;

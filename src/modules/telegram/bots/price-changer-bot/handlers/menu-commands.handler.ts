@@ -6,6 +6,7 @@ import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { SharedCommandsHandler } from './shared-commands.handler';
+import { MENU_TO_REPORT, ReportsHandler } from './reports.handler';
 
 @Injectable()
 export class MenuCommandsHandler {
@@ -13,11 +14,27 @@ export class MenuCommandsHandler {
     private keyboard: PriceChangerKeyboard,
     private yandexMarketService: YandexMarketService,
     private sharedCommandsHandler: SharedCommandsHandler,
+    private reportsHandler: ReportsHandler,
   ) {}
 
   public register(bot: TTelegrafBot) {
     // Подписи — из menu.constants, единственного источника (TASK-014).
     bot.hears(MENU.MAIN, (ctx) => this.showMainMenu(ctx));
+    // Четыре отчёта. hears объявлены здесь, потому что здесь же живёт весь
+    // роутинг reply-кнопок, а инвариант menu-labels требует пару «метка ↔ hears»
+    // в одном файле. Сама работа — в ReportsHandler.
+    bot.hears(MENU.SHIPPED_TODAY, (ctx) =>
+      this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.SHIPPED_TODAY]),
+    );
+    bot.hears(MENU.REDEEMED, (ctx) =>
+      this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.REDEEMED]),
+    );
+    bot.hears(MENU.RETURNING, (ctx) =>
+      this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.RETURNING]),
+    );
+    bot.hears(MENU.IN_TRANSIT, (ctx) =>
+      this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.IN_TRANSIT]),
+    );
     bot.hears(MENU.SETTINGS, (ctx) => this.showApiSettings(ctx));
     bot.hears(MENU.PROFILE, (ctx) => this.showProfile(ctx));
     bot.hears(MENU.HELP, (ctx) => this.showMainMenu(ctx));
