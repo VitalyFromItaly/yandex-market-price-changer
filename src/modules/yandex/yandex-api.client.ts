@@ -69,6 +69,13 @@ export interface IReturnsQuery {
   limit?: number;
 }
 
+/** Магазин продавца: пара идентификаторов и человекочитаемое название. */
+export interface IStoreRef {
+  campaignId: string;
+  businessId: string;
+  name: string;
+}
+
 /** Одна позиция для записи остатка. */
 export interface IStockUpdate {
   /** Артикул в каталоге Яндекса (offerId). */
@@ -273,6 +280,34 @@ export class YandexApiClient {
   public async getCampaigns(): Promise<unknown[]> {
     const data = await this.get<{ campaigns?: unknown[] }>(campaignsPath(), {});
     return data.campaigns ?? [];
+  }
+
+  /**
+   * Магазины токена в готовом виде: и campaignId, и businessId сразу.
+   *
+   * Оба идентификатора приходят ОДНИМ запросом — значит искать их в кабинете
+   * руками не нужно вовсе. Заодно это самая дешёвая проверка живости токена:
+   * протухший отвалится здесь, на первом шаге онбординга, а не на первом
+   * отчёте через неделю.
+   */
+  public async listStores(): Promise<IStoreRef[]> {
+    const campaigns = await this.getCampaigns();
+
+    return campaigns
+      .map((raw) => {
+        const c = (raw ?? {}) as {
+          id?: number;
+          domain?: string;
+          business?: { id?: number; name?: string };
+        };
+        if (!c.id || !c.business?.id) return null;
+        return {
+          campaignId: String(c.id),
+          businessId: String(c.business.id),
+          name: c.business.name ?? c.domain ?? `Магазин ${c.id}`,
+        };
+      })
+      .filter((x): x is IStoreRef => x !== null);
   }
 
   /**

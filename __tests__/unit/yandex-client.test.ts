@@ -326,7 +326,11 @@ describe('Ошибки Partner API', () => {
     expect(error.userMessage).toContain('токен');
   });
 
-  it('ошибка авторизации подсказывает про read-only скоуп', () => {
-    expect(toYandexApiError(403, undefined, 'x').userMessage).toContain('read-only');
+  it('ошибка авторизации называет нужный доступ — с правом записи', () => {
+    // Тест закреплял read-only. После TASK-035 это неверно: обновление
+    // остатков — операция записи, и с read-only токеном вернётся 403.
+    const text = toYandexApiError(403, undefined, 'x').userMessage;
+    expect(text).toContain('Обработка заказов и учёт товаров');
+    expect(text).not.toContain('read-only');
   });
 });

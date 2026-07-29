@@ -1,3 +1,5 @@
+import type { IStoreRef } from '../../../../yandex/yandex-api.client';
+
 import { Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
 
@@ -7,8 +9,9 @@ import {
   type TDraftField,
 } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { YandexClientFactory } from '../../../../yandex/yandex-client.factory';
 import { TTelegrafBot } from '../../../domain.telegram';
-import { esc, htmlOptions } from '../../../formatting/telegram-format';
+import { b, code, esc, htmlOptions } from '../../../formatting/telegram-format';
 import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
 import { MENU, MENU_LABELS } from '../menu.constants';
 import {
@@ -54,6 +57,7 @@ export class ApiSettingsHandler {
     private adminNotifier: AdminNotifierService,
     private config: AppConfigService,
     private scheduleHandler: ScheduleHandler,
+    private readonly clients: YandexClientFactory,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -168,7 +172,13 @@ export class ApiSettingsHandler {
     }
 
     const updated = await this.accessService.saveDraftField(telegramUserId, botId, field, value);
-    const newDraft = updated?.draft ?? {};
+    let newDraft = updated?.draft ?? {};
+
+    // Токен принят — пробуем узнать идентификаторы у самого Маркета.
+    if (field === 'token') {
+      newDraft = await this.autofillFromToken(ctx, value, newDraft);
+    }
+
     const following = nextStep(newDraft);
 
     if (!following) {
@@ -179,6 +189,72 @@ export class ApiSettingsHandler {
       message: `${this.acceptedLabel(field, value)}\n\n${stepPrompt(following)}`,
       keyboard: await this.restartKeyboard(following),
     };
+  }
+
+  /**
+   * Подставить campaign_id и business_id по токену.
+   *
+   * `GET v2/campaigns` отдаёт оба идентификатора сразу — искать их в кабинете
+   * вручную не нужно вовсе. Это снимает два самых частых источника ошибки:
+   * перепутать campaign_id с идентификатором магазина (документация выделяет
+   * это отдельным предупреждением — с ним запросы к API не работают) и просто
+   * ошибиться цифрой.
+   *
+   * Неудача НЕ прерывает регистрацию: при любой проблеме возвращаем черновик
+   * как есть, и визард спокойно продолжится ручным вводом. Запереть человека
+   * из-за недоступности стороннего API было бы хуже, чем спросить два числа.
+   *
+   * Магазинов может быть несколько — тогда автоподстановки не делаем, иначе
+   * молча выбрали бы за пользователя не тот.
+   */
+  private async autofillFromToken(
+    ctx: Context,
+    token: string,
+    draft: TOnboardingDraft,
+  ): Promise<TOnboardingDraft> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+
+    let stores: IStoreRef[];
+    try {
+      stores = await this.clients.forTokenOnly(token).listStores();
+    } catch (error) {
+      // Токен НЕ логируем ни здесь, ни где-либо ещё.
+      this.logger.warn(
+        `Не удалось определить магазины по токену пользователя ${telegramUserId}: ${
+          error instanceof Error ? error.constructor.name : 'неизвестная ошибка'
+        }`,
+      );
+      return draft;
+    }
+
+    if (stores.length !== 1) {
+      this.logger.log(`Автоподстановка пропущена: магазинов ${stores.length} (нужен ровно один)`);
+      return draft;
+    }
+
+    const [store] = stores;
+    await this.accessService.saveDraftField(telegramUserId, botId, 'campaign_id', store.campaignId);
+    const saved = await this.accessService.saveDraftField(
+      telegramUserId,
+      botId,
+      'business_id',
+      store.businessId,
+    );
+
+    await ctx.reply(
+      [
+        `🔎 Нашёл ваш магазин: ${b(store.name)}`,
+        '',
+        `Campaign ID: ${code(store.campaignId)}`,
+        `Business ID: ${code(store.businessId)}`,
+        '',
+        'Искать их в кабинете не нужно — подставил автоматически.',
+      ].join('\n'),
+      htmlOptions(),
+    );
+
+    return saved?.draft ?? draft;
   }
 
   /** Приглашение к первому шагу — используется и при старте, и при сбросе. */

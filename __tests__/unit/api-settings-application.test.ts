@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
+import { YandexClientFactory } from '../../src/modules/yandex/yandex-client.factory';
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
 import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
@@ -60,6 +61,13 @@ describe('ApiSettingsHandler: подача заявки', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         ApiSettingsHandler,
+        {
+          // Автоподстановка id по токену: в этих сценариях сеть не нужна,
+          // пустой список магазинов означает «не определилось» — визард
+          // продолжится ручным вводом, как и раньше.
+          provide: YandexClientFactory,
+          useValue: { forTokenOnly: () => ({ listStores: async () => [] }) },
+        },
         PriceChangerKeyboard,
         { provide: YandexMarketService, useValue: yandexMarketService },
         { provide: UserAccessService, useValue: accessService },

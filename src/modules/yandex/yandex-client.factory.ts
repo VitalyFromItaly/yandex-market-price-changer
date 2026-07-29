@@ -38,6 +38,26 @@ export class YandexClientFactory {
   }
 
   /**
+   * Клиент, у которого есть ТОЛЬКО токен.
+   *
+   * Нужен ровно для одного случая — узнать идентификаторы магазинов до того,
+   * как они известны. Обычный forTenant здесь не подходит: он требует полный
+   * набор кредов, и это правильно — запрос за данными магазина без указания
+   * магазина был бы ошибкой. Здесь же оба поля заведомо пусты, и единственный
+   * доступный метод — listStores().
+   */
+  public forTokenOnly(token: string, options?: IYandexClientOptions): YandexApiClient {
+    if (!token?.trim()) {
+      throw new Error('Нужен токен');
+    }
+    return new YandexApiClient(
+      { token, campaignId: '', businessId: '' },
+      this.config.yandexMarketBaseUrl,
+      options,
+    );
+  }
+
+  /**
    * Клиент из документа настроек продавца. Отдельный метод, чтобы поля
    * `campaign_id`/`business_id` перекладывались в camelCase ровно один раз, а
    * не в каждом вызывающем месте.

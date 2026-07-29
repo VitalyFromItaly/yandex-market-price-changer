@@ -38,8 +38,8 @@ export class YandexAuthError extends YandexApiError {
     return [
       'Яндекс.Маркет отклонил ваш API-токен.',
       '',
-      'Проверьте, что токен не отозван и выдан со скоупом на чтение',
-      '(inventory-and-order-processing:read-only или all-methods:read-only).',
+      'Проверьте, что токен не отозван и выдан с доступом',
+      '«Обработка заказов и учёт товаров».',
     ].join('\n');
   }
 }

@@ -4,7 +4,7 @@
     "prd_source": "аудит ветки nest.js + требования заказчика от 2026-07-28 (в т.ч. замена системы подписок на approval-гейт администратора)",
     "prd_version": "1.2",
     "generated_at": "2026-07-28",
-    "total_tasks": 49,
+    "total_tasks": 50,
     "categories": [
       "infrastructure",
       "functional",
@@ -27,7 +27,7 @@
       "M8": "Обновление остатков через загрузку файла — единственная write-операция, возвращаемая после перехода в read-only"
     },
     "active_tasks": 0,
-    "archived_tasks": 49,
+    "archived_tasks": 50,
     "archive_file": "tasks.archive.json"
   },
   "agent_instructions": {
