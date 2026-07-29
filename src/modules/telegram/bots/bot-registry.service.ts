@@ -13,7 +13,14 @@ import {
 } from '../domain.telegram';
 
 export interface RegisteredBot {
+  /** _id документа Bot в Mongo — по нему приходит вебхук. */
   id: string;
+  /**
+   * Числовой id бота в Telegram (`getMe().id`). Это ДРУГОЙ идентификатор:
+   * записи доступа и расписания хранят именно его, потому что в обработчиках
+   * доступен `ctx.botInfo.id`, а не документ Mongo.
+   */
+  telegramId: number;
   type: string;
   name: string;
   telegraf: TTelegrafBot;
@@ -83,8 +90,15 @@ export class BotRegistry implements OnApplicationBootstrap {
     await this.composer.compose(telegraf);
     await this.setWebhook(telegraf, doc);
 
+    // getMe() один раз при регистрации: telegraf кэширует результат в botInfo,
+    // а нам нужен числовой id, чтобы находить бота по тому же ключу, который
+    // лежит в записях доступа и расписаниях.
+    const info = await telegraf.telegram.getMe();
+    telegraf.botInfo = info;
+
     const entry: RegisteredBot = {
       id: doc.id,
+      telegramId: info.id,
       type: doc.type,
       name: doc.name,
       telegraf,
@@ -117,6 +131,20 @@ export class BotRegistry implements OnApplicationBootstrap {
 
   public find(type: string, id: string): RegisteredBot | null {
     return this.bots.get(type)?.get(id) ?? null;
+  }
+
+  /**
+   * Поиск по числовому id Telegram. Нужен фоновым задачам: расписание знает
+   * `ctx.botInfo.id`, а не _id документа Mongo.
+   */
+  public findByTelegramId(telegramId: number | string): RegisteredBot | null {
+    const wanted = Number(telegramId);
+    for (const byType of this.bots.values()) {
+      for (const entry of byType.values()) {
+        if (entry.telegramId === wanted) return entry;
+      }
+    }
+    return null;
   }
 
   public get count(): number {

@@ -98,6 +98,41 @@ describe('Денежные суммы', () => {
   });
 });
 
+describe('Скрытых надбавок и коэффициентов нет (TASK-032)', () => {
+  // Самые дорогие дефекты старого кода жили именно здесь: наценка «+5 ₽»
+  // применялась только на ОДНОМ из двух путей обновления, а коэффициент по
+  // умолчанию был 2 вместо 1.2 — то есть цена молча удваивалась. Отчёты
+  // обязаны отдавать ровно то, что вернул Яндекс.
+  it('сумма равна тому, что пришло, — байт в байт', () => {
+    expect(orderTotals({ itemsTotal: 1000, deliveryTotal: 0 }).items).toBe(1000);
+    expect(orderTotals({ itemsTotal: 1, deliveryTotal: 0 }).items).toBe(1);
+    expect(orderTotals({ itemsTotal: 0, deliveryTotal: 0 }).items).toBe(0);
+  });
+
+  it('к сумме не прибавляется фиксированная надбавка', () => {
+    // «+5 ₽» проявился бы как расхождение на маленьких суммах.
+    for (const value of [1, 5, 10, 100]) {
+      expect(orderTotals({ itemsTotal: value }).items).toBe(value);
+      expect(orderTotals({ itemsTotal: value }).withDelivery).toBe(value);
+    }
+  });
+
+  it('сумма не умножается на коэффициент', () => {
+    // Удвоение проявилось бы уже на первом заказе.
+    const totals = sumTotals([{ itemsTotal: 777, deliveryTotal: 23 }]);
+    expect(totals.items).toBe(777);
+    expect(totals.withDelivery).toBe(800);
+  });
+
+  it('сумма списка равна сумме слагаемых, без округлений по дороге', () => {
+    const orders = [
+      { itemsTotal: 100.5, deliveryTotal: 0 },
+      { itemsTotal: 200.25, deliveryTotal: 0 },
+    ];
+    expect(sumTotals(orders).items).toBeCloseTo(300.75, 10);
+  });
+});
+
 describe('Формат рублей', () => {
   it('копейки округляются', () => {
     expect(formatRubles(12345.67)).toContain('12');
@@ -156,6 +191,46 @@ describe('Московские сутки', () => {
     // Зашитая константа — мина, которая срабатывает через годы.
     expect(moscowOffset(new Date('2026-01-15T00:00:00Z'))).toBe('+03:00');
     expect(moscowOffset(new Date('2026-07-15T00:00:00Z'))).toBe('+03:00');
+  });
+
+  it('расчёт НЕ зависит от часового пояса сервера', () => {
+    // Приложение живёт в контейнере с UTC, разработчик — в своём поясе, а
+    // продавец ждёт московские сутки. Методы локального времени (getFullYear,
+    // getHours и прочие) дали бы три разных ответа на трёх машинах — поэтому в
+    // moscow-day.ts их не должно быть вовсе, там только Intl с явным поясом.
+    const source = readFileSync(
+      resolve(__dirname, '../../src/modules/yandex/reports/moscow-day.ts'),
+      'utf8',
+    );
+
+    for (const method of [
+      'getFullYear',
+      'getMonth',
+      'getDate',
+      'getHours',
+      'getMinutes',
+      'getTimezoneOffset',
+    ]) {
+      expect(source).not.toContain(`.${method}(`);
+    }
+    expect(source).toContain('Europe/Moscow');
+  });
+
+  it('одинаковый ответ при разных TZ процесса', () => {
+    // Явная проверка того же самого: подменяем пояс процесса и убеждаемся, что
+    // граница суток не поехала.
+    const moment = new Date('2026-07-29T22:30:00Z');
+    const original = process.env.TZ;
+
+    const results: string[] = [];
+    for (const tz of ['UTC', 'America/New_York', 'Asia/Vladivostok']) {
+      process.env.TZ = tz;
+      results.push(moscowDayBounds(moment).from);
+    }
+    process.env.TZ = original;
+
+    expect(new Set(results).size).toBe(1);
+    expect(results[0]).toBe('2026-07-30T00:00:00+03:00');
   });
 
   it('начало суток разбирается обратно в корректный момент', () => {

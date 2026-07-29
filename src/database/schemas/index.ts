@@ -1,6 +1,7 @@
 export * from './bot.schema';
 export * from './user.schema';
 export * from './user-access.schema';
+export * from './report-schedule.schema';
 export * from './yandex-market.schema';
 
 export interface IYandexMarketSchema {

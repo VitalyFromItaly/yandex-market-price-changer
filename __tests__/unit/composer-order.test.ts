@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { PriceChangerComposer } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.composer';
 import { AccessGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/access-gate.handler';
 import { AdminApprovalHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-approval.handler';
+import { ScheduleHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/schedule.handler';
 import { StartHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/start.handler';
 import { MenuCommandsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/menu-commands.handler';
 import { SlashCommandsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/slash-commands.handler';
@@ -51,6 +52,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
         PriceChangerComposer,
         { provide: AccessGateHandler, useValue: stub('accessGate', order) },
         { provide: AdminApprovalHandler, useValue: stub('adminCallbacks', order) },
+        { provide: ScheduleHandler, useValue: stub('scheduleCallbacks', order) },
         { provide: StartHandler, useValue: stub('start', order) },
         { provide: MenuCommandsHandler, useValue: stub('menu', order) },
         {
@@ -103,6 +105,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
       'menu',
       'slash',
       'adminCallbacks',
+      'scheduleCallbacks',
       'callbacks',
       'apiSettings',
       'fallback',

@@ -7,6 +7,7 @@ import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { SharedCommandsHandler } from './shared-commands.handler';
 import { MENU_TO_REPORT, ReportsHandler } from './reports.handler';
+import { ScheduleHandler } from './schedule.handler';
 
 @Injectable()
 export class MenuCommandsHandler {
@@ -15,6 +16,7 @@ export class MenuCommandsHandler {
     private yandexMarketService: YandexMarketService,
     private sharedCommandsHandler: SharedCommandsHandler,
     private reportsHandler: ReportsHandler,
+    private scheduleHandler: ScheduleHandler,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -35,6 +37,7 @@ export class MenuCommandsHandler {
     bot.hears(MENU.IN_TRANSIT, (ctx) =>
       this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.IN_TRANSIT]),
     );
+    bot.hears(MENU.SCHEDULE, (ctx) => this.scheduleHandler.showMenu(ctx));
     bot.hears(MENU.SETTINGS, (ctx) => this.showApiSettings(ctx));
     bot.hears(MENU.PROFILE, (ctx) => this.showProfile(ctx));
     bot.hears(MENU.HELP, (ctx) => this.showMainMenu(ctx));

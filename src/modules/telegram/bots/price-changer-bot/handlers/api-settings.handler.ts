@@ -11,6 +11,7 @@ import { AppConfigService } from '../../../../../config/app-config.service';
 import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { ScheduleHandler } from './schedule.handler';
 import {
   ONBOARDING_TOTAL,
   nextStep,
@@ -46,6 +47,7 @@ export class ApiSettingsHandler {
     private accessService: UserAccessService,
     private adminNotifier: AdminNotifierService,
     private config: AppConfigService,
+    private scheduleHandler: ScheduleHandler,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -61,6 +63,10 @@ export class ApiSettingsHandler {
         this.logger.debug(`Онбординг: сообщение от пользователя ${ctx.from.id}`);
 
         const reply = await this.handleText(ctx, text);
+        // Пустое сообщение означает «обработчик уже ответил сам» (так делает
+        // ветка расписания). Отправлять пустую строку нельзя — Telegram
+        // отвечает на неё 400.
+        if (!reply.message) return;
         await ctx.reply(reply.message, htmlOptions(reply.keyboard));
       } catch (error) {
         this.logger.error('Ошибка обработки настроек API', error as Error);
@@ -93,6 +99,11 @@ export class ApiSettingsHandler {
     });
 
     if (access.status === 'approved') {
+      // Незакрытый вопрос про время рассылки важнее правки настроек: иначе
+      // «09:00» было бы истолковано как попытка изменить Campaign ID.
+      if (await this.scheduleHandler.handlePendingTime(ctx, text)) {
+        return { message: '' }; // ответ уже отправлен внутри
+      }
       return await this.editSetting(ctx, text);
     }
 

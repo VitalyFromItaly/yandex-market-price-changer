@@ -500,7 +500,7 @@
       "dependencies": [
         "TASK-017"
       ],
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": "TASK-029",
@@ -525,7 +525,7 @@
         "TASK-028",
         "TASK-027"
       ],
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": "TASK-030",
@@ -551,7 +551,7 @@
       "dependencies": [
         "TASK-028"
       ],
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": "TASK-031",
@@ -574,7 +574,7 @@
       "dependencies": [
         "TASK-030"
       ],
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": "TASK-032",
@@ -599,7 +599,7 @@
         "TASK-021",
         "TASK-025"
       ],
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": "TASK-034",

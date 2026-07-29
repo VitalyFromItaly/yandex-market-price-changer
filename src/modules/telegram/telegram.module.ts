@@ -8,6 +8,8 @@ import { FileDataProcessorService } from './services/file-data-processor.service
 import { FileProcessingProcessor } from './queue/processors/file-processing.processor';
 import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
 import { NotificationsProcessor } from './queue/processors/notifications.processor';
+import { ReportsProcessor } from './queue/processors/reports.processor';
+import { ReportSchedulerService } from './queue/services/report-scheduler.service';
 import { QUEUE_NAMES } from './index';
 import { BotRegistry } from './bots/bot-registry.service';
 import { PriceChangerComposer } from './bots/price-changer-bot/price-changer.composer';
@@ -16,6 +18,7 @@ import { AdminNotifierService } from './bots/shared/services/admin-notifier.serv
 import { AccessGateHandler } from './bots/price-changer-bot/handlers/access-gate.handler';
 import { AdminApprovalHandler } from './bots/price-changer-bot/handlers/admin-approval.handler';
 import { ReportsHandler } from './bots/price-changer-bot/handlers/reports.handler';
+import { ScheduleHandler } from './bots/price-changer-bot/handlers/schedule.handler';
 import { YandexModule } from '../yandex/yandex.module';
 import { StartHandler } from './bots/price-changer-bot/handlers/start.handler';
 import { MenuCommandsHandler } from './bots/price-changer-bot/handlers/menu-commands.handler';
@@ -55,6 +58,16 @@ import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.hand
         },
       },
       {
+        name: QUEUE_NAMES.REPORTS,
+        defaultJobOptions: {
+          removeOnComplete: 20,
+          removeOnFail: 50,
+          // Ровно одна попытка: следующий запуск всё равно через сутки, а
+          // повторы упавшего отчёта жгут часовую квоту Partner API.
+          attempts: 1,
+        },
+      },
+      {
         name: QUEUE_NAMES.NOTIFICATIONS,
         defaultJobOptions: {
           removeOnComplete: 50,
@@ -79,6 +92,7 @@ import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.hand
     AccessGateHandler,
     AdminApprovalHandler,
     ReportsHandler,
+    ScheduleHandler,
     StartHandler,
     MenuCommandsHandler,
     SlashCommandsHandler,
@@ -91,6 +105,8 @@ import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.hand
     FileProcessingProcessor,
     YandexApiProcessor,
     NotificationsProcessor,
+    ReportsProcessor,
+    ReportSchedulerService,
   ],
   exports: [TelegramService, FileProcessingService, BotRegistry],
 })

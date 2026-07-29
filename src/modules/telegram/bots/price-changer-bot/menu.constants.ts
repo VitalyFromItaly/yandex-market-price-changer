@@ -22,6 +22,7 @@ export const MENU = {
   REDEEMED: '✅ Выкуплено',
   RETURNING: '↩️ Едет обратно',
   IN_TRANSIT: '📦 Едет до клиента',
+  SCHEDULE: '⏰ Рассылка',
   SETTINGS: '⚙️ Настройки API',
   PROFILE: '📊 Мой профиль',
   HELP: '❓ Помощь',
@@ -43,7 +44,7 @@ export const MENU_LABELS: readonly TMenuLabel[] = Object.values(MENU);
 export const MENU_LAYOUT: readonly (readonly TMenuLabel[])[] = [
   [MENU.SHIPPED_TODAY, MENU.REDEEMED],
   [MENU.RETURNING, MENU.IN_TRANSIT],
-  [MENU.SETTINGS],
+  [MENU.SCHEDULE, MENU.SETTINGS],
   [MENU.HELP, MENU.PROFILE],
 ];
 

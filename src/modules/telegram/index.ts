@@ -2,6 +2,7 @@ export const QUEUE_NAMES = {
   FILE_PROCESSING: 'file-processing',
   YANDEX_API: 'yandex-api',
   NOTIFICATIONS: 'notifications',
+  REPORTS: 'reports',
 } as const;
 
 export const JOB_TYPES = {
@@ -13,4 +14,5 @@ export const JOB_TYPES = {
   SEND_PROGRESS: 'send-progress',
   SEND_COMPLETION: 'send-completion',
   SEND_ERROR: 'send-error',
+  SEND_SCHEDULED_REPORT: 'send-scheduled-report',
 } as const;

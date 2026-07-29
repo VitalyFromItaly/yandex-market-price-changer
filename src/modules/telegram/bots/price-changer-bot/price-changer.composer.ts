@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { TTelegrafBot } from '../../domain.telegram';
 import { AccessGateHandler } from './handlers/access-gate.handler';
 import { AdminApprovalHandler } from './handlers/admin-approval.handler';
+import { ScheduleHandler } from './handlers/schedule.handler';
 import { StartHandler } from './handlers/start.handler';
 import { MenuCommandsHandler } from './handlers/menu-commands.handler';
 import { SlashCommandsHandler } from './handlers/slash-commands.handler';
@@ -38,6 +39,7 @@ export class PriceChangerComposer {
       // Админские колбэки — ДО общего обработчика: тот разбирает callback_data
       // точным switch и на неизвестной строке затирает сообщение.
       { name: 'adminCallbacks', register: (b) => this.adminCallbacks.register(b) },
+      { name: 'scheduleCallbacks', register: (b) => this.scheduleCallbacks.register(b) },
       { name: 'callbacks', register: (b) => this.callbacks.register(b) },
       { name: 'apiSettings', register: (b) => this.apiSettings.register(b) },
       // catch-all — строго последним
@@ -51,6 +53,7 @@ export class PriceChangerComposer {
     private readonly menu: MenuCommandsHandler,
     private readonly slash: SlashCommandsHandler,
     private readonly adminCallbacks: AdminApprovalHandler,
+    private readonly scheduleCallbacks: ScheduleHandler,
     private readonly callbacks: CallbackQueryHandler,
     private readonly apiSettings: ApiSettingsHandler,
     private readonly fallback: FallbackHandler,

@@ -6,6 +6,7 @@ import { YandexMarketService } from '../../src/database/services/yandex-market.s
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { AdminNotifierService } from '../../src/modules/telegram/bots/shared/services/admin-notifier.service';
 import { AppConfigService } from '../../src/config/app-config.service';
+import { ScheduleHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/schedule.handler';
 
 /**
  * Подача заявки: ветка, где сходятся черновик кредов, атомарный переход статуса
@@ -61,6 +62,8 @@ describe('ApiSettingsHandler: подача заявки', () => {
         { provide: YandexMarketService, useValue: yandexMarketService },
         { provide: UserAccessService, useValue: accessService },
         { provide: AdminNotifierService, useValue: adminNotifier },
+        // Незакрытых вопросов про время рассылки в этих сценариях нет.
+        { provide: ScheduleHandler, useValue: { handlePendingTime: async () => false } },
         {
           provide: AppConfigService,
           useValue: { isAdmin: (id: number) => id === ADMIN_ID, telegramAdminIds: [ADMIN_ID] },

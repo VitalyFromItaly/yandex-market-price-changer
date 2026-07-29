@@ -114,6 +114,21 @@ export class UserAccessService {
       .exec();
   }
 
+  /** Запомнить, для какого отчёта пользователь сейчас вводит время. */
+  async setPendingSchedule(
+    telegramUserId: string,
+    botId: string,
+    reportKey: string | null,
+  ): Promise<UserAccessDocument | null> {
+    const update = reportKey
+      ? { $set: { pendingScheduleReport: reportKey } }
+      : { $unset: { pendingScheduleReport: '' } };
+
+    return await this.model
+      .findOneAndUpdate({ telegramUserId, botId }, update, { new: true })
+      .exec();
+  }
+
   /**
    * Подать заявку: new → pending.
    *

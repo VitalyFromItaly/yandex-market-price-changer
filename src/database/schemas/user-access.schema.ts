@@ -79,6 +79,14 @@ export class UserAccess {
     business_id?: string;
   };
 
+  /**
+   * Какой отчёт ждёт ввода времени рассылки. Состояние диалога живёт здесь же,
+   * рядом с пользователем: заводить ради одного поля отдельное хранилище (и уж
+   * тем более Redis с TTL) — несоразмерно.
+   */
+  @Prop({ type: String })
+  pendingScheduleReport?: string;
+
   @Prop({ type: Date })
   appliedAt?: Date;
 
