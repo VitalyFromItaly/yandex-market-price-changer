@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TelegramModule } from './modules/telegram/telegram.module';
+import { YandexModule } from './modules/yandex/yandex.module';
 import { DatabaseModule } from './database/database.module';
 import { CqrsModule } from '@nestjs/cqrs';
 import { BullModule } from '@nestjs/bull';
@@ -28,6 +29,7 @@ import { AppConfigService } from './config/app-config.service';
       }),
     }),
     DatabaseModule,
+    YandexModule,
     TelegramModule,
   ],
   controllers: [AppController],
