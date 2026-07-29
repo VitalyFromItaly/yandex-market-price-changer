@@ -17,6 +17,8 @@ import {
   type IMoneyTotals,
 } from './money';
 import { moscowDateParam, moscowDayBounds } from './moscow-day';
+import { buildOrdersWorkbook, workbookFileName } from './report-workbook';
+import { formatReport } from './report-message';
 
 /** Заказ в объёме, нужном отчётам. */
 export interface IReportOrder {
@@ -28,6 +30,11 @@ export interface IReportOrder {
   deliveryTotal?: number;
   items?: Array<{ offerName?: string; count?: number }>;
 }
+
+/** Результат выгрузки: либо файл, либо объяснение, почему файла нет. */
+export type IReportExport =
+  | { empty: true; message: string }
+  | { empty: false; buffer: Buffer; filename: string; caption: string };
 
 export interface IReportResult {
   key: TReportKey;
@@ -149,6 +156,39 @@ export class OrderReportsService {
     }
 
     return { count, totals };
+  }
+
+  /**
+   * Выгрузка «едет до клиента» файлом.
+   *
+   * Пустой результат НЕ отправляет пустой файл: продавец, открывший книгу из
+   * одной шапки, решит, что сломался бот, а не что заказов нет.
+   */
+  public async exportInTransit(
+    store: YandexMarketDocument,
+    now: Date = new Date(),
+  ): Promise<IReportExport> {
+    const result = await this.build(store, REPORT.IN_TRANSIT, now);
+
+    if (!result.count) {
+      return { empty: true, message: formatReport(result, now) };
+    }
+
+    const workbook = buildOrdersWorkbook(result.orders);
+
+    // Про обрезку сообщаем прямо в подписи к файлу: молча урезанная выгрузка
+    // выглядит как полная, и расхождение с личным кабинетом продавец найдёт
+    // сам, в худший для этого момент.
+    const truncated = workbook.truncated
+      ? `\n\n⚠️ В файл попали первые ${workbook.rows} заказов из ${result.count}: остальные не поместились.`
+      : '';
+
+    return {
+      empty: false,
+      buffer: workbook.buffer,
+      filename: workbookFileName(moscowDateParam(now)),
+      caption: formatReport(result, now) + truncated,
+    };
   }
 
   /** Ключи отчётов — для клавиатуры и роутинга кнопок. */

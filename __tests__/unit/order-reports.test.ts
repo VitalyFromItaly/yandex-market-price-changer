@@ -255,3 +255,30 @@ describe('Текст отчёта', () => {
     expect(formatReport(inTransit, NOW)).not.toContain('29-07-2026');
   });
 });
+
+describe('Выгрузка «едет до клиента» файлом (TASK-026)', () => {
+  it('пустой результат отдаёт СООБЩЕНИЕ, а не пустой файл', async () => {
+    // Продавец, открывший книгу из одной шапки, решит, что сломался бот,
+    // а не что заказов нет.
+    const { reports } = await service();
+    const result = await reports.exportInTransit(STORE, NOW);
+
+    expect(result.empty).toBe(true);
+    if (result.empty) expect(result.message).toContain('нет ни одного заказа');
+  });
+
+  it('непустой результат отдаёт буфер с именем файла и подписью', async () => {
+    const { reports } = await service({
+      orders: [{ id: 1, status: 'DELIVERY', itemsTotal: 1000, deliveryTotal: 100 }],
+    });
+    const result = await reports.exportInTransit(STORE, NOW);
+
+    expect(result.empty).toBe(false);
+    if (!result.empty) {
+      expect(Buffer.isBuffer(result.buffer)).toBe(true);
+      expect(result.filename).toBe('edet-do-klienta-29-07-2026.xlsx');
+      expect(result.caption).toContain('Заказов');
+      expect(result.caption).not.toContain('не поместились');
+    }
+  });
+});
