@@ -8,8 +8,10 @@ import {
   maskOutgoing,
   maskSecrets,
   outgoingSourceOf,
+  stripTags,
   truncate,
   MAX_ACTION_LENGTH,
+  MAX_OUTGOING_LENGTH,
   OUTGOING_METHODS,
   SECRET_PLACEHOLDER,
 } from '../../src/modules/telegram/bots/shared/action-log.domain';
@@ -300,9 +302,46 @@ describe('исходящие сообщения бота', () => {
     expect(describeOutgoing(source)).toEqual({ kind: 'answerCallbackQuery', action: '—' });
   });
 
-  it('длинный отчёт обрезается', () => {
-    const long = 'а'.repeat(MAX_ACTION_LENGTH + 100);
+  it('длинный отчёт обрезается по своему, большему пределу', () => {
+    // У входящих предел меньше: там команда или подпись кнопки. Отчёт на 200
+    // символах терял бы всё, кроме заголовка.
+    expect(MAX_OUTGOING_LENGTH).toBeGreaterThan(MAX_ACTION_LENGTH);
+
+    const long = 'а'.repeat(MAX_OUTGOING_LENGTH + 100);
     const described = describeOutgoing(outgoingSourceOf('sendMessage', { chat_id: 1, text: long }));
-    expect(described.action.length).toBe(MAX_ACTION_LENGTH + 1);
+    expect(described.action.length).toBe(MAX_OUTGOING_LENGTH + 1);
+  });
+
+  it('HTML-разметка вырезается — в журнале она не отрисовывается', () => {
+    // Бот шлёт всё с parse_mode: HTML. Без вырезания администратор читал бы
+    // `🎫 <b>API-токен</b>` — та же ошибка, что была на подписи кнопки.
+    const described = describeOutgoing(
+      outgoingSourceOf('sendMessage', { chat_id: 1, text: '🎫 <b>API-токен</b> нужен доступ' }),
+    );
+    expect(described.action).toBe('🎫 API-токен нужен доступ');
+  });
+
+  it('ссылка на диалог превращается в её текст', () => {
+    expect(stripTags('<a href="https://t.me/artonik1">@artonik1</a> (Тема)')).toBe(
+      '@artonik1 (Тема)',
+    );
+  });
+
+  it('экранированные символы возвращаются к исходному виду', () => {
+    // esc() экранирует данные пользователя перед отправкой; в журнале нужно
+    // то, что человек увидел на экране.
+    expect(stripTags('магазин &quot;Тема&quot; &lt;тест&gt;')).toBe('магазин "Тема" <тест>');
+  });
+
+  it('&amp;lt; не схлопывается в «<»', () => {
+    // Порядок замен значим: если &amp; заменить первым, получится «<».
+    expect(stripTags('&amp;lt;')).toBe('&lt;');
+  });
+
+  it('переносы строк сохраняются — отчёт это таблица из строк', () => {
+    const report = 'Продажи: 100 ₽\nЗакуп: 70 ₽\nПрибыль: 30 ₽';
+    const described = describeOutgoing(outgoingSourceOf('sendMessage', { chat_id: 1, text: report }));
+    expect(described.action).toContain('\n');
+    expect(described.action.split('\n')).toHaveLength(3);
   });
 });

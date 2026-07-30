@@ -137,6 +137,13 @@ tr:last-child td {
 
 .action {
   word-break: break-word;
+  /* Ответ бота — это отчёт из строк. Без pre-wrap он склеивается в ленту, по
+     которой невозможно понять, что именно увидел продавец. */
+  white-space: pre-wrap;
+  display: block;
+  /* Длинные сообщения не должны растягивать строку таблицы на весь экран. */
+  max-height: 8.5em;
+  overflow-y: auto;
 }
 
 .muted {
