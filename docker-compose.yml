@@ -29,8 +29,6 @@ services:
       # Зеркало Bot API. Без значения — ходим на api.telegram.org напрямую.
       - TELEGRAM_API_URL=${TELEGRAM_API_URL:-https://api.telegram.org}
       - TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS:?нужно задать TELEGRAM_ADMIN_IDS в .env}
-      # Журнал действий: пусто = /api/logs закрыт для всех.
-      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-}
       - YANDEX_MARKET_BASE_URL=${YANDEX_MARKET_BASE_URL:-https://api.partner.market.yandex.ru}
     depends_on:
       - mongodb

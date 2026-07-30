@@ -49,8 +49,9 @@ red-by-rights build kept looking green). `npm run lint` no longer crashes — 0 
 
 ## Runtime architecture
 
-`src/main.ts` → `NestFactory.create(AppModule)`, global prefix `/api`, global `LoggerInterceptor`,
-`listen(AppConfigService.port)`.
+`src/main.ts` → `NestFactory.create<NestExpressApplication>(AppModule)`, `useStaticAssets` for the
+admin panel (`web/dist`, see below), global prefix `/api`, global `LoggerInterceptor`,
+`enableShutdownHooks()`, `listen(AppConfigService.port)`.
 
 Configuration goes through `@nestjs/config` with Joi validation — **never `process.env` directly, and
 never `config.get('KEY')` outside `src/config/app-config.service.ts`**. Adding a variable means: a
@@ -59,7 +60,7 @@ and `docker-compose.yml`.
 
 `AppModule` → `AppConfigModule` (first, and deliberately so — Bull's factory needs config resolved),
 `CqrsModule.forRoot()` (imported but **no commands/queries exist**), `BullModule.forRootAsync`,
-`DatabaseModule`, `TelegramModule`.
+`DatabaseModule`, `AdminAuthModule`, `LogsModule`, `YandexModule`, `TelegramModule`.
 
 ### Bots are wired by Nest DI
 
@@ -423,15 +424,54 @@ enough either: it is exactly when the database is unreachable that a log line ma
 - Retention is a **TTL index** of `ACTION_LOG_TTL_DAYS` (90). Changing the number is not enough:
   mongoose never alters an existing index with the same key set, so it needs `npm run db:sync-indexes`.
 
-**Reading it: `GET /api/logs`**, guarded by `AdminApiGuard` on the whole `LogsController` (not on
-individual methods — the one that gets forgotten is the one left open). Two checks: `Authorization:
-Bearer <ADMIN_API_TOKEN>` compared with `timingSafeEqual`, plus an `X-Telegram-User-Id` header
-validated against `TELEGRAM_ADMIN_IDS`. The header is trivially forged and is not the protection — it
-exists so revoking an admin in one env variable closes the API too. **An unset `ADMIN_API_TOKEN`
-means closed, not open**: the guard rejects everyone, because the journal holds user ids and message
-text. Query params: `telegramUserId`, `kind`, `since`, `until`, `limit` (capped at `MAX_PAGE_SIZE`),
+**Reading it: the admin panel at `/`, or `GET /api/logs`.** Both sit behind `AdminJwtGuard`,
+applied to the whole `LogsController` (not to individual methods — the one that gets forgotten is
+the one left open).
+
+- **Login is a Telegram id from `TELEGRAM_ADMIN_IDS`; the password is one shared secret** generated
+  on first boot if absent and printed to the log **once**, as a banner. Printing it on every start
+  would park it in CapRover's log history forever. Lost password = delete the single document in
+  `admincredentials` and restart.
+- **Password hash and JWT secret live in Mongo** (`AdminCredential`, one document pinned by a unique
+  `key`), not in env. "Generate at deploy if absent" requires surviving a restart, and an in-memory
+  JWT secret would log every admin out on each redeploy. `bcrypt` at cost 12 — the package was
+  already installed and unused (this file used to list it as dead template weight).
+- `AdminAuthService.verify` **re-checks `sub` against `TELEGRAM_ADMIN_IDS`** instead of trusting the
+  signed token: revoking an admin must close the panel now, not in seven days when the token expires.
+- **`LoginThrottle`**: 5 failures per login → 15 minutes locked. One shared password behind which
+  sits users' correspondence is guessable at network speed without it. The lock is checked *before*
+  the password, or a locked attacker would keep guessing. Time is passed in as an argument so the
+  expiry is testable without timers.
+- `login()` runs `bcrypt.compare` **even for a non-admin id** — skipping it would make response time
+  reveal which ids are in `TELEGRAM_ADMIN_IDS`.
+- `JwtModule.register({})` carries **no** global secret: it comes from Mongo per call, so module
+  initialisation order never depends on the database being up.
+- The previous `ADMIN_API_TOKEN` + `X-Telegram-User-Id` scheme is **gone** — one static env secret,
+  the same for everyone and forever, pasted into a browser.
+
+Query params: `telegramUserId`, `kind`, `since`, `until`, `limit` (capped at `MAX_PAGE_SIZE`),
 `skip`; the response carries `total` from the same filter as the page (`filterOf` is one method for
 exactly that reason).
+
+### The admin panel is served by Nest itself
+
+`web/` is a Vue 3 + Vite SPA; `npm run build` is `nest build && vite build`, and
+`main.ts` does `useStaticAssets(join(__dirname, '..', 'web', 'dist'))` — one repo, one image, one
+container. The path resolves correctly both in prod (`/app/dist` → `/app/web/dist`) and under
+ts-node in dev (`src/` → `web/dist`).
+
+- **Vite build, not Vue from a CDN.** Prod is on a Russian host where external domains are as
+  unreachable as `api.telegram.org` — a CDN-loaded panel would work on the developer's machine and be
+  a blank page in production.
+- Static files are served by express middleware **before** the Nest router, so `LoggerInterceptor`
+  never fires for them and the log is not flooded with one line per asset.
+- The global `/api` prefix is what leaves `/` free for the panel. No `vue-router`: one screen, and a
+  router would demand an SPA fallback in the static handler for nothing.
+- `vite` is pinned to **5.x** in devDependencies. It was previously present only transitively via
+  vitest 2.1; installing vite 6/7 would split the dependency tree.
+- The JWT is kept in `sessionStorage`, not `localStorage`.
+- **No component tests** — that would mean `jsdom` + `@vue/test-utils` for ~250 lines of markup. What
+  needs proving (login, throttle, guard, one-shot password generation) is tested on the backend.
 
 ### Access control: admin approval, not subscriptions
 
@@ -558,7 +598,8 @@ The Express layer (`src/routes/`, `src/middleware/`, `src/controllers/`, `src/ty
   `createMainMenu`/`createBackMenu` are `@deprecated` (labels outside `menu.constants`).
 - `__tests__/vitest.config.ts` — superseded by the root `vitest.config.ts`.
 - `src/modules/yandex/index.ts` is empty. Unused deps left from templates: `@clickhouse/client`,
-  `technicalindicators`, `bcrypt`, `mitt`, `express`, `body-parser`.
+  `technicalindicators`, `mitt`, `express`, `body-parser`. (`bcrypt` is no longer among them — the
+  admin panel hashes its password with it.)
 
 ## Known correctness bugs (verify before relying on these paths)
 

@@ -1,17 +1,17 @@
 import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
 
-import { AdminApiGuard } from '../../common/guards/admin-api.guard';
 import { ActionLogService, MAX_PAGE_SIZE } from '../../database/services/action-log.service';
+import { AdminJwtGuard } from '../admin/admin-jwt.guard';
 
 /**
  * Чтение журнала действий. Только для администраторов — весь контроллер
- * закрыт AdminApiGuard, а не отдельные методы: незакрытым останется ровно тот
+ * закрыт AdminJwtGuard, а не отдельные методы: незакрытым останется ровно тот
  * метод, который забудут пометить.
  *
  * Полный адрес — /api/logs (глобальный префикс задан в main.ts).
  */
 @Controller('logs')
-@UseGuards(AdminApiGuard)
+@UseGuards(AdminJwtGuard)
 export class LogsController {
   constructor(private readonly logs: ActionLogService) {}
 

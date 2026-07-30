@@ -119,14 +119,6 @@ export class AppConfigService {
     return this.telegramAdminIds.includes(Number(telegramUserId));
   }
 
-  /**
-   * Токен админского HTTP-API. undefined означает «API отключено» —
-   * AdminApiGuard в этом случае не пускает никого (fail closed).
-   */
-  get adminApiToken(): string | undefined {
-    return this.config.get<string>('ADMIN_API_TOKEN') || undefined;
-  }
-
   get yandexMarketBaseUrl(): string {
     return this.config.get<string>('YANDEX_MARKET_BASE_URL');
   }

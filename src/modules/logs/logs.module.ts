@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 
-import { AdminApiGuard } from '../../common/guards/admin-api.guard';
 import { DatabaseModule } from '../../database/database.module';
+import { AdminAuthModule } from '../admin/admin-auth.module';
 
 import { LogsController } from './logs.controller';
 
@@ -13,12 +13,11 @@ import { LogsController } from './logs.controller';
  * смешало бы две несвязанные ответственности. Писать журнал будет telegram,
  * читать — этот модуль; общий у них только сервис из DatabaseModule.
  *
- * AppConfigService гварду доступен без импорта: AppConfigModule объявлен
- * глобальным.
+ * Гвард приходит из AdminAuthModule вместе с сервисом, который он зовёт, —
+ * держать его копию здесь значило бы иметь два независимых экземпляра.
  */
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, AdminAuthModule],
   controllers: [LogsController],
-  providers: [AdminApiGuard],
 })
 export class LogsModule {}

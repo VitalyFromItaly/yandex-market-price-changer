@@ -31,6 +31,9 @@ export default [
       // расширять include ради линта значит тянуть тесты в сборку.
       "vitest.config.ts",
       "scripts/**",
+      // Админ-панель: свой тулчейн (vite), свой tsconfig не нужен —
+      // тянуть .vue и DOM-типы в сборку бэкенда ради линта незачем.
+      "web/**",
       "__tests__/**",
       "**/rust-wasm-libs",
       "**/typedocs",

@@ -11,7 +11,7 @@
     "start:prod": "npm run build && npm run start",
     "dev": "nodemon",
     "clean": "rimraf coverage dist tmp",
-    "build": "nest build",
+    "build": "nest build && npm run build:web",
     "lint": "eslint .",
     "lint-fix": "eslint . --fix",
     "test": "vitest run",
@@ -25,7 +25,9 @@
     "db:sync-indexes": "ts-node scripts/sync-indexes.ts",
     "db:clean": "ts-node scripts/clean-db.ts",
     "prettier:check": "prettier --check ./src",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:web": "vite build --config web/vite.config.ts",
+    "dev:web": "vite --config web/vite.config.ts"
   },
   "devDependencies": {
     "@eslint/compat": "^1.4.1",
@@ -33,11 +35,13 @@
     "@nestjs/cli": "^11.0.7",
     "@nestjs/testing": "^11.1.28",
     "@swc/core": "^1.15.46",
+    "@types/bcrypt": "^6.0.0",
     "@types/eslint__js": "~8.42",
     "@types/express": "^5.0.0",
     "@types/lodash": "^4.17.15",
     "@types/node": "^20.19.0",
     "@typescript-eslint/parser": "~8.19",
+    "@vitejs/plugin-vue": "^5.2.4",
     "@vitest/coverage-v8": "~2.1",
     "@vitest/eslint-plugin": "~1.1",
     "eslint": "~9.17",
@@ -53,7 +57,9 @@
     "typescript": "~5.7",
     "typescript-eslint": "~8.19",
     "unplugin-swc": "^1.5.9",
-    "vitest": "~2.1"
+    "vite": "^5.4.21",
+    "vitest": "~2.1",
+    "vue": "^3.5.40"
   },
   "author": "perekutnev@gmail.com",
   "license": "Apache-2.0",
@@ -64,6 +70,7 @@
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.1.3",
     "@nestjs/cqrs": "^11.0.3",
+    "@nestjs/jwt": "^11.0.2",
     "@nestjs/mongoose": "^11.0.3",
     "@nestjs/platform-express": "^11.1.3",
     "@types/bull": "^4.10.4",
