@@ -32,6 +32,32 @@ export const ORDER_STATUS = {
 export type TOrderStatus = (typeof ORDER_STATUS)[keyof typeof ORDER_STATUS];
 
 /**
+ * Статусы, которые Partner API принимает В ФИЛЬТРЕ `status`.
+ *
+ * Список короче enum'а, и это не описка. Проверено на боевом API 30-07-2026:
+ * `PLACING`, `RESERVED`, `PENDING`, `PARTIALLY_RETURNED` и `UNKNOWN` дают
+ * `400 BAD_REQUEST: Statuses [X] are not allowed` — и роняют ВЕСЬ отчёт, а не
+ * отбрасывают один статус. Приходить в ответе они при этом могут: enum описывает
+ * значения ответа, а этот список — то, что можно спросить.
+ *
+ * Раньше это не проявлялось: axios сериализовал массив как `status[]=...`,
+ * Partner API такой параметр игнорировал, и запрещённые значения до него просто
+ * не доезжали. TASK-054 научил клиент слать `status=` повторяющимся параметром —
+ * фильтр заработал, и вместе с ним заработал этот отказ: отчёт «Едет обратно»
+ * (в его определении стоит `PARTIALLY_RETURNED`) с тех пор отвечал
+ * «Яндекс.Маркет отклонил запрос».
+ */
+export const QUERYABLE_STATUSES: readonly TOrderStatus[] = [
+  ORDER_STATUS.UNPAID,
+  ORDER_STATUS.PROCESSING,
+  ORDER_STATUS.DELIVERY,
+  ORDER_STATUS.PICKUP,
+  ORDER_STATUS.DELIVERED,
+  ORDER_STATUS.CANCELLED,
+  ORDER_STATUS.RETURNED,
+];
+
+/**
  * Подстатусы, по которым определяется «едет обратно».
  *
  * ⚠️ DELIVERY_SERIVCE_UNDELIVERED — НЕ опечатка в нашем коде. Опечатка живёт в
@@ -60,14 +86,35 @@ export const RETURN_SHIPMENT_STATUS = {
 } as const;
 
 /**
+ * Типы субсидий Маркета. Тоже перечисление Partner API, и живёт оно ЗДЕСЬ по той
+ * же причине, что `RETURN_SHIPMENT_STATUS`: тест «статусы не размазаны по коду»
+ * ловит литерал `'DELIVERY'` в любом другом файле — и правильно ловит, потому
+ * что это ещё и статус заказа. Одна строка, два разных смысла.
+ *
+ * Дословно из документации `OrderSubsidyDTO`: «Общее ВОЗНАГРАЖДЕНИЕ ПАРТНЁРУ за
+ * DBS-доставку и все скидки на товар: по промокодам, купонам и акциям; по баллам
+ * Плюса; по доставке (DBS)». То есть это деньги, которые продавец ПОЛУЧАЕТ:
+ * скидку по акции даёт Маркет и продавцу её компенсирует.
+ */
+export const SUBSIDY_TYPE = {
+  /** Акции, промокоды, купоны. */
+  SUBSIDY: 'SUBSIDY',
+  /** Баллы Плюса. */
+  YANDEX_CASHBACK: 'YANDEX_CASHBACK',
+  /** Доставка DBS — не товарная выручка, см. subsidiesTotal в money.ts. */
+  DELIVERY: 'DELIVERY',
+} as const;
+
+/**
  * Какой фильтр даты применяет отчёт. Это разные параметры с разным смыслом, и
  * подмена одного другим даёт правдоподобный, но неверный отчёт:
  *
  * - `supplierShipmentDate` — дата ОТГРУЗКИ в службу доставки (DD-MM-YYYY)
  * - `updatedAt` — любое ОБНОВЛЕНИЕ заказа (ISO 8601 со смещением)
+ * - `creationDate` — дата ОФОРМЛЕНИЯ заказа, fromDate/toDate (DD-MM-YYYY)
  * - `none` — фильтра нет, берётся текущий срез
  */
-export type TDateFilter = 'supplierShipmentDate' | 'updatedAt' | 'none';
+export type TDateFilter = 'supplierShipmentDate' | 'updatedAt' | 'creationDate' | 'none';
 
 export interface IReportDefinition {
   /** Человеческое название — оно же заголовок сообщения. */
@@ -163,6 +210,68 @@ export function reportDefinition(key: TReportKey): IReportDefinition {
 }
 
 /**
+ * Статусы определения, пригодные для ЗАПРОСА.
+ *
+ * Запрещённые Яндексом значения отбрасываются здесь, а не в определениях:
+ * определение описывает, что входит в отчёт ПО СМЫСЛУ, и подстраивать смысл под
+ * ограничение транспорта — верный способ однажды удалить статус и забыть, зачем
+ * он был нужен. Отбор ответа (`matchesDefinition`) идёт по полному списку.
+ *
+ * Плата за это: заказы в незапрашиваемом статусе в ответ не придут вовсе. Для
+ * «Едет обратно» это `PARTIALLY_RETURNED`; частичный возврат в пути всё равно
+ * виден через метод возвратов (`usesReturnsApi`), поэтому дыра невелика —
+ * а вот 400 на весь отчёт был бы полным отказом.
+ */
+export function queryStatuses(definition: IReportDefinition): TOrderStatus[] {
+  return definition.statuses.filter((status) => QUERYABLE_STATUSES.includes(status));
+}
+
+/**
+ * Заказы, ОФОРМЛЕННЫЕ за период. Не отчёт и не кнопка — второй набор внутри
+ * прибыли.
+ *
+ * Ключа в `REPORT` намеренно НЕТ: `Object.values(REPORT)` питает
+ * `OrderReportsService.keys`, то есть новый ключ означал бы новую кнопку отчёта
+ * и новую строку в рассылке, которых никто не просил.
+ *
+ * Зачем этот набор вообще. Продавец сверяется с кабинетом, где видит
+ * ОФОРМЛЕННЫЕ заказы, а прибыль считается по ВЫКУПЛЕННЫМ: 30-07-2026 это дало
+ * 11 против 10 при дневной норме магазина 40–50, и расхождение выглядело
+ * поломкой. Теперь обе цифры в одном сообщении.
+ */
+export const PLACED_STATUSES: readonly TOrderStatus[] = [
+  // Недооформленные (PLACING, RESERVED) сюда не входят: заказа ещё нет.
+  // UNPAID входит — это оформленный заказ с отложенным платежом, продавец
+  // видит его в кабинете и считает своим.
+  ORDER_STATUS.UNPAID,
+  ORDER_STATUS.PENDING,
+  ORDER_STATUS.PROCESSING,
+  ORDER_STATUS.DELIVERY,
+  ORDER_STATUS.PICKUP,
+  ORDER_STATUS.DELIVERED,
+  ORDER_STATUS.PARTIALLY_RETURNED,
+  ORDER_STATUS.RETURNED,
+];
+
+export const PLACED_DEFINITION: IReportDefinition = {
+  title: 'Оформлено',
+  // CANCELLED ЗАПРАШИВАЕТСЯ вместе с остальными, хотя в прибыль не идёт:
+  // продавец в кабинете видит отменённые в общем списке, и без строки «ещё N
+  // отменено» наша цифра оказалась бы меньше его — то самое расхождение,
+  // ради которого всё и затевалось. Разделение — в ProfitService, одним
+  // запросом вместо двух.
+  statuses: [...PLACED_STATUSES, ORDER_STATUS.CANCELLED],
+  substatuses: [],
+  dateFilter: 'creationDate',
+  usesReturnsApi: false,
+};
+
+/** Отменён ли заказ. Одна проверка на всех, а не сравнение строк по коду. */
+export function isCancelled(order: { status?: string }): boolean {
+  return order?.status === ORDER_STATUS.CANCELLED;
+}
+
+/**
  * Подходит ли заказ под отчёт. Логика отчётов зовёт ЭТО, а не сравнивает
  * строки у себя, — иначе маппинг снова расползётся по коду.
  */
@@ -170,8 +279,18 @@ export function matchesReport(
   key: TReportKey,
   order: { status?: string; substatus?: string },
 ): boolean {
-  const definition = REPORT_DEFINITIONS[key];
+  return matchesDefinition(REPORT_DEFINITIONS[key], order);
+}
 
+/**
+ * То же по определению, а не по ключу: наборы вроде `PLACED_DEFINITION` ключа
+ * не имеют. `matchesReport` оставлен обёрткой — логика подстатусов должна жить
+ * в одном месте.
+ */
+export function matchesDefinition(
+  definition: IReportDefinition,
+  order: { status?: string; substatus?: string },
+): boolean {
   if (!definition.statuses.includes(order?.status as TOrderStatus)) return false;
 
   // Пустой список подстатусов означает «подстатус не важен», а не «подстатус

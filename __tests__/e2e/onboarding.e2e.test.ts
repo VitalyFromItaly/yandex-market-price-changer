@@ -74,9 +74,18 @@ describe('Онбординг: от /start до отчёта', () => {
    */
   let apiReturns: Array<Record<string, unknown>>;
 
+  /**
+   * Заказы, ОФОРМЛЕННЫЕ за период, — второй набор отчёта о прибыли.
+   *
+   * По умолчанию пусто: у большинства тестов речь про выкупленные, и лишний
+   * набор только зашумил бы их числа. Тесты про два блока задают его сами.
+   */
+  let apiPlacedOrders: Array<Record<string, unknown>>;
+
   async function build() {
     apiCalls = [];
     apiReturns = [];
+    apiPlacedOrders = [];
 
     vi.spyOn(axios, 'create').mockImplementation(
       () =>
@@ -92,6 +101,15 @@ describe('Онбординг: от /start до отчёта', () => {
               // отчёт это переживает, а не что мы просто получили пустой список.
               if (apiReturns === null) throw new Error('500 Internal Server Error');
               return { data: { returns: apiReturns } };
+            }
+
+            // Заказы, ОФОРМЛЕННЫЕ за период, — это отдельный запрос с другим
+            // фильтром даты (fromDate/toDate). Отвечать на него тем же списком
+            // выкупленных нельзя: наборы разные по определению, и заглушка,
+            // которая их путает, скрыла бы ровно ту ошибку, ради которой
+            // отчёт переделывали.
+            if (opts?.params?.fromDate) {
+              return { data: { orders: apiPlacedOrders } };
             }
 
             return {
@@ -295,7 +313,10 @@ describe('Онбординг: от /start до отчёта', () => {
     expect(apiCalls.map((c) => c.path)).toContainEqual(
       expect.stringContaining('/v2/campaigns/12345678/returns'),
     );
-    expect(apiCalls).toHaveLength(2);
+    // Третий запрос — заказы, ОФОРМЛЕННЫЕ за период: другой фильтр даты, тем же
+    // запросом их не получить.
+    expect(apiCalls.filter((c) => c.params.fromDate)).toHaveLength(1);
+    expect(apiCalls).toHaveLength(3);
 
     const text = harness.fake.lastTextTo(USER_ID);
     // Прайс 400 минус скидка 10 % = закуп 360.
@@ -398,6 +419,43 @@ describe('Онбординг: от /start до отчёта', () => {
     const text = harness.fake.lastTextTo(USER_ID);
     expect(text).toContain('Возвраты');
     expect(text).not.toContain('Не учтено');
+  });
+
+  it('оформленные и выкупленные показаны обе цифры и названы разными', async () => {
+    // Продавец сверяется с кабинетом, где видит ОФОРМЛЕННЫЕ заказы. Пока отчёт
+    // показывал только выкупленные, 11 против 9 читалось как поломка.
+    await send('/start');
+    await send(CREDS.token);
+    await send(CREDS.campaign_id);
+    await send(CREDS.business_id);
+    await tap(formatAdminCallback('approve', USER_ID), admin);
+
+    apiPlacedOrders = [
+      {
+        id: 2,
+        status: 'PROCESSING',
+        itemsTotal: 2000,
+        items: [{ offerId: 'FAA02006M', offerName: 'ORIENT', count: 1 }],
+      },
+      { id: 3, status: 'CANCELLED', itemsTotal: 900, items: [] },
+    ];
+
+    await send(MENU.PROFIT);
+    await tap(reportCallback(PERIOD.TODAY, REPORT.PROFIT));
+
+    const text = harness.fake.lastTextTo(USER_ID);
+
+    // Оформлено: 2000 − 460 комиссия − 140 налог − 360 закуп = 1040.
+    expect(text).toContain('Оформлено');
+    expect(text).toMatch(/1[\s ]040/);
+    expect(text).toContain('Ожидается чистая');
+    // Выкупленное — строкой, с той же чистой 340, что и в отчёте по одному набору.
+    expect(text).toContain('Выкуплено');
+    expect(text).toMatch(/340[\s ]₽/);
+    expect(text).toContain('Это другие заказы');
+    // Отменённый в деньги не идёт, но назван: в кабинете продавец его видит.
+    expect(text).toContain('Отменено');
+    expect(text).not.toMatch(/900[\s ]₽/);
   });
 
   it('отказ метода возвратов НЕ роняет отчёт о прибыли', async () => {

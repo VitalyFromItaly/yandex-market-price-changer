@@ -21,6 +21,11 @@ npm run prettier-fix   # prettier --write ./src
 npm run api            # regenerate src/modules/yandex/api from api-docs/openapi/openapi.yaml (unused client — see below)
 npm run parser:run     # run the xlsx parser standalone against a local file
 npm run tunnel         # vk-tunnel on :3004; tunnel:ngrok for ngrok. Webhook mode needs a public URL.
+
+# read-only diagnostics against a live seller's data (see "Profit")
+npx ts-node scripts/diagnose-orders.ts --user=<telegramUserId> [--date=DD-MM-YYYY|--report|--unknown]
+# refresh purchase prices from a price list without Telegram; writes Mongo only, never Partner API
+npx ts-node scripts/load-purchase-prices.ts --user=<telegramUserId> --file=stock.xlsx
 docker compose up -d mongodb redis   # mongo on :27018, redis on :6379, mongo-express on :8083
 ```
 
@@ -177,18 +182,69 @@ excluded from tsconfig, imported nowhere, and its `core/request.ts` only emits
 
 ### Profit
 
-The fifth report (`REPORT.PROFIT`) is the only screen that shows money **after** costs. It reuses the
-`REDEEMED` order set (`status=DELIVERED`, `dateFilter: 'updatedAt'`) — profit is computed on money
-already received, since an order in transit may never be redeemed.
+The fifth report (`REPORT.PROFIT`) is the only screen that shows money **after** costs. It prints
+**two order sets**, and they are *not* whole-and-part — the wording in `profit-message.ts` exists to
+say so:
+
+- **Оформлено за период** (`PLACED_DEFINITION`, `dateFilter: 'creationDate'`) — the figure the seller
+  sees in their Yandex cabinet. Gets the full breakdown, and its bottom line is «Ожидается чистая»:
+  these orders are still in transit and some will not be redeemed.
+- **Выкуплено** — the `REDEEMED` set (`status=DELIVERED`, `dateFilter: 'updatedAt'`), money already
+  received. One compact line beside the main block.
+
+The two barely overlap: today's orders are redeemed a week later, today's redemptions were placed
+earlier. Showing only the redeemed set is what made the report look broken — on 30-07-2026 it printed
+9 orders while the seller counted ~40 placed (the API said 11 placed / 10 redeemed that day against a
+40–50/day norm, both confirmed by two independent date filters). **When there are no placed orders,
+the redeemed set gets the full breakdown instead** — otherwise a report for a quiet period collapses
+into one line and loses commission, tax and cost.
+
+- `PLACED_DEFINITION` deliberately has **no key in `REPORT`**: `Object.values(REPORT)` feeds
+  `OrderReportsService.keys`, so a key would mint a report button and a digest row nobody asked for.
+  `OrderReportsService.collectPlacedOrders` returns `{orders, cancelled}` — `CANCELLED` is requested
+  in the same call and split locally, then printed as «Отменено: N». The cabinet lists cancelled
+  orders too; staying silent about them would put our count below the seller's, which is the whole
+  problem this report was fixing.
+- **Partner API forbids some statuses in the `status` filter**: `PLACING`, `RESERVED`, `PENDING`,
+  `PARTIALLY_RETURNED`, `UNKNOWN` answer `400 Statuses [X] are not allowed` and kill the **whole**
+  report. `QUERYABLE_STATUSES` + `queryStatuses(definition)` filter the request; `matchesDefinition`
+  still matches the response against the definition's full list, so meaning is not bent to fit the
+  transport. This was a live bug, not a theoretical one: `REPORT.RETURNING` lists
+  `PARTIALLY_RETURNED`, so «Едет обратно» answered «Яндекс.Маркет отклонил запрос» from TASK-054
+  onward — before it, `status[]=` was ignored by Yandex, so the forbidden value never arrived.
+  Cost of the fix: partially-returned orders are not fetched; a partial return in transit is still
+  visible through the returns endpoint.
+- **`toDate` is exclusive** — «заказы, созданные ДО 00:00 указанного дня» — so
+  `creationDateParams` always shifts the upper bound one day forward. For a single day Yandex
+  stretches the range itself and the bug is invisible; for «с 1 числа по сегодня» it would silently
+  drop *today's* orders, the ones the seller opened the report for.
 
 - **Arithmetic lives in `reports/profit.ts`**, a pure module beside `money.ts`. Both percentages are
   taken **from the sale sum**: `net = revenue − revenue×commission% − revenue×tax% − purchase`, i.e.
   `revenue × 0.70 − purchase` at the defaults. The tax base is the customer's decision, written down
   there — taking 7% off the post-commission remainder yields 539 ₽ instead of 700 ₽ on 10 000 ₽, and
   both look equally plausible.
-- **Revenue is `itemsTotal`** — goods only, the same figure the other reports print as «Товары», so
-  numbers reconcile between screens. Not `Σ(item.price × count)`: that excludes subsidy compensation
-  and would silently disagree with the displayed total.
+- **Revenue is `itemsTotal` + Market subsidies**, goods only. `itemsTotal` is documented as «Платёж
+  покупателя» and `item.price` as «цена без учёта вознаграждения партнёру за скидки по промокодам,
+  купонам и акциям (параметр `subsidies`)» — the Market's discount is paid *by the Market* and
+  **reimbursed to the seller**, so the seller's revenue exceeds what the buyer paid. Verified on the
+  live store for July (394 redeemed orders, cost 1 649 259 ₽): `itemsTotal` alone gave revenue
+  2 456 985 ₽ and 4 % margin, adding subsidies gave 2 877 765 ₽ and 22 % — the latter is what the
+  customer described (markup ~70 %, margin ~20 %), the former read as «the store works for free».
+  Commission and tax are taken from the full sum including the subsidy, matching the customer's own
+  worked example (`2689 × 23 %`, `2689 × 7 %`).
+  - `subsidiesTotal` (money.ts) sums the **order-level** `subsidies`, never the per-item ones: an
+    item's `amount` is **per unit** (live order #58841189889 — item with `count: 2` carried 276/565,
+    the order 552/1130), so summing items without `× count` understates and with it double-counts.
+    `DELIVERY` is excluded — that's delivery remuneration, the same reason `itemsTotal` excludes
+    `deliveryTotal`. `SUBSIDY_TYPE` lives in `report-status-map.ts` because the literal `'DELIVERY'`
+    is also an order status and the "statuses are not scattered" test rightly catches it elsewhere.
+  - The report prints «в т.ч. субсидии Маркета» under Продажи. The other reports show «Товары» as the
+    buyer's payment, so without that line the two screens look like they disagree — for July the gap
+    is 421 000 ₽.
+  - Earlier revisions of this file claimed the opposite (that `itemsTotal` includes subsidy
+    compensation while `Σ(item.price × count)` does not). On live data those two sums matched **to the
+    rouble** (2 456 985) and neither contains subsidies.
 - **A returned order is excluded whole, and returns come from a second endpoint.** A return *after*
   redemption does **not** move the order out of `DELIVERED` — it lives as its own entity in
   `GET v2/campaigns/{id}/returns`, so `ProfitService.returnedOrderIds` queries that method and
@@ -204,6 +260,14 @@ already received, since an order in transit may never be redeemed.
   for how much. Treating a missing cost as 0 would inflate profit invisibly — that is why
   `orderPurchase` returns `null`, not `0`, and why `normalizeRate` rejects `null` separately
   (`Number(null) === 0`, so "no rate" would have become "zero commission").
+- **A row missing from the catalog still yields a purchase price.** `StockSyncService` skips the
+  *stock* write when `resolveSku` finds nothing (an unknown sku 400s the whole batch) but stores the
+  price anyway, keyed by the first candidate `stripBrand(name)` — the bare code is exactly what an
+  order item's `offerId` carries. Dropping the row wholesale is how prices went missing: for July, 6
+  of 7 skus with no cost were present in the uploaded price list with a price (`Daniel Klein 14081-4`,
+  2280 ₽, row 16952) but had been removed from the catalog, while their orders remained. The report
+  then asked the seller to «пришлите прайс с этими позициями» — which they already had. Stock and
+  cost are independent: a zero or absent quantity does not affect the price at all.
 - **Cost comes from the price list the seller already uploads for stock.** `IPriceRow.price` (column E)
   was parsed and discarded before; `StockSyncService` now also upserts it into `PurchasePrice`,
   **including in «проверка» (dry-run) mode** — that writes to our Mongo, not to Partner API, so profit
@@ -227,9 +291,24 @@ already received, since an order in transit may never be redeemed.
   specific one. Do **not** extend `parseLabelledValue`/`TDraftField` for this: that union drives
   `DRAFT_FIELD_SET`, `ONBOARDING_STEPS` and every `switch (step)` in `onboarding.ts`, whose numeric
   validation demands 5–15 digits and would reject «23».
-- `ProfitService` (`reports/profit.service.ts`) joins the two sources; `OrderReportsService` stays
-  API-only. Both the button (`ReportsHandler.run`) and the daily digest (`reports.processor.ts`) must
-  branch on `REPORT.PROFIT` — a divergence between them is the known complaint pattern.
+- `ProfitService` (`reports/profit.service.ts`) joins the sources; `OrderReportsService` stays
+  API-only. It fetches both order sets with one `Promise.all`, then makes **one** `findBySkus` call
+  over their union and **one** returns call shared by both `profitOf` runs — the returns endpoint is
+  the report's most expensive request. Both the button (`ReportsHandler.run`) and the daily digest
+  (`reports.processor.ts`) must branch on `REPORT.PROFIT` — a divergence between them is the known
+  complaint pattern.
+- **Two read-only scripts exist for exactly the questions this report raises** (both boot
+  `AppConfigModule + YandexModule` only — `AppModule` would start `BotRegistry`, whose bootstrap
+  re-points the webhook away from the running bot; `AppConfigModule` must be imported explicitly,
+  `@Global()` does not pull a module into a context):
+  - `npx ts-node scripts/diagnose-orders.ts --user=<id>` — a day's orders broken down by status via
+    **both** date filters (a mismatch between them means the filter loses orders, not that the seller
+    is wrong), a 7-day histogram, the token's store list, `--report` (the real report through the real
+    services) and `--unknown` (every sku with no purchase price — the message itself lists five).
+  - `npx ts-node scripts/load-purchase-prices.ts --user=<id> --file=stock.xlsx` — refreshes purchase
+    prices from a price list without going through Telegram. Goes through `StockSyncService.sync` with
+    `dryRun: true`, so **no stock is written to Partner API** while our Mongo is updated; upserts never
+    delete rows absent from the file.
 
 ### Data layer
 

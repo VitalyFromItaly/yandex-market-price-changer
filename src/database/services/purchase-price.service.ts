@@ -14,6 +14,9 @@ export interface IPurchasePriceRow {
   category?: string;
 }
 
+/** Сколько операций отправлять в одном bulkWrite. */
+const UPSERT_CHUNK_SIZE = 1000;
+
 /**
  * Закупочные цены продавца.
  *
@@ -61,7 +64,13 @@ export class PurchasePriceService {
       },
     }));
 
-    await this.model.bulkWrite(operations);
+    // Пачками, а не одним bulkWrite: файл склада вырос вчетверо (19 143 строки),
+    // и запас по лимитам одной операции незачем расходовать целиком. Заодно в
+    // логе виден прогресс, а не одна строка через полминуты.
+    for (let i = 0; i < operations.length; i += UPSERT_CHUNK_SIZE) {
+      await this.model.bulkWrite(operations.slice(i, i + UPSERT_CHUNK_SIZE));
+    }
+
     this.logger.log(`Закупочные цены для ${telegramUserId}: записано ${rows.length}`);
 
     return rows.length;

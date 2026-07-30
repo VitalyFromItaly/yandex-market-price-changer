@@ -8,6 +8,7 @@ import {
   amountValue,
   formatRubles,
   orderTotals,
+  subsidiesTotal,
   sumTotals,
 } from '../../src/modules/yandex/reports/money';
 import {
@@ -95,6 +96,30 @@ describe('Денежные суммы', () => {
     expect(amountValue({ value: 2500 })).toBe(2500);
     expect(amountValue(undefined)).toBe(0);
     expect(amountValue({} as never)).toBe(0);
+  });
+
+  /**
+   * Субсидии считаются по ЗАКАЗУ, а не по позициям: у позиции сумма указана НА
+   * ЕДИНИЦУ товара. Проверено на боевом заказе #58841189889 — позиция с count 2
+   * несла 276/565, а заказ 552/1130.
+   */
+  it('субсидии заказа складываются, доставочная исключается', () => {
+    expect(
+      subsidiesTotal({
+        subsidies: [
+          { type: 'SUBSIDY', amount: 1130 },
+          { type: 'YANDEX_CASHBACK', amount: 552 },
+          { type: 'DELIVERY', amount: 300 },
+        ],
+      }),
+    ).toBe(1682);
+  });
+
+  it('нет субсидий — ноль, а не NaN', () => {
+    expect(subsidiesTotal({})).toBe(0);
+    expect(subsidiesTotal({ subsidies: [] })).toBe(0);
+    expect(subsidiesTotal({ subsidies: [{ type: 'SUBSIDY' }] })).toBe(0);
+    expect(subsidiesTotal(undefined as never)).toBe(0);
   });
 });
 

@@ -544,8 +544,11 @@ describe('Текст отчёта о прибыли', () => {
   });
 
   it('пустой период — это результат, а не ошибка', () => {
+    // Формулировка про «выкупленные» ушла вместе с одним набором: теперь
+    // отчёт смотрит и на оформленные, и пустым он бывает только когда нет
+    // ни тех, ни других.
     const text = formatProfitReport({ ...report, totals: profitOf([], COSTS) });
-    expect(text).toContain('выкупленных заказов нет');
+    expect(text).toContain('заказов нет');
     expect(text).not.toContain('Чистая');
   });
 
@@ -563,6 +566,175 @@ describe('Текст отчёта о прибыли', () => {
 
     expect(text).toContain('🔻');
     expect(text).toContain('-4');
+  });
+});
+
+/**
+ * Субсидии Маркета в выручке (TASK-056).
+ *
+ * `itemsTotal` — это ПЛАТЁЖ ПОКУПАТЕЛЯ, а скидку по акции даёт Маркет и продавцу
+ * её компенсирует. Без этого слагаемого июль на боевом магазине дал маржу 4 %
+ * вместо 22 % — 421 тыс. ₽ выручки просто не считались.
+ */
+describe('Субсидии Маркета — это выручка продавца', () => {
+  /** Заказ: покупатель заплатил 10 000, Маркет доплатил 2 000 по акции. */
+  const WITH_SUBSIDY = {
+    id: 7,
+    itemsTotal: 10000,
+    items: [{ offerId: 'A1', count: 1 }],
+    subsidies: [
+      { type: 'SUBSIDY', amount: 1500 },
+      { type: 'YANDEX_CASHBACK', amount: 500 },
+    ],
+  };
+
+  it('субсидия попадает в продажи, а не пропадает', () => {
+    const totals = profitOf([WITH_SUBSIDY], COSTS);
+
+    expect(totals.revenue).toBe(12000);
+    expect(totals.subsidies).toBe(2000);
+    // 12 000 − 23% − 7% − 5 000 закупа = 3 400.
+    expect(totals.net).toBe(3400);
+  });
+
+  it('комиссия и налог считаются С СУБСИДИЕЙ: Маркет берёт их с полной цены', () => {
+    const totals = profitOf([WITH_SUBSIDY], COSTS);
+
+    expect(totals.commission).toBe(2760);
+    expect(totals.tax).toBe(840);
+  });
+
+  it('субсидия за доставку в товарную выручку не идёт', () => {
+    // Это вознаграждение за ДОСТАВКУ. Тот же принцип, по которому itemsTotal
+    // не включает deliveryTotal.
+    const totals = profitOf(
+      [{ ...WITH_SUBSIDY, subsidies: [{ type: 'DELIVERY', amount: 900 }] }],
+      COSTS,
+    );
+
+    expect(totals.revenue).toBe(10000);
+    expect(totals.subsidies).toBe(0);
+  });
+
+  it('заказ без субсидий считается как раньше', () => {
+    const totals = profitOf([ORDER], COSTS);
+
+    expect(totals.revenue).toBe(10000);
+    expect(totals.subsidies).toBe(0);
+  });
+
+  it('в отчёте субсидии названы прямо — иначе расхождение с «Выкуплено» выглядит ошибкой', () => {
+    const text = formatProfitReport({
+      period: DEFAULT_PERIOD,
+      pricesUpdatedAt: new Date('2026-07-29T09:00:00Z'),
+      cancelledOrders: 0,
+      totals: profitOf([WITH_SUBSIDY], COSTS),
+      placed: profitOf([], COSTS),
+    });
+
+    expect(text).toContain('субсидии Маркета');
+    expect(text).toContain(formatRubles(2000));
+  });
+});
+
+/**
+ * Два набора заказов в одном отчёте (TASK-055).
+ *
+ * Продавец сверяется с кабинетом, где видит ОФОРМЛЕННЫЕ заказы, а прибыль
+ * считалась по ВЫКУПЛЕННЫМ: 30-07-2026 это дало 11 против 10 при дневной норме
+ * магазина 40–50, и отчёт выглядел сломанным. Теперь печатаются обе цифры —
+ * и главное, что наборы РАЗНЫЕ, а не целое и часть.
+ */
+describe('Прибыль: оформленные и выкупленные вместе', () => {
+  const base = {
+    period: DEFAULT_PERIOD,
+    pricesUpdatedAt: new Date('2026-07-29T09:00:00Z'),
+    cancelledOrders: 0,
+  };
+
+  /** Оформленный заказ — другой товар и другой id, чтобы наборы не совпадали. */
+  const PLACED_ORDER = {
+    id: 2,
+    itemsTotal: 20000,
+    items: [{ offerId: 'A1', count: 2 }],
+  };
+
+  it('печатает оба набора и говорит, что заказы разные', () => {
+    const text = formatProfitReport({
+      ...base,
+      totals: profitOf([ORDER], COSTS),
+      placed: profitOf([PLACED_ORDER], COSTS),
+    });
+
+    expect(text).toContain('Оформлено');
+    expect(text).toContain('Выкуплено');
+    expect(text).toContain('Это другие заказы');
+  });
+
+  it('разбивка достаётся оформленным, выкупленные идут строкой', () => {
+    // Два одинаковых столбца вычитаний подряд читаются как ошибка отчёта.
+    const text = formatProfitReport({
+      ...base,
+      totals: profitOf([ORDER], COSTS),
+      placed: profitOf([PLACED_ORDER], COSTS),
+    });
+
+    expect(text).toContain('Ожидается чистая');
+    expect(text.match(/Комиссия/g)).toHaveLength(1);
+    // Именно строка вычитания: ниже есть ещё «💵 Закуп: прайс от …» — это подпись.
+    expect(text.match(/➖ Закуп:/g)).toHaveLength(1);
+  });
+
+  it('без оформленных разбивку получают выкупленные', () => {
+    // Иначе отчёт за прошедший день схлопнулся бы в одну строку и продавец
+    // потерял бы комиссию, налог и закуп — то, ради чего его и открывают.
+    const text = formatProfitReport({
+      ...base,
+      totals: profitOf([ORDER], COSTS),
+      placed: profitOf([], COSTS),
+    });
+
+    expect(text).toContain('Комиссия 23%');
+    expect(text).toContain('Чистая');
+    expect(text).not.toContain('Ожидается чистая');
+    expect(text).not.toContain('Это другие заказы');
+  });
+
+  it('отменённые названы отдельно — в кабинете продавец их видит', () => {
+    const text = formatProfitReport({
+      ...base,
+      cancelledOrders: 2,
+      totals: profitOf([], COSTS),
+      placed: profitOf([PLACED_ORDER], COSTS),
+    });
+
+    expect(text).toContain('Отменено');
+    expect(text).toContain('в расчёт не входят');
+  });
+
+  it('заказы без закупа — один блок на оба набора, без повторов артикулов', () => {
+    const unknown = { itemsTotal: 7000, items: [{ offerId: 'НЕТ-В-ПРАЙСЕ', count: 1 }] };
+    const text = formatProfitReport({
+      ...base,
+      totals: profitOf([{ ...unknown, id: 3 }], COSTS),
+      placed: profitOf([PLACED_ORDER, { ...unknown, id: 4 }], COSTS),
+    });
+
+    expect(text.match(/Не учтено заказов/g)).toHaveLength(1);
+    expect(text.match(/НЕТ-В-ПРАЙСЕ/g)).toHaveLength(1);
+    // Считаются оба набора: 7000 + 7000.
+    expect(text).toContain(formatRubles(14000));
+  });
+
+  it('пусто во всех наборах — это результат, а не ошибка', () => {
+    const text = formatProfitReport({
+      ...base,
+      totals: profitOf([], COSTS),
+      placed: profitOf([], COSTS),
+    });
+
+    expect(text).toContain('заказов нет');
+    expect(text).not.toContain('Оформлено');
   });
 });
 

@@ -13,6 +13,8 @@
  * потому что продавцы сверяются то с одной, то с другой.
  */
 
+import { SUBSIDY_TYPE } from './report-status-map';
+
 /** Поля, которые брать НЕЛЬЗЯ. Список из документации Partner API. */
 export const DEPRECATED_MONEY_FIELDS = [
   'total',
@@ -25,10 +27,39 @@ export const DEPRECATED_MONEY_FIELDS = [
   'partnerCompensation',
 ] as const;
 
+export interface IOrderSubsidy {
+  type?: string;
+  amount?: number;
+}
+
 /** Заказ в объёме, нужном для денег. Всё опционально: ответ бывает неполным. */
 export interface IOrderMoney {
   itemsTotal?: number;
   deliveryTotal?: number;
+  /** Субсидии ЗАКАЗА — итог по типам, а не на единицу товара (см. subsidiesTotal). */
+  subsidies?: readonly IOrderSubsidy[];
+}
+
+/**
+ * Субсидии заказа по товарам — деньги, которые Маркет доплачивает продавцу.
+ *
+ * ⚠️ БЕРЁМ ЗАКАЗНЫЕ, А НЕ ПОЗИЦИОННЫЕ. У позиции `subsidies.amount` указана
+ * сумма НА ЕДИНИЦУ товара, у заказа — итог. Проверено на боевом заказе
+ * #58841189889: позиция «TQ-141-1D» с `count: 2` несёт
+ * `YANDEX_CASHBACK 276 / SUBSIDY 565`, а заказ — `552 / 1130`, то есть ровно
+ * вдвое. Сумма по позициям без умножения на count занизила бы выручку, а с
+ * умножением легко посчитать дважды — заказные значения снимают вопрос вовсе.
+ *
+ * `DELIVERY` исключается: это вознаграждение за ДОСТАВКУ, а строка «Продажи»
+ * считает только товары — тот же принцип, по которому `itemsTotal` не включает
+ * `deliveryTotal`.
+ */
+export function subsidiesTotal(order: IOrderMoney): number {
+  return (order?.subsidies ?? []).reduce(
+    (sum, subsidy) =>
+      subsidy?.type === SUBSIDY_TYPE.DELIVERY ? sum : sum + amount(subsidy?.amount),
+    0,
+  );
 }
 
 export interface IMoneyTotals {

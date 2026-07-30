@@ -3,10 +3,13 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
   ORDER_STATUS,
+  PLACED_DEFINITION,
   REPORT,
   REPORT_DEFINITIONS,
   RETURN_SUBSTATUS,
+  isCancelled,
   matchesReport,
+  queryStatuses,
   reportDefinition,
   type TReportKey,
 } from '../../src/modules/yandex/reports/report-status-map';
@@ -63,6 +66,67 @@ describe('Определения отчётов', () => {
     const def = reportDefinition(REPORT.RETURNING);
     expect(def.substatuses).toHaveLength(5);
     expect(def.usesReturnsApi).toBe(true);
+  });
+});
+
+/**
+ * Статусы, запрещённые Яндексом в ФИЛЬТРЕ (TASK-055).
+ *
+ * Проверено на боевом API 30-07-2026: PLACING, RESERVED, PENDING,
+ * PARTIALLY_RETURNED и UNKNOWN отвечают `400 Statuses [X] are not allowed` и
+ * роняют ВЕСЬ отчёт. До TASK-054 это не проявлялось: массив уходил как
+ * `status[]=`, Partner API его игнорировал, и запрещённые значения до него не
+ * доезжали — а «Едет обратно» с тех пор отвечал «Яндекс.Маркет отклонил запрос».
+ */
+describe('Статусы, пригодные для запроса', () => {
+  it('ни одно определение не уходит в запрос с запрещённым статусом', () => {
+    const forbidden = [
+      ORDER_STATUS.PLACING,
+      ORDER_STATUS.RESERVED,
+      ORDER_STATUS.PENDING,
+      ORDER_STATUS.PARTIALLY_RETURNED,
+      ORDER_STATUS.UNKNOWN,
+    ];
+
+    const definitions = [...Object.values(REPORT_DEFINITIONS), PLACED_DEFINITION];
+
+    for (const definition of definitions) {
+      const queried = queryStatuses(definition);
+      expect(queried.length).toBeGreaterThan(0);
+      for (const status of forbidden) {
+        expect(queried).not.toContain(status);
+      }
+    }
+  });
+
+  it('«едет обратно» запрашивает DELIVERY и RETURNED, а PARTIALLY_RETURNED — нет', () => {
+    // Смысл отчёта не подрезаем: в определении статус остался, отбор ответа по
+    // нему работает. Просто спросить о нём Яндекса нельзя.
+    const def = reportDefinition(REPORT.RETURNING);
+    expect(def.statuses).toContain(ORDER_STATUS.PARTIALLY_RETURNED);
+    expect(queryStatuses(def)).toEqual([ORDER_STATUS.DELIVERY, ORDER_STATUS.RETURNED]);
+  });
+
+  it('«оформлено» — по дате оформления, с отменёнными и без недооформленных', () => {
+    // CANCELLED запрашивается намеренно: в кабинете он в общем списке, и без
+    // него наша цифра оказалась бы меньше той, что видит продавец.
+    expect(PLACED_DEFINITION.dateFilter).toBe('creationDate');
+    expect(queryStatuses(PLACED_DEFINITION)).toContain(ORDER_STATUS.CANCELLED);
+    expect(PLACED_DEFINITION.statuses).not.toContain(ORDER_STATUS.PLACING);
+    expect(PLACED_DEFINITION.statuses).not.toContain(ORDER_STATUS.RESERVED);
+  });
+
+  it('«оформлено» отчётом НЕ является — иначе у него появилась бы кнопка', () => {
+    // Object.values(REPORT) питает OrderReportsService.keys, клавиатуру отчётов
+    // и рассылку.
+    expect(Object.values(REPORT)).not.toContain('placed');
+    expect(Object.values(REPORT_DEFINITIONS)).not.toContain(PLACED_DEFINITION);
+  });
+
+  it('isCancelled узнаёт отменённый заказ и только его', () => {
+    expect(isCancelled({ status: ORDER_STATUS.CANCELLED })).toBe(true);
+    expect(isCancelled({ status: ORDER_STATUS.DELIVERED })).toBe(false);
+    expect(isCancelled({})).toBe(false);
   });
 });
 

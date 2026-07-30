@@ -164,10 +164,13 @@ describe('StockSyncService: закупочные цены', () => {
     expect(prices.saved[0].user).toBe(USER);
     // Ключ — «FAA02006M», а не «ORIENT FAA02006M»: в позиции заказа приходит
     // артикул каталога, и join возможен только по нему.
-    expect(prices.saved[0].rows).toEqual([
+    expect(prices.saved[0].rows).toContainEqual(
       expect.objectContaining({ sku: 'FAA02006M', price: 18800 }),
-    ]);
-    expect(result.purchasePricesSaved).toBe(1);
+    );
+    // Ни один ключ не сохранён вместе с брендом — ни для найденных в каталоге,
+    // ни для остальных.
+    expect(prices.saved[0].rows.filter((row) => row.sku.startsWith('ORIENT '))).toEqual([]);
+    expect(result.purchasePricesSaved).toBeGreaterThan(1);
   });
 
   it('СУХОЙ ПРОГОН тоже сохраняет закуп — это наша база, а не Яндекс', async () => {
@@ -180,17 +183,32 @@ describe('StockSyncService: закупочные цены', () => {
 
     expect(client.updateStocks).not.toHaveBeenCalled();
     expect(prices.upsertMany).toHaveBeenCalledTimes(1);
-    expect(result.purchasePricesSaved).toBe(1);
+    // Цены записаны по ВСЕМ строкам файла, а не только по найденным в каталоге:
+    // это наша база, и заказ на позицию вне каталога тоже нужно уметь посчитать.
+    expect(result.purchasePricesSaved).toBe(result.totalRows);
   });
 
-  it('позиции вне каталога в закуп не попадают: сопоставить их с заказом нечем', async () => {
+  it('позиции ВНЕ каталога сохраняют закуп, но остаток им не пишется', async () => {
+    // Раньше такая строка выпадала целиком, и это стоило цен: за июль 6 из 7
+    // артикулов без закупа лежали в присланном прайсе с ценой, но их не было в
+    // каталоге — продавец из каталога их убрал, а заказы остались. Отчёт при
+    // этом просил «пришлите прайс с этими позициями», хотя они в прайсе были.
     const client = fakeClient(['FAA02006M']);
     const prices = fakePurchasePrices();
     const result = await serviceWith(client, prices).sync(CREDENTIALS, file, {
       telegramUserId: USER,
     });
 
-    expect(prices.saved[0].rows).toHaveLength(1);
+    // Остаток ушёл ровно по одной позиции — той, что есть в каталоге.
+    expect(result.matched).toBe(1);
+    expect(client.calls[0].items).toEqual([{ sku: 'FAA02006M', count: 2 }]);
+
+    // А закуп — по всем строкам с ценой, под кодом без бренда: именно он
+    // приходит в позиции заказа.
+    expect(prices.saved[0].rows).toHaveLength(result.totalRows);
+    expect(prices.saved[0].rows).toContainEqual(
+      expect.objectContaining({ sku: 'FAA02007B', price: 17200 }),
+    );
     expect(result.totalRows).toBeGreaterThan(1000);
   });
 
@@ -199,8 +217,10 @@ describe('StockSyncService: закупочные цены', () => {
     const prices = fakePurchasePrices();
     await serviceWith(client, prices).sync(CREDENTIALS, file, { telegramUserId: USER });
 
-    expect(prices.saved[0].rows).toHaveLength(1);
-    expect(prices.saved[0].rows[0].price).toBeGreaterThan(0);
+    const row = prices.saved[0].rows.find((saved) => saved.sku === 'GA-2100-1A1');
+    expect(row?.price).toBeGreaterThan(0);
+    // Ни одной цены с нулём или мусором: цена и остаток разбираются независимо.
+    expect(prices.saved[0].rows.every((saved) => saved.price > 0)).toBe(true);
   });
 
   it('сбой записи закупа НЕ роняет обновление остатков', async () => {

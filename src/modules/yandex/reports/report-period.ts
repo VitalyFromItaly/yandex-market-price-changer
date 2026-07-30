@@ -3,6 +3,7 @@ import {
   calendarDayBounds,
   calendarDayStart,
   moscowDay,
+  shiftDays,
   startOfMonth,
   startOfWeek,
   type ICalendarDate,
@@ -90,6 +91,29 @@ export function shipmentDateParams(
 ): { from: string; to: string } {
   const bounds = periodBounds(period, now);
   return { from: calendarDateParam(bounds.from), to: calendarDateParam(bounds.to) };
+}
+
+/**
+ * Параметры Partner API для фильтра по дате ОФОРМЛЕНИЯ — fromDate/toDate
+ * (DD-MM-YYYY).
+ *
+ * ⚠️ Верхняя граница сдвинута на день вперёд НАМЕРЕННО. По документации
+ * `toDate` — это «заказы, созданные ДО 00:00 указанного дня», то есть граница
+ * исключающая. Для одного дня Яндекс сам растягивает диапазон до суток («если
+ * промежуток меньше суток, `toDate` = `fromDate` + сутки»), и ошибку не видно;
+ * а вот «с 1 числа по сегодня» молча отрезало бы СЕГОДНЯШНИЕ заказы — ровно те,
+ * ради которых продавец и открывает отчёт. Поэтому сдвиг делается всегда, а не
+ * только для диапазонов: одно правило вместо двух, и оно закреплено тестом.
+ */
+export function creationDateParams(
+  period: IReportPeriod,
+  now: Date = new Date(),
+): { from: string; to: string } {
+  const bounds = periodBounds(period, now);
+  return {
+    from: calendarDateParam(bounds.from),
+    to: calendarDateParam(shiftDays(bounds.to, 1)),
+  };
 }
 
 /** Параметры Partner API для фильтра `updatedAt` (ISO 8601 со смещением). */

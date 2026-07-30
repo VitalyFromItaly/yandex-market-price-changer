@@ -3,17 +3,29 @@ import { YandexClientFactory } from '../yandex-client.factory';
 import type { YandexMarketDocument } from '../../../database/schemas/yandex-market.schema';
 import type { IOrdersQuery, YandexApiClient } from '../yandex-api.client';
 import {
+  PLACED_DEFINITION,
   REPORT,
   RETURN_SHIPMENT_STATUS,
-  matchesReport,
+  isCancelled,
+  matchesDefinition,
+  queryStatuses,
   reportDefinition,
+  type IReportDefinition,
   type TReportKey,
 } from './report-status-map';
-import { addTotals, amountValue, orderTotals, ZERO_TOTALS, type IMoneyTotals } from './money';
+import {
+  addTotals,
+  amountValue,
+  orderTotals,
+  ZERO_TOTALS,
+  type IMoneyTotals,
+  type IOrderSubsidy,
+} from './money';
 import { moscowDateParam } from './moscow-day';
 import {
   DEFAULT_PERIOD,
   assertPeriodSupported,
+  creationDateParams,
   shipmentDateParams,
   updatedAtParams,
   type IReportPeriod,
@@ -46,6 +58,14 @@ export interface IReportOrder {
   creationDate?: string;
   itemsTotal?: number;
   deliveryTotal?: number;
+  /**
+   * Субсидии Маркета — итог по типам на весь заказ.
+   *
+   * Нужны прибыли: это вознаграждение партнёру, то есть выручка продавца сверх
+   * платежа покупателя (см. subsidiesTotal в money.ts). Приходили всегда, просто
+   * не читались — за июль в них 421 тыс. ₽.
+   */
+  subsidies?: IOrderSubsidy[];
   items?: IReportOrderItem[];
 }
 
@@ -98,7 +118,7 @@ export class OrderReportsService {
     const client = this.clients.forStore(store);
     const definition = reportDefinition(key);
 
-    const orders = await this.collectOrders(client, key, now, period);
+    const orders = await this.collectOrders(client, definition, now, period);
     let totals = orders.reduce<IMoneyTotals>(
       (acc, order) => addTotals(acc, orderTotals(order)),
       ZERO_TOTALS,
@@ -116,18 +136,46 @@ export class OrderReportsService {
   }
 
   /**
-   * Заказы отчёта. Фильтр по статусу уходит в запрос, а `matchesReport`
+   * Заказы, ОФОРМЛЕННЫЕ за период, с отменёнными отдельным списком.
+   *
+   * Отдельный публичный метод, а не отчёт: кнопки и рассылки у этого набора
+   * нет, он нужен только прибыли — вторым блоком рядом с выкупленными.
+   *
+   * Отменённые приходят тем же запросом и разделяются здесь: в кабинете
+   * продавец видит их в общем списке, поэтому отчёт про них говорит, но в
+   * деньги не берёт.
+   */
+  public async collectPlacedOrders(
+    store: YandexMarketDocument,
+    period: IReportPeriod = DEFAULT_PERIOD,
+    now: Date = new Date(),
+  ): Promise<{ orders: IReportOrder[]; cancelled: IReportOrder[] }> {
+    const client = this.clients.forStore(store);
+    const all = await this.collectOrders(client, PLACED_DEFINITION, now, period);
+
+    return {
+      orders: all.filter((order) => !isCancelled(order)),
+      cancelled: all.filter((order) => isCancelled(order)),
+    };
+  }
+
+  /**
+   * Заказы отчёта. Фильтр по статусу уходит в запрос, а `matchesDefinition`
    * применяется ПОВЕРХ ответа: подстатус Partner API фильтровать не умеет, и
    * без второй проверки в «едет обратно» попали бы все заказы в доставке.
+   *
+   * Принимает ОПРЕДЕЛЕНИЕ, а не ключ отчёта: тем же кодом собирается
+   * `PLACED_DEFINITION`, у которого ключа нет вовсе.
    */
   private async collectOrders(
     client: YandexApiClient,
-    key: TReportKey,
+    definition: IReportDefinition,
     now: Date,
     period: IReportPeriod,
   ): Promise<IReportOrder[]> {
-    const definition = reportDefinition(key);
-    const query: IOrdersQuery = { status: [...definition.statuses] };
+    // В запрос уходят только те статусы, которые Partner API принимает в
+    // фильтре: запрещённое значение отвечает 400 на ВЕСЬ отчёт (см. queryStatuses).
+    const query: IOrdersQuery = { status: queryStatuses(definition) };
 
     // Период проверяем ДО сети — но только там, где он вообще применяется.
     // У среза «что сейчас в пути» фильтра даты нет, и отклонять его из-за
@@ -149,6 +197,14 @@ export class OrderReportsService {
         query.updatedAtTo = range.to;
         break;
       }
+      case 'creationDate': {
+        // Верхняя граница у Яндекса исключающая — сдвиг на день делает
+        // creationDateParams, см. комментарий там.
+        const range = creationDateParams(period, now);
+        query.fromDate = range.from;
+        query.toDate = range.to;
+        break;
+      }
       default:
         // 'none' — срез «что сейчас», фильтр даты не нужен.
         break;
@@ -158,7 +214,7 @@ export class OrderReportsService {
     for await (const page of client.iterateOrders(query)) {
       for (const raw of page) {
         const order = raw as IReportOrder;
-        if (matchesReport(key, order)) collected.push(order);
+        if (matchesDefinition(definition, order)) collected.push(order);
       }
     }
     return collected;

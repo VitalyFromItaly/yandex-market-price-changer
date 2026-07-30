@@ -4,6 +4,7 @@ import {
   PERIOD,
   SCHEDULE_PERIODS,
   assertPeriodSupported,
+  creationDateParams,
   nextSchedulePeriod,
   parseDayInput,
   periodBounds,
@@ -92,6 +93,33 @@ describe('Параметры Partner API', () => {
     expect(shipmentDateParams({ key: PERIOD.WEEK }, NOW)).toEqual({
       from: '27-07-2026',
       to: '30-07-2026',
+    });
+  });
+
+  it('creationDate — верхняя граница на день вперёд: у Яндекса она исключающая', () => {
+    // «Заказы, созданные ДО 00:00 указанного дня». Без сдвига период «с 1 числа
+    // по сегодня» молча терял бы СЕГОДНЯШНИЕ заказы — те самые, ради которых
+    // продавец открывает отчёт.
+    expect(creationDateParams({ key: PERIOD.MONTH }, NOW)).toEqual({
+      from: '01-07-2026',
+      to: '31-07-2026',
+    });
+  });
+
+  it('creationDate за сегодня — это ровно сегодняшние сутки', () => {
+    expect(creationDateParams({ key: PERIOD.TODAY }, NOW)).toEqual({
+      from: '30-07-2026',
+      to: '31-07-2026',
+    });
+  });
+
+  it('creationDate на границе месяца переносит и месяц, и год', () => {
+    // Сдвиг календарной датой, а не миллисекундами: 31-12 + 1 день должно
+    // давать 01-01 следующего года, а не «32-12».
+    const lastDay = new Date('2026-12-31T12:00:00+03:00');
+    expect(creationDateParams({ key: PERIOD.TODAY }, lastDay)).toEqual({
+      from: '31-12-2026',
+      to: '01-01-2027',
     });
   });
 

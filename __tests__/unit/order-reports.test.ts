@@ -253,6 +253,54 @@ describe('Текст отчёта', () => {
   });
 });
 
+/**
+ * Оформленные за период (TASK-055).
+ *
+ * Второй набор внутри отчёта о прибыли: продавец сверяется с кабинетом, где
+ * видит именно оформленные заказы.
+ */
+describe('Сбор оформленных за период', () => {
+  it('фильтрует по дате ОФОРМЛЕНИЯ, верхняя граница — на день вперёд', async () => {
+    // toDate у Яндекса исключающая: «заказы, созданные ДО 00:00 указанного дня».
+    const { reports, queries } = await service();
+    await reports.collectPlacedOrders(STORE, { key: 'today' } as never, NOW);
+
+    expect(queries[0].fromDate).toBe('29-07-2026');
+    expect(queries[0].toDate).toBe('30-07-2026');
+    expect(queries[0]).not.toHaveProperty('updatedAtFrom');
+    expect(queries[0].status).toContain('CANCELLED');
+  });
+
+  it('отменённые отделены от остальных, а не выброшены и не смешаны', async () => {
+    const { reports } = await service({
+      orders: [
+        { id: 1, status: 'PROCESSING', itemsTotal: 1000, items: [] },
+        { id: 2, status: 'CANCELLED', itemsTotal: 500, items: [] },
+        { id: 3, status: 'DELIVERED', itemsTotal: 2000, items: [] },
+      ],
+    });
+
+    const placed = await reports.collectPlacedOrders(STORE, { key: 'today' } as never, NOW);
+
+    expect(placed.orders.map((o) => o.id)).toEqual([1, 3]);
+    expect(placed.cancelled.map((o) => o.id)).toEqual([2]);
+  });
+
+  it('недооформленный заказ в набор не попадает', async () => {
+    // PLACING/RESERVED — заказа ещё нет; спросить о них Яндекса всё равно нельзя.
+    const { reports } = await service({
+      orders: [
+        { id: 1, status: 'PLACING', itemsTotal: 100, items: [] },
+        { id: 2, status: 'PROCESSING', itemsTotal: 100, items: [] },
+      ],
+    });
+
+    const placed = await reports.collectPlacedOrders(STORE, { key: 'today' } as never, NOW);
+
+    expect(placed.orders.map((o) => o.id)).toEqual([2]);
+  });
+});
+
 describe('Выгрузка «едет до клиента» файлом (TASK-026)', () => {
   it('пустой результат отдаёт СООБЩЕНИЕ, а не пустой файл', async () => {
     // Продавец, открывший книгу из одной шапки, решит, что сломался бот,

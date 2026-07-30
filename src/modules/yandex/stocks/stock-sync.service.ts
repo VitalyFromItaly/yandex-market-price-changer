@@ -8,7 +8,7 @@ import { STOCKS_BATCH_SIZE } from '../yandex-api.paths';
 import { YandexClientFactory } from '../yandex-client.factory';
 
 import { parsePriceList } from './price-list.parser';
-import { resolveSku } from './sku-resolver';
+import { resolveSku, stripBrand } from './sku-resolver';
 
 export interface ISkippedRow {
   name: string;
@@ -22,6 +22,15 @@ export interface IStockSyncResult {
   totalRows: number;
   /** Позиций, для которых артикул найден в каталоге. */
   matched: number;
+  /**
+   * Из сопоставленных — сколько уходит с остатком 0, то есть снимается с продажи.
+   *
+   * Считается отдельно и печатается в отчёте: в `stock.xlsx` приходит весь
+   * ассортимент, и пустое количество означает «нет в наличии». Без этого числа
+   * продавец видит «записано 5000» и не догадывается, что тысяча позиций ушла
+   * в ноль.
+   */
+  zeroed: number;
   /** Фактически записано в Яндекс. */
   updated: number;
   /** Пропущено: нет в каталоге либо строка не разобрана. */
@@ -105,14 +114,42 @@ export class StockSyncService {
       const { sku, matchedBy: how } = resolveSku(row.name, catalog);
 
       if (!sku) {
-        // Решение заказчика: нет в каталоге — просто пропускаем. Это новинки,
-        // которых ещё нет на Маркете, ронять из-за них загрузку незачем.
+        // Решение заказчика: нет в каталоге — остаток просто не пишем. Это
+        // новинки, которых ещё нет на Маркете, ронять из-за них загрузку незачем.
         skipped.push({
           name: row.name,
           category: row.category,
           rowNumber: row.rowNumber,
           reason: 'нет в каталоге Яндекса',
         });
+
+        /**
+         * А вот ЗАКУП сохраняем всё равно, под артикулом-кандидатом.
+         *
+         * Отсутствие в каталоге — довод против записи ОСТАТКА (неизвестный sku
+         * даёт 400 на весь батч), но не против цены: цена лежит в нашей Mongo, а
+         * заказ на позицию, которую продавец из каталога убрал, никуда не
+         * исчезает. Именно так и терялись цены: за июль 6 из 7 артикулов без
+         * закупа были в прайсе с ценой («Daniel Klein 14081-4» — 2280 ₽,
+         * строка 16952), но выпадали здесь целиком вместе с остатком. В отчёте
+         * это выглядело как «пришлите прайс с этими позициями», хотя они в
+         * присланном прайсе были.
+         *
+         * Ключ — первый кандидат `stripBrand`: в позициях заказа приходит именно
+         * голый код («14081-4»), и именно он совпал бы с каталогом, будь позиция
+         * в нём. Коллизий это не создаёт: ключа нет в каталоге по условию ветки,
+         * а между собой кандидаты «без бренда» на всех 19 143 наименованиях
+         * файла уникальны (см. sku-resolver).
+         */
+        if (row.price !== null) {
+          purchases.push({
+            sku: stripBrand(row.name),
+            price: row.price,
+            name: row.name,
+            category: row.category,
+          });
+        }
+
         continue;
       }
 
@@ -136,6 +173,7 @@ export class StockSyncService {
     const result: IStockSyncResult = {
       totalRows: rows.length,
       matched: updates.length,
+      zeroed: updates.filter((update) => update.count === 0).length,
       updated: 0,
       skipped,
       matchedBy,
