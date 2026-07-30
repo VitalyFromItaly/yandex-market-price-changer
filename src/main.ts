@@ -14,6 +14,12 @@ async function bootstrap() {
   app.setGlobalPrefix('/api');
   app.useGlobalInterceptors(new LoggerInterceptor());
 
+  // Без этого SIGTERM убивает процесс мимо onApplicationShutdown, и в режиме
+  // polling цикл getUpdates не останавливается: новый контейнер при редеплое
+  // получает 409 Conflict от Bot API — второго читателя апдейтов Telegram не
+  // допускает.
+  app.enableShutdownHooks();
+
   const config = app.get(AppConfigService);
   await app.listen(config.port);
 }

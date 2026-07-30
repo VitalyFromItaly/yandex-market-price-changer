@@ -20,7 +20,12 @@ services:
       # а переданный пароль заставляет сервер писать предупреждение на каждое
       # соединение. Если включите auth — добавьте и сюда, и в команду redis.
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:?нужно задать TELEGRAM_TOKEN в .env}
-      - TELEGRAM_WEBHOOK_URL=${TELEGRAM_WEBHOOK_URL:?нужно задать TELEGRAM_WEBHOOK_URL в .env}
+      # webhook (по умолчанию) или polling. Polling нужен там, откуда вебхук
+      # недостижим для Telegram, — см. комментарий в env.validation.ts.
+      - TELEGRAM_UPDATE_MODE=${TELEGRAM_UPDATE_MODE:-webhook}
+      # Без `:?`: при polling переменная не нужна, и обязательность проверяет
+      # Joi — уже с учётом режима, чего compose сделать не может.
+      - TELEGRAM_WEBHOOK_URL=${TELEGRAM_WEBHOOK_URL:-}
       # Зеркало Bot API. Без значения — ходим на api.telegram.org напрямую.
       - TELEGRAM_API_URL=${TELEGRAM_API_URL:-https://api.telegram.org}
       - TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS:?нужно задать TELEGRAM_ADMIN_IDS в .env}

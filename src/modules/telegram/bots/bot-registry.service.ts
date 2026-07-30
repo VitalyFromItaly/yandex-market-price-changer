@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Telegraf } from 'telegraf';
@@ -31,7 +31,7 @@ export interface RegisteredBot {
  * Иначе Telegram может прислать первый апдейт в ещё не поднятый листенер.
  */
 @Injectable()
-export class BotRegistry implements OnApplicationBootstrap {
+export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(BotRegistry.name);
   private readonly bots = new Map<string, Map<string, RegisteredBot>>();
 
@@ -57,6 +57,29 @@ export class BotRegistry implements OnApplicationBootstrap {
       await this.registerBot(doc);
     }
     this.logger.log(`Готово ботов: ${this.count}`);
+  }
+
+  /**
+   * Останавливает long polling при завершении процесса.
+   *
+   * Без этого контейнер, получивший SIGTERM при редеплое, продолжает держать
+   * цикл getUpdates до принудительного kill — а новый экземпляр в это время
+   * получает от Bot API 409 Conflict, потому что второго читателя апдейтов
+   * Telegram не допускает. Внешне это выглядит как «задеплоили, а бот молчит».
+   *
+   * Работает только при app.enableShutdownHooks() в main.ts.
+   */
+  onApplicationShutdown(signal?: string): void {
+    for (const byType of this.bots.values()) {
+      for (const entry of byType.values()) {
+        try {
+          entry.telegraf.stop(signal ?? 'shutdown');
+        } catch {
+          // telegraf.stop() бросает «Bot is not running!», если приём апдейтов
+          // не запускался (режим webhook). Это не ошибка остановки.
+        }
+      }
+    }
   }
 
   private async loadOrSeedBots(): Promise<BotDocument[]> {
@@ -93,7 +116,6 @@ export class BotRegistry implements OnApplicationBootstrap {
     });
 
     await this.composer.compose(telegraf);
-    await this.setWebhook(telegraf, doc);
 
     // getMe() один раз при регистрации: telegraf кэширует результат в botInfo,
     // а нам нужен числовой id, чтобы находить бота по тому же ключу, который
@@ -111,17 +133,66 @@ export class BotRegistry implements OnApplicationBootstrap {
     if (!this.bots.has(doc.type)) this.bots.set(doc.type, new Map());
     this.bots.get(doc.type).set(doc.id, entry);
 
+    // Приём апдейтов включается ПОСЛЕ записи в реестр: в режиме polling первый
+    // getUpdates уходит немедленно, и обработчик, дошедший до findByTelegramId
+    // раньше этой строки, не нашёл бы собственного бота.
+    await this.startReceiving(telegraf, doc);
+
     this.logger.log(`Бот "${doc.name}" (${doc.type}/${doc.id}) готов`);
   }
 
   /**
-   * Только setWebhook, БЕЗ bot.launch().
+   * Включает приём апдейтов в режиме из TELEGRAM_UPDATE_MODE.
+   *
+   * Оба режима взаимоисключающие на стороне Telegram: пока установлен вебхук,
+   * getUpdates отвечает 409 Conflict. Переключение в обе стороны выполняется
+   * само (launch() снимает вебхук, setWebhook перебивает его обратно), поэтому
+   * менять режим можно одной переменной окружения, без ручной чистки.
+   */
+  private async startReceiving(telegraf: TTelegrafBot, doc: BotDocument): Promise<void> {
+    if (this.config.telegramUpdateMode === 'polling') {
+      this.startPolling(telegraf, doc);
+      return;
+    }
+    await this.setWebhook(telegraf, doc);
+  }
+
+  /**
+   * Long polling. Промис launch() намеренно НЕ ожидается.
+   *
+   * В telegraf 4.16 launch() без опции webhook уходит в `await
+   * this.startPolling()` — бесконечный цикл getUpdates, который резолвится
+   * только после stop(). `await` здесь подвесил бы onApplicationBootstrap
+   * навсегда: Nest дожидается всех хуков до app.listen(), то есть порт не
+   * открылся бы вообще, а следующий бот не зарегистрировался бы.
+   *
+   * Ошибки при этом не теряются — их забирает catch ниже. Вебхук launch()
+   * снимает сам (deleteWebhook), накопившиеся апдейты не сбрасывает: пропущенное
+   * за время недоступности доедет.
+   */
+  private startPolling(telegraf: TTelegrafBot, doc: BotDocument): void {
+    void telegraf
+      .launch(() => {
+        this.logger.log(`Long polling запущен (бот ${doc.type}/${doc.id}) через ${this.config.telegramApiUrl}`);
+      })
+      .catch((error) => {
+        // 409 Conflict здесь означает второй живой экземпляр бота с тем же
+        // токеном — например, не остановленный локальный запуск.
+        this.logger.error(`Long polling остановлен (бот ${doc.type}/${doc.id})`, error as Error);
+      });
+  }
+
+  /**
+   * Только setWebhook, БЕЗ launch({webhook}).
    *
    * telegraf 4.16 в launch({webhook}) безусловно вызывает startWebhook(), а тот
    * делает listen(port) — порт не передавался, поэтому на КАЖДОГО бота
    * поднимался лишний HTTP-сервер на случайном порту, в который никто не
    * стучался. Апдейты приходят через TelegramController, так что нужен
    * ровно setWebhook (TASK-012).
+   *
+   * К режиму polling это не относится: launch() БЕЗ опции webhook никакого
+   * сервера не поднимает, только опрашивает Bot API.
    */
   private async setWebhook(telegraf: TTelegrafBot, doc: BotDocument): Promise<void> {
     const url = `${this.config.telegramWebhookUrl}${this.webhookPath(doc.type, doc.id)}`;

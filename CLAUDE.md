@@ -66,10 +66,36 @@ and `docker-compose.yml`.
 `BotRegistry` (`src/modules/telegram/bots/bot-registry.service.ts`, `OnApplicationBootstrap`) loads
 `Bot` docs from Mongo — seeding one from `AppConfigService.telegramToken` if the collection is empty —
 then per bot: `new Telegraf(doc.token, { telegram: { apiRoot } })` → `telegraf.catch(...)` →
-`PriceChangerComposer.compose()` → `telegram.setWebhook(url)`. **No `bot.launch()`**: telegraf 4.16's
-`launch({webhook})` starts a stray HTTP server per bot that nothing routes to.
+`PriceChangerComposer.compose()` → `getMe()` → registry entry → `startReceiving`.
 `OnApplicationBootstrap` rather than `OnModuleInit` so the HTTP listener is already accepting when
 Telegram sends the first update.
+
+**Two intake modes, chosen by `TELEGRAM_UPDATE_MODE` (`webhook` default | `polling`).** This is not a
+preference, it is network reachability. Prod runs on a Russian host (`MNOGOWEB-MSK`) where Telegram
+traffic is filtered **both ways**: outbound already goes through the mirror in `TELEGRAM_API_URL`
+(a KZ host), and inbound webhook delivery fails the same way — `getWebhookInfo` returned
+`Connection timed out` with `pending_update_count: 7` while the app answered `HTTP/2 200` from the
+open internet with a valid certificate. Polling reverses the direction and rides the mirror that
+already works. Diagnose this class of outage with `getWebhookInfo`, not with app logs: the
+`LoggerInterceptor` prints `Incoming Request` for **every** HTTP request, so its absence after
+startup means the update never arrived.
+
+- **`launch({webhook})` is still forbidden**: telegraf 4.16 unconditionally calls `startWebhook()` →
+  `listen(port)` with no port, so each bot spawned a stray HTTP server nothing routed to (TASK-012).
+  Webhook mode is `telegram.setWebhook(url)` alone, and updates arrive through `TelegramController`.
+- **`launch()` without the `webhook` option is fine** — it starts no server, only `getUpdates`. Its
+  promise **must not be awaited**: it resolves only after `stop()`, and Nest waits for every bootstrap
+  hook before `app.listen()`, so awaiting it would mean the port never opens. `BotRegistry.startPolling`
+  fires it with `void` + `.catch()`.
+- The two modes are mutually exclusive on Telegram's side (`getUpdates` answers `409 Conflict` while a
+  webhook is set). Switching either way is self-healing: `launch()` calls `deleteWebhook` itself, and
+  `setWebhook` overwrites it back. It does **not** drop pending updates, so a backlog accumulated
+  while the endpoint was unreachable is delivered on the next start.
+- `BotRegistry` implements `OnApplicationShutdown` and `main.ts` calls `app.enableShutdownHooks()`.
+  Without both, a container that gets SIGTERM on redeploy keeps its `getUpdates` loop alive and the
+  new instance is answered `409` — which looks exactly like "deployed and the bot went silent".
+- `TELEGRAM_WEBHOOK_URL` is required **only** in webhook mode (Joi `when`), so a polling deployment
+  does not have to invent a fake domain.
 
 `apiRoot` comes from `AppConfigService.telegramApiUrl` (`TELEGRAM_API_URL`, default
 `https://api.telegram.org`) — outbound Bot API calls go through **our own mirror**, not directly.

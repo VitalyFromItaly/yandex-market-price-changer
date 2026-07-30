@@ -136,6 +136,49 @@ describe('envValidationSchema', () => {
     const { error } = envValidationSchema.validate({ ...VALID_ENV, NODE_ENV: 'staging' });
     expect(error).toBeDefined();
   });
+
+  it('по умолчанию режим апдейтов — webhook', () => {
+    const { value } = envValidationSchema.validate(VALID_ENV);
+    expect(value.TELEGRAM_UPDATE_MODE).toBe('webhook');
+  });
+
+  it('TELEGRAM_UPDATE_MODE принимает только webhook и polling', () => {
+    // Опечатка вроде `poling` не должна тихо откатывать режим на вебхук:
+    // на российском хостинге это означает бота, который молчит на всё.
+    const { error } = envValidationSchema.validate({
+      ...VALID_ENV,
+      TELEGRAM_UPDATE_MODE: 'poling',
+    });
+    expect(error).toBeDefined();
+    expect(error!.message).toContain('TELEGRAM_UPDATE_MODE');
+  });
+
+  it('при polling TELEGRAM_WEBHOOK_URL не обязателен', () => {
+    // Требовать публичный домен там, где вебхук принципиально не используется,
+    // значит заставить прод придумывать фиктивное значение.
+    const env = { ...VALID_ENV, TELEGRAM_UPDATE_MODE: 'polling' };
+    delete (env as Record<string, string>).TELEGRAM_WEBHOOK_URL;
+    const { error } = envValidationSchema.validate(env);
+    expect(error).toBeUndefined();
+  });
+
+  it('при webhook отсутствующий TELEGRAM_WEBHOOK_URL по-прежнему падает', () => {
+    const env = { ...VALID_ENV, TELEGRAM_UPDATE_MODE: 'webhook' };
+    delete (env as Record<string, string>).TELEGRAM_WEBHOOK_URL;
+    const { error } = envValidationSchema.validate(env);
+    expect(error).toBeDefined();
+    expect(error!.message).toContain('TELEGRAM_WEBHOOK_URL');
+  });
+
+  it('пустой TELEGRAM_WEBHOOK_URL в режиме webhook читается как «не задан»', () => {
+    // docker-compose передаёт ключ пустым, когда его нет в .env.
+    const { error } = envValidationSchema.validate({
+      ...VALID_ENV,
+      TELEGRAM_WEBHOOK_URL: '',
+    });
+    expect(error).toBeDefined();
+    expect(error!.message).toContain('обязателен');
+  });
 });
 
 describe('AppConfigService (smoke: модуль собирается через Test.createTestingModule)', () => {

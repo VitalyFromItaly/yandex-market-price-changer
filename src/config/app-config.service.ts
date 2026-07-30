@@ -60,6 +60,18 @@ export class AppConfigService {
     return this.config.get<string>('TELEGRAM_TOKEN');
   }
 
+  /**
+   * Как забираем апдейты: Telegram стучится к нам (`webhook`) или мы сами
+   * опрашиваем Bot API (`polling`).
+   *
+   * На российском хостинге вебхук недостижим для серверов Telegram — трафик
+   * фильтруется в обе стороны, поэтому прод работает через polling, а тот
+   * уходит на зеркало из telegramApiUrl.
+   */
+  get telegramUpdateMode(): 'webhook' | 'polling' {
+    return this.config.get<'webhook' | 'polling'>('TELEGRAM_UPDATE_MODE');
+  }
+
   /** Публичный HTTPS-домен, на который Telegram шлёт вебхуки НАМ. */
   get telegramWebhookUrl(): string {
     return this.config.get<string>('TELEGRAM_WEBHOOK_URL');

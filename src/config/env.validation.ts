@@ -62,14 +62,47 @@ export const envValidationSchema = Joi.object({
   TELEGRAM_TOKEN: Joi.string().required().messages({
     'any.required': 'TELEGRAM_TOKEN обязателен: токен бота от @BotFather',
   }),
+  /*
+   * Как забираем апдейты: `webhook` (Telegram стучится к нам) или `polling`
+   * (мы сами опрашиваем Bot API).
+   *
+   * Это не вопрос вкуса, а вопрос сетевой достижимости. Прод стоит на
+   * российском хостинге (MNOGOWEB-MSK), и фильтрация трафика Telegram работает
+   * в ОБЕ стороны: исходящие запросы к api.telegram.org уже ходят через зеркало
+   * из TELEGRAM_API_URL, а входящая доставка вебхука упирается в то же самое —
+   * getWebhookInfo отдавал «Connection timed out» при полностью исправном
+   * приложении (HTTP/2 200 снаружи, валидный сертификат). Polling переворачивает
+   * направление и уходит через то же рабочее зеркало.
+   *
+   * Дефолт `webhook` сохраняет режим для локальной разработки через туннель.
+   */
+  TELEGRAM_UPDATE_MODE: Joi.string().valid('webhook', 'polling').default('webhook').messages({
+    'any.only': "TELEGRAM_UPDATE_MODE: допустимы только 'webhook' или 'polling'",
+  }),
   // Куда Telegram шлёт апдейты НАМ. Раньше ключ назывался TELEGRAM_PROXY_URL,
   // хотя никаким прокси не был — рядом с настоящим TELEGRAM_API_URL это имя
   // напрашивалось на то, чтобы значения перепутали местами.
-  TELEGRAM_WEBHOOK_URL: Joi.string().uri().required().messages({
-    'any.required':
-      'TELEGRAM_WEBHOOK_URL обязателен: публичный HTTPS-домен для вебхука (например, ngrok)',
-    'string.uri': 'TELEGRAM_WEBHOOK_URL должен быть полным URL со схемой https://',
-  }),
+  //
+  // В режиме polling переменная не нужна вовсе: требовать её значило бы
+  // заставить прод придумывать фиктивный домен ради проверки, которая ни на
+  // что не влияет.
+  TELEGRAM_WEBHOOK_URL: Joi.string()
+    .uri()
+    // Пустая строка = «не задано»: и в .env.example, и в docker-compose ключ
+    // присутствует пустым. Без empty('') режим webhook падал бы с невнятным
+    // «is not allowed to be empty» вместо сообщения про обязательность.
+    .empty('')
+    .when('TELEGRAM_UPDATE_MODE', {
+      is: 'polling',
+      then: Joi.optional(),
+      otherwise: Joi.required(),
+    })
+    .messages({
+      'any.required':
+        'TELEGRAM_WEBHOOK_URL обязателен при TELEGRAM_UPDATE_MODE=webhook: ' +
+        'публичный HTTPS-домен для вебхука (например, ngrok)',
+      'string.uri': 'TELEGRAM_WEBHOOK_URL должен быть полным URL со схемой https://',
+    }),
   // Куда ходим МЫ: своё зеркало Bot API вместо api.telegram.org. Дефолт —
   // прямой адрес, чтобы приложение работало и без зеркала.
   //

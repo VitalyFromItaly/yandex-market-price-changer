@@ -83,11 +83,23 @@ npm run tunnel        # vk-tunnel на :3004 (или npm run tunnel:ngrok)
 | `MONGODB_URL`, `MONGODB_DATABASE` | подключение к Mongo |
 | `REDIS_HOST` | Redis для очередей Bull |
 | `TELEGRAM_TOKEN` | токен бота; из него создаётся первая запись в коллекции `bots` |
-| `TELEGRAM_WEBHOOK_URL` | публичный адрес, **на который** Telegram присылает обновления |
+| `TELEGRAM_WEBHOOK_URL` | публичный адрес, **на который** Telegram присылает обновления (только при `TELEGRAM_UPDATE_MODE=webhook`) |
 | `TELEGRAM_ADMIN_IDS` | numeric id администраторов через запятую |
 
 **С значением по умолчанию:** `PORT`, `NODE_ENV`, `REDIS_PORT`, `YANDEX_MARKET_BASE_URL`,
-`TELEGRAM_API_URL`. **Необязательные:** `REDIS_PASSWORD` (пусто — без авторизации).
+`TELEGRAM_API_URL`, `TELEGRAM_UPDATE_MODE`. **Необязательные:** `REDIS_PASSWORD` (пусто — без
+авторизации).
+
+> **`TELEGRAM_UPDATE_MODE`: `webhook` (по умолчанию) или `polling`.** Выбор диктуется не удобством, а
+> сетевой достижимостью. Вебхук требует, чтобы серверы Telegram могли достучаться до нашего адреса; с
+> российского хостинга это не работает — трафик Telegram фильтруется в обе стороны, и `getWebhookInfo`
+> отвечает `Connection timed out` при полностью исправном приложении. `polling` разворачивает
+> направление: мы сами опрашиваем Bot API через зеркало из `TELEGRAM_API_URL`, то есть по каналу,
+> который уже используется для исходящих запросов. Локальной разработке через туннель нужен `webhook`.
+>
+> Первое, что стоит посмотреть, если бот молчит:
+> `curl "$TELEGRAM_API_URL/bot$TELEGRAM_TOKEN/getWebhookInfo"` — поля `pending_update_count` и
+> `last_error_message` говорят о доставке больше, чем логи приложения.
 
 > Два «телеграмных» URL смотрят в противоположные стороны и путать их нельзя:
 > `TELEGRAM_WEBHOOK_URL` — куда Telegram шлёт запросы нам, `TELEGRAM_API_URL` — зеркало Bot API, куда
