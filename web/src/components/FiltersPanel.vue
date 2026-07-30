@@ -1,7 +1,20 @@
 <script setup lang="ts">
 import type { ILogsQuery } from '../api';
 
-/** Виды действий — те же строки, что пишет describeAction на бэкенде. */
+/** Направление: кто кому. */
+const DIRECTIONS = [
+  { value: '', label: 'всё' },
+  { value: 'in', label: 'от пользователя' },
+  { value: 'out', label: 'от бота' },
+];
+
+/**
+ * Виды действий — те же строки, что пишет describeAction на бэкенде.
+ *
+ * Список только для входящих: у исходящих в этом поле лежит имя метода Bot API
+ * (sendMessage и прочие), и перечислять их в том же выпадающем списке значило
+ * бы предлагать заведомо пустые сочетания вроде «от пользователя + sendMessage».
+ */
 const KINDS = [
   { value: '', label: 'любой тип' },
   { value: 'command', label: 'команда' },
@@ -21,6 +34,13 @@ const emit = defineEmits<{ apply: []; reset: [] }>();
     <label>
       Telegram id
       <input v-model="filters.telegramUserId" inputmode="numeric" placeholder="все" />
+    </label>
+
+    <label>
+      Направление
+      <select v-model="filters.direction">
+        <option v-for="d in DIRECTIONS" :key="d.value" :value="d.value">{{ d.label }}</option>
+      </select>
     </label>
 
     <label>

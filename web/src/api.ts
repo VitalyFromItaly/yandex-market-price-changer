@@ -6,6 +6,7 @@ export interface IActionLogRow {
   name?: string;
   botId: string;
   chatId?: string;
+  direction: string;
   kind: string;
   action: string;
   status: string;
@@ -24,6 +25,7 @@ export interface ILogsResponse {
 export interface ILogsQuery {
   telegramUserId?: string;
   kind?: string;
+  direction?: string;
   since?: string;
   until?: string;
   limit?: number;

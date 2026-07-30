@@ -42,7 +42,24 @@ export class ActionLog {
   @Prop({ type: String })
   chatId?: string;
 
-  /** Тип действия: command | menu | callback | document | text | other. */
+  /**
+   * Направление: `in` — пользователь боту, `out` — бот пользователю.
+   *
+   * Отдельное поле, а не ещё одно значение kind: у входящих kind это вид
+   * действия (команда/кнопка/файл), у исходящих — метод Bot API. Смешав их в
+   * одном поле, фильтр «покажи только команды» начал бы попадать и в ответы.
+   *
+   * Дефолт `in`: записи, сделанные до появления исходящих, — входящие.
+   */
+  @Prop({ type: String, required: true, default: 'in' })
+  direction: string;
+
+  /**
+   * Что произошло.
+   *
+   * У входящих: command | menu | callback | document | text | other.
+   * У исходящих: имя метода Bot API (sendMessage, editMessageText, …).
+   */
   @Prop({ type: String, required: true })
   kind: string;
 
@@ -76,6 +93,8 @@ export class ActionLog {
 export const ActionLogSchema = SchemaFactory.createForClass(ActionLog);
 
 // Основной запрос админа — «действия пользователя, свежие сверху».
+// Направление в индекс не входит: оно принимает два значения, и выборка по
+// нему всё равно читает половину коллекции.
 ActionLogSchema.index({ telegramUserId: 1, createdAt: -1 });
 
 /*

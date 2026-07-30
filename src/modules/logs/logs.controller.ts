@@ -19,6 +19,7 @@ export class LogsController {
   async list(
     @Query('telegramUserId') telegramUserId?: string,
     @Query('kind') kind?: string,
+    @Query('direction') direction?: string,
     @Query('since') since?: string,
     @Query('until') until?: string,
     @Query('limit') limit?: string,
@@ -27,6 +28,7 @@ export class LogsController {
     const query = {
       telegramUserId,
       kind,
+      direction,
       since: this.dateOf(since, 'since'),
       until: this.dateOf(until, 'until'),
       limit: this.numberOf(limit, 'limit'),

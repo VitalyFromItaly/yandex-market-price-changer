@@ -3,10 +3,14 @@ import { Test } from '@nestjs/testing';
 
 import {
   describeAction,
+  describeOutgoing,
   fullName,
+  maskOutgoing,
   maskSecrets,
+  outgoingSourceOf,
   truncate,
   MAX_ACTION_LENGTH,
+  OUTGOING_METHODS,
   SECRET_PLACEHOLDER,
 } from '../../src/modules/telegram/bots/shared/action-log.domain';
 import { ActionLogHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/action-log.handler';
@@ -245,5 +249,60 @@ describe('ActionLogHandler', () => {
     handler.register(bot);
 
     await expect(run(ctxOf(), async () => undefined)).resolves.toBeUndefined();
+  });
+});
+
+describe('исходящие сообщения бота', () => {
+  it('в белый список НЕ входит getUpdates', () => {
+    // Через ту же воронку callApi идёт служебное. В режиме polling getUpdates
+    // дёргается непрерывно, и без списка журнал состоял бы из него одного.
+    expect(OUTGOING_METHODS).not.toContain('getUpdates');
+    expect(OUTGOING_METHODS).not.toContain('getMe');
+    expect(OUTGOING_METHODS).not.toContain('setWebhook');
+  });
+
+  it('в белый список входит то, что видит пользователь', () => {
+    expect(OUTGOING_METHODS).toContain('sendMessage');
+    expect(OUTGOING_METHODS).toContain('sendDocument');
+    // Имя метода Bot API, а НЕ telegraf: ctx.answerCbQuery зовёт вот это.
+    expect(OUTGOING_METHODS).toContain('answerCallbackQuery');
+  });
+
+  it('числа в исходящих НЕ маскируются — иначе отчёт превращается в кашу', () => {
+    // Входящая маска режет 5–15 цифр как campaign_id. В отчёте столько же
+    // цифр у выручки, и «Продажи: «скрыто» ₽» сделало бы журнал бесполезным.
+    const report = 'Продажи: 2456985 ₽, прибыль 34340 ₽';
+    expect(maskOutgoing(report)).toBe(report);
+    expect(maskSecrets(report)).not.toBe(report);
+  });
+
+  it('подпись «токен:» в исходящем всё же вырезается', () => {
+    expect(maskOutgoing('токен: ACMA5ba7c9d1e2f3a4b5c6')).toContain(SECRET_PLACEHOLDER);
+  });
+
+  it('описывает отправку текста', () => {
+    const source = outgoingSourceOf('sendMessage', { chat_id: 777, text: 'Ваш отчёт готов' });
+    expect(source.chatId).toBe(777);
+    expect(describeOutgoing(source)).toEqual({ kind: 'sendMessage', action: 'Ваш отчёт готов' });
+  });
+
+  it('описывает отправку файла по имени', () => {
+    const source = outgoingSourceOf('sendDocument', {
+      chat_id: 777,
+      document: { filename: 'otchet.xlsx' },
+    });
+    expect(describeOutgoing(source).action).toBe('otchet.xlsx');
+  });
+
+  it('ответ на нажатие без текста не теряется', () => {
+    // Важен сам факт ответа: без него кнопка у клиента крутится 30 секунд.
+    const source = outgoingSourceOf('answerCallbackQuery', { callback_query_id: '1' });
+    expect(describeOutgoing(source)).toEqual({ kind: 'answerCallbackQuery', action: '—' });
+  });
+
+  it('длинный отчёт обрезается', () => {
+    const long = 'а'.repeat(MAX_ACTION_LENGTH + 100);
+    const described = describeOutgoing(outgoingSourceOf('sendMessage', { chat_id: 1, text: long }));
+    expect(described.action.length).toBe(MAX_ACTION_LENGTH + 1);
   });
 });

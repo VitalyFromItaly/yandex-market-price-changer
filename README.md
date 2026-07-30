@@ -92,8 +92,9 @@ npm run tunnel        # vk-tunnel на :3004 (или npm run tunnel:ngrok)
 
 ## 📜 Журнал действий и админ-панель
 
-Каждое действие пользователя пишется в консоль и в коллекцию `actionlogs`: кто (`telegramUserId`
-и `@username`), что (команда, кнопка, файл), чем закончилось и сколько заняло. Токен Партнёрского
+Пишется **обе стороны диалога** — и что нажал пользователь, и что ответил бот. Каждая запись
+уходит в консоль и в коллекцию `actionlogs`: кто (`telegramUserId` и `@username`), что (команда,
+кнопка, файл — либо текст ответа бота), направление, чем закончилось и сколько заняло. Токен Партнёрского
 API и идентификаторы магазина из текста вырезаются перед записью — при регистрации продавец
 присылает токен обычным сообщением. Записи удаляются сами через 90 дней (TTL-индекс).
 
@@ -119,7 +120,8 @@ TOKEN=$(curl -s -X POST https://<хост>/api/auth/login \
 curl -H "Authorization: Bearer $TOKEN" 'https://<хост>/api/logs?limit=50'
 ```
 
-Параметры `/api/logs`: `telegramUserId`, `kind` (`command|menu|callback|document|text|other`),
+Параметры `/api/logs`: `telegramUserId`, `direction` (`in` — от пользователя, `out` — от бота),
+`kind` (у входящих `command|menu|callback|document|text|other`, у исходящих — метод Bot API),
 `since`, `until` (даты ISO), `limit` (максимум 500), `skip`. В ответе — `total` по тому же фильтру.
 
 **Разработка панели:** `npm run dev:web` поднимает vite на :5173 с проксированием `/api` на

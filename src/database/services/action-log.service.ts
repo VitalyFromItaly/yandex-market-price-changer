@@ -7,6 +7,8 @@ import { ActionLog, ActionLogDocument } from '../schemas/action-log.schema';
 /** Одна запись журнала — ровно то, что знает о действии middleware. */
 export interface IActionLogEntry {
   telegramUserId: string;
+  /** `in` — от пользователя, `out` — от бота. По умолчанию `in`. */
+  direction?: string;
   username?: string;
   name?: string;
   botId: string;
@@ -22,6 +24,7 @@ export interface IActionLogEntry {
 export interface IActionLogQuery {
   telegramUserId?: string;
   kind?: string;
+  direction?: string;
   since?: Date;
   until?: Date;
   limit?: number;
@@ -52,7 +55,7 @@ export class ActionLogService {
    */
   async record(entry: IActionLogEntry): Promise<void> {
     try {
-      await this.model.create({ status: 'ok', ...entry });
+      await this.model.create({ status: 'ok', direction: 'in', ...entry });
     } catch (error) {
       this.logger.warn(`Не удалось записать действие в журнал: ${(error as Error).message}`);
     }
@@ -67,6 +70,7 @@ export class ActionLogService {
 
     if (query.telegramUserId) filter.telegramUserId = query.telegramUserId;
     if (query.kind) filter.kind = query.kind;
+    if (query.direction) filter.direction = query.direction;
     if (query.since || query.until) {
       filter.createdAt = {};
       if (query.since) filter.createdAt.$gte = query.since;

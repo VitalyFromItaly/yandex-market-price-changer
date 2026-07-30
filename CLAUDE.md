@@ -405,6 +405,26 @@ enough either: it is exactly when the database is unreachable that a log line ma
 - **Console shows nothing about user actions without it.** The only per-update line used to come from
   `LoggerInterceptor` (`Incoming Request: POST /api/telegram/webhooks/...`) — HTTP-level, no who, no
   what. Under `TELEGRAM_UPDATE_MODE=polling` even that disappears: updates no longer arrive over HTTP.
+**Both directions are journalled**, distinguished by `direction` (`in` | `out`, default `in` so
+pre-existing rows stay meaningful). Outgoing messages are caught by wrapping `telegram.callApi` in
+`BotRegistry.logOutgoing` — the single funnel every Bot API call passes through, `ctx.reply`
+included. Wrapping the context methods instead would mean a dozen wrappers and a silent hole in the
+journal the first time one is forgotten.
+
+- Only `OUTGOING_METHODS` are recorded. The same funnel carries `getMe`, `setWebhook`,
+  `setMyCommands` and — under polling — a **continuous** `getUpdates`; without the allow-list the
+  journal would consist of nothing else.
+- `kind` holds the Bot API method name for outgoing rows (`sendMessage`, `answerCallbackQuery` —
+  the API name, not telegraf's `answerCbQuery`). That is why `direction` is a separate field and not
+  another `kind` value: sharing one field would make "show me commands" match replies too.
+- **Outgoing text is masked more weakly on purpose** (`maskOutgoing`): the numeric rule is *not*
+  applied. The bot sends reports where almost everything is a number, and revenue `2456985` would be
+  caught by the same rule as a `campaign_id`, turning the journal into «Продажи: «скрыто» ₽». There is
+  no risk: the bot only ever *receives* the seller's token, never sends it.
+- The only live outgoing path outside telegraf is `TelegramApiService` (raw `fetch`), and it is used
+  solely by the **dead** notifications processor — the scheduled digest goes through
+  `bot.telegraf.telegram.sendMessage`, i.e. through `callApi`.
+
 - **Secrets are masked before storage** (`maskSecrets` in `bots/shared/action-log.domain.ts`), and this
   is the point of the module, not a detail: during onboarding the seller pastes the Partner API token
   as an **ordinary message**, so an unmasked journal would be a second copy of other people's
