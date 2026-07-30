@@ -8,7 +8,6 @@ import {
   maskOutgoing,
   maskSecrets,
   outgoingSourceOf,
-  stripTags,
   truncate,
   MAX_ACTION_LENGTH,
   MAX_OUTGOING_LENGTH,
@@ -312,30 +311,14 @@ describe('исходящие сообщения бота', () => {
     expect(described.action.length).toBe(MAX_OUTGOING_LENGTH + 1);
   });
 
-  it('HTML-разметка вырезается — в журнале она не отрисовывается', () => {
-    // Бот шлёт всё с parse_mode: HTML. Без вырезания администратор читал бы
-    // `🎫 <b>API-токен</b>` — та же ошибка, что была на подписи кнопки.
+  it('разметка СОХРАНЯЕТСЯ при записи — из неё строится модалка', () => {
+    // Очистка при записи необратима: показать сообщение «как в телеграме»
+    // после неё было бы не из чего. Плоский текст для строки таблицы делает
+    // toPlainText на стороне отображения — см. telegram-html.test.ts.
     const described = describeOutgoing(
-      outgoingSourceOf('sendMessage', { chat_id: 1, text: '🎫 <b>API-токен</b> нужен доступ' }),
+      outgoingSourceOf('sendMessage', { chat_id: 1, text: '🎫 <b>API-токен</b>' }),
     );
-    expect(described.action).toBe('🎫 API-токен нужен доступ');
-  });
-
-  it('ссылка на диалог превращается в её текст', () => {
-    expect(stripTags('<a href="https://t.me/artonik1">@artonik1</a> (Тема)')).toBe(
-      '@artonik1 (Тема)',
-    );
-  });
-
-  it('экранированные символы возвращаются к исходному виду', () => {
-    // esc() экранирует данные пользователя перед отправкой; в журнале нужно
-    // то, что человек увидел на экране.
-    expect(stripTags('магазин &quot;Тема&quot; &lt;тест&gt;')).toBe('магазин "Тема" <тест>');
-  });
-
-  it('&amp;lt; не схлопывается в «<»', () => {
-    // Порядок замен значим: если &amp; заменить первым, получится «<».
-    expect(stripTags('&amp;lt;')).toBe('&lt;');
+    expect(described.action).toBe('🎫 <b>API-токен</b>');
   });
 
   it('переносы строк сохраняются — отчёт это таблица из строк', () => {

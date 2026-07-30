@@ -167,34 +167,6 @@ export interface IOutgoingDescription {
  */
 export const MAX_OUTGOING_LENGTH = 500;
 
-/** HTML-сущности, которыми экранируются пользовательские данные в сообщениях. */
-const ENTITIES: Record<string, string> = {
-  '&lt;': '<',
-  '&gt;': '>',
-  '&quot;': '"',
-  '&#39;': "'",
-  // &amp; последним: иначе «&amp;lt;» превратится в «<» вместо «&lt;».
-  '&amp;': '&',
-};
-
-/**
- * Убирает HTML-разметку, оставляя то, что пользователь реально увидел.
- *
- * Бот шлёт всё с `parse_mode: HTML`, поэтому в тексте живут `<b>`, `<a href>`
- * и `<code>`. Хранить их означало бы показывать администратору
- * `🎫 <b>API-токен</b>` вместо `🎫 API-токен`: в журнале разметка не
- * отрисовывается, она просто мусорит — та же ошибка, что была на подписи
- * кнопки «Закрыть доступ».
- */
-export function stripTags(text: string): string {
-  const withoutTags = text.replace(/<[^>]*>/g, '');
-
-  return Object.entries(ENTITIES).reduce(
-    (result, [entity, char]) => result.split(entity).join(char),
-    withoutTags,
-  );
-}
-
 /**
  * Маскировка для ИСХОДЯЩИХ, и она намеренно слабее входящей.
  *
@@ -219,9 +191,11 @@ export function describeOutgoing(input: IOutgoingSource): IOutgoingDescription {
     // Без текста (например, answerCallbackQuery без подписи) действие всё
     // равно осмысленно: важен сам факт ответа на нажатие.
     //
-    // Переносы строк сохраняются: отчёт — это таблица из строк, и склеенный
-    // в одну строку он нечитаем. Отображает их панель (white-space: pre-wrap).
-    action: body ? truncate(maskOutgoing(stripTags(body)), MAX_OUTGOING_LENGTH) : '—',
+    // Разметка НЕ вырезается: она нужна панели, чтобы показать сообщение в
+    // том виде, в каком его увидел пользователь. Очистка — забота отображения
+    // (toPlainText для строки таблицы, toSafeHtml для модалки), и она обратима,
+    // а очистка при записи — нет.
+    action: body ? truncate(maskOutgoing(body), MAX_OUTGOING_LENGTH) : '—',
   };
 }
 
