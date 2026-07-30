@@ -1,9 +1,12 @@
-import { XlsxParser } from './index';
-import { TParsedPriceRow } from './domain.parser';
-import { EncodingFixer } from './encoding-fixer';
+import type { TParsedPriceRow } from './domain.parser';
+
 import * as fs from 'fs';
 import * as path from 'path';
+
 import { SKU_PATTERNS } from './constants/sku-patterns';
+import { EncodingFixer } from './encoding-fixer';
+
+import { XlsxParser } from './index';
 
 /**
  * Интерфейс для сырых данных из Excel
@@ -65,10 +68,10 @@ export class SimplePriceListParser {
   private cleanName(value: any): string {
     if (!value) return '';
     let cleanedName = String(value).trim();
-    
+
     // Исправляем кодировку русских символов если нужно
     cleanedName = EncodingFixer.fixRussianEncoding(cleanedName);
-    
+
     return cleanedName;
   }
 
@@ -117,7 +120,7 @@ export class SimplePriceListParser {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
       const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
+      hash = (hash << 5) - hash + char;
       hash = hash & hash; // Преобразуем в 32-битное целое число
     }
     return hash;
@@ -169,13 +172,28 @@ export class SimplePriceListParser {
 
     // Содержит описательные слова - скорее всего полное название
     const descriptiveWords = [
-      'часы', 'watch', 'exclusive', 'limited', 'edition', 'collection',
-      'кварц', 'автомат', 'механ', 'solar', 'radio', 'controlled',
-      'амфибия', 'командирские', 'восток', 'ориент', 'orient', 'casio'
+      'часы',
+      'watch',
+      'exclusive',
+      'limited',
+      'edition',
+      'collection',
+      'кварц',
+      'автомат',
+      'механ',
+      'solar',
+      'radio',
+      'controlled',
+      'амфибия',
+      'командирские',
+      'восток',
+      'ориент',
+      'orient',
+      'casio',
     ];
-    
+
     const lowerName = trimmedName.toLowerCase();
-    const hasDescriptiveWords = descriptiveWords.some(word => lowerName.includes(word));
+    const hasDescriptiveWords = descriptiveWords.some((word) => lowerName.includes(word));
     if (hasDescriptiveWords) {
       return false;
     }
@@ -185,7 +203,7 @@ export class SimplePriceListParser {
     // - Может содержать дефисы, точки
     const hasLetters = /[a-zA-ZА-Яа-яЁё]/.test(trimmedName);
     const hasNumbers = /[0-9]/.test(trimmedName);
-    const hasSpecialChars = /[-._]/.test(trimmedName);
+    const _hasSpecialChars = /[-._]/.test(trimmedName);
 
     // SKU должен содержать и буквы, и цифры
     if (!hasLetters || !hasNumbers) {
@@ -194,13 +212,13 @@ export class SimplePriceListParser {
 
     // Проверяем общие паттерны SKU
     const skuPatterns = [
-      /^[A-Z0-9-]{3,15}$/i,           // ABC123, A1B2C3, ABC-123
-      /^[A-Z]+[0-9]+[A-Z]*$/i,        // ABC123D, PRW6900YL
+      /^[A-Z0-9-]{3,15}$/i, // ABC123, A1B2C3, ABC-123
+      /^[A-Z]+[0-9]+[A-Z]*$/i, // ABC123D, PRW6900YL
       /^[A-Z]{1,4}[-_][0-9A-Z-]{2,10}$/i, // ECB-10D-2A, WS-B1000-8B
-      /^[0-9]{3,8}[А-Яа-яЁёA-Za-z]{0,3}$/i // 58108А, 921892, 58108A
+      /^[0-9]{3,8}[А-Яа-яЁёA-Za-z]{0,3}$/i, // 58108А, 921892, 58108A
     ];
 
-    return skuPatterns.some(pattern => pattern.test(trimmedName));
+    return skuPatterns.some((pattern) => pattern.test(trimmedName));
   }
 
   /**
@@ -216,7 +234,7 @@ export class SimplePriceListParser {
         startRow: 8, // 9-я строка в Excel (индексация с 0)
         header: false, // Не используем заголовки
         skipEmptyRows: false, // НЕ пропускаем пустые строки - они могут содержать названия брендов
-        customHeaders: ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'] // A, B, C, D, E, F, G
+        customHeaders: ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6'], // A, B, C, D, E, F, G
       });
 
       console.log(`📊 Total rows parsed: ${result.data.length}`);
@@ -247,12 +265,14 @@ export class SimplePriceListParser {
         let name = this.cleanName(row.C1); // Название/SKU из колонки B
         const price = this.processPrice(row.C4); // Цена (колонка E)
         const count = this.processCount(row.C6); // Количество (колонка G)
-        
+
         // Если название выглядит как просто SKU (без названия бренда), добавляем текущий бренд
         if (currentBrand && this.looksLikeSKU(name)) {
           const originalName = name;
           name = `${currentBrand} ${name}`;
-          console.log(`🔗 Combined brand+SKU in row ${actualRowNumber}: "${originalName}" -> "${name}"`);
+          console.log(
+            `🔗 Combined brand+SKU in row ${actualRowNumber}: "${originalName}" -> "${name}"`,
+          );
         }
 
         const sku = this.extractSku(name); // Извлекаем SKU из названия
@@ -262,7 +282,7 @@ export class SimplePriceListParser {
           name,
           sku,
           price,
-          count
+          count,
         };
 
         flatList.push(item);
@@ -280,7 +300,7 @@ export class SimplePriceListParser {
       console.log(`📦 Total items: ${flatList.length}`);
 
       // Статистика
-      const totalValue = flatList.reduce((sum, item) => sum + (item.price * item.count), 0);
+      const totalValue = flatList.reduce((sum, item) => sum + item.price * item.count, 0);
       const totalCount = flatList.reduce((sum, item) => sum + item.count, 0);
       const avgPrice = totalCount > 0 ? totalValue / totalCount : 0;
 
@@ -291,11 +311,10 @@ export class SimplePriceListParser {
       // Дополнительная обработка кодировки для всех элементов
       console.log('🔧 Fixing encoding for all items...');
       const fixedList = EncodingFixer.fixEncodingInData(flatList);
-      
+
       console.log('✅ Encoding fix completed');
 
       return fixedList;
-
     } catch (error) {
       console.error('❌ Error parsing price list:', error);
       throw error;
@@ -325,11 +344,11 @@ export class SimplePriceListParser {
     const report = [];
 
     report.push('📊 SIMPLE PRICE LIST PARSING REPORT');
-    report.push('=' .repeat(50));
+    report.push('='.repeat(50));
     report.push('');
 
     const totalItems = data.length;
-    const totalValue = data.reduce((sum, item) => sum + (item.price * item.count), 0);
+    const totalValue = data.reduce((sum, item) => sum + item.price * item.count, 0);
     const totalCount = data.reduce((sum, item) => sum + item.count, 0);
     const avgPrice = totalCount > 0 ? totalValue / totalCount : 0;
 
@@ -340,9 +359,7 @@ export class SimplePriceListParser {
     report.push('');
 
     // Топ-10 самых дорогих товаров
-    const topExpensive = data
-      .sort((a, b) => b.price - a.price)
-      .slice(0, 10);
+    const topExpensive = data.sort((a, b) => b.price - a.price).slice(0, 10);
 
     report.push('💰 Top 10 Most Expensive Items:');
     topExpensive.forEach((item, index) => {
@@ -351,9 +368,7 @@ export class SimplePriceListParser {
     report.push('');
 
     // Топ-10 товаров с наибольшим количеством
-    const topQuantity = data
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
+    const topQuantity = data.sort((a, b) => b.count - a.count).slice(0, 10);
 
     report.push('📦 Top 10 Items by Quantity:');
     topQuantity.forEach((item, index) => {
@@ -363,11 +378,11 @@ export class SimplePriceListParser {
 
     // Статистика по ценовым диапазонам
     const priceRanges = {
-      'Under 500₽': data.filter(item => item.price < 500).length,
-      '500-800₽': data.filter(item => item.price >= 500 && item.price < 800).length,
-      '800-900₽': data.filter(item => item.price >= 800 && item.price < 900).length,
-      '900-1000₽': data.filter(item => item.price >= 900 && item.price < 1000).length,
-      'Over 1000₽': data.filter(item => item.price >= 1000).length,
+      'Under 500₽': data.filter((item) => item.price < 500).length,
+      '500-800₽': data.filter((item) => item.price >= 500 && item.price < 800).length,
+      '800-900₽': data.filter((item) => item.price >= 800 && item.price < 900).length,
+      '900-1000₽': data.filter((item) => item.price >= 900 && item.price < 1000).length,
+      'Over 1000₽': data.filter((item) => item.price >= 1000).length,
     };
 
     report.push('💸 Price Distribution:');
@@ -378,7 +393,7 @@ export class SimplePriceListParser {
     report.push('');
 
     // Товары с количеством >5 (которые были заменены на 6)
-    const highStock = data.filter(item => item.count === 6);
+    const highStock = data.filter((item) => item.count === 6);
     report.push(`📈 Items with high stock (>5): ${highStock.length}`);
     if (highStock.length > 0) {
       report.push('Examples:');
@@ -421,7 +436,7 @@ export class SimplePriceListParser {
     return {
       data,
       jsonPath,
-      reportPath
+      reportPath,
     };
   }
 }
@@ -429,7 +444,9 @@ export class SimplePriceListParser {
 /**
  * Быстрая функция для простого парсинга прайс-листа
  */
-export async function parseToFlatList(filePath: string = './src/modules/parser/prices.xlsx'): Promise<TParsedPriceRow[]> {
+export async function parseToFlatList(
+  filePath: string = './src/modules/parser/prices.xlsx',
+): Promise<TParsedPriceRow[]> {
   const parser = new SimplePriceListParser(filePath);
   return await parser.parseToFlatList();
 }
@@ -439,7 +456,7 @@ export async function parseToFlatList(filePath: string = './src/modules/parser/p
  */
 export async function parseAndSaveSimple(
   filePath: string = './src/modules/parser/prices.xlsx',
-  outputDir: string = './src/modules/parser'
+  outputDir: string = './src/modules/parser',
 ): Promise<void> {
   const parser = new SimplePriceListParser(filePath);
   const result = await parser.parseAndSave(outputDir);

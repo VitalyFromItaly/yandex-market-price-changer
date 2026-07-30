@@ -1,43 +1,52 @@
+import { Injectable } from '@nestjs/common';
 import { Context } from 'telegraf';
-import { ITelegramKeyboard } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/mongo/services/yandex-market.service';
 
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { MENU } from '../menu.constants';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
+
+@Injectable()
 export class SharedCommandsHandler {
-  constructor(private keyboard: ITelegramKeyboard) {}
+  constructor(
+    private keyboard: PriceChangerKeyboard,
+    private yandexMarketService: YandexMarketService,
+  ) {}
 
   /**
    * Обработчик установки коэффициента цены
    */
+  /** @deprecated Изменение цен отключено (TASK-009). Больше не вызывается. */
   async handlePriceCoefficientCommand(ctx: Context): Promise<void> {
     try {
       // Получаем текущие настройки
-      const yandexSettings = await YandexMarketService.getByTelegramUser(
+      const yandexSettings = await this.yandexMarketService.getByTelegramUser(
         ctx.from.id.toString(),
       );
 
       const currentCoefficient = yandexSettings?.priceCoefficient || 1.2;
-      const coefficientText = currentCoefficient === 1.0
-        ? 'без изменений'
-        : `x${currentCoefficient} (${currentCoefficient > 1 ? '+' : ''}${((currentCoefficient - 1) * 100).toFixed(1)}%)`;
+      const coefficientText =
+        currentCoefficient === 1.0
+          ? 'без изменений'
+          : `x${currentCoefficient} (${currentCoefficient > 1 ? '+' : ''}${((currentCoefficient - 1) * 100).toFixed(1)}%)`;
 
       const message = `💰 Установка коэффициента цены
 
-Текущий коэффициент: **${coefficientText}**
+Текущий коэффициент: <b>${coefficientText}</b>
 
 📝 Выберите готовый коэффициент или введите свой:`;
 
       const keyboard = await this.keyboard.createInlineKeyboardMatrix([
         [
           { text: 'x0.9 (-10%)', callback_data: 'set_coefficient_0.9' },
-          { text: 'x1.0 (без изменений)', callback_data: 'set_coefficient_1.0' }
+          { text: 'x1.0 (без изменений)', callback_data: 'set_coefficient_1.0' },
         ],
         [
           { text: 'x1.1 (+10%)', callback_data: 'set_coefficient_1.1' },
-          { text: 'x1.2 (+20%)', callback_data: 'set_coefficient_1.2' }
+          { text: 'x1.2 (+20%)', callback_data: 'set_coefficient_1.2' },
         ],
         [
           { text: 'x1.3 (+30%)', callback_data: 'set_coefficient_1.3' },
-          { text: 'x1.5 (+50%)', callback_data: 'set_coefficient_1.5' }
+          { text: 'x1.5 (+50%)', callback_data: 'set_coefficient_1.5' },
         ],
         [{ text: '📝 Ввести свой коэффициент', callback_data: 'input_custom_coefficient' }],
         [{ text: '❌ Отмена', callback_data: 'main_menu' }],
@@ -53,15 +62,18 @@ export class SharedCommandsHandler {
   /**
    * Обработчик команды загрузки прайс-листа
    */
+  /** @deprecated Загрузка прайс-листа отключена (TASK-009). Не вызывается.
+   *  Загрузка вернётся под ОСТАТКИ (TASK-035) и будет написана заново. */
   async handleUploadPriceListCommand(ctx: Context): Promise<void> {
     try {
       // Проверяем настройки Яндекс Маркета
-      const yandexSettings = await YandexMarketService.getByTelegramUser(
+      const yandexSettings = await this.yandexMarketService.getByTelegramUser(
         ctx.from.id.toString(),
       );
 
       // Если настройки не найдены или не заполнены
-      if (!yandexSettings || !yandexSettings.isConfigured()) {
+      const isConfigured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
+      if (!yandexSettings || !isConfigured) {
         await this.handleMissingApiSettings(ctx, yandexSettings);
         return;
       }
@@ -70,9 +82,7 @@ export class SharedCommandsHandler {
       await this.handleAllowedUpload(ctx, yandexSettings);
     } catch (error) {
       console.error('Ошибка при проверке настроек:', error);
-      await ctx.reply(
-        '❌ Произошла ошибка при проверке настроек. Пожалуйста, попробуйте позже.',
-      );
+      await ctx.reply('❌ Произошла ошибка при проверке настроек. Пожалуйста, попробуйте позже.');
     }
   }
 
@@ -92,18 +102,18 @@ export class SharedCommandsHandler {
       missingFields.push('🎫 API токен');
     }
 
-    const settingsMessage = `🚫 **Загрузка прайс-листа недоступна**
+    const settingsMessage = `🚫 <b>Загрузка прайс-листа недоступна</b>
 
 ❗ Для загрузки прайс-листа необходимо заполнить настройки Яндекс Маркета:
 
-❌ **Отсутствуют данные:**
+❌ <b>Отсутствуют данные:</b>
 ${missingFields.map((field) => `• ${field}`).join('\n')}
 
-🔧 **Где найти эти данные:**
+🔧 <b>Где найти эти данные:</b>
 • Campaign ID и Business ID - в личном кабинете Яндекс.Маркета
 • API токен - в разделе "API" личного кабинета
 
-💡 **Следующие шаги:**
+💡 <b>Следующие шаги:</b>
 1. Нажмите "⚙️ Настроить API"
 2. Заполните все необходимые поля
 3. Вернитесь к загрузке прайс-листа`;
@@ -111,7 +121,7 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
     const keyboard = await this.keyboard.createInlineButtons([
       { text: '⚙️ Настроить API', callback_data: 'settings_api' },
       { text: '❓ Инструкция', callback_data: 'help_api_setup' },
-      { text: '🏠 Главное меню', callback_data: 'main_menu' },
+      { text: MENU.MAIN, callback_data: 'main_menu' },
     ]);
 
     await ctx.reply(settingsMessage, keyboard);
@@ -120,6 +130,7 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
   /**
    * Обработка случая когда настройки API заполнены
    */
+  /** @deprecated Часть отключённого флоу загрузки прайс-листа (TASK-009). */
   private async handleAllowedUpload(ctx: Context, yandexSettings: any): Promise<void> {
     const currentCoefficient = yandexSettings.priceCoefficient || 1.2;
     const coefficientText =
@@ -127,27 +138,27 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
         ? 'без изменений'
         : `x${currentCoefficient} (${currentCoefficient > 1 ? '+' : ''}${((currentCoefficient - 1) * 100).toFixed(1)}%)`;
 
-    const message = `📄 **Загрузка прайс-листа**
+    const message = `📄 <b>Загрузка прайс-листа</b>
 
 ✅ Настройки Яндекс Маркета настроены
-💰 Текущий коэффициент цены: **${coefficientText}**
+💰 Текущий коэффициент цены: <b>${coefficientText}</b>
 
-📊 **Поддерживаемые форматы:**
+📊 <b>Поддерживаемые форматы:</b>
 • Excel (.xlsx, .xls)
 • CSV (.csv)
 
-📋 **Требуемые колонки:**
-• **Название товара** (name, title, товар, наименование)
-• **Цена** (price, цена, cost, стоимость)
-• **Артикул/SKU** (sku, артикул, код) - обязательно!
+📋 <b>Требуемые колонки:</b>
+• <b>Название товара</b> (name, title, товар, наименование)
+• <b>Цена</b> (price, цена, cost, стоимость)
+• <b>Артикул/SKU</b> (sku, артикул, код) - обязательно!
 • Количество (quantity, количество, остаток) - опционально
 
-⚠️ **Важно:**
+⚠️ <b>Важно:</b>
 • Колонка с артикулом (SKU) обязательна для обновления цен
 • Цены будут автоматически умножены на коэффициент
 • Максимальный размер файла: 10MB
 
-📤 **Отправьте файл прайс-листа для обработки**`;
+📤 <b>Отправьте файл прайс-листа для обработки</b>`;
 
     const keyboard = await this.keyboard.createInlineButtons([
       { text: '📋 Скачать пример', callback_data: 'download_example' },
@@ -164,6 +175,7 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
   /**
    * Обработка ввода коэффициента (кнопки или текст)
    */
+  /** @deprecated Ввод коэффициента цены отключён (TASK-009). Не вызывается. */
   async handleCoefficientInput(ctx: any, input: string): Promise<void> {
     try {
       // Извлекаем число из ввода (убираем 'x' если есть)
@@ -173,27 +185,28 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
       if (isNaN(coefficientValue) || coefficientValue <= 0 || coefficientValue > 10) {
         await ctx.reply(
           '❌ Некорректный коэффициент!\n\n' +
-          '💡 Коэффициент должен быть числом от 0.1 до 10\n' +
-          'Примеры: 1.2, 0.9, 1.5'
+            '💡 Коэффициент должен быть числом от 0.1 до 10\n' +
+            'Примеры: 1.2, 0.9, 1.5',
         );
         return;
       }
 
       // Сохраняем коэффициент
-      await YandexMarketService.upsertByTelegramUser(
+      await this.yandexMarketService.upsertByTelegramUser(
         ctx.from.id.toString(),
         ctx.chat.id.toString(),
-        { priceCoefficient: coefficientValue }
+        { priceCoefficient: coefficientValue },
       );
 
       // Формируем сообщение об успехе
-      const percentageText = coefficientValue === 1.0 
-        ? 'без изменений'
-        : `${coefficientValue > 1 ? '+' : ''}${((coefficientValue - 1) * 100).toFixed(1)}%`;
+      const percentageText =
+        coefficientValue === 1.0
+          ? 'без изменений'
+          : `${coefficientValue > 1 ? '+' : ''}${((coefficientValue - 1) * 100).toFixed(1)}%`;
 
-      const successMessage = `✅ **Коэффициент цены обновлен!**
+      const successMessage = `✅ <b>Коэффициент цены обновлен!</b>
 
-💰 Новый коэффициент: **x${coefficientValue}** (${percentageText})
+💰 Новый коэффициент: <b>x${coefficientValue}</b> (${percentageText})
 
 📊 Это означает:
 • При коэффициенте > 1.0 - цены увеличатся
@@ -205,17 +218,16 @@ ${missingFields.map((field) => `• ${field}`).join('\n')}
       const keyboard = await this.keyboard.createInlineButtons([
         { text: '📄 Загрузить прайс-лист', callback_data: 'upload_file' },
         { text: '💰 Изменить коэффициент', callback_data: 'change_coefficient' },
-        { text: '🏠 Главное меню', callback_data: 'main_menu' },
+        { text: MENU.MAIN, callback_data: 'main_menu' },
       ]);
 
       await ctx.reply(successMessage, keyboard);
-
     } catch (error) {
       console.error('Ошибка при сохранении коэффициента:', error);
       await ctx.reply(
         '❌ Ошибка при сохранении коэффициента.\n\n' +
-        '💡 Попробуйте позже или обратитесь к администратору.'
+          '💡 Попробуйте позже или обратитесь к администратору.',
       );
     }
   }
-} 
+}

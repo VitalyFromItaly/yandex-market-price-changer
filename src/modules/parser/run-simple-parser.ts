@@ -5,8 +5,9 @@
  * Запуск: npx ts-node src/modules/parser/run-simple-parser.ts
  */
 
-import { SimplePriceListParser, parseAndSaveSimple } from './simple-parser';
 import * as path from 'path';
+
+import { SimplePriceListParser, parseAndSaveSimple } from './simple-parser';
 
 async function main() {
   try {
@@ -49,25 +50,22 @@ async function main() {
     console.log('\n🔍 Searching for previously missed items:');
 
     const searchTerms = ['GOODYEAR', 'ORIENT', 'символикой', 'LEVEL'];
-    searchTerms.forEach(term => {
-      const found = data.filter(item =>
-        item.name.toUpperCase().includes(term.toUpperCase())
-      );
+    searchTerms.forEach((term) => {
+      const found = data.filter((item) => item.name.toUpperCase().includes(term.toUpperCase()));
       console.log(`  📍 Items containing "${term}": ${found.length}`);
       if (found.length > 0 && found.length <= 3) {
-        found.forEach(item => {
+        found.forEach((item) => {
           console.log(`    - ${item.name} - ${item.price}₽ (${item.count} шт.)`);
         });
       } else if (found.length > 3) {
         console.log(`    First 3 examples:`);
-        found.slice(0, 3).forEach(item => {
+        found.slice(0, 3).forEach((item) => {
           console.log(`    - ${item.name} - ${item.price}₽ (${item.count} шт.)`);
         });
       }
     });
 
     console.log('\n✅ Simple price list parsing completed successfully!');
-
   } catch (error) {
     console.error('❌ Error running simple price list parser:', error);
     process.exit(1);
@@ -76,7 +74,10 @@ async function main() {
 
 // Запускаем только если файл вызван напрямую
 if (require.main === module) {
-  main();
+  main().catch((error) => {
+    console.error('Парсер упал:', error);
+    process.exit(1);
+  });
 }
 
 export { main as runSimplePriceListParser };

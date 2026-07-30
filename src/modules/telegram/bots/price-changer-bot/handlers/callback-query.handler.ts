@@ -1,17 +1,28 @@
-import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/mongo/services/yandex-market.service';
-import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { Injectable } from '@nestjs/common';
 
+import { AppConfigService } from '../../../../../config/app-config.service';
+import { UserAccessService } from '../../../../../database/services/user-access.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { TTelegrafBot } from '../../../domain.telegram';
+import { htmlOptions } from '../../../formatting/telegram-format';
+import { MENU } from '../menu.constants';
+import { nextStep, stepPrompt } from '../onboarding';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { settingsText } from '../settings.text';
+
+@Injectable()
 export class CallbackQueryHandler {
   constructor(
-    private bot: TTelegrafBot,
-    private keyboard: ITelegramKeyboard,
+    private keyboard: PriceChangerKeyboard,
+    private yandexMarketService: YandexMarketService,
+    private accessService: UserAccessService,
+    private config: AppConfigService,
   ) {}
 
-  public setupHandlers() {
+  public register(bot: TTelegrafBot) {
     console.log('Setting up callback query handlers...');
 
-    this.bot.on('callback_query', async (ctx) => {
+    bot.on('callback_query', async (ctx) => {
       const callbackData = (ctx.callbackQuery as any).data;
 
       // Обязательно отвечаем на callback query
@@ -26,183 +37,84 @@ export class CallbackQueryHandler {
           await ctx.editMessageText('❌ Операция отменена.');
           break;
 
-        case 'plan_day':
-          await ctx.editMessageText('📅 Выбран тарифный план: День (100₽)');
-          break;
+        // Ветки plan_day / plan_week / plan_month / plan_year / plan_cancel
+        // сняты вместе с системой подписок (TASK-036): они лишь перерисовывали
+        // сообщение ценником, ничего не сохраняя и ничего не списывая.
+        // Доступ теперь выдаёт администратор — см. AdminApprovalHandler.
 
-        case 'plan_week':
-          await ctx.editMessageText('📅 Выбран тарифный план: Неделя (500₽)');
+        case 'onboarding_restart': {
+          // Единственный способ прервать визард. Reply-кнопкой это сделать
+          // нельзя: её подпись попала бы в MENU_LABELS и потребовала hears.
+          await this.accessService.clearDraft(ctx.from.id.toString(), ctx.botInfo.id.toString());
+          await ctx.editMessageText(
+            `🔄 <b>Начинаем заново.</b>\n\n${stepPrompt('token')}`,
+            htmlOptions(),
+          );
           break;
-
-        case 'plan_month':
-          await ctx.editMessageText('📅 Выбран тарифный план: Месяц (1500₽)');
-          break;
-
-        case 'plan_year':
-          await ctx.editMessageText('📅 Выбран тарифный план: Год (15000₽)');
-          break;
-
-        case 'plan_cancel':
-          await ctx.editMessageText('❌ Выбор тарифного плана отменен.');
-          break;
+        }
 
         case 'settings_api':
-          await ctx.editMessageText(`
-            🔧 **Настройка API Яндекс Маркета**
-
-            📋 **Для настройки потребуется:**
-
-            🔑 **Campaign ID** - ID кампании в Яндекс.Маркете
-            🏢 **Business ID** - ID бизнеса в Яндекс.Маркете
-            🎫 **API токен** - токен авторизации
-
-            📍 **Где найти:**
-            1. Войдите в личный кабинет partner.market.yandex.ru
-            2. Campaign ID: в URL кабинета после /campaigns/
-            3. Business ID: в разделе "Настройки" → "Общие"
-            4. API токен: "Настройки" → "API" → "Создать токен"
-
-            💡 **Отправьте данные в формате:**
-            \`campaign_id: 12345\`
-\`business_id: 67890\`
-            \`token: ваш_токен_здесь\`
-
-            Или по отдельности, бот автоматически определит тип данных.`);
+        case 'help_api_setup': {
+          // Обе кнопки ведут в одно и то же: подробную инструкцию к текущему
+          // шагу визарда. Раньше это были два разных текста, и оба обещали, что
+          // «бот автоматически определит тип данных» — после перехода на визард
+          // это неправда, тип определяется шагом.
+          const access = await this.accessService.findByUserAndBot(
+            ctx.from.id.toString(),
+            ctx.botInfo.id.toString(),
+          );
+          const step = nextStep(access?.draft) ?? 'token';
+          await ctx.editMessageText(
+            `🔧 <b>Настройка доступа к Яндекс.Маркету</b>\n\n${stepPrompt(step)}`,
+            htmlOptions(),
+          );
           break;
+        }
 
-        case 'help_api_setup':
-          await ctx.editMessageText(`❓ **Подробная инструкция настройки API**
-
-            📋 **Шаг 1: Получение Campaign ID**
-            • Откройте partner.market.yandex.ru
-            • В URL после /campaigns/ будет ваш Campaign ID
-            • Пример: partner.market.yandex.ru/campaigns/12345
-
-            🏢 **Шаг 2: Получение Business ID**
-            • В кабинете: "Настройки" → "Общие настройки"
-            • Найдите "ID бизнеса" или "Business ID"
-
-            🔑 **Шаг 3: Создание API токена**
-            • "Настройки" → "API и веб-сервисы"
-            • "Создать токен" → выберите нужные права
-            • Скопируйте созданный токен
-
-            📤 **Отправка данных:**
-            Отправьте каждый параметр отдельным сообщением:
-            1. Campaign ID: 12345
-            2. Business ID: 67890
-            3. Token: ваш_длинный_токен
-
-✅ Бот автоматически сохранит настройки.`);
-          break;
-
-        case 'main_menu':
-          const mainKeyboard = await this.keyboard.createKeyboard([
-            ['📊 Статистика', '⚙️ Настройки'],
-            ['💰 Установить коэффициент цены'],
-            ['📄 Загрузить прайс-лист'],
-            ['❓ Помощь', '👤 Профиль'],
-          ]);
-          await ctx.editMessageText('🏠 Главное меню:');
+        case 'main_menu': {
+          // Раскладка — из menu.constants (TASK-014). Раньше здесь была
+          // третья независимая копия списка подписей.
+          //
+          // isAdmin передаём обязательно: `createKeyboard(menuLayout())` в
+          // обход `createMenuKeyboard` собирал раскладку без ряда
+          // «👥 Пользователи», и администратор терял кнопку при каждом
+          // возврате в меню.
+          const mainKeyboard = await this.keyboard.createMenuKeyboard(
+            this.config.isAdmin(ctx.from.id),
+          );
+          // Два сообщения здесь неизбежны: editMessageText убирает inline-
+          // кнопки из старого сообщения, а reply-клавиатуру можно прицепить
+          // только к новому. Подпись берём из MENU.MAIN — раньше тут было
+          // «🏠 Главное меню:» с двоеточием, у кнопки «🏠 Главное меню», а у
+          // /menu «📋 Главное меню:»: три подписи на один экран.
+          await ctx.editMessageText(MENU.MAIN);
           await ctx.reply('Выберите действие:', mainKeyboard);
           break;
+        }
 
-        case 'download_example':
-          await ctx.editMessageText(
-            '📋 Пример файла будет отправлен вам в личные сообщения...',
-          );
-          // TODO: Реализовать отправку примера файла
-          break;
-
-        case 'change_coefficient':
-          await ctx.editMessageText(`💰 **Изменение коэффициента цены**
-
-Выберите новый коэффициент или введите свой:
-
-📝 **Варианты коэффициентов:**
-• 0.9 = скидка 10%
-• 1.0 = без изменений
-• 1.1 = наценка 10%
-• 1.2 = наценка 20%
-• 1.5 = наценка 50%
-
-💡 Введите свой коэффициент числом (например: 1.15)`);
-          break;
-
-        case 'cancel_upload':
-          await ctx.editMessageText('❌ Загрузка прайс-листа отменена.');
-          break;
-
-        case 'upload_file':
-          await ctx.editMessageText(
-            '📤 **Отправьте файл прайс-листа**\n\nПоддерживаемые форматы: Excel (.xlsx, .xls), CSV (.csv)',
-          );
-          break;
+        // Ветки download_example, change_coefficient, cancel_upload,
+        // upload_file, set_coefficient_* и input_custom_coefficient сняты
+        // (TASK-009): изменение цен по API отключено, приём файла тоже.
+        // Кнопки с этими callback_data больше не отправляются.
 
         case 'check_settings':
           try {
-            const settings = await YandexMarketService.getByTelegramUser(
-              ctx.from.id.toString(),
-            );
-            if (settings) {
-              const settingsText = `🔧 **Текущие настройки API**
-
-🔑 **Campaign ID:** ${settings.campaign_id ? `\`${settings.campaign_id}\`` : '❌ Не заполнен'}
-🏢 **Business ID:** ${settings.business_id ? `\`${settings.business_id}\`` : '❌ Не заполнен'}
-🎫 **API токен:** ${settings.token ? `\`${settings.token.substring(0, 10)}...\`` : '❌ Не заполнен'}
-💰 **Коэффициент:** x${settings.priceCoefficient || 1.0}
-
-${settings.isConfigured() ? '✅ Все настройки заполнены' : '⚠️ Требуется дозаполнение'}`;
-
-              await ctx.editMessageText(settingsText);
-            } else {
-              await ctx.editMessageText('❌ Настройки не найдены.');
-            }
-          } catch (error) {
-            await ctx.editMessageText('❌ Ошибка получения настроек.');
+            // Тот же текст, что на экране настроек. Раньше здесь печатались
+            // сырые Campaign ID и Business ID — вопреки правилу «идентификаторы
+            // продавцу не показываем», которое соблюдалось везде, кроме этой
+            // ветки. Экран противоречил соседнему экрану того же бота.
+            const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+            await ctx.editMessageText(settingsText(store), htmlOptions());
+          } catch {
+            await ctx.editMessageText('❌ Не удалось получить настройки. Попробуйте позже.');
           }
           break;
 
-        // Обработка установки коэффициентов
-        case 'set_coefficient_0.9':
-          await this.handleCoefficientSet(ctx, 0.9);
-          break;
-
-        case 'set_coefficient_1.0':
-          await this.handleCoefficientSet(ctx, 1.0);
-          break;
-
-        case 'set_coefficient_1.1':
-          await this.handleCoefficientSet(ctx, 1.1);
-          break;
-
-        case 'set_coefficient_1.2':
-          await this.handleCoefficientSet(ctx, 1.2);
-          break;
-
-        case 'set_coefficient_1.3':
-          await this.handleCoefficientSet(ctx, 1.3);
-          break;
-
-        case 'set_coefficient_1.5':
-          await this.handleCoefficientSet(ctx, 1.5);
-          break;
-
-        case 'input_custom_coefficient':
-          await ctx.editMessageText(`💰 **Ввод пользовательского коэффициента**
-
-📝 Отправьте числовое значение коэффициента от 0.1 до 10.0
-
-Примеры:
-• \`1.15\` - для наценки 15%
-• \`0.85\` - для скидки 15%
-• \`2.0\` - для увеличения цены в 2 раза
-
-💡 Отправьте просто число в следующем сообщении.`);
-          break;
-
         default:
-          await ctx.editMessageText(`Неизвестная команда: ${callbackData}`);
+          // Сырой callback_data наружу не отдаём: пользователю он ничего не
+          // объясняет, а нам показывает внутренности. Такое сообщение вообще
+          // означает устаревшую кнопку в старом сообщении.
+          await ctx.editMessageText('Эта кнопка устарела. Откройте меню заново: /menu');
       }
     });
   }
@@ -210,45 +122,55 @@ ${settings.isConfigured() ? '✅ Все настройки заполнены' :
   /**
    * Обработка установки коэффициента цены
    */
+  /** @deprecated Кнопки set_coefficient_* сняты (TASK-009). Не вызывается.
+   *  Дефект на память: метод повторно звал answerCbQuery, хотя обработчик
+   *  callback_query уже отвечал на запрос выше — второй вызов возвращал 400. */
   private async handleCoefficientSet(ctx: any, coefficient: number): Promise<void> {
     try {
       // Сохраняем коэффициент в базе данных
-      await YandexMarketService.upsertByTelegramUser(
+      await this.yandexMarketService.upsertByTelegramUser(
         ctx.from.id.toString(),
         ctx.chat.id.toString(),
-        { priceCoefficient: coefficient }
+        { priceCoefficient: coefficient },
       );
 
       // Формируем сообщение об успехе
-      const percentageText = coefficient === 1.0 
-        ? 'без изменений'
-        : `${coefficient > 1 ? '+' : ''}${((coefficient - 1) * 100).toFixed(1)}%`;
+      const percentageText =
+        coefficient === 1.0
+          ? 'без изменений'
+          : `${coefficient > 1 ? '+' : ''}${((coefficient - 1) * 100).toFixed(1)}%`;
 
-      const successMessage = `✅ **Коэффициент цены установлен!**
+      const successMessage = `✅ <b>Коэффициент цены установлен!</b>
 
-💰 Новый коэффициент: **x${coefficient}** (${percentageText})
+💰 Новый коэффициент: <b>x${coefficient}</b> (${percentageText})
 
 📊 Это означает:
-${coefficient > 1 ? '• Цены будут увеличены' : coefficient < 1 ? '• Цены будут уменьшены' : '• Цены останутся без изменений'}
+${describeCoefficient(coefficient)}
 
 🔄 Коэффициент будет применен к следующим загруженным прайс-листам.`;
 
       const keyboard = await this.keyboard.createInlineButtons([
         { text: '📄 Загрузить прайс-лист', callback_data: 'upload_file' },
         { text: '💰 Изменить коэффициент', callback_data: 'change_coefficient' },
-        { text: '🏠 Главное меню', callback_data: 'main_menu' },
+        { text: MENU.MAIN, callback_data: 'main_menu' },
       ]);
 
       await ctx.editMessageText(successMessage, { reply_markup: keyboard.reply_markup });
       await ctx.answerCbQuery('Коэффициент обновлен!');
-
     } catch (error) {
       console.error('Ошибка при сохранении коэффициента:', error);
       await ctx.editMessageText(
         '❌ Ошибка при сохранении коэффициента.\n\n' +
-        '💡 Попробуйте позже или обратитесь к администратору.'
+          '💡 Попробуйте позже или обратитесь к администратору.',
       );
       await ctx.answerCbQuery('Ошибка!');
     }
   }
+}
+
+/** Пояснение к коэффициенту. Вынесено из вложенного тернарника. */
+function describeCoefficient(coefficient: number): string {
+  if (coefficient > 1) return '• Цены будут увеличены';
+  if (coefficient < 1) return '• Цены будут уменьшены';
+  return '• Цены останутся без изменений';
 }

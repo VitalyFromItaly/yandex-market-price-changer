@@ -23,7 +23,9 @@ export class KeyboardBuilder {
 
   public async buildInline() {
     return Markup.inlineKeyboard(
-      this.keyboardInlineButtons.map((button) => Markup.button.callback(button.text, button.callback_data))
+      this.keyboardInlineButtons.map((button) =>
+        Markup.button.callback(button.text, button.callback_data),
+      ),
     );
   }
 }

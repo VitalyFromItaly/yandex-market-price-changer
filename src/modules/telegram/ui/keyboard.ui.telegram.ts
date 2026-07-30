@@ -1,9 +1,11 @@
-import { Markup } from 'telegraf';
-import { ITelegramKeyboard, TTelegramKeyboard } from '../domain.telegram';
-import { KeyboardBuilder } from '../bots/shared/KeyboardBuilder';
+import { Injectable } from '@nestjs/common';
 import { Promise } from 'mongoose';
-import { keyboard } from 'telegraf/markup';
+import { Markup } from 'telegraf';
 
+import { KeyboardBuilder } from '../bots/shared/KeyboardBuilder';
+import { ITelegramKeyboard, TTelegramKeyboard } from '../domain.telegram';
+
+@Injectable()
 export class TelegramKeyboard implements ITelegramKeyboard {
   public protected = new KeyboardBuilder();
 
@@ -23,9 +25,11 @@ export class TelegramKeyboard implements ITelegramKeyboard {
   /**
    * Создать несколько inline кнопок в ряд
    */
-  public async createInlineButtons(buttons: { text: string; callback_data: string }[]): Promise<Markup.Markup<any>> {
+  public async createInlineButtons(
+    buttons: { text: string; callback_data: string }[],
+  ): Promise<Markup.Markup<any>> {
     return Markup.inlineKeyboard(
-      buttons.map((button) => Markup.button.callback(button.text, button.callback_data))
+      buttons.map((button) => Markup.button.callback(button.text, button.callback_data)),
     );
   }
 
@@ -34,9 +38,9 @@ export class TelegramKeyboard implements ITelegramKeyboard {
    */
   public async createInlineKeyboardMatrix(buttons: { text: string; callback_data: string }[][]) {
     return Markup.inlineKeyboard(
-      buttons.map(row =>
-        row.map(button => Markup.button.callback(button.text, button.callback_data))
-      )
+      buttons.map((row) =>
+        row.map((button) => Markup.button.callback(button.text, button.callback_data)),
+      ),
     );
   }
 
@@ -52,15 +56,15 @@ export class TelegramKeyboard implements ITelegramKeyboard {
   /**
    * Создать обычную клавиатуру
    */
-  public async createKeyboard(keyboard: string[][]) {
-    return Markup.keyboard(keyboard).resize();
+  public async createKeyboard(rows: string[][]) {
+    return Markup.keyboard(rows).resize();
   }
 
   /**
    * Создать клавиатуру с одноразовыми кнопками (исчезают после нажатия)
    */
-  public async createOneTimeKeyboard(keyboard: string[][]) {
-    return Markup.keyboard(keyboard).oneTime().resize();
+  public async createOneTimeKeyboard(rows: string[][]) {
+    return Markup.keyboard(rows).oneTime().resize();
   }
 
   /**
@@ -76,31 +80,34 @@ export class TelegramKeyboard implements ITelegramKeyboard {
    * Создать клавиатуру с кнопкой "Поделиться контактом"
    */
   public async createContactKeyboard(text: string = 'Поделиться контактом') {
-    return Markup.keyboard([
-      [Markup.button.contactRequest(text)]
-    ]).resize();
+    return Markup.keyboard([[Markup.button.contactRequest(text)]]).resize();
   }
 
   /**
    * Создать клавиатуру с кнопкой "Поделиться местоположением"
    */
   public async createLocationKeyboard(text: string = 'Поделиться местоположением') {
-    return Markup.keyboard([
-      [Markup.button.locationRequest(text)]
-    ]).resize();
+    return Markup.keyboard([[Markup.button.locationRequest(text)]]).resize();
   }
 
   // === ГОТОВЫЕ ШАБЛОНЫ ===
 
   /**
-   * Главное меню
+   * @deprecated НЕ ВЫЗЫВАТЬ. Строит reply-клавиатуру с ЖЁСТКО ЗАШИТЫМИ
+   * подписями, которых нет ни в menu.constants, ни в bot.hears. Вызов этого
+   * метода воспроизведёт блокер B2 один в один: кнопки отрисуются, но ни одна
+   * не сработает — нажатие уйдёт в catch-all и будет погашено без ответа.
+   *
+   * Reply-кнопки маршрутизируются ПО ТЕКСТУ, поэтому их подписи обязаны
+   * приходить из menu.constants. Используйте PriceChangerKeyboard.createMenuKeyboard().
+   * (Inline-кнопок это не касается — они маршрутизируются по callback_data.)
    */
   public async createMainMenu() {
     return Markup.keyboard([
       ['📊 Статистика', '⚙️ Настройки'],
       ['💰 Установить коэффициент цены'],
       ['📄 Загрузить прайс-лист'],
-      ['❓ Помощь', '👤 Профиль']
+      ['❓ Помощь', '👤 Профиль'],
     ]).resize();
   }
 
@@ -111,31 +118,18 @@ export class TelegramKeyboard implements ITelegramKeyboard {
     return Markup.inlineKeyboard([
       [
         Markup.button.callback('✅ Да', 'confirm_yes'),
-        Markup.button.callback('❌ Нет', 'confirm_no')
-      ]
+        Markup.button.callback('❌ Нет', 'confirm_no'),
+      ],
     ]);
   }
 
   /**
-   * Меню с возвратом назад
+   * @deprecated НЕ ВЫЗЫВАТЬ — та же проблема, что у createMainMenu:
+   * reply-клавиатура с подписями вне menu.constants. Обработчика на
+   * «⬅️ Назад» не существует.
    */
   public async createBackMenu() {
-    return Markup.keyboard([
-      ['⬅️ Назад', '🏠 Главное меню']
-    ]).resize();
-  }
-
-  /**
-   * Меню тарифных планов
-   */
-  public async createSubscriptionPlansMenu() {
-    return Markup.inlineKeyboard([
-      [Markup.button.callback('📅 День - 100₽', 'plan_day')],
-      [Markup.button.callback('📅 Неделя - 500₽', 'plan_week')],
-      [Markup.button.callback('📅 Месяц - 1500₽', 'plan_month')],
-      [Markup.button.callback('📅 Год - 15000₽', 'plan_year')],
-      [Markup.button.callback('❌ Отмена', 'plan_cancel')]
-    ]);
+    return Markup.keyboard([['⬅️ Назад', '🏠 Главное меню']]).resize();
   }
 
   /**

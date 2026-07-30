@@ -1,366 +1,742 @@
-import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/mongo/services/yandex-market.service';
-import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import type { IStoreRef } from '../../../../yandex/yandex-api.client';
 
+import { Injectable, Logger } from '@nestjs/common';
+import { Context } from 'telegraf';
+
+import { AppConfigService } from '../../../../../config/app-config.service';
+import {
+  UserAccessService,
+  type TDraftField,
+} from '../../../../../database/services/user-access.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import {
+  parseRateInput,
+  rateTitle,
+  validateRate,
+  type IRateInput,
+} from '../../../../yandex/reports/profit';
+import { YandexAuthError } from '../../../../yandex/yandex-api.errors';
+import { YandexClientFactory } from '../../../../yandex/yandex-client.factory';
+import { TTelegrafBot } from '../../../domain.telegram';
+import { b, esc, htmlOptions } from '../../../formatting/telegram-format';
+import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
+import { MENU, MENU_LABELS, SUPPORT_CONTACT } from '../menu.constants';
+import {
+  nextStep,
+  stepHelp,
+  parseLabelledValue,
+  stepPrompt,
+  stepTitle,
+  validateStep,
+  type TOnboardingDraft,
+} from '../onboarding';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import {
+  PICK_BUSINESS_PREFIX,
+  PICK_STORE_PREFIX,
+  decidePick,
+  groupByBusiness,
+  uniqueLabels,
+  type IBusinessGroup,
+} from '../store-picker';
+
+import { ReportsHandler } from './reports.handler';
+import { ScheduleHandler } from './schedule.handler';
+
+/** Префикс callback_data подсказки. Дальше идёт название шага. */
+export const HELP_PREFIX = 'onboarding_help:';
+
+/** Что ответить пользователю. */
+interface IReply {
+  message: string;
+  keyboard?: any;
+}
+
+/** Итог попытки определить магазин по токену. */
+interface IAutofillResult {
+  draft: TOnboardingDraft;
+  /**
+   * Заполнено, только если токен НЕ годится и продолжать визард с ним нельзя.
+   * Недоступность Яндекса сюда не относится — это причина отступить на ручной
+   * ввод, а не забраковать токен.
+   */
+  rejected?: string;
+}
+
+/**
+ * Свободный текст: либо очередной шаг визарда онбординга, либо правка настройки
+ * уже одобренным пользователем. Что именно — решает СТАТУС ДОСТУПА, а не форма
+ * присланной строки.
+ *
+ * Регистрируется предпоследним (перед catch-all): слушает любой текст, поэтому
+ * обязан стоять после hears кнопок меню и слэш-команд.
+ */
+@Injectable()
 export class ApiSettingsHandler {
+  private readonly logger = new Logger(ApiSettingsHandler.name);
+
   constructor(
-    private bot: TTelegrafBot,
-    private keyboard: ITelegramKeyboard,
+    private keyboard: PriceChangerKeyboard,
+    private yandexMarketService: YandexMarketService,
+    private accessService: UserAccessService,
+    private adminNotifier: AdminNotifierService,
+    private config: AppConfigService,
+    private scheduleHandler: ScheduleHandler,
+    private readonly clients: YandexClientFactory,
+    private readonly reportsHandler: ReportsHandler,
   ) {}
 
-  public setupHandlers() {
-    console.log('Setting up API settings handler...');
+  /**
+   * Inline-кнопки визарда.
+   *
+   * ОТДЕЛЬНО от register() и раньше него в пайплайне — это не косметика.
+   * `bot.action` в telegraf не вызывает next(), поэтому общий обработчик
+   * callback_query, зарегистрированный раньше, забирает апдейт себе и его
+   * default-ветка отвечает «Неизвестная команда: store_pick:12345». Ровно так
+   * весь пикер магазина (TASK-052) и кнопка «Как получить?» (TASK-049) и не
+   * работали: их action'ы стояли позади общего switch. Текстовый обработчик
+   * при этом обязан остаться ПОЗАДИ menu/slash — отсюда два метода вместо
+   * одного.
+   */
+  public registerCallbacks(bot: TTelegrafBot) {
+    // Подсказка по текущему шагу. Регистрируется здесь же, где живёт визард:
+    // разносить вопрос и справку к нему по разным обработчикам значит
+    // разложить один диалог на два места.
+    bot.action(new RegExp(`^${HELP_PREFIX}`), async (ctx) => {
+      const data = (ctx.callbackQuery as { data?: string } | undefined)?.data ?? '';
+      const step = data.slice(HELP_PREFIX.length) as TDraftField;
 
-    this.bot.on('text', async (ctx) => {
+      await ctx.answerCbQuery();
+      // Состояние визарда НЕ трогаем: справка не продвигает и не сбрасывает
+      // шаг, бот по-прежнему ждёт значение того же поля.
+      await ctx.reply(stepHelp(step), htmlOptions());
+    });
+
+    // Выбор кабинета: показываем магазины внутри него.
+    bot.action(new RegExp(`^${PICK_BUSINESS_PREFIX}`), async (ctx) => {
+      await ctx.answerCbQuery();
+      const businessId = this.callbackTail(ctx, PICK_BUSINESS_PREFIX);
+      const stores = await this.storesFromDraft(ctx);
+      const group = groupByBusiness(stores).find((g) => g.businessId === businessId);
+
+      if (!group) {
+        await ctx.reply('Не удалось получить список магазинов. Пришлите токен заново.');
+        return;
+      }
+      await this.askStore(ctx, group.stores);
+    });
+
+    // Выбор магазина: применяем и продолжаем визард.
+    //
+    // try/catch обязателен: на callback_query необработанное исключение
+    // означает для пользователя полную тишину после того, как спиннер на
+    // кнопке погас, — он не знает, засчиталось нажатие или нет.
+    bot.action(new RegExp(`^${PICK_STORE_PREFIX}`), async (ctx) => {
+      await ctx.answerCbQuery();
       try {
-        const text = ctx.message.text.trim();
-        console.log(
-          `🔄 Text received in ApiSettingsHandler: "${text}" from user ${ctx.from.id}`,
-        );
-
-        // Игнорируем только команды
-        if (text.startsWith('/')) {
-          console.log(`⚡ Ignoring command: ${text}`);
-          return;
-        }
-
-        // Игнорируем кнопки меню - они обрабатываются в MenuCommandsHandler
-        if (this.isMenuButton(text)) {
-          console.log(`🔘 Ignoring menu button: ${text}`);
-          return;
-        }
-
-        console.log(
-          `📝 Processing API settings text from user ${ctx.from.id}: "${text}"`,
-        );
-
-        // Парсим и сохраняем настройки API
-        const result = await this.parseAndSaveApiSettings(
-          ctx.from.id.toString(),
-          ctx.botInfo.id.toString(),
-          text,
-        );
-
-        if (result.success) {
-          await ctx.reply(result.message, result.keyboard);
-        } else {
-          await ctx.reply(result.message);
-        }
+        await this.pickStore(ctx);
       } catch (error) {
-        console.error('Ошибка обработки настроек API:', error);
-        await ctx.reply(
-          '❌ Произошла ошибка при обработке настроек. Попробуйте позже.',
-        );
+        this.logger.error('Не удалось подключить выбранный магазин', error as Error);
+        await ctx.reply('❌ Не удалось подключить магазин. Попробуйте ещё раз.');
       }
     });
   }
 
-  /**
-   * Проверка, является ли текст кнопкой меню
-   */
-  private isMenuButton(text: string): boolean {
-    const menuButtons = [
-      '📊 Статистика',
-      '⚙️ Настройки',
-      '💰 Установить коэффициент цены',
-      '📄 Загрузить прайс-лист',
-      '❓ Помощь',
-      '👤 Профиль',
-      '🏠 Главное меню',
-    ];
+  private async pickStore(ctx: Context): Promise<void> {
+    const campaignId = this.callbackTail(ctx, PICK_STORE_PREFIX);
+    const stores = await this.storesFromDraft(ctx);
+    const store = stores.find((s) => s.campaignId === campaignId);
 
-    return menuButtons.includes(text);
-  }
-
-  /**
-   * Парсинг и сохранение настроек API
-   */
-  private async parseAndSaveApiSettings(
-    telegramUserId: string,
-    telegramChatId: string,
-    text: string,
-  ): Promise<{
-    success: boolean;
-    message: string;
-    keyboard?: any;
-  }> {
-    try {
-      // Определяем тип данных и извлекаем значение
-      const parseResult = this.parseApiData(text);
-
-      console.log({ parseResult });
-
-      if (!parseResult.success) {
-        return {
-          success: false,
-          message: parseResult.message,
-        };
-      }
-
-      // Сохраняем в базу данных
-      const saveResult = await this.saveApiSetting(
-        telegramUserId,
-        telegramChatId,
-        parseResult.type!,
-        parseResult.value!,
-      );
-
-      return saveResult;
-    } catch (error) {
-      console.error('Ошибка парсинга настроек API:', error);
-      return {
-        success: false,
-        message:
-          '❌ Ошибка обработки данных. Проверьте формат и попробуйте снова.',
-      };
+    if (!store) {
+      await ctx.reply('Не удалось получить данные магазина. Пришлите токен заново.');
+      return;
     }
-  }
 
-  /**
-   * Парсинг данных API из текста
-   */
-  private parseApiData(text: string): {
-    success: boolean;
-    type?: 'campaign_id' | 'business_id' | 'token' | 'coefficient';
-    value?: string | number;
-    message: string;
-  } {
-    const cleanText = text.trim();
-
-    // Проверяем форматированный ввод (campaign_id: 12345)
-    const formattedMatch = cleanText.match(
-      /^(campaign_id|business_id|token|coefficient)\s*:\s*(.+)$/i,
+    const access = await this.accessService.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
     );
-    if (formattedMatch) {
-      const type = formattedMatch[1].toLowerCase() as
-        | 'campaign_id'
-        | 'business_id'
-        | 'token'
-        | 'coefficient';
-      const value = formattedMatch[2].trim();
+    const draft = await this.applyStore(ctx, store, access?.draft ?? {});
 
-      const validation = this.validateApiValue(type, value);
-      if (!validation.isValid) {
-        return { success: false, message: validation.error };
+    // Черновик заполнен целиком — заявка уходит сразу, без лишнего шага.
+    const following = nextStep(draft);
+    const reply = following
+      ? { message: stepPrompt(following), keyboard: await this.restartKeyboard(following) }
+      : await this.submitApplication(ctx, draft);
+
+    if (reply.message) await ctx.reply(reply.message, htmlOptions(reply.keyboard));
+  }
+
+  /** Свободный текст. Обязан регистрироваться ПОСЛЕ menu и slash. */
+  public register(bot: TTelegrafBot) {
+    bot.on('text', async (ctx) => {
+      try {
+        const text = ctx.message.text.trim();
+
+        if (text.startsWith('/')) return;
+        if (this.isMenuButton(text)) return;
+
+        // Текст пользователя НЕ логируем: через этот обработчик проходит токен
+        // продавца, а логи не место для чужих секретов.
+        this.logger.debug(`Онбординг: сообщение от пользователя ${ctx.from.id}`);
+
+        const reply = await this.handleText(ctx, text);
+        // Пустое сообщение означает «обработчик уже ответил сам» (так делает
+        // ветка расписания). Отправлять пустую строку нельзя — Telegram
+        // отвечает на неё 400.
+        if (!reply.message) return;
+        await ctx.reply(reply.message, htmlOptions(reply.keyboard));
+      } catch (error) {
+        this.logger.error('Ошибка обработки настроек API', error as Error);
+        await ctx.reply('❌ Произошла ошибка при обработке настроек. Попробуйте позже.');
+      }
+    });
+  }
+
+  private isMenuButton(text: string): boolean {
+    // Раньше здесь был свой, ЧЕТВЁРТЫЙ по счёту список подписей. Он разъехался
+    // с клавиатурой, и нажатие кнопки проваливалось сюда, где гасилось без
+    // ответа — так и были сломаны все кнопки меню. Теперь источник один
+    // (menu.constants), рассинхронизация невозможна (TASK-014).
+    return (MENU_LABELS as readonly string[]).includes(text);
+  }
+
+  private async handleText(ctx: Context, text: string): Promise<IReply> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+
+    // Администраторы гейт не проходят, поэтому записи доступа у них может не
+    // быть — заводим её здесь.
+    const access = await this.accessService.ensure({
+      telegramUserId,
+      botId,
+      telegramChatId: ctx.chat.id.toString(),
+      username: ctx.from.username,
+      firstName: ctx.from.first_name,
+      lastName: ctx.from.last_name,
+    });
+
+    if (access.status === 'approved') {
+      // Незакрытые вопросы важнее правки настроек: иначе «09:00» было бы
+      // истолковано как попытка изменить настройку, а «28-07-2026» — тем более.
+      if (await this.reportsHandler.handlePendingDay(ctx, text)) {
+        return { message: '' }; // ответ уже отправлен внутри
+      }
+      if (await this.scheduleHandler.handlePendingTime(ctx, text)) {
+        return { message: '' }; // ответ уже отправлен внутри
       }
 
+      /**
+       * Правка — только когда есть что править.
+       *
+       * У одобренного пользователя может не быть магазина: доступ выдал
+       * администратор, а токен ещё не прислан. Такой человек попадал в
+       * editSetting, тот требовал подписи вида `token: …` и на голый токен
+       * отвечал «Не понял, что именно нужно изменить» — то есть бот отвергал
+       * ровно то, что сам только что попросил прислать.
+       */
+      if (await this.yandexMarketService.isConfigured(telegramUserId)) {
+        return await this.editSetting(ctx, text);
+      }
+    }
+
+    return await this.wizardStep(ctx, access.draft, text);
+  }
+
+  /**
+   * Один шаг визарда.
+   *
+   * Тип значения определяется ТЕКУЩИМ ШАГОМ, а не формой строки. Раньше бот
+   * угадывал: длинная строка — токен, число из 5–15 цифр — «не знаю, уточните
+   * сами», всё остальное — «не удалось определить тип данных». Пользователь
+   * получал встречный вопрос вместо ответа.
+   */
+  private async wizardStep(
+    ctx: Context,
+    draft: TOnboardingDraft | undefined,
+    text: string,
+  ): Promise<IReply> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+
+    const current = nextStep(draft);
+    if (!current) {
+      // Черновик полон, но заявка не подана — например, предыдущая попытка
+      // упала после сохранения последнего креда.
+      return await this.submitApplication(ctx, draft ?? {});
+    }
+
+    // Явно подписанное значение относим к названному полю: тип назвал сам
+    // пользователь, догадки по форме строки здесь нет.
+    const labelled = parseLabelledValue(text);
+    const field: TDraftField = labelled?.field ?? current;
+    const value = labelled?.value ?? text;
+
+    const validation = validateStep(field, value);
+    if (!validation.ok) {
+      // Переспрашиваем ТОТ ЖЕ шаг — с объяснением, что не так.
       return {
-        success: true,
-        type,
-        value: type === 'coefficient' ? parseFloat(value) : value,
-        message: '',
+        message: `❌ ${esc(validation.error)}\n\n${stepPrompt(field)}`,
+        keyboard: await this.restartKeyboard(field),
       };
     }
 
-    // Автоматическое определение типа данных
+    const updated = await this.accessService.saveDraftField(telegramUserId, botId, field, value);
+    let newDraft = updated?.draft ?? {};
 
-    // Проверяем коэффициент (число от 0.1 до 10)
-    const coefficientMatch = cleanText.match(/^(x?)(\d+\.?\d*)$/);
-    if (coefficientMatch) {
-      const coefficient = parseFloat(coefficientMatch[2]);
-      if (coefficient >= 0.1 && coefficient <= 10) {
+    // Токен принят — пробуем узнать идентификаторы у самого Маркета.
+    if (field === 'token') {
+      const autofill = await this.autofillFromToken(ctx, value, newDraft);
+
+      // Маркет отклонил токен. Дальше идти нельзя: спрашивать Campaign ID у
+      // человека, которому обещали, что ничего кроме токена не понадобится, —
+      // это подменить ошибку вопросом. Токен убираем, иначе nextStep решил бы,
+      // что он уже собран, и визард поехал бы дальше с негодным значением.
+      if (autofill.rejected) {
+        await this.accessService.clearDraftField(telegramUserId, botId, 'token');
         return {
-          success: true,
-          type: 'coefficient',
-          value: coefficient,
-          message: '',
+          message: `❌ ${esc(autofill.rejected)}\n\n${stepPrompt('token')}`,
+          keyboard: await this.restartKeyboard('token'),
         };
       }
+
+      newDraft = autofill.draft;
     }
 
-    // Проверяем Campaign ID / Business ID (только цифры, обычно 5-15 символов)
-    if (/^\d{5,15}$/.test(cleanText)) {
-      // Не можем автоматически определить campaignId или businessId, спрашиваем
-      return {
-        success: false,
-        message: `🤔 Получен ID: **${cleanText}**
+    const following = nextStep(newDraft);
 
-📋 **Уточните тип данных:**
-Отправьте сообщение в формате:
-• \`campaign_id: ${cleanText}\` - если это Campaign ID
-• \`business_id: ${cleanText}\` - если это Business ID
-
-💡 Или воспользуйтесь кнопками для уточнения.`,
-      };
+    if (!following) {
+      return await this.submitApplication(ctx, newDraft);
     }
 
-    // Проверяем токен (длинная строка)
-    if (cleanText.length > 20 && /^[A-Za-z0-9_:-]+$/.test(cleanText)) {
-      return {
-        success: true,
-        type: 'token',
-        value: cleanText,
-        message: '',
-      };
-    }
-
-    // Не удалось определить тип данных
     return {
-      success: false,
-      message: `❓ **Не удалось определить тип данных**
-
-📝 **Получено:** "${cleanText}"
-
-💡 **Отправьте данные в правильном формате:**
-• \`campaign_id: 12345\` - ID кампании
-• \`business_id: 67890\` - ID бизнеса
-• \`token: ваш_токен\` - API токен
-• \`coefficient: 1.2\` - коэффициент цены
-
-📋 **Примеры корректного ввода:**
-• campaign_id: 123456789
-• business_id: 987654321
-• token: ACMA:bhD15nJMV71y4UZPbAFOVTZvNVGgHzkfPIH9QdWm:e0035103
-• coefficient: 1.15
-• 1.2 (коэффициент без префикса)`,
+      message: `${this.acceptedLabel(field, value)}\n\n${stepPrompt(following)}`,
+      keyboard: await this.restartKeyboard(following),
     };
   }
 
   /**
-   * Валидация значений API
+   * Подставить campaign_id и business_id по токену.
+   *
+   * `GET v2/campaigns` отдаёт оба идентификатора сразу — искать их в кабинете
+   * вручную не нужно вовсе. Это снимает два самых частых источника ошибки:
+   * перепутать campaign_id с идентификатором магазина (документация выделяет
+   * это отдельным предупреждением — с ним запросы к API не работают) и просто
+   * ошибиться цифрой.
+   *
+   * Недоступность API НЕ прерывает регистрацию: при сетевой ошибке или 5xx
+   * возвращаем черновик как есть, и визард продолжится ручным вводом. Запереть
+   * человека из-за того, что Яндекс лежит, было бы хуже, чем спросить два числа.
+   *
+   * А вот ОТКАЗ В ДОСТУПЕ — другое дело, и различать их обязательно. Раньше
+   * ловилось всё подряд, поэтому продавец с отозванным или read-only токеном
+   * получал не сообщение об ошибке, а вопрос про Campaign ID: бот подменял
+   * диагноз лишней работой, причём ровно той, которой обещал избавить.
+   *
+   * Магазинов может быть несколько — тогда автоподстановки не делаем, иначе
+   * молча выбрали бы за пользователя не тот.
    */
-  private validateApiValue(
-    type: string,
-    value: string,
-  ): { isValid: boolean; error: string } {
-    switch (type) {
-      case 'campaign_id':
-        if (!/^\d{5,15}$/.test(value)) {
-          return {
-            isValid: false,
-            error:
-              '❌ Campaign ID должен содержать только цифры (5-15 символов).\nПример: campaign_id: 123456789',
-          };
-        }
-        break;
+  private async autofillFromToken(
+    ctx: Context,
+    token: string,
+    draft: TOnboardingDraft,
+  ): Promise<IAutofillResult> {
+    // botId здесь не нужен: сохранение полей уехало в applyStore, а запрос к
+    // API идёт по токену.
+    const telegramUserId = ctx.from.id.toString();
 
-      case 'business_id':
-        if (!/^\d{5,15}$/.test(value)) {
-          return {
-            isValid: false,
-            error:
-              '❌ Business ID должен содержать только цифры (5-15 символов).\nПример: business_id: 987654321',
-          };
-        }
-        break;
+    let stores: IStoreRef[];
+    try {
+      stores = await this.clients.forTokenOnly(token).listStores();
+    } catch (error) {
+      // Токен НЕ логируем ни здесь, ни где-либо ещё.
+      this.logger.warn(
+        `Не удалось определить магазины по токену пользователя ${telegramUserId}: ${
+          error instanceof Error ? error.constructor.name : 'неизвестная ошибка'
+        }`,
+      );
 
-      case 'token':
-        if (value.length < 10) {
-          return {
-            isValid: false,
-            error:
-              '❌ API токен должен содержать минимум 10 символов.\n',
-          };
-        }
-        if (!/^[A-Za-z0-9_:-]+$/.test(value)) {
-          return {
-            isValid: false,
-            error: '❌ API токен содержит недопустимые символы.',
-          };
-        }
-        break;
-
-      case 'coefficient':
-        const coef = parseFloat(value);
-        if (isNaN(coef) || coef <= 0 || coef > 10) {
-          return {
-            isValid: false,
-            error:
-              '❌ Коэффициент должен быть числом от 0.1 до 10.\nПример: coefficient: 1.2',
-          };
-        }
-        break;
-
-      default:
-        return {
-          isValid: false,
-          error: '❌ Неизвестный тип данных.',
-        };
+      if (error instanceof YandexAuthError) {
+        return { draft, rejected: error.userMessage };
+      }
+      return { draft };
     }
 
-    return { isValid: true, error: '' };
+    const pick = decidePick(stores);
+
+    // Пустая выдача — не отказ: это может быть и незаполненный кабинет.
+    // Оставляем тихий откат на ручной ввод, как было.
+    if (pick.kind === 'none') return { draft };
+
+    // Несколько магазинов — спрашиваем, какой подключить. Молча выбрать за
+    // продавца нельзя: он узнал бы об ошибке по пустым отчётам.
+    if (pick.kind === 'business') {
+      await this.askBusiness(ctx, pick.groups);
+      return { draft };
+    }
+    if (pick.kind === 'store') {
+      await this.askStore(ctx, pick.stores);
+      return { draft };
+    }
+
+    return { draft: await this.applyStore(ctx, pick.store, draft) };
+  }
+
+  private callbackTail(ctx: Context, prefix: string): string {
+    const data = (ctx.callbackQuery as { data?: string } | undefined)?.data ?? '';
+    return data.slice(prefix.length).trim();
   }
 
   /**
-   * Сохранение настройки API в базу данных
+   * Заново спросить у Маркета список магазинов, взяв токен из черновика.
+   *
+   * Список НЕ кэшируется между нажатиями: держать его в памяти процесса значит
+   * потерять при рестарте (и тогда кнопка перестанет работать), а класть в базу
+   * ради двух секунд диалога — заводить ещё одно состояние, которое надо
+   * инвалидировать. Один дешёвый запрос надёжнее.
    */
-  private async saveApiSetting(
-    telegramUserId: string,
-    telegramChatId: string,
-    type: 'campaign_id' | 'business_id' | 'token' | 'coefficient',
-    value: string | number,
-  ): Promise<{ success: boolean; message: string; keyboard?: any }> {
+  private async storesFromDraft(ctx: Context): Promise<IStoreRef[]> {
+    const access = await this.accessService.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
+    const token = access?.draft?.token;
+    if (!token) return [];
+
     try {
-      console.log({ telegramUserId, telegramChatId, type, value });
-      // Подготавливаем данные для обновления
-      const updateData: any = {};
-      updateData[type] = value;
-
-      // Сохраняем в базу
-      await YandexMarketService.upsertByTelegramUser(
-        telegramUserId,
-        telegramChatId,
-        updateData,
-      );
-
-      // Получаем обновленные настройки для проверки
-      const updatedSettings = await YandexMarketService.getByTelegramUser(telegramUserId);
-
-      console.log({ updatedSettings });
-
-      // Формируем сообщение об успехе
-      const successMessages = {
-        campaign_id: `✅ **Campaign ID сохранен**\n🔑 ID кампании: \`${value}\``,
-        business_id: `✅ **Business ID сохранен**\n🏢 ID бизнеса: \`${value}\``,
-        token: `✅ **API токен сохранен**\n🎫 Токен: \`${String(value).substring(0, 10)}...\``,
-        coefficient: `✅ **Коэффициент цены обновлен**\n💰 Новый коэффициент: **x${value}** (${Number(value) > 1 ? '+' : ''}${((Number(value) - 1) * 100).toFixed(1)}%)`,
-      };
-
-      let message = successMessages[type];
-
-      console.log({ message });
-
-      // Проверяем, все ли настройки заполнены
-      if (updatedSettings?.isConfigured()) {
-        message += `\n\n🎉 **Все настройки API заполнены!**\n✅ Теперь вы можете загружать прайс-листы`;
-
-        const keyboard = await this.keyboard.createInlineButtons([
-          { text: '📄 Загрузить прайс-лист', callback_data: 'upload_file' },
-          { text: '👀 Проверить настройки', callback_data: 'check_settings' },
-          { text: '🏠 Главное меню', callback_data: 'main_menu' },
-        ]);
-
-        return { success: true, message, keyboard };
-      } else {
-        // Показываем какие настройки еще нужно заполнить
-        const missingFields = [];
-        if (!updatedSettings?.campaign_id) {
-          missingFields.push('🔑 Campaign ID');
-        }
-        if (!updatedSettings?.business_id) {
-          missingFields.push('🏢 Business ID');
-        }
-        if (!updatedSettings?.token) {
-          missingFields.push('🎫 API токен');
-        }
-
-        if (missingFields.length > 0) {
-          message += `\n\n📋 **Осталось заполнить:**\n${missingFields.map((field) => `• ${field}`).join('\n')}`;
-        }
-
-        const keyboard = await this.keyboard.createInlineButtons([
-          { text: '⚙️ Продолжить настройку', callback_data: 'settings_api' },
-          { text: '🏠 Главное меню', callback_data: 'main_menu' },
-        ]);
-
-        return { success: true, message, keyboard };
-      }
+      return await this.clients.forTokenOnly(token).listStores();
     } catch (error) {
-      console.error('Ошибка сохранения настройки API:', error);
+      this.logger.warn(
+        `Не удалось получить магазины: ${
+          error instanceof Error ? error.constructor.name : 'неизвестная ошибка'
+        }`,
+      );
+      return [];
+    }
+  }
+
+  /** Сохранить выбранный магазин в черновик и подтвердить пользователю. */
+  private async applyStore(
+    ctx: Context,
+    store: IStoreRef,
+    draft: TOnboardingDraft,
+  ): Promise<TOnboardingDraft> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+
+    await this.accessService.saveDraftField(telegramUserId, botId, 'campaign_id', store.campaignId);
+    await this.accessService.saveDraftField(telegramUserId, botId, 'business_id', store.businessId);
+    // Название кладём в черновик, чтобы оно попало в документ настроек.
+    // Экран настроек не должен ходить в API ради одной подписи.
+    const saved = await this.accessService.saveDraftField(
+      telegramUserId,
+      botId,
+      'store_name',
+      store.storeName,
+    );
+
+    // Идентификаторы пользователю НЕ показываем: это технический шум, который
+    // ни о чём ему не говорит, а перепутать их легко.
+    await ctx.reply(`🔎 Подключаю магазин: ${b(store.storeName)}`, htmlOptions());
+
+    return saved?.draft ?? draft;
+  }
+
+  private async askBusiness(ctx: Context, groups: IBusinessGroup[]): Promise<void> {
+    const labels = uniqueLabels(groups.map((g) => g.businessName));
+
+    await ctx.reply(
+      'У этого токена несколько кабинетов. Выберите нужный:',
+      htmlOptions({
+        reply_markup: {
+          inline_keyboard: groups.map((g, i) => [
+            { text: labels[i], callback_data: `${PICK_BUSINESS_PREFIX}${g.businessId}` },
+          ]),
+        },
+      }),
+    );
+  }
+
+  private async askStore(ctx: Context, stores: IStoreRef[]): Promise<void> {
+    const labels = uniqueLabels(stores.map((s) => s.storeName));
+
+    await ctx.reply(
+      'Выберите магазин:',
+      htmlOptions({
+        reply_markup: {
+          inline_keyboard: stores.map((s, i) => [
+            { text: labels[i], callback_data: `${PICK_STORE_PREFIX}${s.campaignId}` },
+          ]),
+        },
+      }),
+    );
+  }
+
+  /** Приглашение к первому шагу — используется и при старте, и при сбросе. */
+  public async firstStepReply(draft?: TOnboardingDraft): Promise<IReply> {
+    const step = nextStep(draft) ?? 'token';
+    return {
+      message: stepPrompt(step),
+      keyboard: await this.restartKeyboard(step),
+    };
+  }
+
+  /**
+   * Клавиатура под вопросом визарда.
+   *
+   * «Как получить?» ведёт себя как справка, а не как шаг: показывает
+   * инструкцию и НЕ трогает состояние — бот по-прежнему ждёт значение того же
+   * поля. Кнопка привязана к конкретному шагу, поэтому подсказка приходит
+   * ровно про то, что спрашивают сейчас.
+   */
+  private async restartKeyboard(step?: TDraftField) {
+    const buttons = [];
+    if (step) {
+      buttons.push({ text: '❓ Как получить?', callback_data: `${HELP_PREFIX}${step}` });
+    }
+    buttons.push({ text: '🔄 Начать заново', callback_data: 'onboarding_restart' });
+    return await this.keyboard.createInlineButtons(buttons);
+  }
+
+  /** Уже одобренный пользователь правит одну настройку. */
+  private async editSetting(ctx: Context, text: string): Promise<IReply> {
+    const telegramUserId = ctx.from.id.toString();
+
+    // Ставки прибыли разбираются ПЕРВЫМИ и своим парсером: расширять
+    // parseLabelledValue нельзя, он возвращает поле черновика онбординга.
+    const rate = parseRateInput(text);
+    if (rate) return await this.editRate(ctx, rate);
+
+    const labelled = parseLabelledValue(text);
+
+    if (!labelled) {
       return {
-        success: false,
-        message: '❌ Ошибка сохранения данных в базу. Попробуйте позже.',
+        // Про campaign_id и business_id больше не рассказываем: их не вводят
+        // руками, и на экране настроек их тоже нет. Предлагать пользователю
+        // поле, которого он нигде не видит, — приглашение к ошибке.
+        message: [
+          '❓ Не понял, что именно нужно изменить.',
+          '',
+          'Чтобы сменить магазин или токен, пришлите значение с подписью:',
+          '<code>token: ваш_токен</code>',
+          '',
+          'Ставки расчёта прибыли:',
+          '<code>комиссия: 23</code>',
+          '<code>налог: 7</code>',
+          '<code>скидка: 10</code>',
+          '<code>скидка восток: 4</code>',
+        ].join('\n'),
       };
     }
+
+    const validation = validateStep(labelled.field, labelled.value);
+    if (!validation.ok) {
+      return { message: `❌ ${esc(validation.error)}` };
+    }
+
+    /**
+     * Новый токен — это, как правило, ДРУГОЙ магазин, и записать один лишь
+     * токен здесь нельзя: campaign_id, business_id и название остались бы от
+     * прежнего, а бот продолжил бы писать не туда. Экран настроек при этом
+     * прямо обещает «чтобы сменить магазин — пришлите новый токен».
+     *
+     * Поэтому отдаём токен обычному визарду: он сам сходит в Маркет, при
+     * нескольких магазинах покажет кнопки выбора и перезапишет все поля
+     * разом. Второй путь подключения магазина заводить незачем — он бы и
+     * разошёлся с первым.
+     */
+    if (labelled.field === 'token') {
+      // Черновик чистим перед делегированием: остатки прошлой регистрации
+      // сделали бы nextStep() пустым, и визард подал бы старые значения, ни
+      // разу не взглянув на присланный токен.
+      await this.accessService.clearDraft(telegramUserId, ctx.botInfo.id.toString());
+      return await this.wizardStep(ctx, undefined, text);
+    }
+
+    const updated = await this.yandexMarketService.updateByTelegramUser(telegramUserId, {
+      [labelled.field]: labelled.value,
+    });
+
+    // Одобренный без магазина — редкий случай (доступ выдан вручную);
+    // заводим документ через обычный черновик.
+    if (!updated) {
+      return await this.wizardStep(ctx, undefined, text);
+    }
+
+    return {
+      message: `${this.acceptedLabel(labelled.field, labelled.value)}\n\n✅ Настройка обновлена.`,
+      keyboard: await this.settingsKeyboard(),
+    };
+  }
+
+  /**
+   * Изменение ставки расчёта прибыли.
+   *
+   * В визард такой текст НЕ отдаём, даже если магазина почему-то нет: «пришлите
+   * токен» в ответ на «комиссия: 25» — это бот, не понявший, о чём его просят.
+   */
+  private async editRate(ctx: Context, rate: IRateInput): Promise<IReply> {
+    const validation = validateRate(rate.field, rate.value);
+    if (!validation.ok) {
+      return { message: `❌ ${esc(validation.error)}` };
+    }
+
+    const updated = await this.yandexMarketService.updateRate(
+      ctx.from.id.toString(),
+      rate.field,
+      rate.value,
+    );
+
+    if (!updated) {
+      return {
+        message:
+          '⚠️ Сначала подключите магазин — пришлите API-токен одним сообщением. ' +
+          'Ставки настраиваются после этого.',
+      };
+    }
+
+    return {
+      message:
+        `✅ ${esc(rateTitle(rate.field))}: <b>${rate.value}%</b>\n\n` +
+        'Прибыль пересчитается при следующем открытии отчёта.',
+      keyboard: await this.settingsKeyboard(),
+    };
+  }
+
+  /** Кнопки под подтверждением правки настройки. */
+  private async settingsKeyboard() {
+    return await this.keyboard.createInlineButtons([
+      { text: '👀 Проверить настройки', callback_data: 'check_settings' },
+      { text: MENU.MAIN, callback_data: 'main_menu' },
+    ]);
+  }
+
+  /**
+   * Черновик собран целиком — создаём документ магазина и, если доступа ещё
+   * нет, подаём заявку. Обычно к этому моменту пользователь ввёл ОДИН токен:
+   * остальные поля черновика заполнил autofillFromToken.
+   *
+   * Признаком НОВОЙ заявки служит атомарный переход статуса new → pending, а не
+   * факт заполненности кредов: заполненность истинна и при каждом следующем
+   * сохранении, из-за чего прежняя ветка «Все настройки API заполнены»
+   * срабатывала на каждое сообщение. Проверка живёт в базе, поэтому переживает
+   * рестарт и параллельную обработку двух вебхуков.
+   */
+  private async submitApplication(ctx: Context, draft: TOnboardingDraft): Promise<IReply> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+
+    /**
+     * Документ мог остаться от прежней версии бота или от отката заявки —
+     * тогда обновляем его, а не заводим второй: unique-индекса на
+     * telegramUserId у YandexMarket нет, дубли база не отсечёт.
+     */
+    const saveStore = async () => {
+      const fields = {
+        campaign_id: draft.campaign_id,
+        business_id: draft.business_id,
+        token: draft.token,
+        // Название магазина — чтобы показывать его вместо идентификаторов.
+        name: draft.store_name,
+      };
+      const existing = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+      return existing
+        ? await this.yandexMarketService.updateByTelegramUser(telegramUserId, fields)
+        : await this.yandexMarketService.create({
+            ...fields,
+            telegramUserId,
+            telegramChatId: ctx.chat.id.toString(),
+          });
+    };
+
+    const isAdmin = this.config.isAdmin(ctx.from.id);
+    const access = await this.accessService.findByUserAndBot(telegramUserId, botId);
+
+    /**
+     * Заявка нужна только тому, у кого доступа ещё нет.
+     *
+     * Администратор-продавец не должен присылать заявку сам себе — это было
+     * учтено и раньше. А вот УЖЕ ОДОБРЕННЫЙ пользователь, меняющий магазин,
+     * попадал в tryApply, получал null (фильтр ждёт статус `new`) и читал
+     * «Заявка уже отправлена администратору, ожидайте решения» — ответ не о
+     * том, что он сделал, и о решении, которого он не ждёт.
+     */
+    if (isAdmin || access?.status === 'approved') {
+      const store = await saveStore();
+
+      if (access?.status !== 'approved') {
+        await this.accessService.grant({
+          telegramUserId,
+          botId,
+          telegramChatId: ctx.chat.id.toString(),
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        });
+      } else {
+        // grant() чистит черновик сам; для уже одобренного делаем это явно,
+        // иначе следующая правка увидит остатки этой.
+        await this.accessService.clearDraft(telegramUserId, botId);
+      }
+
+      // Отдаём именно REPLY-клавиатуру, а не inline: до этого момента у
+      // пользователя была сокращённая раскладка без отчётов, и её нужно
+      // заменить прямо сейчас. Inline-кнопки живут в сообщении и меню под
+      // полем ввода не меняют — пришлось бы жать «Главное меню» отдельно.
+      return {
+        // Говорим о том, что произошло, — подключён магазин. Прежнее
+        // «🎉 Все настройки API заполнены!» осталось от снятой логики, где
+        // признаком успеха считалась заполненность полей.
+        message: [
+          `✅ <b>Магазин подключён: ${esc(store?.name) || 'готово'}</b>`,
+          '',
+          'Отчёты доступны в меню ниже.',
+        ].join('\n'),
+        keyboard: await this.keyboard.createMenuKeyboard(isAdmin),
+      };
+    }
+
+    const applied = await this.accessService.tryApply(telegramUserId, botId);
+    if (!applied) {
+      // Заявка уже подана параллельным апдейтом — второй карточки быть не должно.
+      return { message: '⏳ Заявка уже отправлена администратору, ожидайте решения.' };
+    }
+
+    const store = await saveStore();
+    const delivered = await this.adminNotifier.sendApplication(ctx, applied, store);
+
+    if (!delivered) {
+      // Ни один администратор карточку не получил (типовая причина — админ не
+      // нажимал /start и Telegram отвечает 403). Без отката пользователь навсегда
+      // завис бы в pending, и узнать об этом было бы некому.
+      await this.accessService.revertApply(telegramUserId, botId);
+      // Магазин тоже убираем: иначе следующий ввод креда увидит существующий
+      // документ, а статус останется new — пользователь застрянет навсегда.
+      await this.yandexMarketService.deleteByTelegramUser(telegramUserId);
+      return {
+        message: [
+          '⚠️ Не удалось отправить заявку администратору.',
+          '',
+          `Попробуйте позже или напишите в поддержку: ${SUPPORT_CONTACT}`,
+        ].join('\n'),
+      };
+    }
+
+    return {
+      message: [
+        '✅ <b>Заявка отправлена администратору.</b>',
+        '',
+        'Как только он примет решение, бот пришлёт сообщение сюда.',
+      ].join('\n'),
+    };
+  }
+
+  /**
+   * Подтверждение принятого значения. Токен показывается ОБРЕЗАННЫМ: полностью
+   * его не должно быть ни в логах, ни в переписке.
+   */
+  private acceptedLabel(field: TDraftField, value: string): string {
+    const shown = field === 'token' ? `${esc(value.slice(0, 10))}…` : esc(value);
+    return `✅ ${stepTitle(field)} принят: <code>${shown}</code>`;
   }
 }

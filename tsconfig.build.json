@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "src/modules/yandex/api/**/*",
+    "node_modules",
+    "dist",
+    "__tests__",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ]
+}

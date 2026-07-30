@@ -1,143 +1,115 @@
-import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/mongo/services/yandex-market.service';
-import { TelegramUserService } from '../../shared/services/user-subscription.service';
+import { Injectable } from '@nestjs/common';
+
+import { AppConfigService } from '../../../../../config/app-config.service';
+import { UserAccessService } from '../../../../../database/services/user-access.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { TTelegrafBot } from '../../../domain.telegram';
+import { htmlOptions } from '../../../formatting/telegram-format';
+import { helpText } from '../help.text';
+import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { profileText } from '../profile.text';
+import { settingsText } from '../settings.text';
+
 import { SharedCommandsHandler } from './shared-commands.handler';
 
+@Injectable()
 export class SlashCommandsHandler {
-  private sharedHandlers: SharedCommandsHandler;
-
   constructor(
-    private bot: TTelegrafBot,
-    private keyboard: ITelegramKeyboard,
-    private userService: TelegramUserService,
-  ) {
-    this.sharedHandlers = new SharedCommandsHandler(keyboard);
-  }
+    private keyboard: PriceChangerKeyboard,
+    private accessService: UserAccessService,
+    private yandexMarketService: YandexMarketService,
+    private sharedHandlers: SharedCommandsHandler,
+    private config: AppConfigService,
+  ) {}
 
-  public setupHandlers() {
+  public register(bot: TTelegrafBot) {
     console.log('Setting up slash commands handlers...');
 
     // /menu - главное меню
-    this.bot.command('menu', async (ctx) => {
-      const keyboard = await this.keyboard.createMenuKeyboard();
-      await ctx.reply('📋 Главное меню:', keyboard);
+    bot.command('menu', async (ctx) => {
+      const keyboard = await this.keyboard.createMenuKeyboard(this.config.isAdmin(ctx.from.id));
+      // Подпись та же, что у кнопки: раньше здесь было «📋 Главное меню:», в
+      // ветке main_menu — «🏠 Главное меню:» плюс отдельное «Выберите
+      // действие:», а у кнопки — «🏠 Главное меню». Три текста на один экран.
+      await ctx.reply(MENU.MAIN, keyboard);
     });
 
     // /settings - настройки
-    this.bot.command('settings', async (ctx) => {
-      const inlineKeyboard = await this.keyboard.createInlineButtons([
-        { text: '🔧 Настройки API', callback_data: 'settings_api' },
-        { text: '🔄 Автообновление', callback_data: 'settings_auto_update' },
-      ]);
-
-      await ctx.reply('⚙️ Выберите настройку:', inlineKeyboard);
+    // Текст — из settings.text.ts, общий с кнопкой «⚙️ Настройки API». Раньше
+    // команда вела в собственное меню из двух inline-кнопок, причём вторая
+    // («🔄 Автообновление») обработчика не имела вовсе и отвечала
+    // «Неизвестная команда: settings_auto_update».
+    bot.command('settings', async (ctx) => {
+      const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+      await ctx.reply(settingsText(store), htmlOptions());
     });
 
-    // /price - установить коэффициент цены
-    this.bot.command('price', async (ctx) => {
-      await this.sharedHandlers.handlePriceCoefficientCommand(ctx);
-    });
-
-    // /upload - загрузить прайс-лист
-    this.bot.command('upload', async (ctx) => {
-      await this.sharedHandlers.handleUploadPriceListCommand(ctx);
-    });
+    // /price и /upload сняты (TASK-009): изменение цен по API отключено,
+    // бот переведён в read-only режим. Обработчики в SharedCommandsHandler
+    // помечены @deprecated и оставлены как справочный материал.
 
     // /profile - профиль
-    this.bot.command('profile', async (ctx) => {
-      const user = await this.userService.handleUser(ctx.from);
-      const subscription = await this.userService.checkUserSubscription(
-        ctx.from,
+    // Текст — из profile.text.ts, общий с кнопкой «📊 Мой профиль».
+    // Блок «Статистика» убран вместе с подпиской: «Обновлений цен: 156» было
+    // зашитым числом, одинаковым для всех пользователей.
+    bot.command('profile', async (ctx) => {
+      const access = await this.accessService.findByUserAndBot(
+        ctx.from.id.toString(),
+        ctx.botInfo.id.toString(),
       );
-
-      const profileMessage = `👤 **Ваш профиль**
-
-👨‍💼 **Пользователь:** ${ctx.from.first_name} ${ctx.from.last_name || ''}
-🆔 **ID:** \`${ctx.from.id}\`
-📧 **Username:** @${ctx.from.username || 'не указан'}
-
-💳 **Подписка:** ${
-        subscription.hasActiveSubscription ? '✅ Активна' : '❌ Неактивна'
-      }
-${
-  subscription.subscription
-    ? `📅 **До:** ${new Date(subscription.subscription.expires_at).toLocaleDateString('ru-RU')}`
-    : ''
-}
-
-    📊 **Статистика:**
-    • **Регистрация:** ${new Date(user.created_at).toLocaleDateString('ru-RU')}
-    • **Последняя активность:** сегодня
-    • **Обновлений цен:** 156`;
+      const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
 
       const keyboard = await this.keyboard.createInlineButtons([
-        {
-          text: '💳 Управление подпиской',
-          callback_data: 'manage_subscription',
-        },
-        { text: '🔧 Настройки профиля', callback_data: 'profile_settings' },
-        { text: '📊 Подробная статистика', callback_data: 'detailed_stats' },
+        { text: MENU.SETTINGS, callback_data: 'settings_api' },
+        { text: MENU.MAIN, callback_data: 'main_menu' },
       ]);
 
-      await ctx.reply(profileMessage, keyboard);
+      await ctx.reply(
+        profileText({
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+          telegramUserId: ctx.from.id,
+          username: ctx.from.username,
+          accessStatus: access?.status,
+          storeName: store?.name,
+          configured: !!(store?.campaign_id && store?.business_id && store?.token),
+          registeredAt: access?.createdAt ? new Date(access.createdAt) : undefined,
+        }),
+        htmlOptions(keyboard),
+      );
     });
 
     // /help - помощь
-    this.bot.command('help', async (ctx) => {
-      const helpMessage = `❓ **Справка по боту**
-
-        🎯 **Основные функции:**
-        • Изменение цен на товары в Яндекс.Маркете
-        • Загрузка и обработка прайс-листов
-        • Массовое обновление коэффициентов
-        • Статистика продаж и изменений
-
-        🔧 **Настройка:**
-        1. Добавьте API-ключ от Яндекс.Маркета
-        2. Укажите ID кампании и бизнеса
-        3. Загрузите прайс-лист
-        4. Настройте коэффициенты
-
-        📋 **Команды:**
-        /start - Запуск бота
-        /menu - Главное меню
-        /settings - Настройки
-        /price - Установить коэффициент
-        /upload - Загрузить прайс-лист
-        /files - Управление файлами
-        /cleanup - Очистить старые файлы
-        /profile - Профиль
-        /help - Эта справка
-
-💬 **Поддержка:** @Vitality45
-🌐 **Канал новостей:** @YandexMarketBot`;
-
-      const keyboard = await this.keyboard.createInlineButtons([
-        { text: '🚀 Быстрый старт', callback_data: 'quick_start' },
-        { text: '📖 Подробная инструкция', callback_data: 'detailed_guide' },
-        { text: '💬 Связаться с поддержкой', callback_data: 'contact_support' },
-      ]);
-
-      await ctx.reply(helpMessage, keyboard);
+    // Текст — из help.text.ts, общий с кнопкой «Помощь». Пока их было два,
+    // они гарантированно расходились: у команды был свой текст, а кнопка
+    // вообще вела в главное меню.
+    bot.command('help', async (ctx) => {
+      await ctx.reply(helpText(), htmlOptions());
     });
   }
 
   /**
    * Настройка команд бота (для меню слева от поля ввода)
    */
-  public async setupBotCommands() {
+  public async setupBotCommands(bot: TTelegrafBot) {
     try {
-      await this.bot.telegram.setMyCommands([
+      // Список должен содержать ТОЛЬКО реально зарегистрированные команды.
+      // Убраны: /price и /upload (изменение цен отключено, TASK-009),
+      // а также /files и /cleanup — их обработчики были удалены ещё при
+      // миграции, но команды продолжали рекламироваться и молча не работали.
+      // Список содержит ТОЛЬКО реально зарегистрированные команды. Отчёты
+      // вызываются кнопками меню, а не слэш-командами, поэтому в setMyCommands
+      // их нет: команда, которую бот рекламирует, но не обрабатывает, молча не
+      // работает — так уже случилось с /files и /cleanup.
+      await bot.telegram.setMyCommands([
         { command: 'start', description: '🏠 Запустить бота' },
-        { command: 'menu', description: '📋 Главное меню' },
+        { command: 'menu', description: '📋 Меню и отчёты' },
         { command: 'settings', description: '⚙️ Настройки' },
-        { command: 'price', description: '💰 Установить коэффициент цены' },
-        { command: 'upload', description: '📄 Загрузить прайс-лист' },
-        { command: 'files', description: '📋 Управление файлами' },
-        { command: 'cleanup', description: '🧹 Очистить старые файлы' },
         { command: 'profile', description: '👤 Профиль' },
         { command: 'help', description: '❓ Помощь' },
+        // /users намеренно НЕ здесь: список команд общий для всех, а раздел
+        // администратора не должен светиться у обычных пользователей.
       ]);
       console.log('Bot commands set successfully');
     } catch (error) {

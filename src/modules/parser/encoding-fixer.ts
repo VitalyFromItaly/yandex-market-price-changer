@@ -16,12 +16,11 @@ export class EncodingFixer {
     try {
       // Проверяем, содержит ли текст символы, которые могут быть неправильно закодированными
       if (text.includes('Ð') || text.includes('Ñ') || text.includes('Ã')) {
-        
         // Стратегия 1: Пробуем декодировать как CP1251 -> UTF8
         try {
           const buffer = Buffer.from(text, 'latin1');
           const decoded = iconv.decode(buffer, 'cp1251');
-          
+
           // Проверяем, что результат содержит русские символы
           if (/[А-Яа-яЁё]/.test(decoded)) {
             console.log(`✅ Fixed encoding via CP1251: "${text}" -> "${decoded}"`);
@@ -35,7 +34,7 @@ export class EncodingFixer {
         try {
           const buffer = Buffer.from(text, 'binary');
           const decoded = iconv.decode(buffer, 'win1251');
-          
+
           if (/[А-Яа-яЁё]/.test(decoded)) {
             console.log(`✅ Fixed encoding via Win1251: "${text}" -> "${decoded}"`);
             return decoded;
@@ -49,35 +48,35 @@ export class EncodingFixer {
         const preciseReplacements: { [key: string]: string } = {
           // Целые слова/фразы (проверено на примерах пользователя)
           'ÐÐ¼ÑÐ¸Ð±Ð¸Ñ': 'Амфибия',
-          'ÐÑÑÑÑÐ°Ð½': 'КАСИО', 
+          'ÐÑÑÑÑÐ°Ð½': 'КАСИО',
           'ÐÐ¾Ð¼Ð°Ð½Ð´Ð¸ÑÑÐºÐ¸Ðµ': 'Командирские',
-          'ÐÑÑÑÑ': 'ЧАСЫ',
-          'ÐÐÐÐ': 'ОМЕГА',
-          'ÐÑÐ¸ÐµÐ½Ñ': 'Ориент'
+          ÐÑÑÑÑ: 'ЧАСЫ',
+          ÐÐÐÐ: 'ОМЕГА',
+          'ÐÑÐ¸ÐµÐ½Ñ': 'Ориент',
         };
 
         // Точная карта символов (основана на анализе примера ÐÐ¼ÑÐ¸Ð±Ð¸Ñ -> Амфибия)
         const symbolMap: { [key: string]: string } = {
-          'Ð': 'А',  // Ð -> А
-          'Ð¼': 'м',  // Ð¼ -> м  
-          'Ð¸': 'и',  // Ð¸ -> и
-          'Ð±': 'б',  // Ð± -> б
+          Ð: 'А', // Ð -> А
+          'Ð¼': 'м', // Ð¼ -> м
+          'Ð¸': 'и', // Ð¸ -> и
+          'Ð±': 'б', // Ð± -> б
           'Ð°': 'а',
-          'Ðµ': 'е', 
+          Ðµ: 'е',
           'Ð¾': 'о',
           'Ð½': 'н',
           'Ð»': 'л',
-          'Ðº': 'к',
+          Ðº: 'к',
           'Ð´': 'д',
           'Ð²': 'в',
-          'Ð·': 'з'
+          'Ð·': 'з',
         };
 
         // Специальная обработка символа Ñ - зависит от контекста
         const processSpecialChars = (str: string): string => {
           // Ñ в конце слова обычно означает 'я'
           str = str.replace(/Ñ(\s|$)/g, 'я$1');
-          // Ñ перед согласными обычно означает 'ф'  
+          // Ñ перед согласными обычно означает 'ф'
           str = str.replace(/Ñ([бвгджзклмнпрстфхцчшщ])/gi, 'ф$1');
           // Ñ в начале или середине слова может быть 'с', 'т', 'р', 'у'
           // Пока оставим как есть или заменим на наиболее вероятное
@@ -87,12 +86,15 @@ export class EncodingFixer {
 
         let result = text;
         let changed = false;
-        
+
         // Сначала заменяем точные фразы
         for (const [wrong, correct] of Object.entries(preciseReplacements)) {
           if (result.includes(wrong)) {
             const before = result;
-            result = result.replace(new RegExp(wrong.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), correct);
+            result = result.replace(
+              new RegExp(wrong.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+              correct,
+            );
             if (result !== before) {
               changed = true;
               console.log(`🎯 Precise replacement: "${wrong}" -> "${correct}"`);
@@ -106,13 +108,16 @@ export class EncodingFixer {
           for (const [wrong, correct] of Object.entries(symbolMap)) {
             if (result.includes(wrong)) {
               const before = result;
-              result = result.replace(new RegExp(wrong.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), correct);
+              result = result.replace(
+                new RegExp(wrong.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+                correct,
+              );
               if (result !== before) {
                 changed = true;
               }
             }
           }
-          
+
           // Затем специальная обработка символа Ñ
           if (result.includes('Ñ')) {
             const before = result;
@@ -122,14 +127,14 @@ export class EncodingFixer {
             }
           }
         }
-        
+
         if (changed) {
           console.log(`🔧 Fixed encoding via manual replacement: "${text}" -> "${result}"`);
         }
-        
+
         return result;
       }
-      
+
       return text;
     } catch (error) {
       console.warn('⚠️ Failed to fix encoding:', error.message);
@@ -141,7 +146,7 @@ export class EncodingFixer {
    * Исправляет кодировку во всех строковых полях объекта
    */
   public static fixEncodingInData<T = any>(data: T[]): T[] {
-    return data.map(item => {
+    return data.map((item) => {
       if (typeof item === 'object' && item !== null) {
         const fixedItem: any = {};
         for (const [key, value] of Object.entries(item)) {
@@ -165,7 +170,7 @@ export class EncodingFixer {
       'ÐÐ¼ÑÐ¸Ð±Ð¸Ñ 96077Ð EXCLUSIVE',
       'ÐÑÑÑÑÐ°Ð½ G-SHOCK GA-100',
       'ÐÐ¾Ð¼Ð°Ð½Ð´Ð¸ÑÑÐºÐ¸Ðµ 921892',
-      'Normal text without encoding issues'
+      'Normal text without encoding issues',
     ];
 
     console.log('🧪 Testing encoding fix...\n');
@@ -173,10 +178,10 @@ export class EncodingFixer {
     testStrings.forEach((str, index) => {
       console.log(`Test ${index + 1}:`);
       console.log(`  Original: "${str}"`);
-      
+
       const fixed = EncodingFixer.fixRussianEncoding(str);
       console.log(`  Fixed:    "${fixed}"`);
-      
+
       const changed = str !== fixed;
       console.log(`  Changed:  ${changed ? '✅ Yes' : '❌ No'}`);
       console.log('');
@@ -184,4 +189,4 @@ export class EncodingFixer {
 
     console.log('✅ Encoding fix test completed!');
   }
-} 
+}

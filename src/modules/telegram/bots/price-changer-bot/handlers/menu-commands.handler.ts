@@ -1,124 +1,113 @@
-import { ITelegramKeyboard, TTelegrafBot } from '../../../domain.telegram';
-import { YandexMarketService } from '../../../../../database/mongo/services/yandex-market.service';
-import { TelegramUserService } from '../../shared/services/user-subscription.service';
+import { Injectable } from '@nestjs/common';
+import { Context } from 'telegraf';
+
+import { AppConfigService } from '../../../../../config/app-config.service';
+import { UserAccessService } from '../../../../../database/services/user-access.service';
+import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { TTelegrafBot } from '../../../domain.telegram';
+import { htmlOptions } from '../../../formatting/telegram-format';
+import { helpText } from '../help.text';
+import { MENU } from '../menu.constants';
+import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { profileText } from '../profile.text';
+import { settingsText } from '../settings.text';
+
+import { AdminUsersHandler } from './admin-users.handler';
+import { MENU_TO_REPORT, ReportsHandler } from './reports.handler';
+import { ScheduleHandler } from './schedule.handler';
 import { SharedCommandsHandler } from './shared-commands.handler';
 
+@Injectable()
 export class MenuCommandsHandler {
-  private sharedHandlers: SharedCommandsHandler;
-
   constructor(
-    private bot: TTelegrafBot,
-    private keyboard: ITelegramKeyboard,
-    private userService: TelegramUserService,
-  ) {
-    this.sharedHandlers = new SharedCommandsHandler(keyboard);
+    private keyboard: PriceChangerKeyboard,
+    private yandexMarketService: YandexMarketService,
+    private sharedCommandsHandler: SharedCommandsHandler,
+    private adminUsers: AdminUsersHandler,
+    private reportsHandler: ReportsHandler,
+    private scheduleHandler: ScheduleHandler,
+    private accessService: UserAccessService,
+    private config: AppConfigService,
+  ) {}
+
+  public register(bot: TTelegrafBot) {
+    // Подписи — из menu.constants, единственного источника (TASK-014).
+    bot.hears(MENU.MAIN, (ctx) => this.showMainMenu(ctx));
+    // Четыре отчёта. hears объявлены здесь, потому что здесь же живёт весь
+    // роутинг reply-кнопок, а инвариант menu-labels требует пару «метка ↔ hears»
+    // в одном файле. Сама работа — в ReportsHandler.
+    bot.hears(MENU.SHIPPED_TODAY, (ctx) =>
+      this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.SHIPPED_TODAY]),
+    );
+    bot.hears(MENU.REDEEMED, (ctx) =>
+      this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.REDEEMED]),
+    );
+    bot.hears(MENU.RETURNING, (ctx) =>
+      this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.RETURNING]),
+    );
+    bot.hears(MENU.IN_TRANSIT, (ctx) =>
+      this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.IN_TRANSIT]),
+    );
+    bot.hears(MENU.PROFIT, (ctx) => this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.PROFIT]));
+    bot.hears(MENU.SCHEDULE, (ctx) => this.scheduleHandler.showMenu(ctx));
+    bot.hears(MENU.SETTINGS, (ctx) => this.showApiSettings(ctx));
+    bot.hears(MENU.PROFILE, (ctx) => this.showProfile(ctx));
+    // Раздел администратора. Кнопки нет в общей раскладке, но проверка прав
+    // всё равно внутри обработчика: полагаться на то, что нарисовано на
+    // экране, нельзя — callback можно послать и вручную.
+    bot.hears(MENU.USERS, async (ctx) => {
+      if (!this.adminUsers.isAdmin(ctx.from.id)) return;
+      await this.adminUsers.sendList(ctx);
+    });
+    bot.hears(MENU.HELP, async (ctx) => await ctx.reply(helpText(), htmlOptions()));
   }
 
-  public setupHandlers() {
-    console.log('Setting up menu commands handlers...');
-
-    // Настройки
-    this.bot.hears('⚙️ Настройки', async (ctx) => {
-      const inlineKeyboard = await this.keyboard.createInlineButtons([
-        { text: '🔧 Настройки API', callback_data: 'settings_api' },
-        { text: '💳 Подписка', callback_data: 'settings_subscription' },
-      ]);
-
-      await ctx.reply('⚙️ Выберите настройку:', inlineKeyboard);
-    });
-
-    // Установить коэффициент цены
-    this.bot.hears('💰 Установить коэффициент цены', async (ctx) => {
-      await this.sharedHandlers.handlePriceCoefficientCommand(ctx);
-    });
-
-    // Обработчики готовых значений коэффициентов (кнопки)
-    this.bot.hears(/^x(0\.\d+|[12]\.\d+)/, async (ctx) => {
-      await this.handleCoefficientInput(ctx, ctx.match[0]);
-    });
-
-    // Обработчик числового ввода коэффициента
-    this.bot.hears(/^(\d*\.?\d+)$/, async (ctx) => {
-      // Проверяем, что это похоже на коэффициент (число от 0.1 до 10)
-      const value = parseFloat(ctx.message.text);
-      if (value >= 0.1 && value <= 10) {
-        await this.handleCoefficientInput(ctx, ctx.message.text);
-      }
-    });
-
-    // Загрузить прайс-лист
-    this.bot.hears('📄 Загрузить прайс-лист', async (ctx) => {
-      await this.sharedHandlers.handleUploadPriceListCommand(ctx);
-    });
-
-    // Помощь
-    this.bot.hears('❓ Помощь', async (ctx) => {
-      const helpMessage = `❓ Справка по боту
-
-      🎯 Основные функции:
-      • Изменение цен на товары в Яндекс.Маркете
-      • Загрузка прайс-листов
-      • Массовое обновление коэффициентов
-      • Статистика продаж
-
-      🔧 Настройка:
-      1. Добавьте API-ключ от Яндекс.Маркета
-      2. Укажите ID кампании и бизнеса
-      3. Настройте коэффициенты
-      4. Загрузите прайс-лист
-
-      💬 Поддержка: @Vitality45`;
-
-      await ctx.reply(helpMessage);
-    });
-
-    // Профиль
-    this.bot.hears('👤 Профиль', async (ctx) => {
-      const user = await this.userService.handleUser(ctx.from);
-      const subscription = await this.userService.checkUserSubscription(
-        ctx.from,
-      );
-
-      const profileMessage = `👤 Ваш профиль
-
-      👨‍💼 Пользователь: ${ctx.from.first_name} ${ctx.from.last_name || ''}
-      🆔 ID: ${ctx.from.id}
-      📧 Username: @${ctx.from.username || 'не указан'}
-
-      💳 Подписка: ${subscription.hasActiveSubscription ? '✅ Активна' : '❌ Неактивна'}
-      ${subscription.subscription ? `📅 До: ${new Date(subscription.subscription.expires_at).toLocaleDateString('ru-RU')}` : ''}
-
-      📊 Статистика:
-      • Регистрация: ${new Date(user.created_at).toLocaleDateString('ru-RU')}
-      • Последняя активность: сегодня`;
-
-      const keyboard = await this.keyboard.createInlineButtons([
-        {
-          text: '💳 Управление подпиской',
-          callback_data: 'manage_subscription',
-        },
-        { text: '🔧 Настройки профиля', callback_data: 'profile_settings' },
-      ]);
-
-      await ctx.reply(profileMessage, keyboard);
-    });
-
-    // Главное меню
-    this.bot.hears('🏠 Главное меню', async (ctx) => {
-      const keyboard = await this.keyboard.createKeyboard([
-        ['📊 Статистика', '⚙️ Настройки'],
-        ['💰 Установить коэффициент цены'],
-        ['📄 Загрузить прайс-лист'],
-        ['❓ Помощь', '👤 Профиль'],
-      ]);
-      await ctx.reply('🏠 Главное меню:', keyboard);
-    });
+  private async showMainMenu(ctx: Context) {
+    // isAdmin передаём обязательно: без него раскладка собирается без ряда
+    // «👥 Пользователи», и администратор терял кнопку, просто нажав «Главное
+    // меню» — вернуть её удавалось только через /start.
+    const keyboard = await this.keyboard.createMenuKeyboard(this.config.isAdmin(ctx.from.id));
+    // await обязателен: без него ошибка отправки теряется мимо bot.catch, и
+    // кнопка «Главное меню» молча не срабатывает.
+    await ctx.reply(MENU.MAIN, keyboard);
   }
 
-  /**
-   * Обработка ввода коэффициента (кнопки или текст)
-   */
-  private async handleCoefficientInput(ctx: any, input: string): Promise<void> {
-    await this.sharedHandlers.handleCoefficientInput(ctx, input);
+  private async showApiSettings(ctx: Context) {
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    await ctx.reply(settingsText(store), htmlOptions());
+  }
+
+  private async showProfile(ctx: Context) {
+    // Текст — из profile.text.ts, общий с командой /profile. Пока их было два,
+    // они разошлись: кнопка показывала три поля, команда — шесть.
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    const access = await this.accessService.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
+
+    await ctx.reply(
+      profileText({
+        firstName: ctx.from.first_name,
+        lastName: ctx.from.last_name,
+        telegramUserId: ctx.from.id,
+        username: ctx.from.username,
+        accessStatus: access?.status,
+        storeName: store?.name,
+        configured: !!(store?.campaign_id && store?.business_id && store?.token),
+        registeredAt: access?.createdAt ? new Date(access.createdAt) : undefined,
+      }),
+      htmlOptions(),
+    );
+  }
+
+  /** @deprecated Кнопка «Изменить цены» снята (TASK-009). Не вызывается. */
+  private async changePrices(ctx: Context) {
+    await this.sharedCommandsHandler.handleUploadPriceListCommand(ctx);
+  }
+
+  /** @deprecated Кнопка «Обновить коэффициент» снята (TASK-009). Не вызывается. */
+  private async updateCoefficient(ctx: Context) {
+    await this.sharedCommandsHandler.handlePriceCoefficientCommand(ctx);
   }
 }

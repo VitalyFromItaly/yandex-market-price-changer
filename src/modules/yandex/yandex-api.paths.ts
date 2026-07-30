@@ -1,0 +1,76 @@
+/**
+ * Пути Partner API — ЕДИНСТВЕННОЕ место, где они собираются.
+ *
+ * Версия в пути обязательна: неверсионированные запросы Яндекс отключает.
+ * При этом версия относится к КОНКРЕТНОМУ МЕТОДУ — у разных методов актуальные
+ * версии разные, поэтому «взять последнюю по умолчанию» здесь невозможно в
+ * принципе. Каждая версия проставлена явно и живёт рядом со своим путём, чтобы
+ * при обновлении одного метода не поехали остальные.
+ *
+ * Документация:
+ * https://yandex.ru/dev/market/partner-api/doc/ru/reference/orders/getOrders
+ * https://yandex.ru/dev/market/partner-api/doc/ru/reference/returns/getReturns
+ */
+
+export const API_VERSIONS = {
+  orders: 'v2',
+  returns: 'v2',
+  campaigns: 'v2',
+  /** История заказов глубже 30 дней — только через businesses и только v1. */
+  businessOrders: 'v1',
+  /** Каталог товаров продавца. Проверено на боевом аккаунте: v2 отвечает 200. */
+  offerMappings: 'v2',
+  /** Остатки. Проверено: v2 -> 200, v1 -> 404 Resource not found. */
+  stocks: 'v2',
+} as const;
+
+export function campaignsPath(): string {
+  return `/${API_VERSIONS.campaigns}/campaigns`;
+}
+
+export function ordersPath(campaignId: string): string {
+  return `/${API_VERSIONS.orders}/campaigns/${encodeURIComponent(campaignId)}/orders`;
+}
+
+export function returnsPath(campaignId: string): string {
+  return `/${API_VERSIONS.returns}/campaigns/${encodeURIComponent(campaignId)}/returns`;
+}
+
+export function businessOrdersPath(businessId: string): string {
+  return `/${API_VERSIONS.businessOrders}/businesses/${encodeURIComponent(businessId)}/orders`;
+}
+
+/** Каталог товаров продавца (POST). Отдаёт offerId — это и есть артикул. */
+export function offerMappingsPath(businessId: string): string {
+  return `/${API_VERSIONS.offerMappings}/businesses/${encodeURIComponent(businessId)}/offer-mappings`;
+}
+
+/**
+ * Остатки. Один и тот же путь: POST — прочитать, PUT — записать.
+ * PUT — ЕДИНСТВЕННАЯ операция записи во всём приложении (бот read-only,
+ * см. TASK-036…043). Всё остальное только читает.
+ */
+export function stocksPath(campaignId: string): string {
+  return `/${API_VERSIONS.stocks}/campaigns/${encodeURIComponent(campaignId)}/offers/stocks`;
+}
+
+/**
+ * Лимиты страницы у методов разные, и превышение — это 400, а не «молча
+ * обрежем». Значения из документации, см. reference.partner_api в tasks.json.
+ */
+export const PAGE_LIMITS = {
+  orders: { default: 50, max: 50 },
+  returns: { default: 50, max: 100 },
+  /** Каталог: 200 на страницу. Каталог на 5.6k товаров — это 28 запросов. */
+  offerMappings: { default: 200, max: 200 },
+} as const;
+
+/**
+ * Размер батча при записи остатков. Яндекс принимает до 2000 позиций за
+ * запрос, но берём с запасом: при отказе Яндекс не сообщает, какая именно
+ * позиция виновата, — чем меньше батч, тем точнее локализуется проблема.
+ */
+export const STOCKS_BATCH_SIZE = 500;
+
+/** Окно истории getOrders. Диапазон шире — запрос отклоняется Яндексом. */
+export const HISTORY_WINDOW_DAYS = 30;

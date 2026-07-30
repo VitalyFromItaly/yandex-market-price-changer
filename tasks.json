@@ -1,0 +1,197 @@
+{
+  "meta": {
+    "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
+    "prd_source": "аудит ветки nest.js + требования заказчика от 2026-07-28 (в т.ч. замена системы подписок на approval-гейт администратора)",
+    "prd_version": "1.2",
+    "generated_at": "2026-07-28",
+    "total_tasks": 54,
+    "categories": [
+      "infrastructure",
+      "functional",
+      "ui",
+      "integration",
+      "refactor",
+      "deprecation",
+      "unit",
+      "e2e"
+    ],
+    "milestones": {
+      "M0": "Стабилизация — блокеры сборки и запуска, чистка осиротевшего Express-стека, зелёный tsc",
+      "M1": "Deprecation изменения цен — код помечаем @deprecated и не удаляем, функционал убираем из UI",
+      "M2": "Идиоматичный NestJS — ConfigModule с Joi, BotRegistry на DI вместо ручного new-графа, замена глотающего TryCatch",
+      "M3": "Онбординг — пошаговый визард трёх кредов (по одному за шаг), документ создаётся только целиком, гейт на неготовых",
+      "M4": "Yandex read-only слой — версионированный клиент с Api-Key, orders v2, returns v2, маппинг статусов",
+      "M5": "Отчёты — уехало клиенту / выкуплено / едет обратно / выгрузка в пути (.xlsx) + кнопки",
+      "M6": "Планировщик — ежедневная рассылка по MSK, настройка времени, включение и выключение",
+      "M7": "Тесты — юниты на денежную арифметику и маппинг статусов, e2e онбординга",
+      "M8": "Обновление остатков через загрузку файла — единственная write-операция, возвращаемая после перехода в read-only",
+      "M9": "Прибыль — закупочные цены из прайса, настраиваемые комиссия и налог, отчёт «чистая» по выкупленным заказам"
+    },
+    "active_tasks": 0,
+    "archived_tasks": 54,
+    "archive_file": "tasks.archive.json"
+  },
+  "agent_instructions": {
+    "before_start": [
+      "Прочитай этот файл (tasks.json) и git log --oneline -20",
+      "Прочитай progress.md, чтобы понять контекст последних сессий (журнал ротируется: старые записи в progress.archive.md — их читать НЕ нужно)",
+      "Выбери ОДНУ задачу со статусом pending и наивысшим приоритетом (critical > high > medium > low)",
+      "Проверь, что ВСЕ задачи из dependencies имеют статус done. Если нет — выбери другую задачу",
+      "При равном приоритете предпочитай задачу с меньшим id (раньше по milestone)",
+      "Выполненные задачи перенесены в tasks.archive.json (история). Если задача из dependencies ОТСУТСТВУЕТ в tasks.json — она уже выполнена (в архиве) и считается done."
+    ],
+    "during_work": [
+      "Работай ТОЛЬКО над выбранной задачей",
+      "Стек: NestJS 11 + Mongoose 8 (@nestjs/mongoose) + Bull/Redis + telegraf 4.16 + TypeScript 5.7. Тесты — vitest",
+      "Все запросы к данным строго скоупь по telegramUserId — это мультитенантный сервис, кред одного продавца не должен утечь другому",
+      "Секреты и настройки — ТОЛЬКО через ConfigService, никакого прямого process.env в новом коде",
+      "Пути к Partner API ВСЕГДА с версией (v1/v2) — неверсионированные запросы Яндекс скоро отключит. Заголовок авторизации — Api-Key, не Bearer",
+      "Денежные поля: itemsTotal и deliveryTotal. НЕ использовать deprecated total, subsidyTotal, totalWithSubsidy, buyerItemsTotal, buyerTotal. Для возвратов — amount, не refundAmount",
+      "Код изменения цен помечен @deprecated — не развивать его и не звать из нового кода, но и не удалять",
+      "Ошибки не глушить: в очередях пробрасывать, чтобы Bull сделал retry; в боте ловить через bot.catch с Nest Logger",
+      "Порядок регистрации хендлеров telegraf значим — catch-all всегда регистрируется ПОСЛЕДНИМ",
+      "Делай коммиты после каждого логического изменения, с осмысленным сообщением",
+      "Не трогай код, не связанный с текущей задачей"
+    ],
+    "before_finish": [
+      "Выполни ВСЕ test_steps из задачи end-to-end (как пользователь, а не только unit-тесты)",
+      "Убедись, что npx tsc --noEmit проходит без ошибок",
+      "Меняй status на done ТОЛЬКО после успешного прохождения всех test_steps",
+      "Напиши summary проделанной работы в progress.md (дата, id задачи, что сделано, как проверено). Если progress.md разросся (>~500 строк), перенеси записи старше двух недель в progress.archive.md",
+      "ЗАПРЕЩЕНО удалять или редактировать формулировки задач — разрешено менять ТОЛЬКО поле status",
+      "Если задача оказалась слишком крупной — НЕ удаляй её, добавь заметку в progress.md и оставь pending",
+      "Переводя задачу в done, перенеси её из tasks.json в tasks.archive.json (в конец массива tasks). Формулировку задачи не меняй",
+      "CONTINUOUS LOOP: после archive + progress + коммитов СРАЗУ выбери следующую ready-задачу по before_start. НЕ спрашивай «дальше?», «можно продолжать?» и permission между задачами",
+      "Останавливай цикл ТОЛЬКО если: задача blocked; нужен явный consent на опасное действие (drop базы, прод); нет секретов/инфры (нет боевого Api-Key Яндекса, нет ngrok); acceptance criteria противоречивы. Кратко сообщи причину остановки и жди пользователя."
+    ],
+    "status_values": [
+      "pending",
+      "in_progress",
+      "done",
+      "blocked",
+      "obsolete"
+    ],
+    "archive_policy": "tasks.json содержит только невыполненные задачи (pending/in_progress/blocked). Выполненные (done) хранятся в tasks.archive.json для истории и НЕ возвращаются обратно. Отсутствие id в tasks.json означает, что задача выполнена (см. архив).",
+    "continuous_loop": "После закрытия задачи немедленно бери следующую ready (deps done, max priority, tie-break меньший id). Без спроса. Стоп только на blocked/consent/infra/ambiguity.",
+    "intake_policy": "Любую новую работу, о которой пользователь просит в течение сессии, СНАЧАЛА оформляй задачей в бэклоге (tasks.json), а не делай ad-hoc в обход ledger: присвой следующий свободный id, заполни milestone/category/priority/description/acceptance_criteria/test_steps/dependencies со статусом pending, при необходимости обнови meta.total_tasks/active_tasks — и только потом выполняй через обычный flow (before_start → работа → before_finish). Исключение — тривиальные правки в рамках уже выбранной задачи."
+  },
+  "reference": {
+    "partner_api": {
+      "base_url": "https://api.partner.market.yandex.ru/",
+      "versioning": "Версия в пути URL ОБЯЗАТЕЛЬНА. Неверсионированные запросы Яндекс скоро отключит. Версия относится к конкретному методу — разные методы могут иметь разные актуальные версии.",
+      "auth_header": "Api-Key",
+      "recommended_scopes": [
+        "inventory-and-order-processing"
+      ],
+      "limits": {
+        "GET v2/campaigns/{campaignId}/orders": "10 000 запросов/час, пагинация pageToken + limit (1–50), page/pageSize deprecated",
+        "GET v2/campaigns/{campaignId}/returns": "5 000 запросов/час, пагинация pageToken + limit (default 50, max 100)"
+      },
+      "history_window": "getOrders не отдаёт данные старше 30 дней, каждый диапазон дат ограничен 30 днями. Для истории — POST v1/businesses/{businessId}/orders (поэтому business_id обязателен).",
+      "date_filters": {
+        "fromDate/toDate": "DD-MM-YYYY — дата СОЗДАНИЯ заказа",
+        "updatedAtFrom/updatedAtTo": "ISO 8601 с offset — любое ОБНОВЛЕНИЕ",
+        "supplierShipmentDateFrom/supplierShipmentDateTo": "DD-MM-YYYY — дата ОТГРУЗКИ в службу доставки"
+      },
+      "money_fields": {
+        "use": [
+          "itemsTotal",
+          "deliveryTotal",
+          "amount (returns)",
+          "partnerCompensationAmount (returns)"
+        ],
+        "deprecated": [
+          "total",
+          "subsidyTotal",
+          "totalWithSubsidy",
+          "buyerItemsTotal",
+          "buyerTotal",
+          "priceBeforeDiscount",
+          "refundAmount",
+          "partnerCompensation"
+        ]
+      },
+      "order_statuses": [
+        "PLACING",
+        "RESERVED",
+        "UNPAID",
+        "PENDING",
+        "PROCESSING",
+        "DELIVERY",
+        "PICKUP",
+        "DELIVERED",
+        "CANCELLED",
+        "PARTIALLY_RETURNED",
+        "RETURNED",
+        "UNKNOWN"
+      ],
+      "gotcha": "В API существуют ОБЕ опечатки подстатуса: DELIVERY_SERIVCE_UNDELIVERED и DELIVERY_SERVICE_UNDELIVERED. Матчить оба.",
+      "docs": [
+        "https://yandex.ru/dev/market/partner-api/doc/ru/concepts/method-call",
+        "https://yandex.ru/dev/market/partner-api/doc/ru/reference/orders/getOrders",
+        "https://yandex.ru/dev/market/partner-api/doc/ru/reference/returns/getReturns",
+        "https://yandex.ru/dev/market/partner-api/doc/ru/changelog/main"
+      ]
+    },
+    "report_status_map": {
+      "shipped_today": "status=DELIVERY, фильтр supplierShipmentDateFrom/To = сегодня",
+      "redeemed": "status=DELIVERED, фильтр updatedAtFrom/To = сегодня",
+      "returning": "подстатусы COURIER_RETURNS_ORDER, COURIER_RETURNED_ORDER, DELIVERY_SERIVCE_UNDELIVERED, DELIVERY_SERVICE_UNDELIVERED, FULL_NOT_RANSOM + GET v2/campaigns/{id}/returns с shipmentStatuses=IN_TRANSIT",
+      "in_transit_export": "status=PROCESSING + DELIVERY + PICKUP, без фильтра даты, выгрузка .xlsx"
+    },
+    "decisions": {
+      "creds_required": "Все три: token, campaign_id, business_id. Спрашивать по одному за шаг. Без всех трёх дальше не пускать.",
+      "timezone": "Всегда Europe/Moscow",
+      "report_g_format": "Файл .xlsx документом в чат",
+      "amounts_shown": "Оба числа: itemsTotal (товары) и itemsTotal + deliveryTotal (с доставкой)",
+      "keep_as_is": "Сгенерированный OpenAPI-клиент src/modules/yandex/api/** и CqrsModule оставляем — удалять не решено",
+      "token_scope": "ПРИМЕНЕНО 2026-07-29: инструкция онбординга требует доступ «Обработка заказов и учёт товаров» (inventory-and-order-processing, БЕЗ :read-only) — с read-only обновление остатков вернёт 403.",
+      "task_035_scope": "Задачу не дробим — делаем целиком, когда придёт шаблон Excel (решение заказчика 2026-07-29)."
+    },
+    "price_template": {
+      "fixture": "__tests__/fixtures/price-template.xlsx (Прайс 29.07.26.xlsx)",
+      "sheet": "TDSheet",
+      "header_row": 7,
+      "first_data_row": 9,
+      "columns": {
+        "name": "B (индекс 1)",
+        "price": "E (индекс 4)",
+        "quantity": "G (индекс 6) — остаток, который проставляем",
+        "order": "I (индекс 8) — не используется"
+      },
+      "group_rows": "Строка-заголовок категории: колонка A заполнена, колонка B пуста (18 таких: «ORIENT механические», «CASIO COLLECTION» и т.д.). Пропускать.",
+      "rows_total": 4349,
+      "sku_rule": "Артикул = наименование БЕЗ бренда в начале, хвост сохраняется дословно (суффиксы EXCLUSIVE, Космодайвер, с АПЗ, К-35, Limited Edition остаются). Список брендов для отсечения (порядок важен, двухсловные первыми): Daniel Klein, ORIENT STAR, ORIENT, CASIO, SEIKO, Командирские, Амфибия, Восток, Партнер.",
+      "decisions": {
+        "junk_rows": "«Пакет CASIO», «Пакет CASIO ср», «Стенд Casio G-Shock-3» — пропускать и перечислять в отчёте как пропущенные (решение заказчика 2026-07-29).",
+        "quantity_column": "Колонка «Количество» — это остаток для записи в Яндекс.",
+        "confirmed_by_owner_2026_07_29": {
+          "EXCLUSIVE": "оставлять — подтверждено каталогом («71009А EXCLUSIVE»)",
+          "Космодайвер": "оставлять — 7/7 найдено",
+          "с АПЗ": "оставлять — подтверждено каталогом («921306 с АПЗ»)",
+          "К-35": "оставлять номер + К-35 — подтверждено каталогом («350503 К-35»). Коллизия из 11 товаров устранена",
+          "Limited Edition": "оставлять; в каталоге заведён С брендом ORIENT — нужен запасной вариант «имя целиком»",
+          "Пакет/Стенд": "пропускать — в каталоге отсутствуют, подтверждено",
+          "кириллица": "не трогать, слать как в прайсе — подтверждено"
+        },
+        "not_in_catalog": "Позиции прайса, которых нет в каталоге Яндекса, ПРОПУСКАТЬ без ошибки (решение заказчика 2026-07-29). В отчёте показывать количество и список — это новинки, которые стоит завести, но загрузку они ронять не должны."
+      },
+      "matching_strategy": [
+        "1. артикул без бренда — покрывает 3859 позиций",
+        "2. наименование как в прайсе целиком — 1 позиция (ORIENT ... Limited Edition, в каталоге заведён С брендом)",
+        "3. «Наручные часы » + наименование целиком — 246 позиций (так заведена часть Daniel Klein)",
+        "Итог: 4106 из 4349 (94.4%). Остальные 243 в каталоге отсутствуют."
+      ],
+      "verified_against_catalog": {
+        "date": "2026-07-29",
+        "shop": "ALL BEST WATCH, campaign 134874104, business 182608006",
+        "catalog_size": 5599,
+        "coverage": "4106/4349 (94.4%)",
+        "not_found": 243,
+        "catalog_is_not_uniform": "5312 артикулов — голый код, 285 — «Наручные часы Daniel Klein X», 2 — «ORIENT ... Limited Edition». Одного правила недостаточно, нужен перебор кандидатов.",
+        "homoglyphs_not_an_issue": "Проверено: нормализация кириллических двойников (А/В/К) не добавила НИ ОДНОГО совпадения. Артикулы в каталоге и прайсе используют одинаковые символы, конвертировать ничего не нужно."
+      }
+    }
+  },
+  "tasks": []
+}
