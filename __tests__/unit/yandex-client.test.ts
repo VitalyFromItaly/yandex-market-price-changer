@@ -109,6 +109,34 @@ describe('YandexClientFactory', () => {
     businessId: `2000${n}`,
   });
 
+  it('массивы уходят повторяющимся параметром, а НЕ status[]=', async () => {
+    // Главный тест этого файла по цене ошибки. Axios по умолчанию сериализует
+    // массив как `status[]=DELIVERED`, а Partner API такой параметр молча
+    // игнорирует и отдаёт заказы во ВСЕХ статусах. Проверено на боевом магазине:
+    // с квадратными скобками за июль приходило 946 заказов вместо 389, и первая
+    // страница не содержала ни одного нужного. Отчёты не врали лишь потому, что
+    // matchesReport фильтрует ответ повторно у нас.
+    const factory = await buildFactory();
+    factory.forTenant(creds(1));
+
+    const config = (
+      axios.create as unknown as { mock: { calls: Array<[Record<string, unknown>]> } }
+    ).mock.calls[0][0];
+
+    expect(config.paramsSerializer).toEqual({ indexes: null });
+
+    // И то же самое поведением, а не только формой настройки: строка запроса
+    // должна получиться без скобок.
+    const uri = axios.getUri({
+      url: '/orders',
+      params: { status: ['DELIVERED', 'CANCELLED'] },
+      paramsSerializer: config.paramsSerializer as never,
+    });
+
+    expect(uri).toBe('/orders?status=DELIVERED&status=CANCELLED');
+    expect(uri).not.toContain('%5B');
+  });
+
   it('отдаёт клиент на КАЖДЫЙ вызов, а не общий экземпляр', async () => {
     // Общий клиент с изменяемым заголовком означал бы, что при двух
     // параллельных отчётах запрос одного продавца уйдёт с токеном другого.

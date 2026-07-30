@@ -4,7 +4,7 @@
     "prd_source": "аудит ветки nest.js + требования заказчика от 2026-07-28 (в т.ч. замена системы подписок на approval-гейт администратора)",
     "prd_version": "1.2",
     "generated_at": "2026-07-28",
-    "total_tasks": 53,
+    "total_tasks": 54,
     "categories": [
       "infrastructure",
       "functional",
@@ -28,7 +28,7 @@
       "M9": "Прибыль — закупочные цены из прайса, настраиваемые комиссия и налог, отчёт «чистая» по выкупленным заказам"
     },
     "active_tasks": 0,
-    "archived_tasks": 53,
+    "archived_tasks": 54,
     "archive_file": "tasks.archive.json"
   },
   "agent_instructions": {

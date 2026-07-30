@@ -142,6 +142,15 @@ export class YandexApiClient {
     this.http = axios.create({
       baseURL: baseUrl,
       timeout: options.timeoutMs ?? 30_000,
+      // Массивы — повторяющимся параметром: `status=DELIVERED&status=CANCELLED`.
+      // Это не косметика. Axios по умолчанию сериализует массив как
+      // `status[]=DELIVERED`, и Partner API такой параметр молча ИГНОРИРУЕТ —
+      // возвращая заказы во всех статусах. Отчёты этого не показывали только
+      // потому, что `matchesReport` фильтрует ответ повторно у нас: за июль
+      // приходило 946 заказов вместо 389, то есть 19 страниц вместо 8. Первая
+      // страница при этом могла не содержать НИ ОДНОГО нужного заказа, так что
+      // любой однострочный путь (getOrders без обхода) отдал бы пустой отчёт.
+      paramsSerializer: { indexes: null },
       headers: {
         // Именно Api-Key. Authorization: Bearer, который ставил прежний
         // HttpClient и генерированный OpenAPI-клиент, Partner API не понимает.
