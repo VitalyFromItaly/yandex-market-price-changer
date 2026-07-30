@@ -88,7 +88,26 @@ npm run tunnel        # vk-tunnel на :3004 (или npm run tunnel:ngrok)
 
 **С значением по умолчанию:** `PORT`, `NODE_ENV`, `REDIS_PORT`, `YANDEX_MARKET_BASE_URL`,
 `TELEGRAM_API_URL`, `TELEGRAM_UPDATE_MODE`. **Необязательные:** `REDIS_PASSWORD` (пусто — без
-авторизации).
+авторизации), `ADMIN_API_TOKEN` (пусто — журнал действий закрыт для всех).
+
+## 📜 Журнал действий
+
+Каждое действие пользователя пишется в консоль и в коллекцию `actionlogs`: кто (`telegramUserId`
+и `@username`), что (команда, кнопка, файл), чем закончилось и сколько заняло. Токен Партнёрского
+API и идентификаторы магазина из текста вырезаются перед записью — во время регистрации продавец
+присылает токен обычным сообщением. Записи удаляются сами через 90 дней (TTL-индекс).
+
+Чтение — только администратором:
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+     -H "X-Telegram-User-Id: 309809755" \
+     'https://<хост>/api/logs?telegramUserId=123456789&limit=50'
+```
+
+Параметры: `telegramUserId`, `kind` (`command|menu|callback|document|text|other`), `since`,
+`until` (даты ISO), `limit` (максимум 500), `skip`. В ответе — `total` по тому же фильтру.
+Незаданный `ADMIN_API_TOKEN` означает «закрыто для всех», а не «открыто без пароля».
 
 > **`TELEGRAM_UPDATE_MODE`: `webhook` (по умолчанию) или `polling`.** Выбор диктуется не удобством, а
 > сетевой достижимостью. Вебхук требует, чтобы серверы Telegram могли достучаться до нашего адреса; с

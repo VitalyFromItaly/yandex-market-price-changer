@@ -4,12 +4,14 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AppConfigService } from '../config/app-config.service';
 
 import { DatabaseService } from './database.service';
+import { ActionLog, ActionLogSchema } from './schemas/action-log.schema';
 import { Bot, BotSchema } from './schemas/bot.schema';
 import { PurchasePrice, PurchasePriceSchema } from './schemas/purchase-price.schema';
 import { ReportSchedule, ReportScheduleSchema } from './schemas/report-schedule.schema';
 import { UserAccess, UserAccessSchema } from './schemas/user-access.schema';
 import { User, UserSchema } from './schemas/user.schema';
 import { YandexMarket, YandexMarketSchema } from './schemas/yandex-market.schema';
+import { ActionLogService } from './services/action-log.service';
 import { PurchasePriceService } from './services/purchase-price.service';
 import { ReportScheduleService } from './services/report-schedule.service';
 import { UserAccessService } from './services/user-access.service';
@@ -39,6 +41,7 @@ import { YandexMarketService } from './services/yandex-market.service';
       { name: ReportSchedule.name, schema: ReportScheduleSchema },
       { name: PurchasePrice.name, schema: PurchasePriceSchema },
       { name: YandexMarket.name, schema: YandexMarketSchema },
+      { name: ActionLog.name, schema: ActionLogSchema },
     ]),
   ],
   providers: [
@@ -47,6 +50,7 @@ import { YandexMarketService } from './services/yandex-market.service';
     ReportScheduleService,
     PurchasePriceService,
     YandexMarketService,
+    ActionLogService,
   ],
   exports: [
     DatabaseService,
@@ -55,6 +59,7 @@ import { YandexMarketService } from './services/yandex-market.service';
     ReportScheduleService,
     PurchasePriceService,
     YandexMarketService,
+    ActionLogService,
   ],
 })
 export class DatabaseModule {}

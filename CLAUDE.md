@@ -119,13 +119,18 @@ serves any number of bots.
 source of truth and `__tests__/unit/composer-order.test.ts` pins it:
 
 ```
-accessGate → start → menu → slash → adminCallbacks → adminUsers → scheduleCallbacks
-           → reportCallbacks → onboardingCallbacks → callbacks → apiSettings → stockUpload
-           → fallback
+actionLog → accessGate → start → menu → slash → adminCallbacks → adminUsers
+          → scheduleCallbacks → reportCallbacks → onboardingCallbacks → callbacks
+          → apiSettings → stockUpload → fallback
 ```
 
-- `accessGate` is a `bot.use` and must stay **first** — a gate registered after handlers guards
-  nothing, because the update never reaches it.
+- `accessGate` is a `bot.use` and must be the **first step that can refuse an update** — a gate
+  registered after handlers guards nothing, because the update never reaches it. Only steps that
+  *always* call `next()` may precede it, and `composer-order.test.ts` pins that list
+  (`NON_BLOCKING_BEFORE_GATE`) rather than pinning "accessGate is index 0".
+- `actionLog` is such a step and sits **before** the gate deliberately: the most interesting entries
+  are attempts by *blocked* users, and the gate does not call `next()`, so a logger registered after
+  it would never see them.
 - **Every `bot.action` must precede `callbacks`.** `bot.action` is `on('callback_query')` plus a
   pattern match and does **not** call `next()`, so the general handler — which switches on exact
   strings and whose `default:` branch overwrites the message — swallows anything registered after
@@ -363,7 +368,7 @@ into one line and loses commission, tax and cost.
 
 Mongoose via `@nestjs/mongoose`. `database/database.module.ts` does `MongooseModule.forRootAsync`
 (uri/dbName from `AppConfigService`) + `forFeature([Bot, User, UserAccess, ReportSchedule,
-PurchasePrice, YandexMarket])` and
+PurchasePrice, YandexMarket, ActionLog])` and
 re-exports `MongooseModule` so feature modules can `@InjectModel`. Schemas are decorator classes in
 `database/schemas/*.schema.ts` with imperative `schema.index/methods/statics` appended after
 `SchemaFactory.createForClass`.
@@ -388,6 +393,45 @@ Adding an entity means **five** registrations plus the index script: `schemas/in
 the service in `providers` **and** `exports`, `services/index.ts`, and the `MODELS` list in
 `scripts/sync-indexes.ts` — then `npm run db:sync-indexes` once (mongoose creates missing indexes at
 connect but never alters an existing one with the same key set).
+
+### Action log
+
+Every update is journalled — to the console **and** to Mongo — by `ActionLogHandler`, the first step
+of the pipeline. Console alone was not enough: container logs in CapRover die on restart and cannot
+be queried per user, while the question is always "what did *this* seller do". Mongo alone was not
+enough either: it is exactly when the database is unreachable that a log line matters.
+
+- **Console shows nothing about user actions without it.** The only per-update line used to come from
+  `LoggerInterceptor` (`Incoming Request: POST /api/telegram/webhooks/...`) — HTTP-level, no who, no
+  what. Under `TELEGRAM_UPDATE_MODE=polling` even that disappears: updates no longer arrive over HTTP.
+- **Secrets are masked before storage** (`maskSecrets` in `bots/shared/action-log.domain.ts`), and this
+  is the point of the module, not a detail: during onboarding the seller pastes the Partner API token
+  as an **ordinary message**, so an unmasked journal would be a second copy of other people's
+  credentials. Masked: opaque strings ≥20 chars, `токен:`/`token:`/`api_key:` values, and 5–15 digit
+  runs (`campaign_id`/`business_id`, which no screen shows the seller either).
+  The label regex has **no `\b`** — in JavaScript `\b` is an ASCII word boundary and does not match
+  before Cyrillic «т», so with it the Russian label the bot itself asks for went unmasked. A test pins
+  this.
+- **`describeAction` deliberately does not reuse `classifyUpdate`** from `access.domain.ts`. That one
+  answers "may this pass" (hence `/start` is its own kind); this one answers "what did the person do"
+  (where `/start` is just a command). Merging them would mean a change to access rules silently
+  reshapes the journal.
+- The handler **awaits `next()`** to record outcome and duration, rethrows the error after recording
+  it (swallowing would leave the user without a reply and `telegraf.catch` unaware), and does **not**
+  await the Mongo write — `ActionLogService.record` never throws, so a dead database degrades the
+  journal to console-only instead of turning a button press into "Произошла ошибка".
+- Retention is a **TTL index** of `ACTION_LOG_TTL_DAYS` (90). Changing the number is not enough:
+  mongoose never alters an existing index with the same key set, so it needs `npm run db:sync-indexes`.
+
+**Reading it: `GET /api/logs`**, guarded by `AdminApiGuard` on the whole `LogsController` (not on
+individual methods — the one that gets forgotten is the one left open). Two checks: `Authorization:
+Bearer <ADMIN_API_TOKEN>` compared with `timingSafeEqual`, plus an `X-Telegram-User-Id` header
+validated against `TELEGRAM_ADMIN_IDS`. The header is trivially forged and is not the protection — it
+exists so revoking an admin in one env variable closes the API too. **An unset `ADMIN_API_TOKEN`
+means closed, not open**: the guard rejects everyone, because the journal holds user ids and message
+text. Query params: `telegramUserId`, `kind`, `since`, `until`, `limit` (capped at `MAX_PAGE_SIZE`),
+`skip`; the response carries `total` from the same filter as the page (`filterOf` is one method for
+exactly that reason).
 
 ### Access control: admin approval, not subscriptions
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { PriceChangerComposer } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.composer';
 import { AccessGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/access-gate.handler';
+import { ActionLogHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/action-log.handler';
 import { AdminApprovalHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-approval.handler';
 import { ScheduleHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/schedule.handler';
 import { StartHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/start.handler';
@@ -51,6 +52,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         PriceChangerComposer,
+        { provide: ActionLogHandler, useValue: stub('actionLog', order) },
         { provide: AccessGateHandler, useValue: stub('accessGate', order) },
         { provide: AdminApprovalHandler, useValue: stub('adminCallbacks', order) },
         { provide: ScheduleHandler, useValue: stub('scheduleCallbacks', order) },
@@ -117,6 +119,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
     const order = composer.registrationOrder;
     expect(new Set(order).size).toBe(order.length);
     expect(order).toEqual([
+      'actionLog',
       'accessGate',
       'start',
       'menu',
@@ -133,11 +136,26 @@ describe('PriceChangerComposer: порядок регистрации', () => {
     ]);
   });
 
-  it('гейт доступа зарегистрирован ПЕРВЫМ', async () => {
+  it('гейт доступа — первый, кто может НЕ пропустить апдейт', async () => {
     // bot.use, поставленный после хендлеров, ничего не защищает: до него
     // апдейт просто не дойдёт — конкретный обработчик заберёт его раньше.
+    //
+    // Раньше гейт стоял буквально первым. Теперь перед ним журнал действий, и
+    // это не послабление: журнал никогда не завершает апдейт сам. Инвариант
+    // формулируется точнее — до гейта не должно быть НИЧЕГО, кроме шагов,
+    // которые всегда зовут next().
     const { composer } = await buildComposer();
-    expect(composer.registrationOrder[0]).toBe('accessGate');
+    const order = composer.registrationOrder;
+    const NON_BLOCKING_BEFORE_GATE = ['actionLog'];
+
+    expect(order.slice(0, order.indexOf('accessGate'))).toEqual(NON_BLOCKING_BEFORE_GATE);
+  });
+
+  it('журнал действий зарегистрирован ПЕРВЫМ', async () => {
+    // Самое интересное в журнале — попытки заблокированных пользователей.
+    // Запись, сделанная после гейта, их не увидит: гейт не зовёт next().
+    const { composer } = await buildComposer();
+    expect(composer.registrationOrder[0]).toBe('actionLog');
   });
 
   it('админские колбэки идут ДО общего обработчика callback_query', async () => {

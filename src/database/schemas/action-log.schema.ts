@@ -1,0 +1,92 @@
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+
+export type ActionLogDocument = ActionLog & Document;
+
+/** Сколько хранить записи. Дальше их удаляет сама Mongo по TTL-индексу. */
+export const ACTION_LOG_TTL_DAYS = 90;
+
+/**
+ * Журнал действий: одна запись на один апдейт телеграма.
+ *
+ * Зачем отдельная коллекция, а не только консоль. Логи контейнера в CapRover
+ * живут до перезапуска и не ищутся по пользователю, а вопрос всегда звучит как
+ * «что делал вот этот продавец» — то есть нужен запрос по telegramUserId за
+ * период. Консольная строка при этом тоже пишется: она нужна ровно в тот
+ * момент, когда база недоступна.
+ *
+ * Кто именно совершил действие, хранится ДВУМЯ полями. `telegramUserId` —
+ * настоящий ключ: он не меняется и по нему идёт связь с UserAccess и
+ * YandexMarket. `username` — только для чтения глазами: пользователь может
+ * его сменить или не иметь вовсе, поэтому искать по нему нельзя, а вот
+ * прочитать «кто это был» без похода в другую коллекцию — можно.
+ */
+@Schema({ timestamps: true })
+export class ActionLog {
+  @Prop({ type: String, required: true })
+  telegramUserId: string;
+
+  /** `@username` на момент действия. Может отсутствовать — это норма. */
+  @Prop({ type: String })
+  username?: string;
+
+  /** Имя и фамилия из профиля — тоже снимок на момент действия. */
+  @Prop({ type: String })
+  name?: string;
+
+  /** Числовой id бота (`ctx.botInfo.id`) — тенант. */
+  @Prop({ type: String, required: true })
+  botId: string;
+
+  /** `ctx.chat.id` — единственное, куда можно писать ответ. */
+  @Prop({ type: String })
+  chatId?: string;
+
+  /** Тип действия: command | menu | callback | document | text | other. */
+  @Prop({ type: String, required: true })
+  kind: string;
+
+  /**
+   * Что именно сделано: текст команды, подпись кнопки, callback_data, имя файла.
+   *
+   * Значение уже очищено от секретов (см. maskSecrets в action-log.domain.ts):
+   * во время регистрации пользователь присылает токен Яндекс.Маркета обычным
+   * сообщением, и хранить его здесь означало бы завести вторую копию чужих
+   * доступов в коллекции, которую заводили ради удобства.
+   */
+  @Prop({ type: String, required: true })
+  action: string;
+
+  /** Дошёл ли апдейт до конца пайплайна без исключения. */
+  @Prop({ type: String, required: true, default: 'ok' })
+  status: string;
+
+  /** Сколько заняла обработка — видно подвисания на Partner API. */
+  @Prop({ type: Number })
+  durationMs?: number;
+
+  /** Сообщение исключения, если обработка упала. */
+  @Prop({ type: String })
+  error?: string;
+
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
+export const ActionLogSchema = SchemaFactory.createForClass(ActionLog);
+
+// Основной запрос админа — «действия пользователя, свежие сверху».
+ActionLogSchema.index({ telegramUserId: 1, createdAt: -1 });
+
+/*
+ * TTL: Mongo удаляет записи сама.
+ *
+ * Индекс объявлен по возрастанию, и это же поле обслуживает сортировку общего
+ * списка по убыванию — Mongo умеет читать индекс в обратную сторону, поэтому
+ * второй индекс по createdAt не нужен.
+ *
+ * Менять expireAfterSeconds правкой этой строки недостаточно: mongoose создаёт
+ * отсутствующий индекс, но НЕ переопределяет существующий с тем же набором
+ * полей. После изменения срока нужен `npm run db:sync-indexes`.
+ */
+ActionLogSchema.index({ createdAt: 1 }, { expireAfterSeconds: ACTION_LOG_TTL_DAYS * 24 * 60 * 60 });

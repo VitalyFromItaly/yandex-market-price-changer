@@ -4,6 +4,7 @@ export * from './user-access.schema';
 export * from './report-schedule.schema';
 export * from './purchase-price.schema';
 export * from './yandex-market.schema';
+export * from './action-log.schema';
 
 export interface IYandexMarketSchema {
   telegramUserId: number;

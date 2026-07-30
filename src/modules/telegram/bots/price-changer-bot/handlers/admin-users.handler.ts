@@ -132,7 +132,7 @@ export class AdminUsersHandler {
           reply_markup: {
             inline_keyboard: approved.slice(0, LIST_LIMIT).map((u) => [
               {
-                text: `⛔ ${this.displayName(u)}`,
+                text: `⛔ ${this.plainName(u)}`,
                 callback_data: `${REVOKE_PREFIX}${u.telegramUserId}`,
               },
             ]),
@@ -221,6 +221,23 @@ export class AdminUsersHandler {
   }
 
   /** Ник ссылкой — чтобы администратор тапнул и написал напрямую. */
+  /**
+   * Подпись для КНОПКИ — обычный текст, без разметки.
+   *
+   * Telegram применяет parse_mode только к тексту сообщения; подпись кнопки он
+   * показывает буквально. Из-за displayName() на кнопке «Закрыть доступ»
+   * красовалось `<a href="https://t.me/artonik1">@artonik1</a> (Тема)` целиком,
+   * вместе с тегами. htmlOptions() рядом этому не помогает и помочь не может —
+   * он задаёт parse_mode сообщения, а не клавиатуры.
+   */
+  private plainName(user: UserAccessDocument): string {
+    const name = [user.firstName, user.lastName].filter(Boolean).join(' ');
+
+    if (user.username) return `@${user.username}${name ? ` (${name})` : ''}`;
+    return name ? `${name} ${user.telegramUserId}` : user.telegramUserId;
+  }
+
+  /** Подпись для ТЕКСТА СООБЩЕНИЯ — со ссылкой на диалог, HTML. */
   private displayName(user: UserAccessDocument): string {
     const name = [user.firstName, user.lastName].filter(Boolean).join(' ');
 

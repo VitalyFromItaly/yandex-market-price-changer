@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { TTelegrafBot } from '../../domain.telegram';
 
 import { AccessGateHandler } from './handlers/access-gate.handler';
+import { ActionLogHandler } from './handlers/action-log.handler';
 import { AdminApprovalHandler } from './handlers/admin-approval.handler';
 import { AdminUsersHandler } from './handlers/admin-users.handler';
 import { ApiSettingsHandler } from './handlers/api-settings.handler';
@@ -35,8 +36,14 @@ export class PriceChangerComposer {
    */
   private get pipeline(): Array<{ name: string; register: (bot: TTelegrafBot) => void }> {
     return [
-      // Гейт доступа — строго первым: bot.use, зарегистрированный после
-      // хендлеров, ничего не защищает, так как апдейт до него не дойдёт.
+      // Журнал действий — раньше гейта. Гейт от этого первым быть не перестаёт:
+      // журнал ничего не блокирует и всегда зовёт next(). А вот записать
+      // попытку ЗАБЛОКИРОВАННОГО пользователя можно только отсюда — после
+      // гейта такой апдейт до журнала уже не доходит.
+      { name: 'actionLog', register: (b) => this.actionLog.register(b) },
+      // Гейт доступа — первый, кто может НЕ пропустить апдейт: bot.use,
+      // зарегистрированный после хендлеров, ничего не защищает, так как
+      // апдейт до него не дойдёт.
       { name: 'accessGate', register: (b) => this.accessGate.register(b) },
       { name: 'start', register: (b) => this.start.register(b) },
       { name: 'menu', register: (b) => this.menu.register(b) },
@@ -73,6 +80,7 @@ export class PriceChangerComposer {
   // ломался и стоил неработающих кнопок, — должен читаться прямо здесь.
   // eslint-disable-next-line max-params
   constructor(
+    private readonly actionLog: ActionLogHandler,
     private readonly accessGate: AccessGateHandler,
     private readonly start: StartHandler,
     private readonly menu: MenuCommandsHandler,
