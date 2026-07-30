@@ -43,7 +43,13 @@ export const ONBOARDING_CALLBACKS: readonly string[] = [
  * точным равенством нельзя, иначе гейт не пропустит их на этапе регистрации,
  * то есть подсказка не откроется ровно тому, кому она нужна.
  */
-export const ONBOARDING_CALLBACK_PREFIXES: readonly string[] = ['onboarding_help:'];
+export const ONBOARDING_CALLBACK_PREFIXES: readonly string[] = [
+  'onboarding_help:',
+  // Выбор магазина — часть регистрации: он происходит ДО одобрения, и без
+  // этих префиксов гейт не пропустил бы кнопки ровно тем, кому они нужны.
+  'store_pick_business:',
+  'store_pick:',
+];
 
 function isOnboardingCallback(data: string): boolean {
   return (

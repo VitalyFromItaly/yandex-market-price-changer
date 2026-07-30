@@ -73,14 +73,16 @@ export class MenuCommandsHandler {
       yandexSettings?.token
     );
 
-    const lines = [
-      '⚙️ <b>Настройки API</b>',
-      '',
-      `🎫 Токен: ${yandexSettings?.token ? '✅ установлен' : '❌ не установлен'}`,
-      `🔑 Campaign ID: ${esc(yandexSettings?.campaign_id) || '—'}`,
-      `🏢 Business ID: ${esc(yandexSettings?.business_id) || '—'}`,
-      '',
-    ];
+    // Идентификаторы пользователю НЕ показываем. Продавцу они ни о чём не
+    // говорят, а места занимают больше, чем название магазина. Раньше здесь
+    // печатались оба числа, и экран выглядел технической выкладкой.
+    const lines = ['⚙️ <b>Настройки API</b>', ''];
+
+    if (configured) {
+      lines.push(`🏪 Магазин: ${esc(yandexSettings?.name) || '✅ подключён'}`, '');
+    } else {
+      lines.push('🏪 Магазин: ❌ не подключён', '');
+    }
 
     if (configured) {
       // Прежний текст предлагал прислать все три значения разом в формате

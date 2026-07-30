@@ -11,7 +11,7 @@ import {
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { YandexClientFactory } from '../../../../yandex/yandex-client.factory';
 import { TTelegrafBot } from '../../../domain.telegram';
-import { b, code, esc, htmlOptions } from '../../../formatting/telegram-format';
+import { b, esc, htmlOptions } from '../../../formatting/telegram-format';
 import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
 import { MENU, MENU_LABELS } from '../menu.constants';
 import {
@@ -26,6 +26,14 @@ import {
   type TOnboardingDraft,
 } from '../onboarding';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import {
+  PICK_BUSINESS_PREFIX,
+  PICK_STORE_PREFIX,
+  decidePick,
+  groupByBusiness,
+  uniqueLabels,
+  type IBusinessGroup,
+} from '../store-picker';
 
 import { ScheduleHandler } from './schedule.handler';
 
@@ -72,6 +80,47 @@ export class ApiSettingsHandler {
       // Состояние визарда НЕ трогаем: справка не продвигает и не сбрасывает
       // шаг, бот по-прежнему ждёт значение того же поля.
       await ctx.reply(stepHelp(step), htmlOptions());
+    });
+
+    // Выбор кабинета: показываем магазины внутри него.
+    bot.action(new RegExp(`^${PICK_BUSINESS_PREFIX}`), async (ctx) => {
+      await ctx.answerCbQuery();
+      const businessId = this.callbackTail(ctx, PICK_BUSINESS_PREFIX);
+      const stores = await this.storesFromDraft(ctx);
+      const group = groupByBusiness(stores).find((g) => g.businessId === businessId);
+
+      if (!group) {
+        await ctx.reply('Не удалось получить список магазинов. Пришлите токен заново.');
+        return;
+      }
+      await this.askStore(ctx, group.stores);
+    });
+
+    // Выбор магазина: применяем и продолжаем визард.
+    bot.action(new RegExp(`^${PICK_STORE_PREFIX}`), async (ctx) => {
+      await ctx.answerCbQuery();
+      const campaignId = this.callbackTail(ctx, PICK_STORE_PREFIX);
+      const stores = await this.storesFromDraft(ctx);
+      const store = stores.find((s) => s.campaignId === campaignId);
+
+      if (!store) {
+        await ctx.reply('Не удалось получить данные магазина. Пришлите токен заново.');
+        return;
+      }
+
+      const access = await this.accessService.findByUserAndBot(
+        ctx.from.id.toString(),
+        ctx.botInfo.id.toString(),
+      );
+      const draft = await this.applyStore(ctx, store, access?.draft ?? {});
+
+      // Черновик заполнен целиком — заявка уходит сразу, без лишнего шага.
+      const following = nextStep(draft);
+      const reply = following
+        ? { message: stepPrompt(following), keyboard: await this.restartKeyboard(following) }
+        : await this.submitApplication(ctx, draft);
+
+      if (reply.message) await ctx.reply(reply.message, htmlOptions(reply.keyboard));
     });
 
     bot.on('text', async (ctx) => {
@@ -212,8 +261,9 @@ export class ApiSettingsHandler {
     token: string,
     draft: TOnboardingDraft,
   ): Promise<TOnboardingDraft> {
+    // botId здесь не нужен: сохранение полей уехало в applyStore, а запрос к
+    // API идёт по токену.
     const telegramUserId = ctx.from.id.toString();
-    const botId = ctx.botInfo.id.toString();
 
     let stores: IStoreRef[];
     try {
@@ -228,33 +278,112 @@ export class ApiSettingsHandler {
       return draft;
     }
 
-    if (stores.length !== 1) {
-      this.logger.log(`Автоподстановка пропущена: магазинов ${stores.length} (нужен ровно один)`);
+    const pick = decidePick(stores);
+
+    if (pick.kind === 'none') return draft;
+
+    // Несколько магазинов — спрашиваем, какой подключить. Молча выбрать за
+    // продавца нельзя: он узнал бы об ошибке по пустым отчётам.
+    if (pick.kind === 'business') {
+      await this.askBusiness(ctx, pick.groups);
+      return draft;
+    }
+    if (pick.kind === 'store') {
+      await this.askStore(ctx, pick.stores);
       return draft;
     }
 
-    const [store] = stores;
+    return await this.applyStore(ctx, pick.store, draft);
+  }
+
+  private callbackTail(ctx: Context, prefix: string): string {
+    const data = (ctx.callbackQuery as { data?: string } | undefined)?.data ?? '';
+    return data.slice(prefix.length).trim();
+  }
+
+  /**
+   * Заново спросить у Маркета список магазинов, взяв токен из черновика.
+   *
+   * Список НЕ кэшируется между нажатиями: держать его в памяти процесса значит
+   * потерять при рестарте (и тогда кнопка перестанет работать), а класть в базу
+   * ради двух секунд диалога — заводить ещё одно состояние, которое надо
+   * инвалидировать. Один дешёвый запрос надёжнее.
+   */
+  private async storesFromDraft(ctx: Context): Promise<IStoreRef[]> {
+    const access = await this.accessService.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
+    const token = access?.draft?.token;
+    if (!token) return [];
+
+    try {
+      return await this.clients.forTokenOnly(token).listStores();
+    } catch (error) {
+      this.logger.warn(
+        `Не удалось получить магазины: ${
+          error instanceof Error ? error.constructor.name : 'неизвестная ошибка'
+        }`,
+      );
+      return [];
+    }
+  }
+
+  /** Сохранить выбранный магазин в черновик и подтвердить пользователю. */
+  private async applyStore(
+    ctx: Context,
+    store: IStoreRef,
+    draft: TOnboardingDraft,
+  ): Promise<TOnboardingDraft> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+
     await this.accessService.saveDraftField(telegramUserId, botId, 'campaign_id', store.campaignId);
+    await this.accessService.saveDraftField(telegramUserId, botId, 'business_id', store.businessId);
+    // Название кладём в черновик, чтобы оно попало в документ настроек.
+    // Экран настроек не должен ходить в API ради одной подписи.
     const saved = await this.accessService.saveDraftField(
       telegramUserId,
       botId,
-      'business_id',
-      store.businessId,
+      'store_name',
+      store.storeName,
     );
 
-    await ctx.reply(
-      [
-        `🔎 Нашёл ваш магазин: ${b(store.name)}`,
-        '',
-        `Campaign ID: ${code(store.campaignId)}`,
-        `Business ID: ${code(store.businessId)}`,
-        '',
-        'Искать их в кабинете не нужно — подставил автоматически.',
-      ].join('\n'),
-      htmlOptions(),
-    );
+    // Идентификаторы пользователю НЕ показываем: это технический шум, который
+    // ни о чём ему не говорит, а перепутать их легко.
+    await ctx.reply(`🔎 Подключаю магазин: ${b(store.storeName)}`, htmlOptions());
 
     return saved?.draft ?? draft;
+  }
+
+  private async askBusiness(ctx: Context, groups: IBusinessGroup[]): Promise<void> {
+    const labels = uniqueLabels(groups.map((g) => g.businessName));
+
+    await ctx.reply(
+      'У этого токена несколько кабинетов. Выберите нужный:',
+      htmlOptions({
+        reply_markup: {
+          inline_keyboard: groups.map((g, i) => [
+            { text: labels[i], callback_data: `${PICK_BUSINESS_PREFIX}${g.businessId}` },
+          ]),
+        },
+      }),
+    );
+  }
+
+  private async askStore(ctx: Context, stores: IStoreRef[]): Promise<void> {
+    const labels = uniqueLabels(stores.map((s) => s.storeName));
+
+    await ctx.reply(
+      'Выберите магазин:',
+      htmlOptions({
+        reply_markup: {
+          inline_keyboard: stores.map((s, i) => [
+            { text: labels[i], callback_data: `${PICK_STORE_PREFIX}${s.campaignId}` },
+          ]),
+        },
+      }),
+    );
   }
 
   /** Приглашение к первому шагу — используется и при старте, и при сбросе. */
@@ -348,6 +477,8 @@ export class ApiSettingsHandler {
         campaign_id: draft.campaign_id,
         business_id: draft.business_id,
         token: draft.token,
+        // Название магазина — чтобы показывать его вместо идентификаторов.
+        name: draft.store_name,
       };
       const existing = await this.yandexMarketService.findByTelegramUser(telegramUserId);
       return existing

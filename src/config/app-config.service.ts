@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
  * Типизированный доступ к конфигурации.
  *
  * Нужен, чтобы по коду не расползались строковые ключи вида
- * `config.get('TELEGRAM_PROXY_URL')` — опечатка в таком ключе не ловится
+ * `config.get('TELEGRAM_WEBHOOK_URL')` — опечатка в таком ключе не ловится
  * компилятором и превращается в `undefined` уже в рантайме. Здесь ключ
  * упоминается ровно один раз, а наружу торчит свойство с типом.
  *
@@ -60,9 +60,19 @@ export class AppConfigService {
     return this.config.get<string>('TELEGRAM_TOKEN');
   }
 
-  /** Публичный HTTPS-домен, на который Telegram шлёт вебхуки. */
-  get telegramProxyUrl(): string {
-    return this.config.get<string>('TELEGRAM_PROXY_URL');
+  /** Публичный HTTPS-домен, на который Telegram шлёт вебхуки НАМ. */
+  get telegramWebhookUrl(): string {
+    return this.config.get<string>('TELEGRAM_WEBHOOK_URL');
+  }
+
+  /**
+   * Базовый URL Bot API, куда ходим МЫ: своё зеркало вместо api.telegram.org.
+   *
+   * Хвостовой слеш срезается здесь, а не в каждом потребителе: TelegramApiService
+   * дописывает `/bot<token>/...` шаблоном, и `https://h/` дал бы `https://h//bot…`.
+   */
+  get telegramApiUrl(): string {
+    return this.config.get<string>('TELEGRAM_API_URL').replace(/\/+$/, '');
   }
 
   /**

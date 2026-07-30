@@ -16,6 +16,23 @@ import * as Joi from 'joi';
  *
  * Теперь приложение падает на старте с указанием конкретной переменной.
  */
+
+/**
+ * Базовый URL, к которому потом дописывают путь, не должен нести своего пути.
+ * Подробнее — в комментарии к TELEGRAM_API_URL ниже.
+ */
+const rejectUrlWithPath: Joi.CustomValidator<string> = (value, helpers) => {
+  const { pathname } = new URL(value);
+  if (pathname !== '/') {
+    return helpers.message({
+      custom:
+        `${helpers.state.path?.join('.')}: префикс пути ('${pathname}') не поддерживается — ` +
+        'укажите только схему и хост, например https://tg-api.example.com',
+    });
+  }
+  return value;
+};
+
 export const envValidationSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
 
@@ -45,11 +62,25 @@ export const envValidationSchema = Joi.object({
   TELEGRAM_TOKEN: Joi.string().required().messages({
     'any.required': 'TELEGRAM_TOKEN обязателен: токен бота от @BotFather',
   }),
-  TELEGRAM_PROXY_URL: Joi.string().uri().required().messages({
+  // Куда Telegram шлёт апдейты НАМ. Раньше ключ назывался TELEGRAM_PROXY_URL,
+  // хотя никаким прокси не был — рядом с настоящим TELEGRAM_API_URL это имя
+  // напрашивалось на то, чтобы значения перепутали местами.
+  TELEGRAM_WEBHOOK_URL: Joi.string().uri().required().messages({
     'any.required':
-      'TELEGRAM_PROXY_URL обязателен: публичный HTTPS-домен для вебхука (например, ngrok)',
-    'string.uri': 'TELEGRAM_PROXY_URL должен быть полным URL со схемой https://',
+      'TELEGRAM_WEBHOOK_URL обязателен: публичный HTTPS-домен для вебхука (например, ngrok)',
+    'string.uri': 'TELEGRAM_WEBHOOK_URL должен быть полным URL со схемой https://',
   }),
+  // Куда ходим МЫ: своё зеркало Bot API вместо api.telegram.org. Дефолт —
+  // прямой адрес, чтобы приложение работало и без зеркала.
+  //
+  // Только схема + хост (+порт), без пути. Telegraf собирает адрес метода как
+  // new URL('./bot<token>/<method>', apiRoot), а такое разрешение отбрасывает
+  // последний сегмент пути базы: 'https://h/tg' превращается в 'https://h/botX/...'.
+  // Все запросы молча уходят в 404, бот выглядит мёртвым и в логах — ничего.
+  TELEGRAM_API_URL: Joi.string()
+    .uri()
+    .custom(rejectUrlWithPath, 'без пути')
+    .default('https://api.telegram.org'),
   // Обязателен, а не «пустой список по умолчанию»: без единого администратора
   // ни одну заявку невозможно одобрить, и каждый новый пользователь навсегда
   // повисает в статусе pending — молча, без единой ошибки в логах.

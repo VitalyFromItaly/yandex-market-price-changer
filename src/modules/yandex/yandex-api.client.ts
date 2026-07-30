@@ -69,11 +69,20 @@ export interface IReturnsQuery {
   limit?: number;
 }
 
-/** Магазин продавца: пара идентификаторов и человекочитаемое название. */
+/**
+ * Магазин продавца.
+ *
+ * Названия бизнеса и магазина храним ОТДЕЛЬНО: у одного бизнеса (кабинета)
+ * может быть несколько магазинов, и при выборе продавцу показываются то одно,
+ * то другое. Склеенная строка не позволила бы сгруппировать список.
+ */
 export interface IStoreRef {
   campaignId: string;
   businessId: string;
-  name: string;
+  /** Название кабинета — им подписан бизнес. */
+  businessName: string;
+  /** Домен магазина. Внутри одного кабинета магазины различаются им. */
+  storeName: string;
 }
 
 /** Одна позиция для записи остатка. */
@@ -301,10 +310,15 @@ export class YandexApiClient {
           business?: { id?: number; name?: string };
         };
         if (!c.id || !c.business?.id) return null;
+        const businessName = c.business.name ?? `Кабинет ${c.business.id}`;
         return {
           campaignId: String(c.id),
           businessId: String(c.business.id),
-          name: c.business.name ?? c.domain ?? `Магазин ${c.id}`,
+          businessName,
+          // Домен — то, чем продавец различает свои магазины. Если его нет,
+          // подписываем по названию кабинета, но НЕ оставляем пустым: кнопка
+          // без подписи Telegram отвергает.
+          storeName: c.domain ?? businessName,
         };
       })
       .filter((x): x is IStoreRef => x !== null);

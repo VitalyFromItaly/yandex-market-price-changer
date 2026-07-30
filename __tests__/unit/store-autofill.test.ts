@@ -40,7 +40,12 @@ describe('listStores: разбор ответа GET campaigns', () => {
     });
 
     expect(await client.listStores()).toEqual([
-      { campaignId: '134874104', businessId: '182608006', name: 'ALL BEST WATCH' },
+      {
+        campaignId: '134874104',
+        businessId: '182608006',
+        businessName: 'ALL BEST WATCH',
+        storeName: 'allbestwatch.ru',
+      },
     ]);
   });
 
@@ -82,20 +87,31 @@ describe('listStores: разбор ответа GET campaigns', () => {
     expect(await clientWith({ campaigns: [] }).listStores()).toEqual([]);
   });
 
-  it('название берётся из бизнеса, иначе из домена, иначе по id', async () => {
-    const byName = await clientWith({
-      campaigns: [{ id: 1, domain: 'd.ru', business: { id: 2, name: 'Имя' } }],
-    }).listStores();
-    expect(byName[0].name).toBe('Имя');
+  it('кабинет и магазин подписаны отдельно', () => {
+    // Склеенная строка не позволила бы сгруппировать список при выборе.
+    return clientWith({
+      campaigns: [{ id: 1, domain: 'shop.ru', business: { id: 2, name: 'Кабинет' } }],
+    })
+      .listStores()
+      .then(([s]) => {
+        expect(s.businessName).toBe('Кабинет');
+        expect(s.storeName).toBe('shop.ru');
+      });
+  });
 
-    const byDomain = await clientWith({
-      campaigns: [{ id: 1, domain: 'd.ru', business: { id: 2 } }],
+  it('без домена магазин подписывается кабинетом — пустая подпись недопустима', async () => {
+    // Кнопку без текста Telegram отвергает.
+    const [s] = await clientWith({
+      campaigns: [{ id: 1, business: { id: 2, name: 'Кабинет' } }],
     }).listStores();
-    expect(byDomain[0].name).toBe('d.ru');
+    expect(s.storeName).toBe('Кабинет');
+    expect(s.storeName.length).toBeGreaterThan(0);
+  });
 
-    const byId = await clientWith({
-      campaigns: [{ id: 7, business: { id: 2 } }],
+  it('без названия кабинета подпись строится по его id', async () => {
+    const [s] = await clientWith({
+      campaigns: [{ id: 1, business: { id: 777 } }],
     }).listStores();
-    expect(byId[0].name).toContain('7');
+    expect(s.businessName).toContain('777');
   });
 });

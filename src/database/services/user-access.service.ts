@@ -20,7 +20,7 @@ export interface IAdminIdentity {
   username?: string;
 }
 
-export type TDraftField = 'token' | 'campaign_id' | 'business_id';
+export type TDraftField = 'token' | 'campaign_id' | 'business_id' | 'store_name';
 
 /**
  * Белый список полей черновика. Имя поля попадает в ключ $set (`draft.<field>`),
