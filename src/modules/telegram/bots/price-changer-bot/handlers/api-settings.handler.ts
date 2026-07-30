@@ -10,10 +10,20 @@ import {
 } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import {
+  DEFAULT_RATES,
+  RATE_CB_CANCEL,
+  RATE_CB_PATTERN,
+  RATE_FIELDS,
+  isRateField,
+  parseRateCallback,
   parseRateInput,
+  parseRateValue,
+  rateInputLabel,
   rateTitle,
+  ratesOf,
   validateRate,
   type IRateInput,
+  type TRateField,
 } from '../../../../yandex/reports/profit';
 import { YandexAuthError } from '../../../../yandex/yandex-api.errors';
 import { YandexClientFactory } from '../../../../yandex/yandex-client.factory';
@@ -31,6 +41,7 @@ import {
   type TOnboardingDraft,
 } from '../onboarding';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { settingsKeyboardRows, settingsText } from '../settings.text';
 import {
   PICK_BUSINESS_PREFIX,
   PICK_STORE_PREFIX,
@@ -74,6 +85,15 @@ interface IAutofillResult {
 @Injectable()
 export class ApiSettingsHandler {
   private readonly logger = new Logger(ApiSettingsHandler.name);
+
+  /**
+   * Ставку без магазина писать некуда: документ настроек создаётся один раз и
+   * сразу целиком. Текст один на все три места, где это выясняется (кнопка,
+   * ответ на вопрос, правка сообщением), — иначе три формулировки одного отказа.
+   */
+  private readonly NO_STORE_FOR_RATES =
+    '⚠️ Сначала подключите магазин — пришлите API-токен одним сообщением. ' +
+    'Ставки настраиваются после этого.';
 
   constructor(
     private keyboard: PriceChangerKeyboard,
@@ -140,6 +160,131 @@ export class ApiSettingsHandler {
         await ctx.reply('❌ Не удалось подключить магазин. Попробуйте ещё раз.');
       }
     });
+
+    // Правка ставки прибыли кнопкой. Здесь же, потому что ответ на вопрос
+    // «пришлите новое значение» разбирает этот же обработчик текста: вопрос и
+    // ответ на него — один диалог, разносить его по двум файлам незачем.
+    bot.action(RATE_CB_PATTERN, async (ctx) => {
+      await ctx.answerCbQuery();
+      try {
+        const data = (ctx.callbackQuery as { data?: string } | undefined)?.data ?? '';
+        const target = parseRateCallback(data);
+
+        if (target === 'cancel') {
+          await this.accessService.setPendingRate(
+            ctx.from.id.toString(),
+            ctx.botInfo.id.toString(),
+            null,
+          );
+          await this.showSettings(ctx);
+          return;
+        }
+
+        if (target) await this.askRate(ctx, target);
+      } catch (error) {
+        this.logger.error('Не удалось начать правку ставки', error as Error);
+        await ctx.reply('❌ Не удалось открыть настройку. Попробуйте ещё раз.');
+      }
+    });
+  }
+
+  /**
+   * Экран настроек со своими кнопками.
+   *
+   * Здесь он нужен дважды — после сохранения ставки и после отмены, — чтобы
+   * правка второй ставки была следующим тапом, а не походом в меню. Текст и
+   * клавиатура берутся из settings.text.ts, единственного источника для всех
+   * входов в этот экран.
+   */
+  private async showSettings(ctx: Context): Promise<void> {
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    const keyboard = await this.keyboard.createInlineKeyboardMatrix(settingsKeyboardRows(store));
+
+    await ctx.reply(settingsText(store), htmlOptions({ reply_markup: keyboard.reply_markup }));
+  }
+
+  /**
+   * Спросить новое значение ставки.
+   *
+   * Подписи в вопросе не требуем: бот сам только что спросил про конкретную
+   * ставку, и переспрашивать «а какую именно» значило бы не поверить своему же
+   * вопросу. Текстовая форма всё равно упомянута — тем, кто правит ставки часто,
+   * так быстрее, и это тот же путь, что работал до кнопок.
+   */
+  private async askRate(ctx: Context, field: TRateField): Promise<void> {
+    const telegramUserId = ctx.from.id.toString();
+
+    // Без магазина ставку писать некуда: документ настроек создаётся один раз и
+    // сразу целиком. Отвечаем тем же текстом, что и editRate, и вопрос НЕ
+    // открываем — иначе следующее число ушло бы в никуда.
+    const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+    if (!store) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return;
+    }
+
+    await this.accessService.setPendingRate(telegramUserId, ctx.botInfo.id.toString(), field);
+
+    const current = ratesOf(store)[field];
+    const keyboard = await this.keyboard.createInlineButtons([
+      { text: '⬅️ Отмена', callback_data: RATE_CB_CANCEL },
+    ]);
+
+    await ctx.reply(
+      [
+        `${esc(rateTitle(field))} — сейчас ${b(`${current}%`)}.`,
+        '',
+        'Пришлите новое значение в процентах — например <code>23</code>.',
+        `Можно и с подписью: <code>${esc(rateInputLabel(field))}: ${current}</code>.`,
+      ].join('\n'),
+      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    );
+  }
+
+  /**
+   * Ответ на вопрос «пришлите новое значение ставки».
+   *
+   * Забирает ТОЛЬКО числовой ввод. Это и делает безопасным вызов раньше вопросов
+   * про день отчёта и время рассылки: «28-07-2026» и «09:00» числами не
+   * являются и уходят своим обработчикам. Нечисловой текст закрывает вопрос и
+   * идёт дальше обычным маршрутом — иначе открытый вопрос про ставку превратил
+   * бы бота в глухого: на любое сообщение он отвечал бы «нужно число».
+   *
+   * @returns true, если сообщение было значением ставки и обработано здесь.
+   */
+  public async handlePendingRate(ctx: Context, text: string): Promise<boolean> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+
+    const account = await this.accessService.findByUserAndBot(telegramUserId, botId);
+    const field = account?.pendingRate;
+    if (!isRateField(field)) return false;
+
+    const value = parseRateValue(text);
+    if (value === null) {
+      await this.accessService.setPendingRate(telegramUserId, botId, null);
+      return false;
+    }
+
+    const validation = validateRate(field, value);
+    if (!validation.ok) {
+      // Вопрос остаётся открытым: продавец должен ответить ещё раз, не начиная
+      // всё заново, — так же ведут себя вопросы про день и время.
+      await ctx.reply(`❌ ${esc(validation.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
+      return true;
+    }
+
+    const updated = await this.yandexMarketService.updateRate(telegramUserId, field, value);
+    await this.accessService.setPendingRate(telegramUserId, botId, null);
+
+    if (!updated) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return true;
+    }
+
+    await ctx.reply(`✅ ${esc(rateTitle(field))}: ${b(`${value}%`)}`, htmlOptions());
+    await this.showSettings(ctx);
+    return true;
   }
 
   private async pickStore(ctx: Context): Promise<void> {
@@ -219,6 +364,13 @@ export class ApiSettingsHandler {
     if (access.status === 'approved') {
       // Незакрытые вопросы важнее правки настроек: иначе «09:00» было бы
       // истолковано как попытка изменить настройку, а «28-07-2026» — тем более.
+      //
+      // Ставка спрашивается первой, и это безопасно ровно потому, что
+      // handlePendingRate забирает ТОЛЬКО числовой ввод: дата и время числами не
+      // являются и доходят до своих обработчиков ниже.
+      if (await this.handlePendingRate(ctx, text)) {
+        return { message: '' }; // ответ уже отправлен внутри
+      }
       if (await this.reportsHandler.handlePendingDay(ctx, text)) {
         return { message: '' }; // ответ уже отправлен внутри
       }
@@ -520,11 +672,14 @@ export class ApiSettingsHandler {
           'Чтобы сменить магазин или токен, пришлите значение с подписью:',
           '<code>token: ваш_токен</code>',
           '',
-          'Ставки расчёта прибыли:',
-          '<code>комиссия: 23</code>',
-          '<code>налог: 7</code>',
-          '<code>скидка: 10</code>',
-          '<code>скидка восток: 4</code>',
+          `Ставки расчёта прибыли проще менять кнопками — ${esc(MENU.SETTINGS)}.`,
+          'Сообщением тоже можно:',
+          // Подписи И примеры — из profit.ts, оттуда же, откуда их берёт парсер
+          // и схема. Пока это были литералы, подсказка «комиссия: 23» жила
+          // рядом с настройкой продавца в 25 %.
+          ...RATE_FIELDS.map(
+            (field) => `<code>${esc(rateInputLabel(field))}: ${DEFAULT_RATES[field]}</code>`,
+          ),
         ].join('\n'),
       };
     }
@@ -588,11 +743,7 @@ export class ApiSettingsHandler {
     );
 
     if (!updated) {
-      return {
-        message:
-          '⚠️ Сначала подключите магазин — пришлите API-токен одним сообщением. ' +
-          'Ставки настраиваются после этого.',
-      };
+      return { message: this.NO_STORE_FOR_RATES };
     }
 
     return {

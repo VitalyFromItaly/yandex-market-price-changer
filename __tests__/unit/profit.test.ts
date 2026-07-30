@@ -6,14 +6,22 @@ import {
   DEFAULT_RATES,
   DEFAULT_TAX_PERCENT,
   DEFAULT_VOSTOK_DISCOUNT_PERCENT,
+  RATE_CB_CANCEL,
+  RATE_FIELDS,
   applyDiscounts,
   discountGroup,
+  isRateField,
   normalizeRate,
   purchaseCost,
   orderPurchase,
   orderSkus,
+  parseRateCallback,
   parseRateInput,
+  parseRateValue,
   profitOf,
+  rateCallback,
+  rateInputLabel,
+  rateShortLabel,
   rateTitle,
   ratesOf,
   validateRate,
@@ -500,6 +508,90 @@ describe('Ставки', () => {
     expect(rateTitle('taxPercent')).toContain('Налог');
     expect(rateTitle('vostokDiscountPercent')).toContain('Восток');
     expect(rateTitle('discountPercent')).toBe('Скидка от прайса');
+  });
+
+  /**
+   * Список ставок обязан быть полным: по нему рисуются кнопки экрана настроек и
+   * по нему же проверяется, что пришло в `pendingRate`. Пропущенное поле — это
+   * ставка, которую нельзя изменить и которая не видна на экране.
+   */
+  it('в списке все четыре ставки, и каждая — известное поле', () => {
+    expect(RATE_FIELDS).toHaveLength(4);
+    expect([...RATE_FIELDS].sort()).toEqual(Object.keys(DEFAULT_RATES).sort());
+
+    for (const field of RATE_FIELDS) {
+      expect(isRateField(field)).toBe(true);
+    }
+
+    expect(isRateField('priceCoefficient')).toBe(false);
+    expect(isRateField(undefined)).toBe(false);
+    expect(isRateField(null)).toBe(false);
+  });
+
+  it('голое число разбирается: с запятой, с точкой, со знаком процента', () => {
+    expect(parseRateValue('23')).toBe(23);
+    expect(parseRateValue(' 23 ')).toBe(23);
+    expect(parseRateValue('23,5')).toBe(23.5);
+    expect(parseRateValue('23.5')).toBe(23.5);
+    expect(parseRateValue('7 %')).toBe(7);
+    expect(parseRateValue('0')).toBe(0);
+  });
+
+  /**
+   * Границы между двумя парсерами. Голое число — ответ на вопрос бота, подпись —
+   * сообщение по своей воле, и путать их нельзя: `parseRateValue`, поймавший
+   * дату, увёл бы отчёт за день в настройки прибыли.
+   */
+  it('не числом не считается ни дата, ни время, ни подписанное значение', () => {
+    expect(parseRateValue('28-07-2026')).toBeNull();
+    expect(parseRateValue('09:00')).toBeNull();
+    expect(parseRateValue('комиссия: 23')).toBeNull();
+    expect(parseRateValue('23 процента')).toBeNull();
+    expect(parseRateValue('')).toBeNull();
+    expect(parseRateValue('ACMA:token')).toBeNull();
+  });
+
+  it('подпись для ввода — та самая, которую понимает парсер', () => {
+    for (const field of RATE_FIELDS) {
+      const label = rateInputLabel(field);
+      expect(parseRateInput(`${label}: 5`)).toEqual({ field, value: 5 });
+    }
+
+    // Частная подпись раньше общей: у «Востока» своя скидка, и предлагать ему
+    // «скидка» значило бы предлагать изменить не ту ставку.
+    expect(rateInputLabel('vostokDiscountPercent')).toBe('скидка восток');
+    expect(rateInputLabel('discountPercent')).toBe('скидка');
+  });
+
+  it('на кнопке подпись короткая и со своим значком', () => {
+    const labels = RATE_FIELDS.map((field) => rateShortLabel(field));
+
+    expect(new Set(labels).size).toBe(RATE_FIELDS.length);
+    for (const label of labels) {
+      // Длинная подпись в ряду из двух кнопок обрезается Telegram до
+      // неразличимого огрызка — ровно та беда, из-за которой подписи рассылки
+      // стали галочкой вместо глагола.
+      expect(label.length).toBeLessThanOrEqual(12);
+    }
+  });
+
+  it('callback_data кнопки разбирается обратно и укладывается в лимит Telegram', () => {
+    for (const field of RATE_FIELDS) {
+      const data = rateCallback(field);
+      expect(parseRateCallback(data)).toBe(field);
+      // Лимит Telegram на callback_data — 64 байта.
+      expect(Buffer.byteLength(data, 'utf8')).toBeLessThanOrEqual(64);
+    }
+
+    expect(parseRateCallback(RATE_CB_CANCEL)).toBe('cancel');
+  });
+
+  it('чужой callback_data ставкой не считается', () => {
+    expect(parseRateCallback('rate:priceCoefficient')).toBeNull();
+    expect(parseRateCallback('rep:month:profit')).toBeNull();
+    expect(parseRateCallback('store_pick:12345')).toBeNull();
+    expect(parseRateCallback('rate:')).toBeNull();
+    expect(parseRateCallback('')).toBeNull();
   });
 });
 

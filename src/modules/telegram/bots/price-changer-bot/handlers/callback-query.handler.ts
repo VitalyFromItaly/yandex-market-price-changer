@@ -8,7 +8,7 @@ import { htmlOptions } from '../../../formatting/telegram-format';
 import { MENU } from '../menu.constants';
 import { nextStep, stepPrompt } from '../onboarding';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
-import { settingsText } from '../settings.text';
+import { settingsKeyboardRows, settingsText } from '../settings.text';
 
 @Injectable()
 export class CallbackQueryHandler {
@@ -104,7 +104,15 @@ export class CallbackQueryHandler {
             // продавцу не показываем», которое соблюдалось везде, кроме этой
             // ветки. Экран противоречил соседнему экрану того же бота.
             const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
-            await ctx.editMessageText(settingsText(store), htmlOptions());
+            // Клавиатура — оттуда же, где текст: без неё этот вход в экран
+            // остался бы единственным без кнопок правки ставок.
+            const keyboard = await this.keyboard.createInlineKeyboardMatrix(
+              settingsKeyboardRows(store),
+            );
+            await ctx.editMessageText(
+              settingsText(store),
+              htmlOptions({ reply_markup: keyboard.reply_markup }),
+            );
           } catch {
             await ctx.editMessageText('❌ Не удалось получить настройки. Попробуйте позже.');
           }

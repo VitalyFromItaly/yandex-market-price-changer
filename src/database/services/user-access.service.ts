@@ -1,7 +1,10 @@
+import type { TRateField } from '../../modules/yandex/reports/profit';
+
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
+import { isRateField } from '../../modules/yandex/reports/profit';
 import { IAdminCard, UserAccess, UserAccessDocument } from '../schemas/user-access.schema';
 
 /** Кто обратился к боту — всё, что нужно, чтобы завести запись доступа. */
@@ -169,6 +172,29 @@ export class UserAccessService {
     const update = reportKey
       ? { $set: { pendingReportDay: reportKey } }
       : { $unset: { pendingReportDay: '' } };
+
+    return await this.model
+      .findOneAndUpdate({ telegramUserId, botId }, update, { new: true })
+      .exec();
+  }
+
+  /**
+   * Незакрытый вопрос «какую ставку прибыли меняем».
+   *
+   * Имя поля проверяется по белому списку `RATE_FIELDS`: в `pendingRate` оно
+   * потом читается обратно и уходит в `updateRate`, то есть решает, КАКУЮ
+   * настройку магазина перезаписать.
+   */
+  async setPendingRate(
+    telegramUserId: string,
+    botId: string,
+    field: TRateField | null,
+  ): Promise<UserAccessDocument | null> {
+    if (field !== null && !isRateField(field)) {
+      throw new Error(`Недопустимая ставка: ${field}`);
+    }
+
+    const update = field ? { $set: { pendingRate: field } } : { $unset: { pendingRate: '' } };
 
     return await this.model
       .findOneAndUpdate({ telegramUserId, botId }, update, { new: true })

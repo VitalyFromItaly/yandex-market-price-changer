@@ -34,10 +34,16 @@ describe('ApiSettingsHandler: подача заявки', () => {
     stores?: unknown[];
     /** Чем упадёт listStores(), если задано. */
     listStoresError?: Error;
+    /** Открытый вопрос про ставку — как если бы кнопку уже нажали. */
+    pendingRate?: string;
+    /** Подмена вопроса про день отчёта: им проверяется порядок pending-проверок. */
+    pendingDay?: () => Promise<boolean>;
   }) {
     const state = {
       status: opts.status ?? 'new',
       draft: { ...(opts.draft ?? {}) },
+      /** Незакрытый вопрос «какую ставку меняем» — как его хранит UserAccess. */
+      pendingRate: opts.pendingRate,
     };
 
     const accessService = {
@@ -50,6 +56,10 @@ describe('ApiSettingsHandler: подача заявки', () => {
         telegramUserId: String(USER_ID),
         botId: '999',
       })),
+      setPendingRate: vi.fn(async (_u: string, _b: string, field: string | null) => {
+        state.pendingRate = field ?? undefined;
+        return { ...state };
+      }),
       saveDraftField: vi.fn(async (_u: string, _b: string, field: string, value: string) => {
         state.draft[field] = value;
         return { draft: { ...state.draft } };
@@ -110,7 +120,10 @@ describe('ApiSettingsHandler: подача заявки', () => {
         // Незакрытых вопросов (про время рассылки и про день отчёта) в этих
         // сценариях нет — текст должен доходить до визарда.
         { provide: ScheduleHandler, useValue: { handlePendingTime: async () => false } },
-        { provide: ReportsHandler, useValue: { handlePendingDay: async () => false } },
+        {
+          provide: ReportsHandler,
+          useValue: { handlePendingDay: opts.pendingDay ?? (async () => false) },
+        },
         {
           provide: AppConfigService,
           useValue: { isAdmin: (id: number) => id === ADMIN_ID, telegramAdminIds: [ADMIN_ID] },
@@ -151,6 +164,47 @@ describe('ApiSettingsHandler: подача заявки', () => {
       // Обработчик может ответить несколько раз: applyStore шлёт «Подключаю
       // магазин…» сам, а итог возвращается вызывающему отдельным сообщением.
       allReplies: () => ctx.reply.mock.calls.map((c) => String(c[0] ?? '')).join('\n'),
+    };
+  }
+
+  /**
+   * Нажимает inline-кнопку обработчика.
+   *
+   * Кнопки живут в registerCallbacks(), а НЕ в register(): `bot.action` не
+   * вызывает next(), поэтому общий обработчик callback_query, стоящий раньше,
+   * съел бы их вместе с ответом «Эта кнопка устарела» (так уже ломался пикер
+   * магазина). Здесь собираем зарегистрированные пары «шаблон → обработчик» и
+   * вызываем ту, чей шаблон совпал, — ровно как это сделает telegraf.
+   */
+  async function tap(handler: ApiSettingsHandler, data: string, fromId = USER_ID) {
+    const actions: { pattern: RegExp; fn: (ctx: unknown) => Promise<void> }[] = [];
+    handler.registerCallbacks({
+      action: (pattern: RegExp, fn: never) => actions.push({ pattern, fn }),
+    } as never);
+
+    const ctx = {
+      from: { id: fromId, username: 'vasya', first_name: 'Вася' },
+      chat: { id: 555 },
+      botInfo: { id: 999 },
+      callbackQuery: { data },
+      answerCbQuery: vi.fn(async () => undefined),
+      reply: vi.fn(async () => undefined),
+    };
+
+    const matched = actions.filter((a) => a.pattern.test(data));
+    for (const action of matched) {
+      await action.fn(ctx);
+    }
+
+    return {
+      ctx,
+      matched: matched.length,
+      allReplies: () => ctx.reply.mock.calls.map((c) => String(c[0] ?? '')).join('\n'),
+      /** reply_markup последнего ответа — им проверяются кнопки под сообщением. */
+      lastMarkup: () => {
+        const last = ctx.reply.mock.calls[ctx.reply.mock.calls.length - 1];
+        return JSON.stringify((last?.[1] as { reply_markup?: unknown })?.reply_markup ?? {});
+      },
     };
   }
 
@@ -358,6 +412,111 @@ describe('ApiSettingsHandler: подача заявки', () => {
 
     expect(yandexMarketService.updateRate).not.toHaveBeenCalled();
     expect(reply()).toContain('процентах');
+  });
+
+  /**
+   * Правка ставок КНОПКОЙ.
+   *
+   * Текстовый ввод («комиссия: 25») работал и раньше, но узнать о нём было
+   * негде: в интерфейсе не было ни одной кнопки, а подсказки на экране стояли
+   * литералами с чужими значениями.
+   */
+  it('нажатие кнопки открывает вопрос про ставку и в магазин ничего не пишет', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    const { ctx, allReplies } = await tap(handler, 'rate:commissionPercent');
+
+    expect(ctx.answerCbQuery).toHaveBeenCalled();
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      '999',
+      'commissionPercent',
+    );
+    // Вопрос — это ещё не правка: до ответа пользователя в базе ничего не меняется.
+    expect(yandexMarketService.updateRate).not.toHaveBeenCalled();
+    expect(allReplies()).toContain('Комиссия');
+    expect(allReplies()).toContain('23%');
+  });
+
+  it('ответ числом сохраняет ставку и закрывает вопрос', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'commissionPercent',
+    });
+    const { allReplies } = await send(handler, '25');
+
+    expect(yandexMarketService.updateRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      'commissionPercent',
+      25,
+    );
+    expect(yandexMarketService.updateRate.mock.calls[0][2]).toBeTypeOf('number');
+    // Вопрос закрыт: следующее число не должно снова уехать в комиссию.
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
+    expect(allReplies()).toContain('25%');
+    // И сразу экран настроек — чтобы правка второй ставки была следующим тапом.
+    expect(allReplies()).toContain('Настройки API');
+  });
+
+  it('ответ вне 0–100 не сохраняется, а вопрос остаётся открытым', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'taxPercent',
+    });
+    const { allReplies } = await send(handler, '200');
+
+    expect(yandexMarketService.updateRate).not.toHaveBeenCalled();
+    expect(accessService.setPendingRate).not.toHaveBeenCalled();
+    expect(allReplies()).toContain('процентах');
+  });
+
+  /**
+   * Главный риск порядка: handlePendingRate стоит ПЕРВЫМ, раньше вопросов про
+   * день отчёта и время рассылки. Безопасно это ровно потому, что он забирает
+   * только числовой ввод.
+   */
+  it('дата при открытом вопросе про ставку уходит в отчёт, а не в ставку', async () => {
+    const pendingDay = vi.fn(async () => true);
+    const { handler, yandexMarketService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'commissionPercent',
+      pendingDay,
+    });
+    await send(handler, '28-07-2026');
+
+    expect(yandexMarketService.updateRate).not.toHaveBeenCalled();
+    expect(pendingDay).toHaveBeenCalled();
+  });
+
+  it('кнопка ставки без магазина не открывает вопрос, а просит токен', async () => {
+    const { handler, accessService } = await build({
+      status: 'approved',
+      store: null,
+    });
+    const { allReplies } = await tap(handler, 'rate:taxPercent');
+
+    // Вопрос НЕ открываем: писать ставку некуда, и присланное число повисло бы
+    // в воздухе.
+    expect(accessService.setPendingRate).not.toHaveBeenCalled();
+    expect(allReplies()).toContain('подключите магазин');
+  });
+
+  it('«Отмена» снимает вопрос и возвращает экран настроек', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'taxPercent',
+    });
+    const { allReplies } = await tap(handler, 'rate:cancel');
+
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
+    expect(yandexMarketService.updateRate).not.toHaveBeenCalled();
+    expect(allReplies()).toContain('Настройки API');
   });
 
   it('ставка НЕ путается с токеном и не уезжает в визард', async () => {

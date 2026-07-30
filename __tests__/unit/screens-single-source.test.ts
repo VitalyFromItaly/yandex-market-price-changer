@@ -2,7 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import { settingsText } from '../../src/modules/telegram/bots/price-changer-bot/settings.text';
+import {
+  settingsKeyboardRows,
+  settingsText,
+} from '../../src/modules/telegram/bots/price-changer-bot/settings.text';
+import {
+  DEFAULT_RATES,
+  RATE_FIELDS,
+  rateCallback,
+} from '../../src/modules/yandex/reports/profit';
 import { profileText } from '../../src/modules/telegram/bots/price-changer-bot/profile.text';
 import { helpText } from '../../src/modules/telegram/bots/price-changer-bot/help.text';
 
@@ -191,6 +199,102 @@ describe('Ставки расчёта прибыли на экране наст�
 
     expect(text).not.toContain('12345678');
     expect(text).not.toContain('Campaign ID');
+  });
+
+  /**
+   * Подсказки текстового ввода — с ТЕКУЩИМИ значениями.
+   *
+   * Дефект был ровно такой: сверху экран печатал «Комиссия 25 %», а снизу
+   * предлагал прислать «комиссия: 23», потому что примеры стояли литералами.
+   */
+  it('подсказка правки несёт текущее значение, а не зашитое', () => {
+    const text = settingsText({ ...STORE, commissionPercent: 25, taxPercent: 6 } as never);
+
+    expect(text).toContain('комиссия: 25');
+    expect(text).toContain('налог: 6');
+    expect(text).not.toContain('комиссия: 23');
+  });
+});
+
+/**
+ * Кнопки экрана настроек — из того же источника, что и его текст.
+ *
+ * Экран открывается из трёх мест, и клавиатура повторяет судьбу текста: три
+ * копии разошлись бы так же. Поэтому и проверка та же — чтением исходников.
+ */
+describe('Кнопки правки ставок', () => {
+  const BOT = resolve(__dirname, '../../src/modules/telegram/bots/price-changer-bot');
+  const read = (file: string) =>
+    readFileSync(join(BOT, file), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+  const STORE = {
+    campaign_id: '12345678',
+    business_id: '87654321',
+    token: 'ACMA:secret:value',
+    name: 'allbestwatch.ru',
+  } as never;
+
+  it('все три входа в экран строят клавиатуру одной функцией', () => {
+    for (const file of [
+      'handlers/menu-commands.handler.ts',
+      'handlers/slash-commands.handler.ts',
+      'handlers/callback-query.handler.ts',
+    ]) {
+      expect(read(file)).toContain('settingsKeyboardRows(');
+    }
+  });
+
+  it('на каждую ставку своя кнопка, и значение написано на ней', () => {
+    const rows = settingsKeyboardRows(STORE);
+    const buttons = rows.flat();
+
+    for (const field of RATE_FIELDS) {
+      const button = buttons.find((b) => b.callback_data === rateCallback(field));
+      expect(button, field).toBeDefined();
+      expect(button!.text).toContain(`${DEFAULT_RATES[field]}%`);
+    }
+  });
+
+  it('на кнопке текущее значение продавца, а не дефолт', () => {
+    const buttons = settingsKeyboardRows({
+      ...STORE,
+      commissionPercent: 25,
+      vostokDiscountPercent: 7,
+    } as never).flat();
+
+    const commission = buttons.find(
+      (b) => b.callback_data === rateCallback('commissionPercent'),
+    )!;
+    const vostok = buttons.find(
+      (b) => b.callback_data === rateCallback('vostokDiscountPercent'),
+    )!;
+
+    expect(commission.text).toContain('25%');
+    expect(vostok.text).toContain('7%');
+  });
+
+  it('до подключения магазина кнопок ставок нет', () => {
+    // Ставок на этом экране нет тоже: он обязан сказать ровно одну вещь —
+    // пришлите токен.
+    const buttons = settingsKeyboardRows(null).flat();
+
+    for (const field of RATE_FIELDS) {
+      expect(buttons.some((b) => b.callback_data === rateCallback(field))).toBe(false);
+    }
+    // Выход из экрана остаётся: тупик без единой кнопки хуже.
+    expect(buttons).toHaveLength(1);
+  });
+
+  it('в подписях кнопок нет идентификаторов магазина', () => {
+    const text = settingsKeyboardRows(STORE)
+      .flat()
+      .map((b) => b.text)
+      .join(' ');
+
+    expect(text).not.toContain('12345678');
+    expect(text).not.toContain('87654321');
   });
 });
 

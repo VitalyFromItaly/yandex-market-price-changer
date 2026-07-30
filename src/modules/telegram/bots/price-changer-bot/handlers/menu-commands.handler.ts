@@ -10,7 +10,7 @@ import { helpText } from '../help.text';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { profileText } from '../profile.text';
-import { settingsText } from '../settings.text';
+import { settingsKeyboardRows, settingsText } from '../settings.text';
 
 import { AdminUsersHandler } from './admin-users.handler';
 import { MENU_TO_REPORT, ReportsHandler } from './reports.handler';
@@ -74,7 +74,10 @@ export class MenuCommandsHandler {
 
   private async showApiSettings(ctx: Context) {
     const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
-    await ctx.reply(settingsText(store), htmlOptions());
+    // Текст И кнопки — из settings.text.ts, общие с `/settings` и с inline
+    // «👀 Проверить настройки». Кнопки правят ставки расчёта прибыли.
+    const keyboard = await this.keyboard.createInlineKeyboardMatrix(settingsKeyboardRows(store));
+    await ctx.reply(settingsText(store), htmlOptions({ reply_markup: keyboard.reply_markup }));
   }
 
   private async showProfile(ctx: Context) {

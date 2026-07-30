@@ -312,12 +312,34 @@ into one line and loses commission, tax and cost.
   `findBySkus` returns `{price, name, category}` rather than a number — the group is derived from the
   stored name/category — and why changing a percentage takes effect immediately instead of waiting for
   the next upload.
-- **Rates are edited by message** — `комиссия: 23`, `налог: 7`, `скидка: 10`, `скидка восток: 4`,
-  parsed by `parseRateInput` in `profit.ts`. Labels of up to three words are accepted, and the
-  two-word `скидка восток` must be matched before the one-word `скидка`, or the general label eats the
-  specific one. Do **not** extend `parseLabelledValue`/`TDraftField` for this: that union drives
-  `DRAFT_FIELD_SET`, `ONBOARDING_STEPS` and every `switch (step)` in `onboarding.ts`, whose numeric
-  validation demands 5–15 digits and would reject «23».
+- **Rates are edited by button, and still by message.** Both paths live in
+  `api-settings.handler.ts` and both write through `YandexMarketService.updateRate`.
+  - **By button:** the settings screen carries one inline button per rate, built by
+    `settingsKeyboardRows(store)` in `settings.text.ts` — the *same* module as the screen text, and
+    for the same reason: the screen has three entry points (`MENU.SETTINGS`, `/settings`,
+    `check_settings`), and three copies of the keyboard would drift exactly as three copies of the
+    text did. The value is printed **on** the button (`📉 Комиссия 23%`) rather than in a separate
+    list, and `rateShortLabel` is deliberately short — Telegram truncates long captions in a
+    two-button row. `RATE_CB_PATTERN`/`rateCallback`/`parseRateCallback` sit in `profit.ts` next to
+    the rates themselves; the action is registered in `registerCallbacks()`, so it is already ahead
+    of the general `callback_query` switch and **no composer change was needed**.
+  - **The pending question is a third field**, `UserAccess.pendingRate`, beside `pendingScheduleReport`
+    and `pendingReportDay` — not a reuse of them: on a shared field «23» could be read as a schedule
+    time. `handlePendingRate` runs **first** of the three pending checks, which is safe only because
+    it consumes **numeric input only** (`parseRateValue`); a date or `09:00` is not a number and
+    reaches its own handler. Non-numeric text closes the question and falls through, or an open rate
+    question would make the bot answer «нужно число» to everything.
+  - **By message:** `комиссия: 23`, `налог: 7`, `скидка: 10`, `скидка восток: 4`, parsed by
+    `parseRateInput`. Labels of up to three words are accepted, and the two-word `скидка восток` must
+    be matched before the one-word `скидка`, or the general label eats the specific one. Do **not**
+    extend `parseLabelledValue`/`TDraftField` for this: that union drives `DRAFT_FIELD_SET`,
+    `ONBOARDING_STEPS` and every `switch (step)` in `onboarding.ts`, whose numeric validation demands
+    5–15 digits and would reject «23».
+  - **Every label and example on screen is derived, never a literal.** `rateInputLabel` is read back
+    out of `RATE_LABELS`, so a hint is always a label the parser accepts, and the hints print the
+    seller's **current** value: the screen used to show «Комиссия 25 %» and offer `комиссия: 23` two
+    lines below. `RATE_FIELDS` is built from a `Record<TRateField, true>` for the `DRAFT_FIELD_SET`
+    reason — an array literal does not force the union to be complete.
 - `ProfitService` (`reports/profit.service.ts`) joins the sources; `OrderReportsService` stays
   API-only. It fetches both order sets with one `Promise.all`, then makes **one** `findBySkus` call
   over their union and **one** returns call shared by both `profitOf` runs — the returns endpoint is
