@@ -1,8 +1,21 @@
+import { Injectable } from '@nestjs/common';
+
+import { AppConfigService } from '../../../config/app-config.service';
 import { TELEGRAM_PARSE_MODE, splitMessage } from '../formatting/telegram-format';
 
 /**
  * Отправка сообщений без экземпляра Telegraf — воркеры очередей знают только
- * botToken, поэтому ходят в Bot API напрямую.
+ * botToken, поэтому собирают запрос к Bot API сами.
+ *
+ * «Сами» не значит «на api.telegram.org»: базовый адрес берётся из
+ * AppConfigService.telegramApiUrl, тот же, что получает Telegraf через apiRoot.
+ * Раньше хост был захардкожен здесь, и эта ветка осталась бы единственной,
+ * которая ходит мимо зеркала — то есть итоговый отчёт не доходил бы, а всё
+ * остальное работало.
+ *
+ * Класс перестал быть статическим ровно из-за конфига: читать process.env в
+ * обход AppConfigService запрещено, а единственный потребитель
+ * (NotificationsProcessor) сам живёт в Nest DI.
  *
  * Здесь раньше был захардкожен legacy `parse_mode: 'Markdown'`, при том что
  * тексты отчётов писались с `**жирный**`. Telegram отвечал 400 «Can't find end
@@ -10,8 +23,11 @@ import { TELEGRAM_PARSE_MODE, splitMessage } from '../formatting/telegram-format
  * то есть итоговый отчёт пользователь не получал НИКОГДА. Режим разметки
  * теперь берётся из единого источника (telegram-format.ts).
  */
-export default class TelegramApiService {
-  public static async sendMessage(botToken: string, chatId: string, text: string): Promise<void> {
+@Injectable()
+export class TelegramApiService {
+  constructor(private readonly config: AppConfigService) {}
+
+  public async sendMessage(botToken: string, chatId: string, text: string): Promise<void> {
     // Длинный отчёт не влезает в лимит Telegram (4096) и тоже даёт 400 —
     // режем на части и шлём по порядку.
     for (const chunk of splitMessage(text)) {
@@ -19,8 +35,8 @@ export default class TelegramApiService {
     }
   }
 
-  private static async send(botToken: string, chatId: string, text: string): Promise<void> {
-    const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  private async send(botToken: string, chatId: string, text: string): Promise<void> {
+    const url = `${this.config.telegramApiUrl}/bot${botToken}/sendMessage`;
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

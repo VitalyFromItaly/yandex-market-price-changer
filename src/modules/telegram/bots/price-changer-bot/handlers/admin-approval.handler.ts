@@ -106,7 +106,12 @@ export class AdminApprovalHandler {
   ): Promise<void> {
     try {
       if (access.status === 'approved') {
-        const kb = await this.keyboard.createMenuKeyboard();
+        // Раскладку собираем для ЗАЯВИТЕЛЯ, а не для нажавшего кнопку админа:
+        // ctx.from здесь — администратор, и его права к меню получателя
+        // отношения не имеют.
+        const kb = await this.keyboard.createMenuKeyboard(
+          this.config.isAdmin(access.telegramUserId),
+        );
         await ctx.telegram.sendMessage(
           access.telegramChatId,
           [

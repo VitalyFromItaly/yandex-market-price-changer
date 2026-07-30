@@ -8,6 +8,20 @@ import { STOCKS_BATCH_SIZE } from '../../src/modules/yandex/yandex-api.paths';
 
 const FIXTURE = join(process.cwd(), '__tests__/fixtures/price-template.xlsx');
 const CREDENTIALS = { token: 't', campaignId: 'c', businessId: 'b' };
+const USER = '42';
+
+/** Хранилище закупа — заглушка, запоминающая то, что бы записалось. */
+function fakePurchasePrices() {
+  const saved: Array<{ user: string; rows: Array<{ sku: string; price: number }> }> = [];
+
+  return {
+    saved,
+    upsertMany: vi.fn(async (user: string, rows: Array<{ sku: string; price: number }>) => {
+      saved.push({ user, rows });
+      return rows.length;
+    }),
+  };
+}
 
 /** Клиент-заглушка: сети не касаемся, но записываем всё, что бы ушло. */
 function fakeClient(catalog: string[], opts: { failBatch?: number } = {}) {
@@ -26,8 +40,11 @@ function fakeClient(catalog: string[], opts: { failBatch?: number } = {}) {
   };
 }
 
-function serviceWith(client: ReturnType<typeof fakeClient>) {
-  return new StockSyncService({ forTenant: () => client } as never);
+function serviceWith(
+  client: ReturnType<typeof fakeClient>,
+  prices: ReturnType<typeof fakePurchasePrices> = fakePurchasePrices(),
+) {
+  return new StockSyncService({ forTenant: () => client } as never, prices as never);
 }
 
 describe('StockSyncService', () => {
@@ -35,7 +52,10 @@ describe('StockSyncService', () => {
 
   it('сухой прогон НЕ делает ни одной записи', async () => {
     const client = fakeClient(['FAA02006M']);
-    const result = await serviceWith(client).sync(CREDENTIALS, file, true);
+    const result = await serviceWith(client).sync(CREDENTIALS, file, {
+      dryRun: true,
+      telegramUserId: USER,
+    });
 
     expect(client.updateStocks).not.toHaveBeenCalled();
     expect(client.getWarehouseId).not.toHaveBeenCalled();
@@ -48,7 +68,7 @@ describe('StockSyncService', () => {
 
   it('позиции не из каталога пропускаются, а не роняют загрузку', async () => {
     const client = fakeClient(['FAA02006M']);
-    const result = await serviceWith(client).sync(CREDENTIALS, file, false);
+    const result = await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
 
     expect(result.matched).toBe(1);
     expect(result.skipped.length).toBe(result.totalRows - 1);
@@ -58,7 +78,7 @@ describe('StockSyncService', () => {
 
   it('в Яндекс уходит артикул из каталога и количество из прайса', async () => {
     const client = fakeClient(['FAA02006M']);
-    await serviceWith(client).sync(CREDENTIALS, file, false);
+    await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
 
     expect(client.calls[0].items).toEqual([{ sku: 'FAA02006M', count: 2 }]);
     expect(client.calls[0].warehouseId).toBe(777);
@@ -67,7 +87,7 @@ describe('StockSyncService', () => {
   it('порог «>10» доезжает до API как 11, а НЕ как 0', async () => {
     // Регресс на старую логику: она обнулила бы 1605 позиций.
     const client = fakeClient(['GA-2100-1A1']);
-    await serviceWith(client).sync(CREDENTIALS, file, false);
+    await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
 
     const sent = client.calls.flatMap((c) => c.items);
     expect(sent).toHaveLength(1);
@@ -82,7 +102,7 @@ describe('StockSyncService', () => {
     const all = parsePriceList(rows).rows.map((r) => stripBrand(r.name));
 
     const client = fakeClient(all);
-    const result = await serviceWith(client).sync(CREDENTIALS, rows, false);
+    const result = await serviceWith(client).sync(CREDENTIALS, rows, { telegramUserId: USER });
 
     expect(result.updated).toBe(result.matched);
     expect(client.updateStocks).toHaveBeenCalledTimes(
@@ -99,7 +119,7 @@ describe('StockSyncService', () => {
     const all = parsePriceList(file).rows.map((r) => stripBrand(r.name));
 
     const client = fakeClient(all, { failBatch: 1 });
-    const result = await serviceWith(client).sync(CREDENTIALS, file, false);
+    const result = await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
 
     // Первый батч упал, но остальные ушли.
     expect(result.errors).toHaveLength(1);
@@ -111,11 +131,90 @@ describe('StockSyncService', () => {
 
   it('пустой каталог: ничего не пишем и не падаем', async () => {
     const client = fakeClient([]);
-    const result = await serviceWith(client).sync(CREDENTIALS, file, false);
+    const result = await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
 
     expect(client.updateStocks).not.toHaveBeenCalled();
     expect(result.updated).toBe(0);
     expect(result.skipped.length).toBe(result.totalRows);
+  });
+
+  it('без telegramUserId падает сразу: закуп ушёл бы в никуда', async () => {
+    const client = fakeClient(['FAA02006M']);
+
+    // Именно так выглядел бы забытый переход со старого флага dryRun:
+    // sync(creds, file, true) → боевая запись остатков вместо сверки.
+    await expect(serviceWith(client).sync(CREDENTIALS, file, true as never)).rejects.toThrow(
+      /telegramUserId/,
+    );
+    expect(client.updateStocks).not.toHaveBeenCalled();
+  });
+});
+
+describe('StockSyncService: закупочные цены', () => {
+  const file = readFileSync(FIXTURE);
+
+  it('цена из прайса сохраняется под артикулом КАТАЛОГА, а не под наименованием', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const prices = fakePurchasePrices();
+    const result = await serviceWith(client, prices).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+    });
+
+    expect(prices.upsertMany).toHaveBeenCalledTimes(1);
+    expect(prices.saved[0].user).toBe(USER);
+    // Ключ — «FAA02006M», а не «ORIENT FAA02006M»: в позиции заказа приходит
+    // артикул каталога, и join возможен только по нему.
+    expect(prices.saved[0].rows).toEqual([
+      expect.objectContaining({ sku: 'FAA02006M', price: 18800 }),
+    ]);
+    expect(result.purchasePricesSaved).toBe(1);
+  });
+
+  it('СУХОЙ ПРОГОН тоже сохраняет закуп — это наша база, а не Яндекс', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const prices = fakePurchasePrices();
+    const result = await serviceWith(client, prices).sync(CREDENTIALS, file, {
+      dryRun: true,
+      telegramUserId: USER,
+    });
+
+    expect(client.updateStocks).not.toHaveBeenCalled();
+    expect(prices.upsertMany).toHaveBeenCalledTimes(1);
+    expect(result.purchasePricesSaved).toBe(1);
+  });
+
+  it('позиции вне каталога в закуп не попадают: сопоставить их с заказом нечем', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const prices = fakePurchasePrices();
+    const result = await serviceWith(client, prices).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+    });
+
+    expect(prices.saved[0].rows).toHaveLength(1);
+    expect(result.totalRows).toBeGreaterThan(1000);
+  });
+
+  it('строка с порогом «>10» сохраняет цену: остаток и закуп независимы', async () => {
+    const client = fakeClient(['GA-2100-1A1']);
+    const prices = fakePurchasePrices();
+    await serviceWith(client, prices).sync(CREDENTIALS, file, { telegramUserId: USER });
+
+    expect(prices.saved[0].rows).toHaveLength(1);
+    expect(prices.saved[0].rows[0].price).toBeGreaterThan(0);
+  });
+
+  it('сбой записи закупа НЕ роняет обновление остатков', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const prices = fakePurchasePrices();
+    prices.upsertMany.mockRejectedValueOnce(new Error('mongo недоступна'));
+
+    const result = await serviceWith(client, prices).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+    });
+
+    // Остатки — то, ради чего файл присылают: они обновились.
+    expect(result.updated).toBe(1);
+    expect(result.purchasePricesSaved).toBe(0);
   });
 });
 
@@ -129,6 +228,7 @@ describe('formatStockReport', () => {
     errors: [],
     dryRun: false,
     catalogSize: 5599,
+    purchasePricesSaved: 4106,
   };
 
   it('успешная загрузка: числа на месте', () => {
@@ -142,6 +242,17 @@ describe('formatStockReport', () => {
     const text = formatStockReport({ ...base, dryRun: true, updated: 0 });
     expect(text).toContain('ничего не записано');
     expect(text).not.toContain('Остатки обновлены');
+  });
+
+  it('сохранённый закуп виден числом — иначе «ничего не записано» вводит в заблуждение', () => {
+    const text = formatStockReport({ ...base, dryRun: true, updated: 0 });
+    expect(text).toContain('Закупочных цен сохранено');
+    expect(text).toContain('4106');
+  });
+
+  it('без сохранённых цен строки о закупе нет', () => {
+    const text = formatStockReport({ ...base, purchasePricesSaved: 0 });
+    expect(text).not.toContain('Закупочных цен');
   });
 
   it('пропуски видны ЧИСЛОМ, а не теряются молча', () => {

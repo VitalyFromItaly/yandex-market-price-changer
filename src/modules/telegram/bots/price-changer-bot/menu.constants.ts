@@ -22,6 +22,8 @@ export const MENU = {
   REDEEMED: '✅ Выкуплено',
   RETURNING: '↩️ Едет обратно',
   IN_TRANSIT: '📦 Едет до клиента',
+  /** Чистая прибыль по выкупленным заказам. Отдельно от «Выкуплено». */
+  PROFIT: '💰 Прибыль',
   SCHEDULE: '⏰ Рассылка',
   SETTINGS: '⚙️ Настройки API',
   PROFILE: '📊 Мой профиль',
@@ -31,6 +33,13 @@ export const MENU = {
 } as const;
 
 export type TMenuLabel = (typeof MENU)[keyof typeof MENU];
+
+/**
+ * Контакт поддержки. Живёт рядом с подписями меню по той же причине: он
+ * упоминается из справки и из сообщения о недоставленной заявке, а раньше
+ * второе звало «связаться с поддержкой», нигде не говоря куда.
+ */
+export const SUPPORT_CONTACT = '@Vitality45';
 
 /** Все подписи одним списком — для проверки «это кнопка меню?». */
 export const MENU_LABELS: readonly TMenuLabel[] = Object.values(MENU);
@@ -46,6 +55,9 @@ export const MENU_LABELS: readonly TMenuLabel[] = Object.values(MENU);
 export const MENU_LAYOUT: readonly (readonly TMenuLabel[])[] = [
   [MENU.SHIPPED_TODAY, MENU.REDEEMED],
   [MENU.RETURNING, MENU.IN_TRANSIT],
+  // Прибыль — своим рядом во всю ширину: это не ещё один срез заказов, а
+  // единственный экран, где видны деньги после комиссии, налога и закупа.
+  [MENU.PROFIT],
   [MENU.SCHEDULE, MENU.SETTINGS],
   [MENU.HELP, MENU.PROFILE],
 ];

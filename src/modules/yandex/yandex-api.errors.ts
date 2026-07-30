@@ -47,7 +47,11 @@ export class YandexAuthError extends YandexApiError {
 /** 404 — кампании с таким id нет или токен не даёт к ней доступа. */
 export class YandexNotFoundError extends YandexApiError {
   public get userMessage(): string {
-    return 'Кампания не найдена. Проверьте Campaign ID в настройках.';
+    // Про Campaign ID пользователю говорить нельзя: он его не вводит и нигде
+    // не видит — бот определяет магазин по токену (TASK-050/052). Совет
+    // «проверьте Campaign ID в настройках» отправлял искать поле, которого на
+    // экране настроек нет.
+    return 'Магазин недоступен по этому токену. Подключите магазин заново в настройках.';
   }
 }
 
@@ -78,6 +82,12 @@ export class YandexBadRequestError extends YandexApiError {
 export class YandexServerError extends YandexApiError {
   public get retryable(): boolean {
     return true;
+  }
+
+  public get userMessage(): string {
+    // Без переопределения 5xx выглядел как общее «не удалось получить данные»,
+    // и пользователь шёл проверять свои настройки — там, где виноват не он.
+    return 'Яндекс.Маркет отвечает ошибкой. Это на его стороне — попробуйте позже.';
   }
 }
 

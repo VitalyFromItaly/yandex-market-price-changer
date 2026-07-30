@@ -9,17 +9,22 @@ import {
   type TDraftField,
 } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import {
+  parseRateInput,
+  rateTitle,
+  validateRate,
+  type IRateInput,
+} from '../../../../yandex/reports/profit';
+import { YandexAuthError } from '../../../../yandex/yandex-api.errors';
 import { YandexClientFactory } from '../../../../yandex/yandex-client.factory';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { b, esc, htmlOptions } from '../../../formatting/telegram-format';
 import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
-import { MENU, MENU_LABELS } from '../menu.constants';
+import { MENU, MENU_LABELS, SUPPORT_CONTACT } from '../menu.constants';
 import {
-  ONBOARDING_TOTAL,
   nextStep,
   stepHelp,
   parseLabelledValue,
-  stepNumber,
   stepPrompt,
   stepTitle,
   validateStep,
@@ -35,6 +40,7 @@ import {
   type IBusinessGroup,
 } from '../store-picker';
 
+import { ReportsHandler } from './reports.handler';
 import { ScheduleHandler } from './schedule.handler';
 
 /** Префикс callback_data подсказки. Дальше идёт название шага. */
@@ -44,6 +50,17 @@ export const HELP_PREFIX = 'onboarding_help:';
 interface IReply {
   message: string;
   keyboard?: any;
+}
+
+/** Итог попытки определить магазин по токену. */
+interface IAutofillResult {
+  draft: TOnboardingDraft;
+  /**
+   * Заполнено, только если токен НЕ годится и продолжать визард с ним нельзя.
+   * Недоступность Яндекса сюда не относится — это причина отступить на ручной
+   * ввод, а не забраковать токен.
+   */
+  rejected?: string;
 }
 
 /**
@@ -66,9 +83,22 @@ export class ApiSettingsHandler {
     private config: AppConfigService,
     private scheduleHandler: ScheduleHandler,
     private readonly clients: YandexClientFactory,
+    private readonly reportsHandler: ReportsHandler,
   ) {}
 
-  public register(bot: TTelegrafBot) {
+  /**
+   * Inline-кнопки визарда.
+   *
+   * ОТДЕЛЬНО от register() и раньше него в пайплайне — это не косметика.
+   * `bot.action` в telegraf не вызывает next(), поэтому общий обработчик
+   * callback_query, зарегистрированный раньше, забирает апдейт себе и его
+   * default-ветка отвечает «Неизвестная команда: store_pick:12345». Ровно так
+   * весь пикер магазина (TASK-052) и кнопка «Как получить?» (TASK-049) и не
+   * работали: их action'ы стояли позади общего switch. Текстовый обработчик
+   * при этом обязан остаться ПОЗАДИ menu/slash — отсюда два метода вместо
+   * одного.
+   */
+  public registerCallbacks(bot: TTelegrafBot) {
     // Подсказка по текущему шагу. Регистрируется здесь же, где живёт визард:
     // разносить вопрос и справку к нему по разным обработчикам значит
     // разложить один диалог на два места.
@@ -97,32 +127,48 @@ export class ApiSettingsHandler {
     });
 
     // Выбор магазина: применяем и продолжаем визард.
+    //
+    // try/catch обязателен: на callback_query необработанное исключение
+    // означает для пользователя полную тишину после того, как спиннер на
+    // кнопке погас, — он не знает, засчиталось нажатие или нет.
     bot.action(new RegExp(`^${PICK_STORE_PREFIX}`), async (ctx) => {
       await ctx.answerCbQuery();
-      const campaignId = this.callbackTail(ctx, PICK_STORE_PREFIX);
-      const stores = await this.storesFromDraft(ctx);
-      const store = stores.find((s) => s.campaignId === campaignId);
-
-      if (!store) {
-        await ctx.reply('Не удалось получить данные магазина. Пришлите токен заново.');
-        return;
+      try {
+        await this.pickStore(ctx);
+      } catch (error) {
+        this.logger.error('Не удалось подключить выбранный магазин', error as Error);
+        await ctx.reply('❌ Не удалось подключить магазин. Попробуйте ещё раз.');
       }
-
-      const access = await this.accessService.findByUserAndBot(
-        ctx.from.id.toString(),
-        ctx.botInfo.id.toString(),
-      );
-      const draft = await this.applyStore(ctx, store, access?.draft ?? {});
-
-      // Черновик заполнен целиком — заявка уходит сразу, без лишнего шага.
-      const following = nextStep(draft);
-      const reply = following
-        ? { message: stepPrompt(following), keyboard: await this.restartKeyboard(following) }
-        : await this.submitApplication(ctx, draft);
-
-      if (reply.message) await ctx.reply(reply.message, htmlOptions(reply.keyboard));
     });
+  }
 
+  private async pickStore(ctx: Context): Promise<void> {
+    const campaignId = this.callbackTail(ctx, PICK_STORE_PREFIX);
+    const stores = await this.storesFromDraft(ctx);
+    const store = stores.find((s) => s.campaignId === campaignId);
+
+    if (!store) {
+      await ctx.reply('Не удалось получить данные магазина. Пришлите токен заново.');
+      return;
+    }
+
+    const access = await this.accessService.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
+    const draft = await this.applyStore(ctx, store, access?.draft ?? {});
+
+    // Черновик заполнен целиком — заявка уходит сразу, без лишнего шага.
+    const following = nextStep(draft);
+    const reply = following
+      ? { message: stepPrompt(following), keyboard: await this.restartKeyboard(following) }
+      : await this.submitApplication(ctx, draft);
+
+    if (reply.message) await ctx.reply(reply.message, htmlOptions(reply.keyboard));
+  }
+
+  /** Свободный текст. Обязан регистрироваться ПОСЛЕ menu и slash. */
+  public register(bot: TTelegrafBot) {
     bot.on('text', async (ctx) => {
       try {
         const text = ctx.message.text.trim();
@@ -171,12 +217,27 @@ export class ApiSettingsHandler {
     });
 
     if (access.status === 'approved') {
-      // Незакрытый вопрос про время рассылки важнее правки настроек: иначе
-      // «09:00» было бы истолковано как попытка изменить Campaign ID.
+      // Незакрытые вопросы важнее правки настроек: иначе «09:00» было бы
+      // истолковано как попытка изменить настройку, а «28-07-2026» — тем более.
+      if (await this.reportsHandler.handlePendingDay(ctx, text)) {
+        return { message: '' }; // ответ уже отправлен внутри
+      }
       if (await this.scheduleHandler.handlePendingTime(ctx, text)) {
         return { message: '' }; // ответ уже отправлен внутри
       }
-      return await this.editSetting(ctx, text);
+
+      /**
+       * Правка — только когда есть что править.
+       *
+       * У одобренного пользователя может не быть магазина: доступ выдал
+       * администратор, а токен ещё не прислан. Такой человек попадал в
+       * editSetting, тот требовал подписи вида `token: …` и на голый токен
+       * отвечал «Не понял, что именно нужно изменить» — то есть бот отвергал
+       * ровно то, что сам только что попросил прислать.
+       */
+      if (await this.yandexMarketService.isConfigured(telegramUserId)) {
+        return await this.editSetting(ctx, text);
+      }
     }
 
     return await this.wizardStep(ctx, access.draft, text);
@@ -225,7 +286,21 @@ export class ApiSettingsHandler {
 
     // Токен принят — пробуем узнать идентификаторы у самого Маркета.
     if (field === 'token') {
-      newDraft = await this.autofillFromToken(ctx, value, newDraft);
+      const autofill = await this.autofillFromToken(ctx, value, newDraft);
+
+      // Маркет отклонил токен. Дальше идти нельзя: спрашивать Campaign ID у
+      // человека, которому обещали, что ничего кроме токена не понадобится, —
+      // это подменить ошибку вопросом. Токен убираем, иначе nextStep решил бы,
+      // что он уже собран, и визард поехал бы дальше с негодным значением.
+      if (autofill.rejected) {
+        await this.accessService.clearDraftField(telegramUserId, botId, 'token');
+        return {
+          message: `❌ ${esc(autofill.rejected)}\n\n${stepPrompt('token')}`,
+          keyboard: await this.restartKeyboard('token'),
+        };
+      }
+
+      newDraft = autofill.draft;
     }
 
     const following = nextStep(newDraft);
@@ -249,9 +324,14 @@ export class ApiSettingsHandler {
    * это отдельным предупреждением — с ним запросы к API не работают) и просто
    * ошибиться цифрой.
    *
-   * Неудача НЕ прерывает регистрацию: при любой проблеме возвращаем черновик
-   * как есть, и визард спокойно продолжится ручным вводом. Запереть человека
-   * из-за недоступности стороннего API было бы хуже, чем спросить два числа.
+   * Недоступность API НЕ прерывает регистрацию: при сетевой ошибке или 5xx
+   * возвращаем черновик как есть, и визард продолжится ручным вводом. Запереть
+   * человека из-за того, что Яндекс лежит, было бы хуже, чем спросить два числа.
+   *
+   * А вот ОТКАЗ В ДОСТУПЕ — другое дело, и различать их обязательно. Раньше
+   * ловилось всё подряд, поэтому продавец с отозванным или read-only токеном
+   * получал не сообщение об ошибке, а вопрос про Campaign ID: бот подменял
+   * диагноз лишней работой, причём ровно той, которой обещал избавить.
    *
    * Магазинов может быть несколько — тогда автоподстановки не делаем, иначе
    * молча выбрали бы за пользователя не тот.
@@ -260,7 +340,7 @@ export class ApiSettingsHandler {
     ctx: Context,
     token: string,
     draft: TOnboardingDraft,
-  ): Promise<TOnboardingDraft> {
+  ): Promise<IAutofillResult> {
     // botId здесь не нужен: сохранение полей уехало в applyStore, а запрос к
     // API идёт по токену.
     const telegramUserId = ctx.from.id.toString();
@@ -275,25 +355,31 @@ export class ApiSettingsHandler {
           error instanceof Error ? error.constructor.name : 'неизвестная ошибка'
         }`,
       );
-      return draft;
+
+      if (error instanceof YandexAuthError) {
+        return { draft, rejected: error.userMessage };
+      }
+      return { draft };
     }
 
     const pick = decidePick(stores);
 
-    if (pick.kind === 'none') return draft;
+    // Пустая выдача — не отказ: это может быть и незаполненный кабинет.
+    // Оставляем тихий откат на ручной ввод, как было.
+    if (pick.kind === 'none') return { draft };
 
     // Несколько магазинов — спрашиваем, какой подключить. Молча выбрать за
     // продавца нельзя: он узнал бы об ошибке по пустым отчётам.
     if (pick.kind === 'business') {
       await this.askBusiness(ctx, pick.groups);
-      return draft;
+      return { draft };
     }
     if (pick.kind === 'store') {
       await this.askStore(ctx, pick.stores);
-      return draft;
+      return { draft };
     }
 
-    return await this.applyStore(ctx, pick.store, draft);
+    return { draft: await this.applyStore(ctx, pick.store, draft) };
   }
 
   private callbackTail(ctx: Context, prefix: string): string {
@@ -415,17 +501,30 @@ export class ApiSettingsHandler {
   /** Уже одобренный пользователь правит одну настройку. */
   private async editSetting(ctx: Context, text: string): Promise<IReply> {
     const telegramUserId = ctx.from.id.toString();
+
+    // Ставки прибыли разбираются ПЕРВЫМИ и своим парсером: расширять
+    // parseLabelledValue нельзя, он возвращает поле черновика онбординга.
+    const rate = parseRateInput(text);
+    if (rate) return await this.editRate(ctx, rate);
+
     const labelled = parseLabelledValue(text);
 
     if (!labelled) {
       return {
+        // Про campaign_id и business_id больше не рассказываем: их не вводят
+        // руками, и на экране настроек их тоже нет. Предлагать пользователю
+        // поле, которого он нигде не видит, — приглашение к ошибке.
         message: [
           '❓ Не понял, что именно нужно изменить.',
           '',
-          'Пришлите значение с подписью:',
+          'Чтобы сменить магазин или токен, пришлите значение с подписью:',
           '<code>token: ваш_токен</code>',
-          '<code>campaign_id: 12345678</code>',
-          '<code>business_id: 87654321</code>',
+          '',
+          'Ставки расчёта прибыли:',
+          '<code>комиссия: 23</code>',
+          '<code>налог: 7</code>',
+          '<code>скидка: 10</code>',
+          '<code>скидка восток: 4</code>',
         ].join('\n'),
       };
     }
@@ -433,6 +532,25 @@ export class ApiSettingsHandler {
     const validation = validateStep(labelled.field, labelled.value);
     if (!validation.ok) {
       return { message: `❌ ${esc(validation.error)}` };
+    }
+
+    /**
+     * Новый токен — это, как правило, ДРУГОЙ магазин, и записать один лишь
+     * токен здесь нельзя: campaign_id, business_id и название остались бы от
+     * прежнего, а бот продолжил бы писать не туда. Экран настроек при этом
+     * прямо обещает «чтобы сменить магазин — пришлите новый токен».
+     *
+     * Поэтому отдаём токен обычному визарду: он сам сходит в Маркет, при
+     * нескольких магазинах покажет кнопки выбора и перезапишет все поля
+     * разом. Второй путь подключения магазина заводить незачем — он бы и
+     * разошёлся с первым.
+     */
+    if (labelled.field === 'token') {
+      // Черновик чистим перед делегированием: остатки прошлой регистрации
+      // сделали бы nextStep() пустым, и визард подал бы старые значения, ни
+      // разу не взглянув на присланный токен.
+      await this.accessService.clearDraft(telegramUserId, ctx.botInfo.id.toString());
+      return await this.wizardStep(ctx, undefined, text);
     }
 
     const updated = await this.yandexMarketService.updateByTelegramUser(telegramUserId, {
@@ -447,15 +565,56 @@ export class ApiSettingsHandler {
 
     return {
       message: `${this.acceptedLabel(labelled.field, labelled.value)}\n\n✅ Настройка обновлена.`,
-      keyboard: await this.keyboard.createInlineButtons([
-        { text: '👀 Проверить настройки', callback_data: 'check_settings' },
-        { text: MENU.MAIN, callback_data: 'main_menu' },
-      ]),
+      keyboard: await this.settingsKeyboard(),
     };
   }
 
   /**
-   * Все три креда собраны — создаём документ магазина и подаём заявку.
+   * Изменение ставки расчёта прибыли.
+   *
+   * В визард такой текст НЕ отдаём, даже если магазина почему-то нет: «пришлите
+   * токен» в ответ на «комиссия: 25» — это бот, не понявший, о чём его просят.
+   */
+  private async editRate(ctx: Context, rate: IRateInput): Promise<IReply> {
+    const validation = validateRate(rate.field, rate.value);
+    if (!validation.ok) {
+      return { message: `❌ ${esc(validation.error)}` };
+    }
+
+    const updated = await this.yandexMarketService.updateRate(
+      ctx.from.id.toString(),
+      rate.field,
+      rate.value,
+    );
+
+    if (!updated) {
+      return {
+        message:
+          '⚠️ Сначала подключите магазин — пришлите API-токен одним сообщением. ' +
+          'Ставки настраиваются после этого.',
+      };
+    }
+
+    return {
+      message:
+        `✅ ${esc(rateTitle(rate.field))}: <b>${rate.value}%</b>\n\n` +
+        'Прибыль пересчитается при следующем открытии отчёта.',
+      keyboard: await this.settingsKeyboard(),
+    };
+  }
+
+  /** Кнопки под подтверждением правки настройки. */
+  private async settingsKeyboard() {
+    return await this.keyboard.createInlineButtons([
+      { text: '👀 Проверить настройки', callback_data: 'check_settings' },
+      { text: MENU.MAIN, callback_data: 'main_menu' },
+    ]);
+  }
+
+  /**
+   * Черновик собран целиком — создаём документ магазина и, если доступа ещё
+   * нет, подаём заявку. Обычно к этому моменту пользователь ввёл ОДИН токен:
+   * остальные поля черновика заполнил autofillFromToken.
    *
    * Признаком НОВОЙ заявки служит атомарный переход статуса new → pending, а не
    * факт заполненности кредов: заполненность истинна и при каждом следующем
@@ -490,24 +649,50 @@ export class ApiSettingsHandler {
           });
     };
 
-    // Администратор-продавец не должен присылать заявку сам себе.
-    if (this.config.isAdmin(ctx.from.id)) {
-      await saveStore();
-      await this.accessService.grant({
-        telegramUserId,
-        botId,
-        telegramChatId: ctx.chat.id.toString(),
-        username: ctx.from.username,
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-      });
+    const isAdmin = this.config.isAdmin(ctx.from.id);
+    const access = await this.accessService.findByUserAndBot(telegramUserId, botId);
+
+    /**
+     * Заявка нужна только тому, у кого доступа ещё нет.
+     *
+     * Администратор-продавец не должен присылать заявку сам себе — это было
+     * учтено и раньше. А вот УЖЕ ОДОБРЕННЫЙ пользователь, меняющий магазин,
+     * попадал в tryApply, получал null (фильтр ждёт статус `new`) и читал
+     * «Заявка уже отправлена администратору, ожидайте решения» — ответ не о
+     * том, что он сделал, и о решении, которого он не ждёт.
+     */
+    if (isAdmin || access?.status === 'approved') {
+      const store = await saveStore();
+
+      if (access?.status !== 'approved') {
+        await this.accessService.grant({
+          telegramUserId,
+          botId,
+          telegramChatId: ctx.chat.id.toString(),
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        });
+      } else {
+        // grant() чистит черновик сам; для уже одобренного делаем это явно,
+        // иначе следующая правка увидит остатки этой.
+        await this.accessService.clearDraft(telegramUserId, botId);
+      }
+
       // Отдаём именно REPLY-клавиатуру, а не inline: до этого момента у
       // пользователя была сокращённая раскладка без отчётов, и её нужно
       // заменить прямо сейчас. Inline-кнопки живут в сообщении и меню под
       // полем ввода не меняют — пришлось бы жать «Главное меню» отдельно.
       return {
-        message: '🎉 <b>Все настройки API заполнены!</b>\n\nОтчёты появились в меню ниже.',
-        keyboard: await this.keyboard.createMenuKeyboard(),
+        // Говорим о том, что произошло, — подключён магазин. Прежнее
+        // «🎉 Все настройки API заполнены!» осталось от снятой логики, где
+        // признаком успеха считалась заполненность полей.
+        message: [
+          `✅ <b>Магазин подключён: ${esc(store?.name) || 'готово'}</b>`,
+          '',
+          'Отчёты доступны в меню ниже.',
+        ].join('\n'),
+        keyboard: await this.keyboard.createMenuKeyboard(isAdmin),
       };
     }
 
@@ -529,8 +714,11 @@ export class ApiSettingsHandler {
       // документ, а статус останется new — пользователь застрянет навсегда.
       await this.yandexMarketService.deleteByTelegramUser(telegramUserId);
       return {
-        message:
-          '⚠️ Не удалось отправить заявку администратору. Попробуйте позже или свяжитесь с поддержкой.',
+        message: [
+          '⚠️ Не удалось отправить заявку администратору.',
+          '',
+          `Попробуйте позже или напишите в поддержку: ${SUPPORT_CONTACT}`,
+        ].join('\n'),
       };
     }
 
@@ -549,7 +737,6 @@ export class ApiSettingsHandler {
    */
   private acceptedLabel(field: TDraftField, value: string): string {
     const shown = field === 'token' ? `${esc(value.slice(0, 10))}…` : esc(value);
-    const step = stepNumber(field);
-    return `✅ ${stepTitle(field)} принят (${step} из ${ONBOARDING_TOTAL}): <code>${shown}</code>`;
+    return `✅ ${stepTitle(field)} принят: <code>${shown}</code>`;
   }
 }

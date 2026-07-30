@@ -90,6 +90,8 @@ export const REPORT = {
   RETURNING: 'returning',
   /** (г) Всё, что едет до клиента — выгрузка .xlsx. */
   IN_TRANSIT: 'in_transit',
+  /** (д) Чистая прибыль по выкупленным заказам. */
+  PROFIT: 'profit',
 } as const;
 
 export type TReportKey = (typeof REPORT)[keyof typeof REPORT];
@@ -137,6 +139,21 @@ export const REPORT_DEFINITIONS: Readonly<Record<TReportKey, IReportDefinition>>
     substatuses: [],
     // Это срез «что сейчас в пути», а не события за период — фильтра даты нет.
     dateFilter: 'none',
+    usesReturnsApi: false,
+  },
+
+  [REPORT.PROFIT]: {
+    title: 'Прибыль',
+    // Тот же набор заказов, что у «Выкуплено», и это не совпадение: прибыль
+    // считается по деньгам, которые продавец УЖЕ получил. Заказ в пути можно
+    // не выкупить, и посчитанная по нему прибыль оказалась бы выдумкой.
+    //
+    // Определение продублировано, а не переиспользовано ссылкой на REDEEMED
+    // намеренно: если завтра «Выкуплено» решат считать по другому фильтру даты,
+    // прибыль не должна поехать за ним молча.
+    statuses: [ORDER_STATUS.DELIVERED],
+    substatuses: [],
+    dateFilter: 'updatedAt',
     usesReturnsApi: false,
   },
 };

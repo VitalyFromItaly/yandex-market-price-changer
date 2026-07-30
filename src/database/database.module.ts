@@ -5,10 +5,12 @@ import { AppConfigService } from '../config/app-config.service';
 
 import { DatabaseService } from './database.service';
 import { Bot, BotSchema } from './schemas/bot.schema';
+import { PurchasePrice, PurchasePriceSchema } from './schemas/purchase-price.schema';
 import { ReportSchedule, ReportScheduleSchema } from './schemas/report-schedule.schema';
 import { UserAccess, UserAccessSchema } from './schemas/user-access.schema';
 import { User, UserSchema } from './schemas/user.schema';
 import { YandexMarket, YandexMarketSchema } from './schemas/yandex-market.schema';
+import { PurchasePriceService } from './services/purchase-price.service';
 import { ReportScheduleService } from './services/report-schedule.service';
 import { UserAccessService } from './services/user-access.service';
 import { YandexMarketService } from './services/yandex-market.service';
@@ -35,15 +37,23 @@ import { YandexMarketService } from './services/yandex-market.service';
       { name: User.name, schema: UserSchema },
       { name: UserAccess.name, schema: UserAccessSchema },
       { name: ReportSchedule.name, schema: ReportScheduleSchema },
+      { name: PurchasePrice.name, schema: PurchasePriceSchema },
       { name: YandexMarket.name, schema: YandexMarketSchema },
     ]),
   ],
-  providers: [DatabaseService, UserAccessService, ReportScheduleService, YandexMarketService],
+  providers: [
+    DatabaseService,
+    UserAccessService,
+    ReportScheduleService,
+    PurchasePriceService,
+    YandexMarketService,
+  ],
   exports: [
     DatabaseService,
     MongooseModule,
     UserAccessService,
     ReportScheduleService,
+    PurchasePriceService,
     YandexMarketService,
   ],
 })

@@ -12,6 +12,7 @@ import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-change
 import { FallbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/fallback.handler';
 import { StockUploadHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
 import { AdminUsersHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-users.handler';
+import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
 
 /**
  * Порядок регистрации обработчиков telegraf — значимый инвариант, который
@@ -53,6 +54,12 @@ describe('PriceChangerComposer: порядок регистрации', () => {
         { provide: AccessGateHandler, useValue: stub('accessGate', order) },
         { provide: AdminApprovalHandler, useValue: stub('adminCallbacks', order) },
         { provide: ScheduleHandler, useValue: stub('scheduleCallbacks', order) },
+        {
+          // У отчётов только колбэки выбора периода — кнопки меню их зовут
+          // напрямую, не через composer.
+          provide: ReportsHandler,
+          useValue: { registerCallbacks: () => order.push('reportCallbacks') },
+        },
         { provide: StartHandler, useValue: stub('start', order) },
         { provide: MenuCommandsHandler, useValue: stub('menu', order) },
         {
@@ -63,7 +70,15 @@ describe('PriceChangerComposer: порядок регистрации', () => {
           },
         },
         { provide: CallbackQueryHandler, useValue: stub('callbacks', order) },
-        { provide: ApiSettingsHandler, useValue: stub('apiSettings', order) },
+        {
+          // У визарда ДВА входа: колбэки (до общего switch) и текст (после
+          // menu/slash). Композер зовёт оба, и порядок проверяется для каждого.
+          provide: ApiSettingsHandler,
+          useValue: {
+            register: () => order.push('apiSettings'),
+            registerCallbacks: () => order.push('onboardingCallbacks'),
+          },
+        },
         { provide: AdminUsersHandler, useValue: stub('adminUsers', order) },
         { provide: StockUploadHandler, useValue: stub('stockUpload', order) },
         { provide: FallbackHandler, useValue: stub('fallback', order) },
@@ -109,6 +124,8 @@ describe('PriceChangerComposer: порядок регистрации', () => {
       'adminCallbacks',
       'adminUsers',
       'scheduleCallbacks',
+      'reportCallbacks',
+      'onboardingCallbacks',
       'callbacks',
       'apiSettings',
       'stockUpload',
@@ -130,5 +147,25 @@ describe('PriceChangerComposer: порядок регистрации', () => {
     const { composer } = await buildComposer();
     const order = composer.registrationOrder;
     expect(order.indexOf('adminCallbacks')).toBeLessThan(order.indexOf('callbacks'));
+  });
+
+  it('колбэки визарда идут ДО общего обработчика callback_query', async () => {
+    // Та же ловушка, и она уже сработала: `store_pick:`, `store_pick_business:`
+    // и `onboarding_help:` регистрировались вместе с текстовым обработчиком,
+    // то есть ПОСЛЕ общего switch. bot.action не вызывает next(), поэтому
+    // весь пикер магазина (TASK-052) и кнопка «Как получить?» (TASK-049)
+    // отвечали «Неизвестная команда: store_pick:12345».
+    const { composer } = await buildComposer();
+    const order = composer.registrationOrder;
+    expect(order.indexOf('onboardingCallbacks')).toBeLessThan(order.indexOf('callbacks'));
+  });
+
+  it('текстовый обработчик визарда регистрируется отдельно от его колбэков', async () => {
+    // Разделение — не косметика: колбэки обязаны быть ДО общего switch, а
+    // текст — ПОСЛЕ menu и slash. Одним методом эти два требования не
+    // выполнить, и слияние обратно немедленно ломает одно из них.
+    const { composer } = await buildComposer();
+    const order = composer.registrationOrder;
+    expect(order.indexOf('onboardingCallbacks')).toBeLessThan(order.indexOf('apiSettings'));
   });
 });

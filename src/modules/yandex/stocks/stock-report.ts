@@ -32,6 +32,13 @@ export function formatStockReport(result: IStockSyncResult): string {
     lines.push(`📤 Записано: ${b(result.updated)}`);
   }
 
+  // Закупочные цены сохраняются и при сверке — про это надо сказать прямо,
+  // иначе строка «в Яндекс ничего не записано» читается как «не сохранено
+  // вообще ничего», и продавец не поймёт, откуда взялась прибыль.
+  if (result.purchasePricesSaved) {
+    lines.push(`💵 Закупочных цен сохранено: ${b(result.purchasePricesSaved)}`);
+  }
+
   // Пропуски — главное, ради чего отчёт читают. Прячем их в конец только если
   // их нет вовсе.
   if (result.skipped.length) {

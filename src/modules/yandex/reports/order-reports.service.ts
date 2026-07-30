@@ -10,9 +10,33 @@ import {
   type TReportKey,
 } from './report-status-map';
 import { addTotals, amountValue, orderTotals, ZERO_TOTALS, type IMoneyTotals } from './money';
-import { moscowDateParam, moscowDayBounds } from './moscow-day';
+import { moscowDateParam } from './moscow-day';
+import {
+  DEFAULT_PERIOD,
+  assertPeriodSupported,
+  shipmentDateParams,
+  updatedAtParams,
+  type IReportPeriod,
+} from './report-period';
 import { buildOrdersWorkbook, workbookFileName } from './report-workbook';
 import { formatReport } from './report-message';
+
+/**
+ * Позиция заказа в объёме, нужном отчётам.
+ *
+ * `offerId` — артикул продавца, тот же, что в каталоге и в закупочных ценах.
+ * Устаревший синоним `shopSku` не используем: документация прямо велит брать
+ * `offerId`, а имя из списка устаревших полей ещё и запрещено тестом.
+ *
+ * Позиции ПРИХОДИЛИ всегда: `getOrders` отдаёт ответ Яндекса как есть, а отчёты
+ * лишь кастуют его к этому интерфейсу. Расширение типа не добавляет ни запроса,
+ * ни расхода квоты — только перестаёт выбрасывать уже полученные данные.
+ */
+export interface IReportOrderItem {
+  offerId?: string;
+  offerName?: string;
+  count?: number;
+}
 
 /** Заказ в объёме, нужном отчётам. */
 export interface IReportOrder {
@@ -22,7 +46,7 @@ export interface IReportOrder {
   creationDate?: string;
   itemsTotal?: number;
   deliveryTotal?: number;
-  items?: Array<{ offerName?: string; count?: number }>;
+  items?: IReportOrderItem[];
 }
 
 /**
@@ -48,6 +72,8 @@ export interface IReportResult {
   count: number;
   totals: IMoneyTotals;
   orders: IReportOrder[];
+  /** За какой период собран — заголовок сообщения печатает именно его. */
+  period: IReportPeriod;
 }
 
 /**
@@ -67,11 +93,12 @@ export class OrderReportsService {
     store: YandexMarketDocument,
     key: TReportKey,
     now: Date = new Date(),
+    period: IReportPeriod = DEFAULT_PERIOD,
   ): Promise<IReportResult> {
     const client = this.clients.forStore(store);
     const definition = reportDefinition(key);
 
-    const orders = await this.collectOrders(client, key, now);
+    const orders = await this.collectOrders(client, key, now, period);
     let totals = orders.reduce<IMoneyTotals>(
       (acc, order) => addTotals(acc, orderTotals(order)),
       ZERO_TOTALS,
@@ -85,7 +112,7 @@ export class OrderReportsService {
       count += returns.count;
     }
 
-    return { key, title: definition.title, count, totals, orders };
+    return { key, title: definition.title, count, totals, orders, period };
   }
 
   /**
@@ -97,21 +124,29 @@ export class OrderReportsService {
     client: YandexApiClient,
     key: TReportKey,
     now: Date,
+    period: IReportPeriod,
   ): Promise<IReportOrder[]> {
     const definition = reportDefinition(key);
     const query: IOrdersQuery = { status: [...definition.statuses] };
 
+    // Период проверяем ДО сети — но только там, где он вообще применяется.
+    // У среза «что сейчас в пути» фильтра даты нет, и отклонять его из-за
+    // слишком старой даты было бы отказом на ровном месте.
+    if (definition.dateFilter !== 'none') {
+      assertPeriodSupported(period, now);
+    }
+
     switch (definition.dateFilter) {
       case 'supplierShipmentDate': {
-        const today = moscowDateParam(now);
-        query.supplierShipmentDateFrom = today;
-        query.supplierShipmentDateTo = today;
+        const range = shipmentDateParams(period, now);
+        query.supplierShipmentDateFrom = range.from;
+        query.supplierShipmentDateTo = range.to;
         break;
       }
       case 'updatedAt': {
-        const bounds = moscowDayBounds(now);
-        query.updatedAtFrom = bounds.from;
-        query.updatedAtTo = bounds.to;
+        const range = updatedAtParams(period, now);
+        query.updatedAtFrom = range.from;
+        query.updatedAtTo = range.to;
         break;
       }
       default:

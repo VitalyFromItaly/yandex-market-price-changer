@@ -1,12 +1,15 @@
 import { Injectable } from '@nestjs/common';
 
+import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { TTelegrafBot } from '../../../domain.telegram';
-import { esc, htmlOptions } from '../../../formatting/telegram-format';
+import { htmlOptions } from '../../../formatting/telegram-format';
 import { helpText } from '../help.text';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { profileText } from '../profile.text';
+import { settingsText } from '../settings.text';
 
 import { SharedCommandsHandler } from './shared-commands.handler';
 
@@ -17,6 +20,7 @@ export class SlashCommandsHandler {
     private accessService: UserAccessService,
     private yandexMarketService: YandexMarketService,
     private sharedHandlers: SharedCommandsHandler,
+    private config: AppConfigService,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -24,18 +28,21 @@ export class SlashCommandsHandler {
 
     // /menu - главное меню
     bot.command('menu', async (ctx) => {
-      const keyboard = await this.keyboard.createMenuKeyboard();
-      await ctx.reply('📋 Главное меню:', keyboard);
+      const keyboard = await this.keyboard.createMenuKeyboard(this.config.isAdmin(ctx.from.id));
+      // Подпись та же, что у кнопки: раньше здесь было «📋 Главное меню:», в
+      // ветке main_menu — «🏠 Главное меню:» плюс отдельное «Выберите
+      // действие:», а у кнопки — «🏠 Главное меню». Три текста на один экран.
+      await ctx.reply(MENU.MAIN, keyboard);
     });
 
     // /settings - настройки
+    // Текст — из settings.text.ts, общий с кнопкой «⚙️ Настройки API». Раньше
+    // команда вела в собственное меню из двух inline-кнопок, причём вторая
+    // («🔄 Автообновление») обработчика не имела вовсе и отвечала
+    // «Неизвестная команда: settings_auto_update».
     bot.command('settings', async (ctx) => {
-      const inlineKeyboard = await this.keyboard.createInlineButtons([
-        { text: MENU.SETTINGS, callback_data: 'settings_api' },
-        { text: '🔄 Автообновление', callback_data: 'settings_auto_update' },
-      ]);
-
-      await ctx.reply('⚙️ Выберите настройку:', inlineKeyboard);
+      const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+      await ctx.reply(settingsText(store), htmlOptions());
     });
 
     // /price и /upload сняты (TASK-009): изменение цен по API отключено,
@@ -43,35 +50,34 @@ export class SlashCommandsHandler {
     // помечены @deprecated и оставлены как справочный материал.
 
     // /profile - профиль
+    // Текст — из profile.text.ts, общий с кнопкой «📊 Мой профиль».
+    // Блок «Статистика» убран вместе с подпиской: «Обновлений цен: 156» было
+    // зашитым числом, одинаковым для всех пользователей.
     bot.command('profile', async (ctx) => {
       const access = await this.accessService.findByUserAndBot(
         ctx.from.id.toString(),
         ctx.botInfo.id.toString(),
       );
-      const settings = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
-      const configured = !!(settings?.campaign_id && settings?.business_id && settings?.token);
-
-      // Блок «Статистика» убран вместе с подпиской: «Обновлений цен: 156» было
-      // зашитым числом, одинаковым для всех пользователей.
-      const profileMessage = `👤 <b>Ваш профиль</b>
-
-👨‍💼 <b>Пользователь:</b> ${esc(ctx.from.first_name)} ${esc(ctx.from.last_name || '')}
-🆔 <b>ID:</b> <code>${ctx.from.id}</code>
-📧 <b>Username:</b> @${esc(ctx.from.username || 'не указан')}
-
-✅ <b>Доступ:</b> ${this.accessLabel(access?.status)}
-⚙️ <b>Настройки API:</b> ${configured ? '✅ Заполнены' : '❌ Не заполнены'}${
-        access?.createdAt
-          ? `\n📅 <b>Регистрация:</b> ${new Date(access.createdAt).toLocaleDateString('ru-RU')}`
-          : ''
-      }`;
+      const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
 
       const keyboard = await this.keyboard.createInlineButtons([
         { text: MENU.SETTINGS, callback_data: 'settings_api' },
         { text: MENU.MAIN, callback_data: 'main_menu' },
       ]);
 
-      await ctx.reply(profileMessage, htmlOptions(keyboard));
+      await ctx.reply(
+        profileText({
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+          telegramUserId: ctx.from.id,
+          username: ctx.from.username,
+          accessStatus: access?.status,
+          storeName: store?.name,
+          configured: !!(store?.campaign_id && store?.business_id && store?.token),
+          registeredAt: access?.createdAt ? new Date(access.createdAt) : undefined,
+        }),
+        htmlOptions(keyboard),
+      );
     });
 
     // /help - помощь
@@ -81,19 +87,6 @@ export class SlashCommandsHandler {
     bot.command('help', async (ctx) => {
       await ctx.reply(helpText(), htmlOptions());
     });
-  }
-
-  private accessLabel(status: string | undefined): string {
-    switch (status) {
-      case 'approved':
-        return '✅ Выдан';
-      case 'pending':
-        return '⏳ Заявка на рассмотрении';
-      case 'rejected':
-        return '⛔ Отклонена';
-      default:
-        return '❌ Заявка не подана';
-    }
   }
 
   /**

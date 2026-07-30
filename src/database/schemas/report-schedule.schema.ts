@@ -37,6 +37,16 @@ export class ReportSchedule {
   @Prop({ type: String, default: '09:00', required: true })
   time: string;
 
+  /**
+   * За какой период считать отчёт: `today` | `week` | `month`.
+   *
+   * Конкретной даты здесь быть не может — в ежедневной задаче она означала бы
+   * отчёт, который завтра пришлёт ровно те же числа, что сегодня. Осмысленны
+   * только периоды, отсчитываемые от «сейчас» (см. SCHEDULE_PERIODS).
+   */
+  @Prop({ type: String, default: 'today', required: true })
+  period: string;
+
   createdAt?: Date;
   updatedAt?: Date;
 }

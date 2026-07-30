@@ -46,6 +46,9 @@ export class BotRegistry implements OnApplicationBootstrap {
     // валидное число, и заявки будут молча уходить в никуда. Печатаем список
     // при старте, чтобы её было видно глазами. Id не секретны.
     this.logger.log(`Администраторы: ${this.config.telegramAdminIds.join(', ')}`);
+    // Куда реально уходят запросы, видно только здесь: при неверном зеркале
+    // ошибки выглядят как обычные сетевые таймауты, без намёка на причину.
+    this.logger.log(`Bot API: ${this.config.telegramApiUrl}`);
 
     const docs = await this.loadOrSeedBots();
     // Раньше launchBots() вызывался БЕЗ await — промис не джойнился, и ошибки
@@ -71,7 +74,12 @@ export class BotRegistry implements OnApplicationBootstrap {
   }
 
   private async registerBot(doc: BotDocument): Promise<void> {
-    const telegraf: TTelegrafBot = new Telegraf(doc.token);
+    // apiRoot — единственная точка, где задаётся адрес Bot API для ВСЕХ
+    // исходящих вызовов этого бота: и методы (sendMessage, setWebhook, getMe),
+    // и ссылки на файлы из getFileLink строятся telegraf'ом от него.
+    const telegraf: TTelegrafBot = new Telegraf(doc.token, {
+      telegram: { apiRoot: this.config.telegramApiUrl },
+    });
 
     // Единая точка обработки ошибок вместо глотающего TryCatch (TASK-013):
     // ошибка логируется целиком и пользователь получает внятный ответ.
@@ -116,7 +124,7 @@ export class BotRegistry implements OnApplicationBootstrap {
    * ровно setWebhook (TASK-012).
    */
   private async setWebhook(telegraf: TTelegrafBot, doc: BotDocument): Promise<void> {
-    const url = `${this.config.telegramProxyUrl}${this.webhookPath(doc.type, doc.id)}`;
+    const url = `${this.config.telegramWebhookUrl}${this.webhookPath(doc.type, doc.id)}`;
     await telegraf.telegram.setWebhook(url);
     this.logger.log(`Вебхук установлен: ${url}`);
   }

@@ -1,6 +1,13 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
+import {
+  DEFAULT_COMMISSION_PERCENT,
+  DEFAULT_DISCOUNT_PERCENT,
+  DEFAULT_TAX_PERCENT,
+  DEFAULT_VOSTOK_DISCOUNT_PERCENT,
+} from '../../modules/yandex/reports/profit';
+
 export type YandexMarketDocument = YandexMarket & Document;
 
 @Schema({ timestamps: true })
@@ -16,6 +23,32 @@ export class YandexMarket {
 
   @Prop({ default: 1.2 })
   priceCoefficient: number;
+
+  /**
+   * Комиссия Яндекс.Маркета, % — вычитается из суммы продажи при расчёте прибыли.
+   *
+   * Дефолт импортируется, а не написан литералом: у соседнего
+   * `priceCoefficient` он разъехался по четырём файлам именно так.
+   */
+  @Prop({ type: Number, default: DEFAULT_COMMISSION_PERCENT })
+  commissionPercent: number;
+
+  /** Налог с продаж, % — считается от суммы продажи (см. profit.ts). */
+  @Prop({ type: Number, default: DEFAULT_TAX_PERCENT })
+  taxPercent: number;
+
+  /**
+   * Скидка от цены прайса, % — из неё получается закуп.
+   *
+   * В прайсе стоит цена поставщика, а не закупочная: закуп = цена × (1 − скидка).
+   * По «Востоку» скидка своя, поэтому их две.
+   */
+  @Prop({ type: Number, default: DEFAULT_DISCOUNT_PERCENT })
+  discountPercent: number;
+
+  /** Скидка от цены прайса на «Восток», %. */
+  @Prop({ type: Number, default: DEFAULT_VOSTOK_DISCOUNT_PERCENT })
+  vostokDiscountPercent: number;
 
   @Prop({ default: Date.now })
   createdAt: Date;

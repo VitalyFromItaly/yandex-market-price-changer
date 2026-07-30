@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 
+import { DatabaseModule } from '../../database/database.module';
+
 import { OrderReportsService } from './reports/order-reports.service';
+import { ProfitService } from './reports/profit.service';
 import { StockSyncService } from './stocks/stock-sync.service';
 import { YandexClientFactory } from './yandex-client.factory';
 
@@ -15,9 +18,13 @@ import { YandexClientFactory } from './yandex-client.factory';
  * быть провайдером (см. YandexApiClient).
  *
  * AppConfigService приходит из глобального AppConfigModule, импорты не нужны.
+ *
+ * DatabaseModule нужен двум вещам: закупочные цены пишутся при загрузке прайса
+ * и читаются при расчёте прибыли. Цикла нет — база о Яндексе не знает.
  */
 @Module({
-  providers: [YandexClientFactory, OrderReportsService, StockSyncService],
-  exports: [YandexClientFactory, OrderReportsService, StockSyncService],
+  imports: [DatabaseModule],
+  providers: [YandexClientFactory, OrderReportsService, ProfitService, StockSyncService],
+  exports: [YandexClientFactory, OrderReportsService, ProfitService, StockSyncService],
 })
 export class YandexModule {}

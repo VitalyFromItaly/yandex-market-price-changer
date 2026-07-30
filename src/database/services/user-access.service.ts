@@ -25,8 +25,23 @@ export type TDraftField = 'token' | 'campaign_id' | 'business_id' | 'store_name'
 /**
  * Белый список полей черновика. Имя поля попадает в ключ $set (`draft.<field>`),
  * поэтому оно НЕ может браться из пользовательского ввода напрямую.
+ *
+ * Собирается из Record<TDraftField, true>, а не пишется массивом-литералом, и
+ * это принципиально: `Record` обязывает перечислить ВСЕ варианты объединения,
+ * пропуск — ошибка компиляции. Дефект на память: TASK-052 расширила тип полем
+ * `store_name`, а массив `TDraftField[]` забыла — компилятор промолчал (массив
+ * не требует полноты), и `saveDraftField` начал бросать на КАЖДОМ успешном
+ * определении магазина. Пользователь присылал верный токен и получал
+ * «Произошла ошибка при обработке настроек».
  */
-export const DRAFT_FIELDS: TDraftField[] = ['token', 'campaign_id', 'business_id'];
+const DRAFT_FIELD_SET: Record<TDraftField, true> = {
+  token: true,
+  campaign_id: true,
+  business_id: true,
+  store_name: true,
+};
+
+export const DRAFT_FIELDS = Object.keys(DRAFT_FIELD_SET) as TDraftField[];
 
 /**
  * Доступ к боту.
@@ -93,6 +108,31 @@ export class UserAccessService {
       .exec();
   }
 
+  /**
+   * Убрать ОДНО поле черновика.
+   *
+   * Нужно там, где значение уже сохранено, а потом выяснилось, что оно не
+   * годится: токен пишется в черновик до похода в Яндекс, и если Маркет его
+   * отклонил, визард обязан спросить токен заново. `clearDraft` для этого не
+   * подходит — он стёр бы и то, что пользователь уже ввёл верно.
+   */
+  async clearDraftField(
+    telegramUserId: string,
+    botId: string,
+    field: TDraftField,
+  ): Promise<UserAccessDocument | null> {
+    if (!DRAFT_FIELDS.includes(field)) {
+      throw new Error(`Недопустимое поле черновика: ${field}`);
+    }
+    return await this.model
+      .findOneAndUpdate(
+        { telegramUserId, botId },
+        { $unset: { [`draft.${field}`]: '' } },
+        { new: true },
+      )
+      .exec();
+  }
+
   /** Сбросить черновик — пользователь начинает визард заново. */
   async clearDraft(telegramUserId: string, botId: string): Promise<UserAccessDocument | null> {
     return await this.model
@@ -109,6 +149,26 @@ export class UserAccessService {
     const update = reportKey
       ? { $set: { pendingScheduleReport: reportKey } }
       : { $unset: { pendingScheduleReport: '' } };
+
+    return await this.model
+      .findOneAndUpdate({ telegramUserId, botId }, update, { new: true })
+      .exec();
+  }
+
+  /**
+   * Незакрытый вопрос «за какой день показать отчёт».
+   *
+   * Отдельное поле, а не общее с `pendingScheduleReport`: вопросы разные, и на
+   * общем поле «28-07-2026» могло бы уехать в настройку времени рассылки.
+   */
+  async setPendingReportDay(
+    telegramUserId: string,
+    botId: string,
+    reportKey: string | null,
+  ): Promise<UserAccessDocument | null> {
+    const update = reportKey
+      ? { $set: { pendingReportDay: reportKey } }
+      : { $unset: { pendingReportDay: '' } };
 
     return await this.model
       .findOneAndUpdate({ telegramUserId, botId }, update, { new: true })

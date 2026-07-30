@@ -10,7 +10,7 @@ const VALID_ENV = {
   MONGODB_DATABASE: 'yandex-market-price-changer',
   REDIS_HOST: 'localhost',
   TELEGRAM_TOKEN: '123456:AAbbCC',
-  TELEGRAM_PROXY_URL: 'https://example.ngrok-free.app',
+  TELEGRAM_WEBHOOK_URL: 'https://example.ngrok-free.app',
   TELEGRAM_ADMIN_IDS: '123456789,987654321',
 };
 
@@ -25,7 +25,7 @@ describe('envValidationSchema', () => {
     'MONGODB_DATABASE',
     'REDIS_HOST',
     'TELEGRAM_TOKEN',
-    'TELEGRAM_PROXY_URL',
+    'TELEGRAM_WEBHOOK_URL',
     'TELEGRAM_ADMIN_IDS',
   ])('падает, если не задан %s', (key) => {
     const env = { ...VALID_ENV };
@@ -37,7 +37,7 @@ describe('envValidationSchema', () => {
 
   it('сообщает обо ВСЕХ проблемах сразу, а не по одной за запуск', () => {
     const { error } = envValidationSchema.validate(
-      { TELEGRAM_TOKEN: 'x', TELEGRAM_PROXY_URL: 'https://a.example.com' },
+      { TELEGRAM_TOKEN: 'x', TELEGRAM_WEBHOOK_URL: 'https://a.example.com' },
       { abortEarly: false },
     );
     expect(error).toBeDefined();
@@ -51,10 +51,10 @@ describe('envValidationSchema', () => {
     expect(error!.message).toContain('Bull');
   });
 
-  it('TELEGRAM_PROXY_URL обязан быть полным URL', () => {
+  it('TELEGRAM_WEBHOOK_URL обязан быть полным URL', () => {
     const { error } = envValidationSchema.validate({
       ...VALID_ENV,
-      TELEGRAM_PROXY_URL: 'не-урл',
+      TELEGRAM_WEBHOOK_URL: 'не-урл',
     });
     expect(error).toBeDefined();
     expect(error!.message).toContain('https://');
@@ -66,7 +66,39 @@ describe('envValidationSchema', () => {
     expect(value.REDIS_PORT).toBe(6379);
     expect(value.NODE_ENV).toBe('development');
     expect(value.YANDEX_MARKET_BASE_URL).toBe('https://api.partner.market.yandex.ru');
+    // Без зеркала приложение обязано работать напрямую.
+    expect(value.TELEGRAM_API_URL).toBe('https://api.telegram.org');
   });
+
+  it('пустой TELEGRAM_API_URL означает «зеркала нет» и подставляет дефолт', () => {
+    // В .env.example ключ есть с пустым значением: скопированный шаблон не
+    // должен падать на «must be a valid uri».
+    const { error, value } = envValidationSchema.validate({
+      ...VALID_ENV,
+      TELEGRAM_API_URL: '',
+    });
+    expect(error).toBeUndefined();
+    expect(value.TELEGRAM_API_URL).toBe('https://api.telegram.org');
+  });
+
+  it.each(['https://tg-api.example.com/tg', 'https://tg-api.example.com/bot/'])(
+    'TELEGRAM_API_URL отвергает %o — путь в базовом URL telegraf отбрасывает',
+    (value) => {
+      // new URL('./bot<token>/method', 'https://h/tg') === 'https://h/bot<token>/method',
+      // то есть каждый вызов ушёл бы в 404 молча.
+      const { error } = envValidationSchema.validate({ ...VALID_ENV, TELEGRAM_API_URL: value });
+      expect(error).toBeDefined();
+      expect(error!.message).toContain('префикс пути');
+    },
+  );
+
+  it.each(['https://tg-api.example.com', 'https://tg-api.example.com/', 'http://localhost:8081'])(
+    'TELEGRAM_API_URL принимает %o',
+    (value) => {
+      const { error } = envValidationSchema.validate({ ...VALID_ENV, TELEGRAM_API_URL: value });
+      expect(error).toBeUndefined();
+    },
+  );
 
   it('пустой REDIS_PASSWORD допустим — redis в compose поднят без auth', () => {
     const { error } = envValidationSchema.validate({ ...VALID_ENV, REDIS_PASSWORD: '' });
@@ -131,7 +163,14 @@ describe('AppConfigService (smoke: модуль собирается через 
     expect(config.redisHost).toBe('localhost');
     expect(config.redisPort).toBe(6379);
     expect(config.port).toBe(3000);
-    expect(config.telegramProxyUrl).toBe(VALID_ENV.TELEGRAM_PROXY_URL);
+    expect(config.telegramWebhookUrl).toBe(VALID_ENV.TELEGRAM_WEBHOOK_URL);
+  });
+
+  it('telegramApiUrl срезает хвостовой слеш', async () => {
+    // TelegramApiService дописывает `/bot<token>/...` шаблоном — со слешем
+    // получился бы `https://h//bot…`.
+    const config = await build({ ...VALID_ENV, TELEGRAM_API_URL: 'https://mirror.example.com/' });
+    expect(config.telegramApiUrl).toBe('https://mirror.example.com');
   });
 
   it('пустой пароль Redis превращается в undefined, а не в пустую строку', async () => {

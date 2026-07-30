@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
+import { SCHEDULE_PERIODS, type TPeriodKey } from '../../modules/yandex/reports/report-period';
 import {
   DEFAULT_SCHEDULE_TIME,
   parseScheduleTime,
@@ -73,6 +74,31 @@ export class ReportScheduleService {
         {
           $set: { enabled },
           $setOnInsert: { time: DEFAULT_SCHEDULE_TIME },
+        },
+        { new: true, upsert: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+  }
+
+  /**
+   * Сменить период отчёта.
+   *
+   * Значение приходит НЕ из пользовательского ввода, а из замкнутого списка
+   * SCHEDULE_PERIODS — кнопка перебирает его по кругу. Проверка всё равно
+   * здесь: callback_data подделывается вручную, и в базу не должно попасть
+   * ничего, чего отчёты не умеют считать.
+   */
+  async setPeriod(key: IScheduleKey, period: TPeriodKey): Promise<ReportScheduleDocument> {
+    if (!SCHEDULE_PERIODS.includes(period)) {
+      throw new Error(`Недопустимый период рассылки: ${period}`);
+    }
+
+    return await this.model
+      .findOneAndUpdate(
+        key,
+        {
+          $set: { period },
+          $setOnInsert: { time: DEFAULT_SCHEDULE_TIME, enabled: false },
         },
         { new: true, upsert: true, setDefaultsOnInsert: true },
       )

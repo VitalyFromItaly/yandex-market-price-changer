@@ -123,7 +123,7 @@ export class StockUploadHandler {
         businessId: store.business_id,
       },
       buffer,
-      dryRun,
+      { dryRun, telegramUserId: ctx.from.id.toString() },
     );
 
     this.logger.log(

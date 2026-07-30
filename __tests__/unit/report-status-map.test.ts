@@ -17,10 +17,21 @@ import {
  * пусто». Поэтому проверяется каждое правило по отдельности.
  */
 describe('Определения отчётов', () => {
-  it('описаны все четыре отчёта', () => {
+  it('описаны все пять отчётов', () => {
     expect(Object.keys(REPORT_DEFINITIONS).sort()).toEqual(
-      ['in_transit', 'redeemed', 'returning', 'shipped_today'].sort(),
+      ['in_transit', 'profit', 'redeemed', 'returning', 'shipped_today'].sort(),
     );
+  });
+
+  it('«прибыль» берёт те же заказы, что «выкуплено» — деньги уже получены', () => {
+    // Заказ в пути можно не выкупить, и прибыль по нему была бы выдумкой.
+    const profit = reportDefinition(REPORT.PROFIT);
+    const redeemed = reportDefinition(REPORT.REDEEMED);
+
+    expect(profit.statuses).toEqual([ORDER_STATUS.DELIVERED]);
+    expect(profit.statuses).toEqual(redeemed.statuses);
+    expect(profit.dateFilter).toBe('updatedAt');
+    expect(profit.usesReturnsApi).toBe(false);
   });
 
   it('«уехало клиенту» — DELIVERY по дате ОТГРУЗКИ', () => {

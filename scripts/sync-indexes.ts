@@ -4,6 +4,7 @@ import { BotSchema } from '../src/database/schemas/bot.schema';
 import { UserSchema } from '../src/database/schemas/user.schema';
 import { UserAccessSchema } from '../src/database/schemas/user-access.schema';
 import { ReportScheduleSchema } from '../src/database/schemas/report-schedule.schema';
+import { PurchasePriceSchema } from '../src/database/schemas/purchase-price.schema';
 import { YandexMarketSchema } from '../src/database/schemas/yandex-market.schema';
 
 /**
@@ -28,6 +29,7 @@ const MODELS = [
   { name: 'User', schema: UserSchema },
   { name: 'UserAccess', schema: UserAccessSchema },
   { name: 'ReportSchedule', schema: ReportScheduleSchema },
+  { name: 'PurchasePrice', schema: PurchasePriceSchema },
   { name: 'YandexMarket', schema: YandexMarketSchema },
 ];
 

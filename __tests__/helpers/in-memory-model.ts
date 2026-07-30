@@ -1,7 +1,8 @@
 /**
  * Модель Mongoose в памяти — ровно в том объёме, который используют сервисы:
  * findOne / find / findOneAndUpdate (с $set, $setOnInsert, $unset и upsert) /
- * updateOne / deleteOne, плюс `new Model(doc).save()`.
+ * updateOne / deleteOne / countDocuments / bulkWrite, сортировка в findOne,
+ * оператор $in в фильтре, плюс `new Model(doc).save()`.
  *
  * Зачем не mongodb-memory-server и не живая Mongo: сквозной тест должен идти
  * из `npm test` на любой машине, без Docker и без сети. Настоящая база здесь
@@ -19,10 +20,31 @@ function matches(doc: TDoc, filter: TDoc): boolean {
       if ('$lte' in expected) return actual != null && actual <= expected.$lte;
       if ('$gte' in expected) return actual != null && actual >= expected.$gte;
       if ('$ne' in expected) return actual !== expected.$ne;
+      // Закуп читается одним запросом по списку артикулов.
+      if ('$in' in expected) return (expected.$in as unknown[]).includes(actual);
     }
 
     return actual === expected;
   });
+}
+
+/**
+ * Присвоение полей из update.
+ *
+ * Mongo трактует поля БЕЗ оператора как `$set` — так пишет, например,
+ * `updateByTelegramUser` (`{...data, updated_at}` без `$set`). Пока помощник
+ * применял только `$set`, такая правка молча не сохранялась, и тест на изменение
+ * ставки показывал старое значение при успешном ответе бота.
+ */
+function applySet(doc: TDoc, update: TDoc): void {
+  for (const [path, value] of Object.entries(update.$set ?? {})) {
+    assign(doc, path, value);
+  }
+
+  for (const [path, value] of Object.entries(update ?? {})) {
+    if (path.startsWith('$')) continue;
+    assign(doc, path, value);
+  }
 }
 
 /** Поддерживаются точечные пути вида `draft.token` — их пишет saveDraftField. */
@@ -46,11 +68,21 @@ function unset(doc: TDoc, path: string): void {
   delete cursor[parts[parts.length - 1]];
 }
 
+/** Одна операция bulkWrite. Поддерживается только updateOne с upsert. */
+interface IBulkOperation {
+  updateOne: { filter: TDoc; update: TDoc; upsert?: boolean };
+}
+
 export interface IInMemoryModel {
   new (doc?: TDoc): { save(): Promise<TDoc> };
   documents: TDoc[];
-  findOne(filter: TDoc): { exec(): Promise<TDoc | null> };
+  findOne(filter: TDoc): {
+    sort(spec: Record<string, 1 | -1>): { exec(): Promise<TDoc | null> };
+    exec(): Promise<TDoc | null>;
+  };
   find(filter?: TDoc): { exec(): Promise<TDoc[]> };
+  countDocuments(filter?: TDoc): { exec(): Promise<number> };
+  bulkWrite(operations: IBulkOperation[]): Promise<{ upsertedCount: number }>;
   findOneAndUpdate(
     filter: TDoc,
     update: TDoc,
@@ -77,11 +109,63 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
     static documents = documents;
 
     static findOne(filter: TDoc) {
-      return { exec: async () => documents.find((d) => matches(d, filter)) ?? null };
+      const found = () => documents.filter((d) => matches(d, filter));
+
+      return {
+        exec: async () => found()[0] ?? null,
+        /** Только по одному полю — больше сервисам и не нужно. */
+        sort(spec: Record<string, 1 | -1>) {
+          const [field, direction] = Object.entries(spec)[0] ?? [];
+          return {
+            exec: async () => {
+              const sorted = [...found()].sort((a, b) => {
+                const left = a[field] ?? 0;
+                const right = b[field] ?? 0;
+                if (left === right) return 0;
+                return (left < right ? -1 : 1) * (direction === -1 ? -1 : 1);
+              });
+              return sorted[0] ?? null;
+            },
+          };
+        },
+      };
     }
 
     static find(filter: TDoc = {}) {
       return { exec: async () => documents.filter((d) => matches(d, filter)) };
+    }
+
+    static countDocuments(filter: TDoc = {}) {
+      return { exec: async () => documents.filter((d) => matches(d, filter)).length };
+    }
+
+    /**
+     * Пакетная запись. Прайс — это тысячи строк, и сервис пишет их одним
+     * bulkWrite; последовательные upsert'ы держали бы обработчик минуты.
+     */
+    static async bulkWrite(operations: IBulkOperation[]) {
+      let created = 0;
+
+      for (const operation of operations) {
+        const { filter, update, upsert } = operation.updateOne;
+        let doc = documents.find((d) => matches(d, filter));
+
+        if (!doc) {
+          if (!upsert) continue;
+          doc = { ...stripOperators(filter), createdAt: new Date() };
+          documents.push(doc);
+          created += 1;
+        }
+
+        for (const [path, value] of Object.entries(update.$set ?? {})) {
+          assign(doc, path, value);
+        }
+        // timestamps: true — mongoose обновляет updatedAt сам; отчёт печатает
+        // именно эту дату, поэтому в памяти её тоже надо ставить.
+        doc.updatedAt = new Date();
+      }
+
+      return { upsertedCount: created };
     }
 
     static findOneAndUpdate(filter: TDoc, update: TDoc, options: { upsert?: boolean } = {}) {
@@ -97,9 +181,7 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
             documents.push(doc);
           }
 
-          for (const [path, value] of Object.entries(update.$set ?? {})) {
-            assign(doc, path, value);
-          }
+          applySet(doc, update);
           for (const path of Object.keys(update.$unset ?? {})) unset(doc, path);
 
           return doc;

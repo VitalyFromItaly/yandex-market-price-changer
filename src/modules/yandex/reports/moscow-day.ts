@@ -82,6 +82,78 @@ export function moscowDayStart(now: Date = new Date()): Date {
   return new Date(moscowDayBounds(now).from);
 }
 
+// --- календарная арифметика --------------------------------------------------
+//
+// Считается по КАЛЕНДАРНЫМ частям московской даты, а не сдвигом Date на
+// 24 * 60 * 60 * 1000. Арифметика в миллисекундах — обычный источник ошибок «на
+// один день»: она предполагает, что сутки всегда ровно 24 часа, и промахивается
+// на границах месяца и года. Здесь же день недели и «первое число» берутся из
+// самой даты, где ошибиться нечему.
+
+/** Календарная дата без времени и часового пояса. */
+export interface ICalendarDate {
+  year: number;
+  month: number;
+  day: number;
+}
+
+/**
+ * День недели московской даты: 1 — понедельник, 7 — воскресенье.
+ *
+ * Считается через `Date.UTC` от календарных частей — это чистая арифметика
+ * календаря, часовой пояс в неё не вмешивается. Брать `getUTCDay()` у момента
+ * московской полуночи нельзя: в UTC это 21:00 ПРЕДЫДУЩИХ суток, и половину
+ * года неделя начиналась бы на день раньше.
+ */
+export function moscowWeekday(date: ICalendarDate): number {
+  const dow = new Date(Date.UTC(date.year, date.month - 1, date.day)).getUTCDay();
+  return dow === 0 ? 7 : dow;
+}
+
+/** Сдвиг календарной даты на N дней. Переносы месяца и года делает сам Date. */
+export function shiftDays(date: ICalendarDate, days: number): ICalendarDate {
+  const shifted = new Date(Date.UTC(date.year, date.month - 1, date.day + days));
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+  };
+}
+
+/** Понедельник той недели, в которую попадает дата. */
+export function startOfWeek(date: ICalendarDate): ICalendarDate {
+  return shiftDays(date, -(moscowWeekday(date) - 1));
+}
+
+/** Первое число того же месяца. */
+export function startOfMonth(date: ICalendarDate): ICalendarDate {
+  return { year: date.year, month: date.month, day: 1 };
+}
+
+/** DD-MM-YYYY — формат fromDate/toDate и supplierShipmentDate. */
+export function calendarDateParam(date: ICalendarDate): string {
+  return `${pad(date.day)}-${pad(date.month)}-${date.year}`;
+}
+
+/**
+ * Границы произвольной московской даты в ISO 8601 со смещением — формат
+ * updatedAtFrom/updatedAtTo. Смещение берётся на момент `now`: в России часы не
+ * переводят с 2014 года, а если правила вернут, tzdata подхватится сама.
+ */
+export function calendarDayBounds(
+  date: ICalendarDate,
+  now: Date = new Date(),
+): { from: string; to: string } {
+  const offset = moscowOffset(now);
+  const iso = `${date.year}-${pad(date.month)}-${pad(date.day)}`;
+  return { from: `${iso}T00:00:00${offset}`, to: `${iso}T23:59:59${offset}` };
+}
+
+/** Момент начала московских суток указанной даты — для проверки окна истории. */
+export function calendarDayStart(date: ICalendarDate, now: Date = new Date()): Date {
+  return new Date(calendarDayBounds(date, now).from);
+}
+
 function pad(value: number): string {
   return String(value).padStart(2, '0');
 }

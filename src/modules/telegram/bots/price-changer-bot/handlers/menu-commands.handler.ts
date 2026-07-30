@@ -1,12 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { Context } from 'telegraf';
 
+import { AppConfigService } from '../../../../../config/app-config.service';
+import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { TTelegrafBot } from '../../../domain.telegram';
-import { code, esc, htmlOptions } from '../../../formatting/telegram-format';
+import { htmlOptions } from '../../../formatting/telegram-format';
 import { helpText } from '../help.text';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { profileText } from '../profile.text';
+import { settingsText } from '../settings.text';
 
 import { AdminUsersHandler } from './admin-users.handler';
 import { MENU_TO_REPORT, ReportsHandler } from './reports.handler';
@@ -22,6 +26,8 @@ export class MenuCommandsHandler {
     private adminUsers: AdminUsersHandler,
     private reportsHandler: ReportsHandler,
     private scheduleHandler: ScheduleHandler,
+    private accessService: UserAccessService,
+    private config: AppConfigService,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -42,6 +48,7 @@ export class MenuCommandsHandler {
     bot.hears(MENU.IN_TRANSIT, (ctx) =>
       this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.IN_TRANSIT]),
     );
+    bot.hears(MENU.PROFIT, (ctx) => this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.PROFIT]));
     bot.hears(MENU.SCHEDULE, (ctx) => this.scheduleHandler.showMenu(ctx));
     bot.hears(MENU.SETTINGS, (ctx) => this.showApiSettings(ctx));
     bot.hears(MENU.PROFILE, (ctx) => this.showProfile(ctx));
@@ -56,66 +63,42 @@ export class MenuCommandsHandler {
   }
 
   private async showMainMenu(ctx: Context) {
-    const keyboard = await this.keyboard.createMenuKeyboard();
+    // isAdmin передаём обязательно: без него раскладка собирается без ряда
+    // «👥 Пользователи», и администратор терял кнопку, просто нажав «Главное
+    // меню» — вернуть её удавалось только через /start.
+    const keyboard = await this.keyboard.createMenuKeyboard(this.config.isAdmin(ctx.from.id));
     // await обязателен: без него ошибка отправки теряется мимо bot.catch, и
     // кнопка «Главное меню» молча не срабатывает.
-    await ctx.reply('🏠 Главное меню', keyboard);
+    await ctx.reply(MENU.MAIN, keyboard);
   }
 
   private async showApiSettings(ctx: Context) {
-    const yandexSettings = await this.yandexMarketService.findByTelegramUser(
-      ctx.from.id.toString(),
-    );
-
-    const configured = !!(
-      yandexSettings?.campaign_id &&
-      yandexSettings?.business_id &&
-      yandexSettings?.token
-    );
-
-    // Идентификаторы пользователю НЕ показываем. Продавцу они ни о чём не
-    // говорят, а места занимают больше, чем название магазина. Раньше здесь
-    // печатались оба числа, и экран выглядел технической выкладкой.
-    const lines = ['⚙️ <b>Настройки API</b>', ''];
-
-    if (configured) {
-      lines.push(`🏪 Магазин: ${esc(yandexSettings?.name) || '✅ подключён'}`, '');
-    } else {
-      lines.push('🏪 Магазин: ❌ не подключён', '');
-    }
-
-    if (configured) {
-      // Прежний текст предлагал прислать все три значения разом в формате
-      // «Campaign ID: ...». Так бот работал ДО визарда; теперь он спрашивает
-      // по одному, а два значения определяет сам, и старая инструкция уводила
-      // пользователя в сторону.
-      lines.push(
-        'Магазин подключён. Чтобы сменить магазин или токен —',
-        `пришлите новый токен сообщением: ${code('token: ваш_токен')}`,
-      );
-    } else {
-      lines.push(
-        'Магазин не подключён. Пришлите API-токен одним сообщением —',
-        'Campaign ID и Business ID бот определит сам.',
-      );
-    }
-
-    await ctx.reply(lines.join('\n'), htmlOptions());
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    await ctx.reply(settingsText(store), htmlOptions());
   }
 
   private async showProfile(ctx: Context) {
-    // Имя и фамилия — произвольный текст от пользователя: один символ `<`
-    // в имени ломал разметку всего сообщения и давал 400 от Telegram.
-    const settings = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
-    const configured = !!(settings?.campaign_id && settings?.business_id && settings?.token);
+    // Текст — из profile.text.ts, общий с командой /profile. Пока их было два,
+    // они разошлись: кнопка показывала три поля, команда — шесть.
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    const access = await this.accessService.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
 
-    const message = `📊 Мой профиль
-
-👤 <b>Пользователь</b>: ${esc(ctx.from.first_name)} ${esc(ctx.from.last_name || '')}
-🆔 <b>ID</b>: ${ctx.from.id}
-⚙️ <b>Настройки API</b>: ${configured ? '✅ Заполнены' : '❌ Не заполнены'}`;
-
-    await ctx.reply(message, htmlOptions());
+    await ctx.reply(
+      profileText({
+        firstName: ctx.from.first_name,
+        lastName: ctx.from.last_name,
+        telegramUserId: ctx.from.id,
+        username: ctx.from.username,
+        accessStatus: access?.status,
+        storeName: store?.name,
+        configured: !!(store?.campaign_id && store?.business_id && store?.token),
+        registeredAt: access?.createdAt ? new Date(access.createdAt) : undefined,
+      }),
+      htmlOptions(),
+    );
   }
 
   /** @deprecated Кнопка «Изменить цены» снята (TASK-009). Не вызывается. */

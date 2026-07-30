@@ -9,6 +9,14 @@ export interface CreateYandexMarketDto {
   business_id?: string;
   token?: string;
   priceCoefficient?: number;
+  /** Комиссия Маркета, % — для расчёта прибыли. */
+  commissionPercent?: number;
+  /** Налог с продаж, % — для расчёта прибыли. */
+  taxPercent?: number;
+  /** Скидка от цены прайса, % — из неё получается закуп. */
+  discountPercent?: number;
+  /** Скидка от цены прайса на «Восток», %. */
+  vostokDiscountPercent?: number;
   name?: string;
   telegramUserId?: string;
   telegramChatId?: string;
@@ -19,6 +27,10 @@ export interface UpdateYandexMarketDto {
   business_id?: string;
   token?: string;
   priceCoefficient?: number;
+  commissionPercent?: number;
+  taxPercent?: number;
+  discountPercent?: number;
+  vostokDiscountPercent?: number;
   name?: string;
 }
 
@@ -127,7 +139,35 @@ export class YandexMarketService {
   }
 
   /**
+   * Обновить одну ставку расчёта прибыли (комиссия или налог).
+   *
+   * Отдельный метод, а не вычисляемый ключ на месте вызова: `{[field]: value}`
+   * с полем-объединением теряет типизацию, и опечатка в имени поля молча
+   * записала бы в документ лишнее.
+   */
+  async updateRate(
+    telegramUserId: string,
+    field: 'commissionPercent' | 'taxPercent' | 'discountPercent' | 'vostokDiscountPercent',
+    value: number,
+  ): Promise<YandexMarketDocument | null> {
+    // Перечисление по одному варианту, а не `{[field]: value}`: вычисляемый ключ
+    // с полем-объединением теряет типизацию, и опечатка в имени поля молча
+    // записала бы в документ лишнее поле вместо настройки.
+    const data: UpdateYandexMarketDto = {};
+    if (field === 'commissionPercent') data.commissionPercent = value;
+    if (field === 'taxPercent') data.taxPercent = value;
+    if (field === 'discountPercent') data.discountPercent = value;
+    if (field === 'vostokDiscountPercent') data.vostokDiscountPercent = value;
+
+    return await this.updateByTelegramUser(telegramUserId, data);
+  }
+
+  /**
    * Проверить настроен ли аккаунт
+   *
+   * Проверяются РОВНО три креда и ничего больше. Добавить сюда ставки прибыли
+   * нельзя: этим же методом маршрутизируется свободный текст одобренного
+   * пользователя, и «магазин не настроен» отправило бы его обратно в визард.
    */
   async isConfigured(telegramUserId: string): Promise<boolean> {
     const config = await this.findByTelegramUser(telegramUserId);

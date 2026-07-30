@@ -4,7 +4,7 @@ import { Job } from 'bull';
 
 import { esc } from '../../formatting/telegram-format';
 import { QUEUE_NAMES, JOB_TYPES } from '../../index';
-import TelegramApiService from '../../services/telegram.api.service';
+import { TelegramApiService } from '../../services/telegram.api.service';
 import {
   ProgressNotificationJobData,
   CompletionNotificationJobData,
@@ -14,7 +14,7 @@ import {
 @Injectable()
 @Processor(QUEUE_NAMES.NOTIFICATIONS)
 export class NotificationsProcessor {
-  constructor() {}
+  constructor(private readonly telegramApi: TelegramApiService) {}
 
   @Process({ name: JOB_TYPES.SEND_PROGRESS, concurrency: 1 })
   async handleProgressNotification(job: Job<ProgressNotificationJobData>) {
@@ -28,7 +28,7 @@ export class NotificationsProcessor {
         message += `\n\n${esc(details)}`;
       }
 
-      await TelegramApiService.sendMessage(botToken, chatId, message);
+      await this.telegramApi.sendMessage(botToken, chatId, message);
       return { success: true };
     } catch (error) {
       console.error('Error sending progress notification:', error);
@@ -42,7 +42,7 @@ export class NotificationsProcessor {
 
     try {
       const message = this.formatPriceUpdateReport(results, priceCoefficient);
-      await TelegramApiService.sendMessage(botToken, chatId, message);
+      await this.telegramApi.sendMessage(botToken, chatId, message);
       return { success: true };
     } catch (error) {
       console.error('Error sending completion notification:', error);
@@ -57,7 +57,7 @@ export class NotificationsProcessor {
     try {
       // Текст ошибки приходит из внешнего источника — обязательно экранируем.
       const message = `❌ Произошла ошибка при обработке файла:\n\n${esc(error)}\n\n💡 Попробуйте загрузить файл ещё раз.`;
-      await TelegramApiService.sendMessage(botToken, chatId, message);
+      await this.telegramApi.sendMessage(botToken, chatId, message);
       return { success: true };
     } catch (sendError) {
       console.error('Error sending error notification:', sendError);

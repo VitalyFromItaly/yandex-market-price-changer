@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { UserAccessService } from '../../src/database/services/user-access.service';
+import { DRAFT_FIELDS, UserAccessService } from '../../src/database/services/user-access.service';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
 
 /**
@@ -106,6 +106,33 @@ describe('UserAccessService: атомарность переходов', () => {
     expect(call()[update].$set).toEqual({ 'draft.token': 'ACMA:xxx' });
 
     await expect(service.saveDraftField('1', '2', 'status' as never, 'approved')).rejects.toThrow();
+  });
+
+  it('store_name — разрешённое поле черновика', async () => {
+    // Дефект на память: TASK-052 расширила тип TDraftField полем store_name, а
+    // белый список DRAFT_FIELDS забыла. Компилятор промолчал (`TDraftField[]`
+    // не требует полноты), и saveDraftField бросал на КАЖДОМ успешном
+    // определении магазина: пользователь присылал верный токен и читал
+    // «Произошла ошибка при обработке настроек», название магазина терялось.
+    await service.saveDraftField('1', '2', 'store_name', 'allbestwatch.ru');
+    expect(call()[update].$set).toEqual({ 'draft.store_name': 'allbestwatch.ru' });
+  });
+
+  it('DRAFT_FIELDS перечисляет ВСЕ поля черновика', async () => {
+    // Полнота списка — то, из-за чего дефект и случился. Проверяем прямо,
+    // а не через побочный эффект одного поля.
+    expect([...DRAFT_FIELDS].sort()).toEqual(
+      ['business_id', 'campaign_id', 'store_name', 'token'].sort(),
+    );
+  });
+
+  it('clearDraftField убирает ОДНО поле, не трогая остальные', async () => {
+    // Нужно, когда Маркет отклонил токен: его надо снять, чтобы визард
+    // переспросил, но уже введённое сохранить. clearDraft стёр бы всё.
+    await service.clearDraftField('1', '2', 'token');
+    expect(call()[update].$unset).toEqual({ 'draft.token': '' });
+
+    await expect(service.clearDraftField('1', '2', 'status' as never)).rejects.toThrow();
   });
 
   it('grant выдаёт доступ без заявки — для администратора-продавца', async () => {

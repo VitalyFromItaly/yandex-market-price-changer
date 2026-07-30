@@ -1,7 +1,9 @@
+import type { IPurchasePriceRow } from '../../../database/services/purchase-price.service';
 import type { IYandexTenantCredentials, IStockUpdate } from '../yandex-api.client';
 
 import { Injectable, Logger } from '@nestjs/common';
 
+import { PurchasePriceService } from '../../../database/services/purchase-price.service';
 import { STOCKS_BATCH_SIZE } from '../yandex-api.paths';
 import { YandexClientFactory } from '../yandex-client.factory';
 
@@ -31,6 +33,15 @@ export interface IStockSyncResult {
   /** true — ничего не записывали, только сверяли. */
   dryRun: boolean;
   catalogSize: number;
+  /** Сколько закупочных цен сохранено в нашу базу. */
+  purchasePricesSaved: number;
+}
+
+/** Кому принадлежит прайс. Закуп скоупится по продавцу, как и всё остальное. */
+export interface ISyncOptions {
+  telegramUserId: string;
+  /** Сверить с каталогом и составить отчёт, НИЧЕГО не записывая в Partner API. */
+  dryRun?: boolean;
 }
 
 /**
@@ -43,18 +54,34 @@ export interface IStockSyncResult {
 export class StockSyncService {
   private readonly logger = new Logger(StockSyncService.name);
 
-  constructor(private readonly clients: YandexClientFactory) {}
+  constructor(
+    private readonly clients: YandexClientFactory,
+    private readonly purchasePrices: PurchasePriceService,
+  ) {}
 
   /**
-   * @param dryRun сверить с каталогом и составить отчёт, НИЧЕГО не записывая.
-   *   Нужен, чтобы увидеть последствия до того, как они наступят: сколько
-   *   позиций найдётся, что пропустится. Первую загрузку разумно прогонять так.
+   * @param options.dryRun сверить с каталогом и составить отчёт, НИЧЕГО не
+   *   записывая в Partner API. Нужен, чтобы увидеть последствия до того, как они
+   *   наступят: сколько позиций найдётся, что пропустится. Первую загрузку
+   *   разумно прогонять так.
    */
   public async sync(
     credentials: IYandexTenantCredentials,
     file: Buffer,
-    dryRun = false,
+    options: ISyncOptions,
   ): Promise<IStockSyncResult> {
+    /**
+     * Проверка не формальность. Раньше третьим аргументом был флаг `dryRun`, и
+     * забытый при переходе на объект `sync(creds, file, true)` дал бы
+     * `dryRun: undefined` — то есть БОЕВУЮ запись остатков там, где просили
+     * только сверку, плюс закуп, записанный в никуда. Компилятор ловит это в
+     * `src`, но тесты в tsconfig не входят.
+     */
+    if (!options?.telegramUserId) {
+      throw new Error('sync: нужен telegramUserId — закуп скоупится по продавцу');
+    }
+
+    const dryRun = options.dryRun ?? false;
     const client = this.clients.forTenant(credentials);
 
     const { rows, invalid } = parsePriceList(file);
@@ -71,6 +98,7 @@ export class StockSyncService {
     const catalog = await client.loadCatalogOfferIds();
 
     const updates: IStockUpdate[] = [];
+    const purchases: IPurchasePriceRow[] = [];
     const matchedBy: Record<string, number> = {};
 
     for (const row of rows) {
@@ -90,6 +118,19 @@ export class StockSyncService {
 
       matchedBy[how] = (matchedBy[how] ?? 0) + 1;
       updates.push({ sku, count: row.quantity });
+
+      // Закупочная цена. Колонка «Цена» разбиралась и раньше, но никем не
+      // читалась — именно из неё и считается прибыль. Ключ — разрешённый по
+      // каталогу артикул: в позициях заказа приходит он же, и только по нему
+      // закуп сходится с продажей.
+      if (row.price !== null) {
+        purchases.push({
+          sku,
+          price: row.price,
+          name: row.name,
+          category: row.category,
+        });
+      }
     }
 
     const result: IStockSyncResult = {
@@ -101,7 +142,18 @@ export class StockSyncService {
       errors: [],
       dryRun,
       catalogSize: catalog.size,
+      purchasePricesSaved: 0,
     };
+
+    /**
+     * Закуп пишем ДО ветки dryRun и в том числе В НЕЙ.
+     *
+     * Это запись в НАШУ базу, а не в Partner API: режим «проверка» обещает не
+     * менять ничего в магазине, и это обещание он держит. Зато прибыль начинает
+     * считаться сразу после сверки — до первой боевой записи остатков, которую
+     * на живом магазине разумно отложить.
+     */
+    result.purchasePricesSaved = await this.savePurchasePrices(options.telegramUserId, purchases);
 
     if (dryRun) {
       this.logger.log(`Сухой прогон: ${updates.length} из ${rows.length} нашлись, записи НЕ было`);
@@ -110,6 +162,25 @@ export class StockSyncService {
 
     result.updated = await this.writeInBatches(client, updates, result);
     return result;
+  }
+
+  /**
+   * Сохранение закупа не должно ронять загрузку остатков.
+   *
+   * Остатки — то, ради чего файл и присылают; прибыль считается по ним же
+   * позже. Упасть здесь значило бы не обновить остатки из-за проблемы с
+   * второстепенными данными, поэтому ошибка логируется, а загрузка идёт дальше.
+   */
+  private async savePurchasePrices(
+    telegramUserId: string,
+    purchases: readonly IPurchasePriceRow[],
+  ): Promise<number> {
+    try {
+      return await this.purchasePrices.upsertMany(telegramUserId, purchases);
+    } catch (error) {
+      this.logger.error(`Не удалось сохранить закупочные цены: ${String(error)}`);
+      return 0;
+    }
   }
 
   /**

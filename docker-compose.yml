@@ -20,7 +20,9 @@ services:
       # а переданный пароль заставляет сервер писать предупреждение на каждое
       # соединение. Если включите auth — добавьте и сюда, и в команду redis.
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:?нужно задать TELEGRAM_TOKEN в .env}
-      - TELEGRAM_PROXY_URL=${TELEGRAM_PROXY_URL:?нужно задать TELEGRAM_PROXY_URL в .env}
+      - TELEGRAM_WEBHOOK_URL=${TELEGRAM_WEBHOOK_URL:?нужно задать TELEGRAM_WEBHOOK_URL в .env}
+      # Зеркало Bot API. Без значения — ходим на api.telegram.org напрямую.
+      - TELEGRAM_API_URL=${TELEGRAM_API_URL:-https://api.telegram.org}
       - TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS:?нужно задать TELEGRAM_ADMIN_IDS в .env}
       - YANDEX_MARKET_BASE_URL=${YANDEX_MARKET_BASE_URL:-https://api.partner.market.yandex.ru}
     depends_on:

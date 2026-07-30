@@ -4,6 +4,11 @@ import { Context } from 'telegraf';
 import { ReportScheduleService } from '../../../../../database/services/report-schedule.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import {
+  nextSchedulePeriod,
+  periodShortLabel,
+  schedulePeriod,
+} from '../../../../../modules/yandex/reports/report-period';
+import {
   REPORT,
   reportDefinition,
   type TReportKey,
@@ -19,9 +24,12 @@ import { PriceChangerKeyboard } from '../price-changer.keyboard';
  * callback_data раздела рассылки. Формирование и разбор рядом — чтобы формат не
  * разъехался между кнопкой и обработчиком.
  */
-export const SCHEDULE_CB_PATTERN = /^sch:(menu|on|off|time):([a-z_]*)$/;
+export const SCHEDULE_CB_PATTERN = /^sch:(menu|on|off|time|period):([a-z_]*)$/;
 
-export function scheduleCallback(action: 'menu' | 'on' | 'off' | 'time', reportKey = ''): string {
+export function scheduleCallback(
+  action: 'menu' | 'on' | 'off' | 'time' | 'period',
+  reportKey = '',
+): string {
   return `sch:${action}:${reportKey}`;
 }
 
@@ -31,6 +39,7 @@ const ORDER: TReportKey[] = [
   REPORT.REDEEMED,
   REPORT.RETURNING,
   REPORT.IN_TRANSIT,
+  REPORT.PROFIT,
 ];
 
 /**
@@ -65,6 +74,9 @@ export class ScheduleHandler {
           case 'time':
             await this.askTime(ctx, reportKey as TReportKey);
             break;
+          case 'period':
+            await this.cyclePeriod(ctx, reportKey as TReportKey);
+            break;
           default:
             await ctx.answerCbQuery();
             await this.showMenu(ctx, true);
@@ -84,11 +96,23 @@ export class ScheduleHandler {
     const saved = await this.schedules.listForUser(telegramUserId, botId);
     const byKey = new Map(saved.map((doc) => [doc.reportKey, doc]));
 
+    /**
+     * Состояние живёт НА КНОПКАХ, а не списком в сообщении.
+     *
+     * Раньше подпись была «🔕 Выключить: Уехало клиенту» — 28 символов в ряду
+     * из двух кнопок. Telegram обрезает такую до «🔕 Вклю...клиенту», где
+     * неразличимы ни действие («Включить» и «Выключить» дают одинаковый
+     * огрызок «Вклю…»), ни отчёт. Галочка вместо глагола короче названия
+     * отчёта и не обрезается, а состояние читается прямо с кнопки — поэтому
+     * дублирующий список из сообщения убран.
+     */
     const lines = [
       `⏰ <b>Ежедневная рассылка</b>`,
       '',
-      '🕒 Время указывается <b>по Москве</b>.',
+      'Нажмите на отчёт, чтобы включить или выключить его.',
+      'Кнопка со временем меняет час отправки.',
       '',
+      '🕒 Время указывается <b>по Москве</b>.',
     ];
 
     const rows: { text: string; callback_data: string }[][] = [];
@@ -99,15 +123,29 @@ export class ScheduleHandler {
       const time = doc?.time ?? DEFAULT_SCHEDULE_TIME;
       const title = reportDefinition(key).title;
 
-      lines.push(`${enabled ? '✅' : '⬜'} <b>${esc(title)}</b> — ${esc(time)}`);
-
       rows.push([
         {
-          text: `${enabled ? '🔕 Выключить' : '🔔 Включить'}: ${title}`,
+          text: `${enabled ? '✅' : '⬜'} ${title}`,
           callback_data: scheduleCallback(enabled ? 'off' : 'on', key),
         },
         { text: `🕒 ${time}`, callback_data: scheduleCallback('time', key) },
       ]);
+
+      // Период — ОТДЕЛЬНЫМ рядом, во всю ширину. Третьей кнопкой в ряду он
+      // ужал бы соседей до неразличимых огрызков — ровно та беда, из-за
+      // которой подписи выше стали галочкой вместо глагола.
+      //
+      // «Едет до клиента» — срез «что сейчас в пути», период на него не
+      // влияет; кнопка, которая ничего не меняет, хуже её отсутствия.
+      if (key !== REPORT.IN_TRANSIT) {
+        const period = schedulePeriod(doc?.period);
+        rows.push([
+          {
+            text: `📅 Период: ${periodShortLabel(period)}`,
+            callback_data: scheduleCallback('period', key),
+          },
+        ]);
+      }
     }
 
     rows.push([{ text: MENU.MAIN, callback_data: 'main_menu' }]);
@@ -147,6 +185,28 @@ export class ScheduleHandler {
     }
 
     await ctx.answerCbQuery(enabled ? `Включено на ${doc.time} МСК` : 'Выключено');
+    await this.showMenu(ctx, true);
+  }
+
+  /**
+   * Перебор периода по кругу.
+   *
+   * Одним нажатием, без отдельного экрана выбора: вариантов всего три, и
+   * текущий написан прямо на кнопке — открывать ради них подменю значило бы
+   * добавить шаг туда, где хватает одного тапа.
+   */
+  private async cyclePeriod(ctx: Context, reportKey: TReportKey): Promise<void> {
+    const key = {
+      telegramUserId: ctx.from.id.toString(),
+      botId: ctx.botInfo.id.toString(),
+      reportKey,
+    };
+
+    const current = schedulePeriod((await this.schedules.findOne(key))?.period);
+    const next = nextSchedulePeriod(current);
+
+    await this.schedules.setPeriod(key, next);
+    await ctx.answerCbQuery(periodShortLabel(next));
     await this.showMenu(ctx, true);
   }
 

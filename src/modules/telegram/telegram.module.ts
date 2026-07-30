@@ -28,6 +28,7 @@ import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
 import { FileProcessingService } from './queue/services/file-processing.service';
 import { ReportSchedulerService } from './queue/services/report-scheduler.service';
 import { FileDataProcessorService } from './services/file-data-processor.service';
+import { TelegramApiService } from './services/telegram.api.service';
 import { TelegramController } from './telegram.controller';
 import { TelegramService } from './telegram.service';
 
@@ -109,6 +110,7 @@ import { QUEUE_NAMES } from './index';
     FallbackHandler,
     FileProcessingService,
     FileDataProcessorService,
+    TelegramApiService,
     FileProcessingProcessor,
     YandexApiProcessor,
     NotificationsProcessor,

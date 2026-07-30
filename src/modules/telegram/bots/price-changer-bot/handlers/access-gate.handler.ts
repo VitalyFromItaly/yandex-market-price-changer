@@ -14,7 +14,7 @@ import {
   isRejectionExpired,
   REJECTION_COOLDOWN_MS,
 } from '../../shared/access.domain';
-import { nextStep, stepPrompt } from '../onboarding';
+import { PENDING_TEXT, nextStep, rejectedText, stepPrompt } from '../onboarding';
 
 /**
  * Гейт доступа: единственная точка, где решается, пускать апдейт дальше.
@@ -118,19 +118,10 @@ export class AccessGateHandler {
   private blockText(access: UserAccessDocument): string {
     switch (access.status) {
       case 'pending':
-        return [
-          '⏳ Заявка на рассмотрении.',
-          '',
-          'Доступ откроется, как только администратор её одобрит — бот пришлёт',
-          'сообщение сюда же.',
-        ].join('\n');
+        return PENDING_TEXT;
 
       case 'rejected':
-        return [
-          '⛔ Заявка отклонена.',
-          '',
-          `Повторная регистрация будет доступна через ${hoursUntilRetry(access.rejectedAt, new Date())} ч.`,
-        ].join('\n');
+        return rejectedText(hoursUntilRetry(access.rejectedAt, new Date()));
 
       default: {
         // Возвращаем ровно на тот шаг, где пользователь остановился, а не в
@@ -149,7 +140,11 @@ export class AccessGateHandler {
       case 'rejected':
         return `Заявка отклонена. Повторно через ${hoursUntilRetry(access.rejectedAt, new Date())} ч.`;
       default:
-        return 'Сначала заполните настройки API';
+        // Формулировка та же, что в полном тексте выше. Раньше попап говорил
+        // «Сначала заполните настройки API» — про настройки, тогда как длинное
+        // сообщение про заявку на доступ. Одно состояние объяснялось двумя
+        // разными способами.
+        return 'Сначала нужно подать заявку на доступ';
     }
   }
 

@@ -12,7 +12,12 @@ import { SharedCommandsHandler } from '../../src/modules/telegram/bots/price-cha
 import { CallbackQueryHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/callback-query.handler';
 import { AdminApprovalHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-approval.handler';
 import { ScheduleHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/schedule.handler';
-import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
+import {
+  ReportsHandler,
+  reportCallback,
+} from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
+import { PERIOD } from '../../src/modules/yandex/reports/report-period';
+import { REPORT } from '../../src/modules/yandex/reports/report-status-map';
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
 import { StockUploadHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
 import { AdminUsersHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-users.handler';
@@ -31,6 +36,9 @@ import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { AppConfigService } from '../../src/config/app-config.service';
 import { YandexClientFactory } from '../../src/modules/yandex/yandex-client.factory';
 import { OrderReportsService } from '../../src/modules/yandex/reports/order-reports.service';
+import { ProfitService } from '../../src/modules/yandex/reports/profit.service';
+import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
+import { PurchasePrice } from '../../src/database/schemas/purchase-price.schema';
 import { formatAdminCallback } from '../../src/modules/telegram/bots/shared/access.domain';
 import { MENU } from '../../src/modules/telegram/bots/price-changer-bot/menu.constants';
 
@@ -60,8 +68,15 @@ describe('Онбординг: от /start до отчёта', () => {
   /** Запросы, ушедшие в Partner API. Пусто — значит запроса не было. */
   let apiCalls: Array<{ path: string; params: Record<string, unknown> }>;
 
+  /**
+   * Возвраты, которые отдаёт метод возвратов. По умолчанию их нет — так и у
+   * боевого магазина: в API возвратов пусто.
+   */
+  let apiReturns: Array<Record<string, unknown>>;
+
   async function build() {
     apiCalls = [];
+    apiReturns = [];
 
     vi.spyOn(axios, 'create').mockImplementation(
       () =>
@@ -69,9 +84,29 @@ describe('Онбординг: от /start до отчёта', () => {
           interceptors: { response: { use: () => undefined } },
           get: async (path: string, opts: { params: Record<string, unknown> }) => {
             apiCalls.push({ path, params: opts?.params ?? {} });
+
+            // Возвраты — отдельный метод и отдельная сущность: заказ при возврате
+            // остаётся в DELIVERED, поэтому подменять надо именно этот ответ.
+            if (path.includes('/returns')) {
+              // null означает «метод возвратов отказал» — так проверяется, что
+              // отчёт это переживает, а не что мы просто получили пустой список.
+              if (apiReturns === null) throw new Error('500 Internal Server Error');
+              return { data: { returns: apiReturns } };
+            }
+
             return {
               data: {
-                orders: [{ id: 1, status: 'DELIVERED', itemsTotal: 1000, deliveryTotal: 200 }],
+                orders: [
+                  {
+                    id: 1,
+                    status: 'DELIVERED',
+                    itemsTotal: 1000,
+                    deliveryTotal: 200,
+                    // Позиции нужны прибыли: закуп сходится с продажей только
+                    // по offerId. Приходили они всегда — отчёты их не читали.
+                    items: [{ offerId: 'FAA02006M', offerName: 'ORIENT', count: 1 }],
+                  },
+                ],
               },
             };
           },
@@ -81,6 +116,18 @@ describe('Онбординг: от /start до отчёта', () => {
     const accessModel = inMemoryModel();
     const marketModel = inMemoryModel();
     const scheduleModel = inMemoryModel();
+    // Цена ПРАЙСА 400; закуп — минус скидка 10 % = 360.
+    // Итого: 1000 продажа − 230 комиссия − 70 налог − 360 закуп = 340.
+    const pricesModel = inMemoryModel([
+      {
+        telegramUserId: String(USER_ID),
+        sku: 'FAA02006M',
+        price: 400,
+        name: 'ORIENT FAA02006M',
+        category: 'ORIENT механические',
+        updatedAt: new Date(),
+      },
+    ]);
 
     const scheduler = {
       schedule: vi.fn(async () => undefined),
@@ -113,9 +160,12 @@ describe('Онбординг: от /start до отчёта', () => {
         YandexMarketService,
         YandexClientFactory,
         OrderReportsService,
+        ProfitService,
+        PurchasePriceService,
         { provide: getModelToken(UserAccess.name), useValue: accessModel },
         { provide: getModelToken(ReportSchedule.name), useValue: scheduleModel },
         { provide: getModelToken(YandexMarket.name), useValue: marketModel },
+        { provide: getModelToken(PurchasePrice.name), useValue: pricesModel },
         { provide: ReportSchedulerService, useValue: scheduler },
         {
           provide: AppConfigService,
@@ -132,7 +182,7 @@ describe('Онбординг: от /start до отчёта', () => {
     const fake = createFakeBot(BOT_ID);
     await composer.compose(fake.bot as never);
 
-    return { fake, accessModel, marketModel, scheduler };
+    return { fake, accessModel, marketModel, pricesModel, scheduler };
   }
 
   const user = { id: USER_ID, username: 'vasya', first_name: 'Вася' };
@@ -148,20 +198,24 @@ describe('Онбординг: от /start до отчёта', () => {
 
   it('визард спрашивает креды ПО ОДНОМУ и не пускает дальше', async () => {
     await send('/start');
-    expect(harness.fake.lastTextTo(USER_ID)).toContain('Шаг 1 из 3');
+    // Спрашивается ТОЛЬКО токен: campaign_id и business_id бот определяет по
+    // нему сам, и нумерации «Шаг 1 из 3» больше нет.
+    expect(harness.fake.lastTextTo(USER_ID)).toContain('API-токен');
 
     // Кнопка отчёта до заполнения кредов не работает и в Яндекс не ходит.
     await send(MENU.REDEEMED);
     expect(harness.fake.lastTextTo(USER_ID)).toContain('заявку на доступ');
     expect(apiCalls).toHaveLength(0);
 
+    // В этом сценарии автоопределение магазинов не срабатывает, поэтому визард
+    // отступает на ручной ввод — тот самый запасной путь.
     await send(CREDS.token);
-    expect(harness.fake.lastTextTo(USER_ID)).toContain('Шаг 2 из 3');
+    expect(harness.fake.lastTextTo(USER_ID)).toContain('Campaign ID');
     // Документа магазина ещё нет: он создаётся один раз и сразу целиком.
     expect(harness.marketModel.documents).toHaveLength(0);
 
     await send(CREDS.campaign_id);
-    expect(harness.fake.lastTextTo(USER_ID)).toContain('Шаг 3 из 3');
+    expect(harness.fake.lastTextTo(USER_ID)).toContain('Business ID');
     expect(harness.marketModel.documents).toHaveLength(0);
   });
 
@@ -201,7 +255,13 @@ describe('Онбординг: от /start до отчёта', () => {
     expect(harness.fake.lastTextTo(USER_ID)).toContain('Доступ открыт');
 
     apiCalls.length = 0;
+
+    // Кнопка отчёта сначала спрашивает период и в Яндекс ещё не ходит.
     await send(MENU.REDEEMED);
+    expect(apiCalls).toHaveLength(0);
+    expect(harness.fake.lastTextTo(USER_ID)).toContain('за какой период');
+
+    await tap(reportCallback(PERIOD.TODAY, REPORT.REDEEMED));
 
     // Запрос ушёл, путь версионированный, фильтр — по updatedAt со смещением.
     expect(apiCalls).toHaveLength(1);
@@ -211,6 +271,196 @@ describe('Онбординг: от /start до отчёта', () => {
     const text = harness.fake.lastTextTo(USER_ID);
     expect(text).toContain('Заказов');
     expect(text).toContain('Товары');
+  });
+
+  it('прибыль считается по закупу из базы и сходится с суммой продажи', async () => {
+    await send('/start');
+    await send(CREDS.token);
+    await send(CREDS.campaign_id);
+    await send(CREDS.business_id);
+    await tap(formatAdminCallback('approve', USER_ID), admin);
+
+    apiCalls.length = 0;
+
+    await send(MENU.PROFIT);
+    expect(apiCalls).toHaveLength(0);
+    expect(harness.fake.lastTextTo(USER_ID)).toContain('за какой период');
+
+    await tap(reportCallback(PERIOD.TODAY, REPORT.PROFIT));
+
+    // Заказы берутся тем же методом, что у «Выкуплено»: статус DELIVERED.
+    expect(apiCalls[0].path).toContain('/v2/campaigns/12345678/orders');
+    // Плюс метод возвратов: возврат ПОСЛЕ выкупа заказ из DELIVERED не выводит,
+    // и без этого запроса возвращённый заказ остался бы в прибыли.
+    expect(apiCalls.map((c) => c.path)).toContainEqual(
+      expect.stringContaining('/v2/campaigns/12345678/returns'),
+    );
+    expect(apiCalls).toHaveLength(2);
+
+    const text = harness.fake.lastTextTo(USER_ID);
+    // Прайс 400 минус скидка 10 % = закуп 360.
+    // 1000 продажа − 230 комиссия − 70 налог − 360 закуп = 340 чистая.
+    // Продажи — itemsTotal, ровно как в отчёте «Выкуплено»; доставка (200) в
+    // расчёт не входит.
+    expect(text).toContain('Продажи');
+    expect(text).toMatch(/1[\s ]000/);
+    expect(text).toContain('Комиссия 23%');
+    expect(text).toContain('230');
+    expect(text).toContain('Налог 7%');
+    expect(text).toContain('360');
+    expect(text).toContain('Чистая');
+    expect(text).toMatch(/340[\s ]₽/);
+    expect(text).toContain('минус 10%');
+    // Ни одного исключённого заказа: закуп известен по всем позициям.
+    expect(text).not.toContain('Не учтено');
+  });
+
+  it('заказ без закупа в прибыль не попадает, но и не исчезает молча', async () => {
+    await send('/start');
+    await send(CREDS.token);
+    await send(CREDS.campaign_id);
+    await send(CREDS.business_id);
+    await tap(formatAdminCallback('approve', USER_ID), admin);
+
+    // Закупа по артикулу заказа больше нет.
+    harness.pricesModel.documents.length = 0;
+
+    await send(MENU.PROFIT);
+    await tap(reportCallback(PERIOD.TODAY, REPORT.PROFIT));
+
+    const text = harness.fake.lastTextTo(USER_ID);
+    expect(text).toContain('Не учтено заказов');
+    expect(text).toContain('FAA02006M');
+    // Чистой прибыли не показываем вовсе: считать её было бы не по чему.
+    expect(text).not.toContain('Чистая');
+  });
+
+  it('изменённая ставка сразу меняет расчёт', async () => {
+    await send('/start');
+    await send(CREDS.token);
+    await send(CREDS.campaign_id);
+    await send(CREDS.business_id);
+    await tap(formatAdminCallback('approve', USER_ID), admin);
+
+    await send('комиссия: 50');
+    expect(harness.fake.lastTextTo(USER_ID)).toContain('50%');
+
+    await send(MENU.PROFIT);
+    await tap(reportCallback(PERIOD.TODAY, REPORT.PROFIT));
+
+    const text = harness.fake.lastTextTo(USER_ID);
+    // 1000 − 500 комиссия − 70 налог − 360 закуп = 70.
+    expect(text).toContain('Комиссия 50%');
+    expect(text).toMatch(/70[\s ]₽/);
+  });
+
+  it('заказ с возвратом исключается из прибыли ЦЕЛИКОМ', async () => {
+    // Возврат после выкупа заказ из DELIVERED не выводит — он живёт отдельной
+    // сущностью в методе возвратов. Без её опроса деньги, вернувшиеся покупателю,
+    // так и остались бы в прибыли.
+    await send('/start');
+    await send(CREDS.token);
+    await send(CREDS.campaign_id);
+    await send(CREDS.business_id);
+    await tap(formatAdminCallback('approve', USER_ID), admin);
+
+    apiReturns = [{ returnId: 77, orderId: 1, amount: { value: 1000, currencyId: 'RUR' } }];
+
+    await send(MENU.PROFIT);
+    await tap(reportCallback(PERIOD.TODAY, REPORT.PROFIT));
+
+    const text = harness.fake.lastTextTo(USER_ID);
+    expect(text).toContain('Возвраты');
+    expect(text).toMatch(/1[\s ]000[\s ]₽/);
+    // Единственный заказ ушёл в возврат, значит считать нечего: ни выручки,
+    // ни закупа, ни чистой.
+    expect(text).not.toContain('Чистая');
+    expect(text).not.toContain('➖ Закуп');
+    // И это НЕ «нет закупочной цены» — прайс тут ни при чём.
+    expect(text).not.toContain('Не учтено');
+  });
+
+  it('возврат считается раньше отсутствия закупа: продавца не гоняют за прайсом', async () => {
+    await send('/start');
+    await send(CREDS.token);
+    await send(CREDS.campaign_id);
+    await send(CREDS.business_id);
+    await tap(formatAdminCallback('approve', USER_ID), admin);
+
+    // Закуп по позиции стираем И оформляем возврат: заказ обязан попасть в
+    // «Возвраты», а не в «нет закупочной цены».
+    harness.pricesModel.documents.length = 0;
+    apiReturns = [{ returnId: 77, orderId: 1, amount: { value: 1000, currencyId: 'RUR' } }];
+
+    await send(MENU.PROFIT);
+    await tap(reportCallback(PERIOD.TODAY, REPORT.PROFIT));
+
+    const text = harness.fake.lastTextTo(USER_ID);
+    expect(text).toContain('Возвраты');
+    expect(text).not.toContain('Не учтено');
+  });
+
+  it('отказ метода возвратов НЕ роняет отчёт о прибыли', async () => {
+    // Прибыль без вычета возвратов полезнее сообщения об ошибке.
+    await send('/start');
+    await send(CREDS.token);
+    await send(CREDS.campaign_id);
+    await send(CREDS.business_id);
+    await tap(formatAdminCallback('approve', USER_ID), admin);
+
+    apiReturns = null as never; // ответ метода возвратов сломан
+
+    await send(MENU.PROFIT);
+    await tap(reportCallback(PERIOD.TODAY, REPORT.PROFIT));
+
+    const text = harness.fake.lastTextTo(USER_ID);
+    expect(text).toContain('Чистая');
+    expect(text).toMatch(/340[\s ]₽/);
+  });
+
+  it('скидка от прайса меняется БЕЗ перезагрузки прайса', async () => {
+    // В базе лежит цена прайса, а не закуп, — именно поэтому смена процента
+    // действует сразу. Если бы скидка применялась при записи, отчёт до новой
+    // загрузки файла показывал бы старые числа.
+    await send('/start');
+    await send(CREDS.token);
+    await send(CREDS.campaign_id);
+    await send(CREDS.business_id);
+    await tap(formatAdminCallback('approve', USER_ID), admin);
+
+    await send('скидка: 50');
+    expect(harness.fake.lastTextTo(USER_ID)).toContain('50%');
+
+    await send(MENU.PROFIT);
+    await tap(reportCallback(PERIOD.TODAY, REPORT.PROFIT));
+
+    const text = harness.fake.lastTextTo(USER_ID);
+    // Прайс 400 минус 50 % = закуп 200; 1000 − 230 − 70 − 200 = 500.
+    expect(text).toContain('минус 50%');
+    expect(text).toContain('200');
+    expect(text).toMatch(/500[\s ]₽/);
+    // Цена в базе не тронута — менялась только настройка.
+    expect(harness.pricesModel.documents[0].price).toBe(400);
+  });
+
+  it('«скидка восток» правит ДРУГОЙ процент, а не общую скидку', async () => {
+    await send('/start');
+    await send(CREDS.token);
+    await send(CREDS.campaign_id);
+    await send(CREDS.business_id);
+    await tap(formatAdminCallback('approve', USER_ID), admin);
+
+    await send('скидка восток: 30');
+    expect(harness.fake.lastTextTo(USER_ID)).toContain('Восток');
+
+    await send(MENU.PROFIT);
+    await tap(reportCallback(PERIOD.TODAY, REPORT.PROFIT));
+
+    const text = harness.fake.lastTextTo(USER_ID);
+    // Товар в заказе — ORIENT, поэтому считается по ОБЩЕЙ скидке 10 %: 340.
+    expect(text).toContain('минус 10%');
+    expect(text).toContain('Восток 30%');
+    expect(text).toMatch(/340[\s ]₽/);
   });
 
   it('отказ стирает креды и закрывает повторную регистрацию на сутки', async () => {

@@ -97,9 +97,14 @@ export class AppConfigService {
    * Единственный способ проверить админа. Метод есть, чтобы по хендлерам не
    * расползался `includes` — и, главное, чтобы никто не сравнил число
    * `ctx.from.id` со строкой из окружения (`'123' === 123` — false).
+   *
+   * Принимает и строку: id приходит числом из `ctx.from.id`, но строкой из
+   * базы (`UserAccess.telegramUserId`). Приведение — здесь, в одном месте, а
+   * не Number() по всем вызовам: как раз такие россыпи и рождают промах,
+   * от которого метод защищает.
    */
-  isAdmin(telegramUserId: number): boolean {
-    return this.telegramAdminIds.includes(telegramUserId);
+  isAdmin(telegramUserId: number | string): boolean {
+    return this.telegramAdminIds.includes(Number(telegramUserId));
   }
 
   get yandexMarketBaseUrl(): string {

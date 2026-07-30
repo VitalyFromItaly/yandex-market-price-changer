@@ -1,10 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   ONBOARDING_STEPS,
-  ONBOARDING_TOTAL,
   nextStep,
   parseLabelledValue,
-  stepNumber,
   stepPrompt,
   stepHelp,
   stepTitle,
@@ -18,8 +16,9 @@ import { ONBOARDING_CALLBACKS } from '../../src/modules/telegram/bots/shared/acc
  */
 describe('Порядок шагов', () => {
   it('три шага, токен первым', () => {
+    // Полей по-прежнему три, но спрашивается обычно ОДНО: campaign_id и
+    // business_id приходят по токену, а эти два шага остаются запасным путём.
     expect(ONBOARDING_STEPS).toEqual(['token', 'campaign_id', 'business_id']);
-    expect(ONBOARDING_TOTAL).toBe(3);
   });
 
   it('текущий шаг — первое незаполненное поле', () => {
@@ -36,9 +35,27 @@ describe('Порядок шагов', () => {
     expect(nextStep({ token: 'x', business_id: '2' })).toBe('campaign_id');
   });
 
-  it('номера шагов совпадают с тем, что видит пользователь', () => {
+  it('вопросы НЕ нумерованы: в обычном сценарии шаг один', () => {
+    // «Шаг 1 из 3» осталось со времён, когда все три значения вводились
+    // руками. После TASK-050 бот определяет магазин по токену, и обещание
+    // «из 3» стало неправдой в самом частом сценарии — справка при этом уже
+    // говорила «нужен только API-токен».
     for (const step of ONBOARDING_STEPS) {
-      expect(stepPrompt(step)).toContain(`Шаг ${stepNumber(step)} из ${ONBOARDING_TOTAL}`);
+      expect(stepPrompt(step)).not.toMatch(/Шаг\s*\d+\s*из\s*\d+/);
+    }
+  });
+
+  it('вопрос про токен обещает автоопределение магазина', () => {
+    // Ровно то, что заявляют справка и экран настроек. Если обещание уйдёт
+    // отсюда, продавец решит, что дальше его ждут ещё два числа.
+    expect(stepPrompt('token')).toContain('сам');
+  });
+
+  it('ручные шаги подписаны как ЗАПАСНОЙ путь', () => {
+    // Их показывают, только когда автоопределение не сработало. Без пометки
+    // они читаются как обязательные — и противоречат обещанию «только токен».
+    for (const step of ['campaign_id', 'business_id'] as const) {
+      expect(stepPrompt(step)).toContain('Не удалось определить это по токену');
     }
   });
 });

@@ -1,12 +1,14 @@
 import { Injectable } from '@nestjs/common';
 
+import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { TTelegrafBot } from '../../../domain.telegram';
-import { esc, htmlOptions } from '../../../formatting/telegram-format';
-import { MENU, menuLayout } from '../menu.constants';
+import { htmlOptions } from '../../../formatting/telegram-format';
+import { MENU } from '../menu.constants';
 import { nextStep, stepPrompt } from '../onboarding';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import { settingsText } from '../settings.text';
 
 @Injectable()
 export class CallbackQueryHandler {
@@ -14,6 +16,7 @@ export class CallbackQueryHandler {
     private keyboard: PriceChangerKeyboard,
     private yandexMarketService: YandexMarketService,
     private accessService: UserAccessService,
+    private config: AppConfigService,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -71,8 +74,20 @@ export class CallbackQueryHandler {
         case 'main_menu': {
           // Раскладка — из menu.constants (TASK-014). Раньше здесь была
           // третья независимая копия списка подписей.
-          const mainKeyboard = await this.keyboard.createKeyboard(menuLayout());
-          await ctx.editMessageText('🏠 Главное меню:');
+          //
+          // isAdmin передаём обязательно: `createKeyboard(menuLayout())` в
+          // обход `createMenuKeyboard` собирал раскладку без ряда
+          // «👥 Пользователи», и администратор терял кнопку при каждом
+          // возврате в меню.
+          const mainKeyboard = await this.keyboard.createMenuKeyboard(
+            this.config.isAdmin(ctx.from.id),
+          );
+          // Два сообщения здесь неизбежны: editMessageText убирает inline-
+          // кнопки из старого сообщения, а reply-клавиатуру можно прицепить
+          // только к новому. Подпись берём из MENU.MAIN — раньше тут было
+          // «🏠 Главное меню:» с двоеточием, у кнопки «🏠 Главное меню», а у
+          // /menu «📋 Главное меню:»: три подписи на один экран.
+          await ctx.editMessageText(MENU.MAIN);
           await ctx.reply('Выберите действие:', mainKeyboard);
           break;
         }
@@ -84,29 +99,22 @@ export class CallbackQueryHandler {
 
         case 'check_settings':
           try {
-            const settings = await this.yandexMarketService.getByTelegramUser(
-              ctx.from.id.toString(),
-            );
-            if (settings) {
-              const settingsText = `🔧 <b>Текущие настройки API</b>
-
-🔑 <b>Campaign ID:</b> ${settings.campaign_id ? `<code>${esc(settings.campaign_id)}</code>` : '❌ Не заполнен'}
-🏢 <b>Business ID:</b> ${settings.business_id ? `<code>${esc(settings.business_id)}</code>` : '❌ Не заполнен'}
-🎫 <b>API токен:</b> ${settings.token ? `<code>${esc(settings.token.substring(0, 10))}...</code>` : '❌ Не заполнен'}
-
-${(await this.yandexMarketService.isConfigured(ctx.from.id.toString())) ? '✅ Все настройки заполнены' : '⚠️ Требуется дозаполнение'}`;
-
-              await ctx.editMessageText(settingsText, htmlOptions());
-            } else {
-              await ctx.editMessageText('❌ Настройки не найдены.');
-            }
+            // Тот же текст, что на экране настроек. Раньше здесь печатались
+            // сырые Campaign ID и Business ID — вопреки правилу «идентификаторы
+            // продавцу не показываем», которое соблюдалось везде, кроме этой
+            // ветки. Экран противоречил соседнему экрану того же бота.
+            const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+            await ctx.editMessageText(settingsText(store), htmlOptions());
           } catch {
-            await ctx.editMessageText('❌ Ошибка получения настроек.');
+            await ctx.editMessageText('❌ Не удалось получить настройки. Попробуйте позже.');
           }
           break;
 
         default:
-          await ctx.editMessageText(`Неизвестная команда: ${esc(callbackData)}`);
+          // Сырой callback_data наружу не отдаём: пользователю он ничего не
+          // объясняет, а нам показывает внутренности. Такое сообщение вообще
+          // означает устаревшую кнопку в старом сообщении.
+          await ctx.editMessageText('Эта кнопка устарела. Откройте меню заново: /menu');
       }
     });
   }

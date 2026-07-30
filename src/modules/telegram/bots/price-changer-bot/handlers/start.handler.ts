@@ -7,8 +7,10 @@ import { YandexMarketService } from '../../../../../database/services/yandex-mar
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { hoursUntilRetry, isRejectionExpired } from '../../shared/access.domain';
-import { nextStep, stepPrompt, type TOnboardingDraft } from '../onboarding';
+import { PENDING_TEXT, rejectedText, type TOnboardingDraft } from '../onboarding';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
+
+import { ApiSettingsHandler } from './api-settings.handler';
 
 /**
  * Обработчик /start — единственная команда, доступная при любом статусе
@@ -28,6 +30,7 @@ export class StartHandler {
     private readonly accessService: UserAccessService,
     private readonly config: AppConfigService,
     private readonly yandexMarketService: YandexMarketService,
+    private readonly apiSettings: ApiSettingsHandler,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -55,15 +58,7 @@ export class StartHandler {
           return;
 
         case 'pending':
-          await ctx.reply(
-            [
-              '⏳ Заявка на рассмотрении.',
-              '',
-              'Администратор проверяет ваши данные. Как только он примет решение,',
-              'бот пришлёт сообщение сюда же.',
-            ].join('\n'),
-            htmlOptions(),
-          );
+          await ctx.reply(PENDING_TEXT, htmlOptions());
           return;
 
         case 'rejected': {
@@ -75,14 +70,7 @@ export class StartHandler {
             return;
           }
           const hours = hoursUntilRetry(access.rejectedAt, new Date());
-          await ctx.reply(
-            [
-              '⛔ Заявка отклонена.',
-              '',
-              `Повторная регистрация будет доступна через ${hours} ч.`,
-            ].join('\n'),
-            htmlOptions(),
-          );
+          await ctx.reply(rejectedText(hours), htmlOptions());
           return;
         }
 
@@ -110,16 +98,22 @@ export class StartHandler {
     const configured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
 
     if (!configured) {
+      /**
+       * Спрашиваем токен ПРЯМО ЗДЕСЬ, а не отправляем нажимать «Настройки API».
+       *
+       * Бот уже знает, что магазина нет, — это и есть ответ на вопрос «что
+       * дальше». Отправлять человека за ним в меню значило перекладывать на
+       * него лишний шаг ради сведений, которые у бота уже есть.
+       *
+       * Двумя сообщениями, потому что Telegram разрешает одному сообщению
+       * только один reply_markup: первое ставит сокращённую reply-клавиатуру,
+       * второе несёт inline-кнопку «Как получить?» рядом с самим вопросом.
+       */
       const kb = await this.keyboard.createUnconfiguredKeyboard(isAdmin);
-      await ctx.reply(
-        [
-          '👋 Осталось подключить магазин.',
-          '',
-          'Нажмите «⚙️ Настройки API» и введите три значения из личного кабинета',
-          'Яндекс.Маркета. После этого появятся отчёты.',
-        ].join('\n'),
-        htmlOptions(kb),
-      );
+      await ctx.reply('👋 Осталось подключить магазин — и появятся отчёты.', htmlOptions(kb));
+
+      const reply = await this.apiSettings.firstStepReply();
+      await ctx.reply(reply.message, htmlOptions(reply.keyboard));
       return;
     }
 
@@ -130,17 +124,26 @@ export class StartHandler {
   /**
    * Приглашение в визард. Если пользователь уже что-то ввёл, продолжаем с того
    * шага, где он остановился, — переспрашивать введённое незачем.
+   *
+   * Текст вопроса и клавиатуру берём у самого визарда, а не собираем здесь
+   * свои: раньше это приглашение уходило БЕЗ кнопок «Как получить?» и «Начать
+   * заново», хотя тот же вопрос из ApiSettingsHandler их всегда нёс. Один и тот
+   * же экран выглядел по-разному в зависимости от того, каким путём в него
+   * пришли.
    */
   private async replyOnboarding(ctx: Context, draft?: TOnboardingDraft) {
-    const step = nextStep(draft) ?? 'token';
     const intro = [
       '👋 Добро пожаловать!',
       '',
-      'Доступ к боту выдаёт администратор. Заполните три значения из личного',
-      'кабинета Яндекс.Маркета — бот спросит их по одному.',
+      'Доступ к боту выдаёт администратор. Чтобы подать заявку, пришлите',
+      'API-токен Яндекс.Маркета — магазин бот определит по нему сам.',
+      '',
+      // Пустая строка ОТДЕЛЬНЫМ элементом: join склеивает через один \n, и без
+      // неё вопрос визарда прилипал к приветствию вплотную.
       '',
     ].join('\n');
 
-    await ctx.reply(intro + stepPrompt(step), htmlOptions());
+    const reply = await this.apiSettings.firstStepReply(draft);
+    await ctx.reply(intro + reply.message, htmlOptions(reply.keyboard));
   }
 }

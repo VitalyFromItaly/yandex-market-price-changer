@@ -66,12 +66,20 @@ export class UserAccess {
   @Prop({ type: String })
   lastName?: string;
 
-  /** Собираемые по одному креды. Стирается при подаче заявки. */
+  /**
+   * Собираемые креды. Стирается при подаче заявки.
+   *
+   * `store_name` — служебное поле: у пользователя его не спрашивают, туда
+   * кладётся название магазина, выбранного по токену, чтобы оно доехало до
+   * документа настроек без второго запроса к API. Поля перечислены здесь же,
+   * где живёт TDraftField, — они обязаны совпадать.
+   */
   @Prop({ type: Object })
   draft?: {
     token?: string;
     campaign_id?: string;
     business_id?: string;
+    store_name?: string;
   };
 
   /**
@@ -81,6 +89,14 @@ export class UserAccess {
    */
   @Prop({ type: String })
   pendingScheduleReport?: string;
+
+  /**
+   * Какой отчёт ждёт ввода конкретной даты. Отдельно от
+   * `pendingScheduleReport`: это разные вопросы про разные вещи, и общее поле
+   * означало бы, что «28-07-2026» может быть истолковано как время рассылки.
+   */
+  @Prop({ type: String })
+  pendingReportDay?: string;
 
   @Prop({ type: Date })
   appliedAt?: Date;

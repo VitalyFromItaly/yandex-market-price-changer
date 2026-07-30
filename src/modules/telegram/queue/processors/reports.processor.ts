@@ -4,10 +4,14 @@ import { Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
 
+import { ReportScheduleService } from '../../../../database/services/report-schedule.service';
 import { UserAccessService } from '../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../database/services/yandex-market.service';
 import { OrderReportsService } from '../../../yandex/reports/order-reports.service';
+import { formatProfitReport } from '../../../yandex/reports/profit-message';
+import { ProfitService } from '../../../yandex/reports/profit.service';
 import { formatReport } from '../../../yandex/reports/report-message';
+import { schedulePeriod, type IReportPeriod } from '../../../yandex/reports/report-period';
 import { REPORT, type TReportKey } from '../../../yandex/reports/report-status-map';
 import { BotRegistry } from '../../bots/bot-registry.service';
 import { htmlOptions } from '../../formatting/telegram-format';
@@ -29,6 +33,8 @@ export class ReportsProcessor {
     private readonly access: UserAccessService,
     private readonly yandexMarketService: YandexMarketService,
     private readonly reports: OrderReportsService,
+    private readonly profit: ProfitService,
+    private readonly schedules: ReportScheduleService,
   ) {}
 
   @Process(JOB_TYPES.SEND_SCHEDULED_REPORT)
@@ -76,12 +82,19 @@ export class ReportsProcessor {
         return;
       }
 
-      const result = await this.reports.build(store, key);
-      await bot.telegraf.telegram.sendMessage(
-        account.telegramChatId,
-        formatReport(result),
-        htmlOptions(),
-      );
+      // Период — тот, что продавец выбрал в настройках рассылки. Неизвестное
+      // значение (документ старше поля, правка руками) схлопывается в
+      // «сегодня»: рассылка не должна падать из-за строки в базе.
+      const saved = await this.schedules.findOne({ telegramUserId, botId, reportKey });
+      const period: IReportPeriod = { key: schedulePeriod(saved?.period) };
+
+      // Прибыль — своим сервисом и своим текстом, ровно как по кнопке.
+      const text =
+        key === REPORT.PROFIT
+          ? formatProfitReport(await this.profit.build(store, period))
+          : formatReport(await this.reports.build(store, key, new Date(), period));
+
+      await bot.telegraf.telegram.sendMessage(account.telegramChatId, text, htmlOptions());
     } catch (error) {
       // Ошибку ЛОГИРУЕМ и гасим. Пробрасывать её нельзя: у задачи attempts=1,
       // но даже единственный повтор упавшего отчёта жжёт часовую квоту

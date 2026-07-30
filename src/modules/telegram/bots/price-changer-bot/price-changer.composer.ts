@@ -9,6 +9,7 @@ import { ApiSettingsHandler } from './handlers/api-settings.handler';
 import { CallbackQueryHandler } from './handlers/callback-query.handler';
 import { FallbackHandler } from './handlers/fallback.handler';
 import { MenuCommandsHandler } from './handlers/menu-commands.handler';
+import { ReportsHandler } from './handlers/reports.handler';
 import { ScheduleHandler } from './handlers/schedule.handler';
 import { SlashCommandsHandler } from './handlers/slash-commands.handler';
 import { StartHandler } from './handlers/start.handler';
@@ -48,6 +49,13 @@ export class PriceChangerComposer {
       // сообщение «Неизвестная команда».
       { name: 'adminUsers', register: (b) => this.adminUsers.register(b) },
       { name: 'scheduleCallbacks', register: (b) => this.scheduleCallbacks.register(b) },
+      // Выбор периода отчёта — тоже ДО общего callback_query.
+      { name: 'reportCallbacks', register: (b) => this.reports.registerCallbacks(b) },
+      // Кнопки визарда (выбор магазина, «Как получить?») — тоже ДО общего
+      // callback_query, по той же причине. Пока они регистрировались вместе с
+      // текстовым обработчиком, то есть ПОСЛЕ, весь пикер магазина отвечал
+      // «Неизвестная команда: store_pick:12345».
+      { name: 'onboardingCallbacks', register: (b) => this.apiSettings.registerCallbacks(b) },
       { name: 'callbacks', register: (b) => this.callbacks.register(b) },
       { name: 'apiSettings', register: (b) => this.apiSettings.register(b) },
       // Приём прайса. После apiSettings (тот слушает текст, а не документы),
@@ -72,6 +80,7 @@ export class PriceChangerComposer {
     private readonly adminCallbacks: AdminApprovalHandler,
     private readonly adminUsers: AdminUsersHandler,
     private readonly scheduleCallbacks: ScheduleHandler,
+    private readonly reports: ReportsHandler,
     private readonly callbacks: CallbackQueryHandler,
     private readonly apiSettings: ApiSettingsHandler,
     private readonly stockUpload: StockUploadHandler,

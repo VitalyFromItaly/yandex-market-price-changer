@@ -3,6 +3,7 @@ import { UserSchema } from '../../src/database/schemas/user.schema';
 import { YandexMarketSchema } from '../../src/database/schemas/yandex-market.schema';
 import { UserAccessSchema } from '../../src/database/schemas/user-access.schema';
 import { ReportScheduleSchema } from '../../src/database/schemas/report-schedule.schema';
+import { PurchasePriceSchema } from '../../src/database/schemas/purchase-price.schema';
 
 /**
  * Индексы — то, что теряется при миграции схем молча: приложение работает,
@@ -74,5 +75,14 @@ describe('Составные unique новых схем', () => {
 
   it('под сверку расписаний есть индекс по enabled', () => {
     expect(findIndex(ReportScheduleSchema, ['enabled'])).toBeDefined();
+  });
+
+  it('закупочная цена уникальна по (продавец, артикул)', () => {
+    // Дубль означал бы, что закуп по одному и тому же товару читается
+    // произвольный из двух, и прибыль менялась бы от запроса к запросу.
+    const index = findIndex(PurchasePriceSchema, ['telegramUserId', 'sku']);
+
+    expect(index).toBeDefined();
+    expect(index[1].unique).toBe(true);
   });
 });

@@ -15,7 +15,10 @@ import { TTelegrafBot } from '../../../domain.telegram';
 export class FallbackHandler {
   public register(bot: TTelegrafBot) {
     bot.on('message', async (ctx) => {
-      await ctx.reply('Не понимаю эту команду. Откройте меню или отправьте /help.');
+      // Сюда попадают не только команды, но и стикеры, фото, голосовые —
+      // всё, что не разобрал ни один обработчик. Прежнее «Не понимаю эту
+      // команду» на присланную картинку звучало неуместно.
+      await ctx.reply('Не понимаю это сообщение. Откройте меню /menu или справку /help.');
     });
   }
 }
