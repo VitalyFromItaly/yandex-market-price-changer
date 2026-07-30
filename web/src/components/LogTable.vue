@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import type { IActionLogRow } from '../api';
 
+// Плоский текст для строки таблицы — из общего с бэкендом модуля.
+import { toPlainText } from '../../../src/shared/telegram-html';
+
 defineProps<{ rows: IActionLogRow[] }>();
+const emit = defineEmits<{ select: [row: IActionLogRow] }>();
 
 /**
  * Подписи методов Bot API — они приходят в том же поле kind у исходящих.
@@ -62,7 +66,13 @@ function who(row: IActionLogRow): string {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in rows" :key="row._id" :class="{ failed: row.status === 'error' }">
+        <tr
+          v-for="row in rows"
+          :key="row._id"
+          class="row"
+          :class="{ failed: row.status === 'error' }"
+          @click="emit('select', row)"
+        >
           <td class="nowrap">{{ formatTime(row.createdAt) }}</td>
           <!-- Стрелка вместо слова: направление читается мгновенно и не
                занимает колонку шириной в «от пользователя». -->
@@ -77,7 +87,9 @@ function who(row: IActionLogRow): string {
           </td>
           <td class="nowrap">{{ KIND_LABELS[row.kind] ?? row.kind }}</td>
           <td>
-            <span class="action">{{ row.action }}</span>
+            <!-- В таблице — одна строка без разметки: полный текст и
+                 форматирование показывает модалка по клику. -->
+            <span class="action">{{ toPlainText(row.action) }}</span>
             <div v-if="row.error" class="muted err">{{ row.error }}</div>
           </td>
           <td class="num">{{ row.durationMs ?? '—' }}</td>
@@ -135,8 +147,23 @@ tr:last-child td {
   text-align: center;
 }
 
+/* В таблице сообщение сжато до одной строки: она нужна, чтобы найти нужную
+   запись, а читают её в модалке. Многострочный отчёт растянул бы таблицу так,
+   что на экран поместилось бы три записи. */
 .action {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   word-break: break-word;
+}
+
+.row {
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--surface);
 }
 
 .muted {

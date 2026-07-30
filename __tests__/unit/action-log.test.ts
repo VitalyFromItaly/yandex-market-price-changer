@@ -10,6 +10,7 @@ import {
   outgoingSourceOf,
   truncate,
   MAX_ACTION_LENGTH,
+  MAX_OUTGOING_LENGTH,
   OUTGOING_METHODS,
   SECRET_PLACEHOLDER,
 } from '../../src/modules/telegram/bots/shared/action-log.domain';
@@ -300,9 +301,30 @@ describe('исходящие сообщения бота', () => {
     expect(describeOutgoing(source)).toEqual({ kind: 'answerCallbackQuery', action: '—' });
   });
 
-  it('длинный отчёт обрезается', () => {
-    const long = 'а'.repeat(MAX_ACTION_LENGTH + 100);
+  it('длинный отчёт обрезается по своему, большему пределу', () => {
+    // У входящих предел меньше: там команда или подпись кнопки. Отчёт на 200
+    // символах терял бы всё, кроме заголовка.
+    expect(MAX_OUTGOING_LENGTH).toBeGreaterThan(MAX_ACTION_LENGTH);
+
+    const long = 'а'.repeat(MAX_OUTGOING_LENGTH + 100);
     const described = describeOutgoing(outgoingSourceOf('sendMessage', { chat_id: 1, text: long }));
-    expect(described.action.length).toBe(MAX_ACTION_LENGTH + 1);
+    expect(described.action.length).toBe(MAX_OUTGOING_LENGTH + 1);
+  });
+
+  it('разметка СОХРАНЯЕТСЯ при записи — из неё строится модалка', () => {
+    // Очистка при записи необратима: показать сообщение «как в телеграме»
+    // после неё было бы не из чего. Плоский текст для строки таблицы делает
+    // toPlainText на стороне отображения — см. telegram-html.test.ts.
+    const described = describeOutgoing(
+      outgoingSourceOf('sendMessage', { chat_id: 1, text: '🎫 <b>API-токен</b>' }),
+    );
+    expect(described.action).toBe('🎫 <b>API-токен</b>');
+  });
+
+  it('переносы строк сохраняются — отчёт это таблица из строк', () => {
+    const report = 'Продажи: 100 ₽\nЗакуп: 70 ₽\nПрибыль: 30 ₽';
+    const described = describeOutgoing(outgoingSourceOf('sendMessage', { chat_id: 1, text: report }));
+    expect(described.action).toContain('\n');
+    expect(described.action.split('\n')).toHaveLength(3);
   });
 });

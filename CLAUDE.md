@@ -424,6 +424,20 @@ journal the first time one is forgotten.
 - The only live outgoing path outside telegraf is `TelegramApiService` (raw `fetch`), and it is used
   solely by the **dead** notifications processor — the scheduled digest goes through
   `bot.telegraf.telegram.sendMessage`, i.e. through `callApi`.
+- **Markup is stored, not stripped.** The bot sends everything with `parse_mode: HTML`, and the panel
+  needs those tags to show the message the way the user saw it. Cleaning at write time is
+  irreversible; cleaning at display time is not. `src/shared/telegram-html.ts` — a pure module with
+  **no imports**, used by both the backend and the browser bundle — provides `toPlainText` (one-line
+  table cell) and `toSafeHtml` (modal). One implementation rather than two, because that pair drifts
+  silently: the panel would start showing something other than what is stored.
+  - `toSafeHtml` works **from the deny side**: it neutralises every `<`/`>` first and then re-enables
+    an allow-list of tags. Stripping known-bad tags instead lets any unanticipated construct through.
+  - It deliberately does **not** escape `&`. The stored string is already HTML — user data was run
+    through `esc()` when the message was built — so escaping again turns `&quot;` into `&amp;quot;`
+    and the admin reads a literal `&quot;` instead of a quote.
+  - `<a>` is rebuilt only for `http`/`https`/`tg` schemes and always gets `rel="noopener noreferrer"`;
+    a rejected link stays visible as text, and its `</a>` stays text too (a live closing tag with no
+    opener is litter).
 
 - **Secrets are masked before storage** (`maskSecrets` in `bots/shared/action-log.domain.ts`), and this
   is the point of the module, not a detail: during onboarding the seller pastes the Partner API token

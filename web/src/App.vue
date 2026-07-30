@@ -7,6 +7,7 @@ import { ApiError, clearToken, fetchLogs, loadToken, login, me, saveToken } from
 import FiltersPanel from './components/FiltersPanel.vue';
 import LoginForm from './components/LoginForm.vue';
 import LogTable from './components/LogTable.vue';
+import MessageModal from './components/MessageModal.vue';
 
 const REFRESH_MS = 10_000;
 
@@ -18,6 +19,8 @@ const loading = ref(false);
 const autoRefresh = ref(false);
 
 const rows = ref<IActionLogRow[]>([]);
+/** Открытая запись; null — модалка закрыта. */
+const selected = ref<IActionLogRow | null>(null);
 const total = ref(0);
 const skip = ref(0);
 
@@ -69,6 +72,7 @@ function signOut(): void {
   token.value = null;
   rows.value = [];
   total.value = 0;
+  selected.value = null;
   stopTimer();
   autoRefresh.value = false;
 }
@@ -152,7 +156,9 @@ function stopTimer(): void {
 
     <p v-if="loadError" class="error">{{ loadError }}</p>
 
-    <LogTable :rows="rows" />
+    <LogTable :rows="rows" @select="selected = $event" />
+
+    <MessageModal v-if="selected" :row="selected" @close="selected = null" />
 
     <footer>
       <span class="muted">
