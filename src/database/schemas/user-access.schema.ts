@@ -98,6 +98,16 @@ export class UserAccess {
   @Prop({ type: String })
   pendingReportDay?: string;
 
+  /**
+   * Какую ставку расчёта прибыли пользователь сейчас вводит (`TRateField`).
+   *
+   * Третье pending-поле, а не переиспользование двух соседних, по той же
+   * причине, что разведены они сами: вопросы разные, а на общем поле «23» могло
+   * бы быть истолковано как время рассылки — и наоборот.
+   */
+  @Prop({ type: String })
+  pendingRate?: string;
+
   @Prop({ type: Date })
   appliedAt?: Date;
 

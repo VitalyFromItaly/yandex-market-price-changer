@@ -423,12 +423,38 @@ export function profitOf(
 
 // --- ввод ставок -------------------------------------------------------------
 
-/** Настройка, которую можно изменить сообщением. */
+/** Настройка, которую можно изменить кнопкой или сообщением. */
 export type TRateField =
   | 'commissionPercent'
   | 'taxPercent'
   | 'vostokDiscountPercent'
   | 'discountPercent';
+
+/**
+ * Все четыре ставки — списком.
+ *
+ * Собран из `Record<TRateField, true>`, а НЕ написан массивом-литералом, и это
+ * принципиально: `Record` обязывает компилятор потребовать каждый член
+ * объединения, а `TRateField[]` полноты не требует. Дефект на память —
+ * `DRAFT_FIELD_SET` в user-access.service.ts: тип расширили, массив забыли,
+ * компилятор промолчал, и пользователь получал ошибку на верном вводе.
+ *
+ * Порядок задаёт порядок кнопок на экране настроек: сначала то, что вычитается
+ * из продажи, потом скидки от прайса — так же, как идёт текст экрана.
+ */
+const RATE_FIELD_SET: Record<TRateField, true> = {
+  commissionPercent: true,
+  taxPercent: true,
+  discountPercent: true,
+  vostokDiscountPercent: true,
+};
+
+export const RATE_FIELDS = Object.keys(RATE_FIELD_SET) as TRateField[];
+
+/** Является ли строка из базы или из callback_data известной ставкой. */
+export function isRateField(value: unknown): value is TRateField {
+  return typeof value === 'string' && RATE_FIELDS.includes(value as TRateField);
+}
 
 export interface IRateInput {
   field: TRateField;
@@ -459,6 +485,42 @@ const RATE_LABELS: Readonly<Record<string, TRateField>> = {
   скидка: 'discountPercent',
   discount: 'discountPercent',
 };
+
+/**
+ * Подпись, которую надо предложить продавцу для текстового ввода.
+ *
+ * ВЫВОДИТСЯ из RATE_LABELS, а не пишется рядом ещё одним switch: подсказка
+ * обязана быть подписью, которую парсер действительно принимает. Пока примеры
+ * стояли литералами («комиссия: 23» в двух файлах), они были ещё и с чужим
+ * значением — экран показывал «Комиссия 25 %» и тут же предлагал «комиссия: 23».
+ *
+ * Берётся ПЕРВОЕ совпадение, поэтому русская подпись выигрывает у английской, а
+ * «скидка восток» — у «скидка на восток»: порядок ключей в RATE_LABELS и есть
+ * порядок предпочтения.
+ */
+export function rateInputLabel(field: TRateField): string {
+  return Object.keys(RATE_LABELS).find((label) => RATE_LABELS[label] === field) ?? field;
+}
+
+/**
+ * Короткая подпись для кнопки. Рядом с ней встанет значение («📉 Комиссия 23%»).
+ *
+ * Именно короткая: в ряду из двух кнопок Telegram обрезает подписи, и полное
+ * «Скидка от прайса на «Восток»» превратилось бы в неразличимый огрызок — тем же
+ * способом уже ломались кнопки рассылки (см. schedule.handler.ts).
+ */
+export function rateShortLabel(field: TRateField): string {
+  switch (field) {
+    case 'commissionPercent':
+      return '📉 Комиссия';
+    case 'taxPercent':
+      return '🧾 Налог';
+    case 'vostokDiscountPercent':
+      return '⌚ Восток';
+    default:
+      return '📦 Скидка';
+  }
+}
 
 /** Человеческое название ставки — для подтверждения и ошибки. */
 export function rateTitle(field: TRateField): string {
@@ -504,6 +566,53 @@ export function parseRateInput(text: string): IRateInput | null {
   if (!Number.isFinite(value)) return null;
 
   return { field, value };
+}
+
+/**
+ * Разбор ГОЛОГО числа: «23», «23,5», «7 %».
+ *
+ * Нужен там, где подписи уже нет: продавец нажал кнопку «📉 Комиссия», бот
+ * спросил новое значение — переспрашивать его ещё и подписью значило бы не
+ * поверить собственному вопросу. `parseRateInput` для этого не годится и
+ * годиться не должен: он обязан возвращать `null` на «23», иначе любое число в
+ * чате уезжало бы в настройки.
+ */
+export function parseRateValue(text: string): number | null {
+  const match = String(text ?? '')
+    .trim()
+    .match(/^([\d]+(?:[.,]\d+)?)\s*%?$/);
+  if (!match) return null;
+
+  const value = Number(match[1].replace(',', '.'));
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * callback_data кнопок правки ставок. Формирование и разбор рядом — тем же
+ * приёмом, что у отчётов (`reportCallback`) и рассылки (`scheduleCallback`),
+ * чтобы формат не разъехался между кнопкой и обработчиком.
+ *
+ * Самое длинное значение — `rate:vostokDiscountPercent`, 26 байт при лимите
+ * Telegram в 64.
+ */
+export const RATE_CB_PREFIX = 'rate:';
+
+/** Отмена вопроса «пришлите новое значение». */
+export const RATE_CB_CANCEL = `${RATE_CB_PREFIX}cancel`;
+
+export const RATE_CB_PATTERN = new RegExp(
+  `^${RATE_CB_PREFIX}(${[...RATE_FIELDS, 'cancel'].join('|')})$`,
+);
+
+export function rateCallback(field: TRateField): string {
+  return `${RATE_CB_PREFIX}${field}`;
+}
+
+/** Что нажали: конкретную ставку, отмену или ничего из нашего. */
+export function parseRateCallback(data: string): TRateField | 'cancel' | null {
+  const tail = RATE_CB_PATTERN.exec(String(data ?? ''))?.[1];
+  if (!tail) return null;
+  return tail === 'cancel' ? 'cancel' : (tail as TRateField);
 }
 
 /** Проверка ставки. Ошибка возвращается, чтобы обработчик переспросил. */

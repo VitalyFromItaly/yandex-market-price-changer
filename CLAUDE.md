@@ -15,7 +15,8 @@ but `src` still holds unreachable leftovers — read "Dead code map" below befor
 ## Commands
 
 ```bash
-npm run dev            # nodemon → ts-node src/main.ts (the only reliable way to run the app)
+npm run dev            # nodemon → ts-node src/main.ts (development)
+npm run build && npm start   # nest build → dist/, then node dist/main.js
 npm run lint-fix       # eslint . --fix
 npm run prettier-fix   # prettier --write ./src
 npm run api            # regenerate src/modules/yandex/api from api-docs/openapi/openapi.yaml (unused client — see below)
@@ -39,12 +40,12 @@ determine a type for the Bot.name field"*. `@nestjs/testing` **is** installed; `
 works. Run a single file with `npx vitest run <file>` (or `-t "<name>"`). Note
 `__tests__/vitest.config.ts` still exists but is **dead** — nothing references it.
 
-Still broken, and not worth taking as a signal:
-
-- `npm run lint` crashes: `eslint.config.js` imports `@eslint/compat` and `eslint-plugin-import`,
-  neither of which is in `package.json`.
-- `.github/workflows/nodejs.yml` calls `npm run prettier:check`, which does not exist, so CI is
-  red/no-op.
+The rest of the toolchain works now, and CI is real: `.github/workflows/nodejs.yml` runs
+`typecheck → lint → prettier:check → test → build` on push **and** pull request, deliberately without
+`--if-present` (it silently skipped the missing `prettier:check` for months, which is exactly how a
+red-by-rights build kept looking green). `npm run lint` no longer crashes — 0 errors, ~143
+`no-explicit-any` warnings. `npm run build` (`nest build`) produces `dist/` and `npm start` runs it;
+`npm run dev` is still the convenient path in development, not the only working one.
 
 ## Runtime architecture
 
@@ -444,8 +445,8 @@ surfacing later as a connection timeout.
 `/start` on the bot themselves** — Telegram forbids a bot from writing first, so otherwise the
 application card is rejected with 403 and the applicant waits forever.
 
-Remaining drift: `README.md` documents `TELEGRAM_BOT_TOKEN`/`MONGODB_URI`, which the code does not
-read.
+`README.md` used to document `TELEGRAM_BOT_TOKEN`/`MONGODB_URI`, names the code never read; it was
+rewritten together with the module docs and now points at `env.validation.ts` as the authority.
 
 ## Dead code map
 
@@ -490,6 +491,15 @@ The Express layer (`src/routes/`, `src/middleware/`, `src/controllers/`, `src/ty
 
 ## Module docs
 
-Russian, partly stale but useful for intent: `src/modules/telegram/README.md` (commands, file
-limits), `src/modules/yandex/README.md` (50-offer batching rationale), `src/modules/parser/README.md`
-(SKU patterns, UTF-8/Windows-1251 encoding fixes).
+Russian, rewritten against the current code (they used to describe the removed price-changing flow —
+CSV uploads, product creation, a price coefficient, Express):
+
+- `README.md` — what the bot does now, env vars, commands, scripts.
+- `src/modules/telegram/README.md` — bots on DI, the load-bearing registration order, the access
+  gate, the price-list upload, what is left alive in the Bull queues.
+- `src/modules/yandex/README.md` — client rules (Api-Key, per-method versions, repeated array params,
+  non-queryable statuses, pagination), the five reports, profit, stock writing.
+- `src/modules/parser/README.md` — states plainly that the module is off the live path, and what to
+  delete it together with.
+
+They repeat the *rules*; this file keeps the *reasons*. When both change, change both.

@@ -1,3 +1,5 @@
+import type { TRateField } from '../../modules/yandex/reports/profit';
+
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -147,7 +149,10 @@ export class YandexMarketService {
    */
   async updateRate(
     telegramUserId: string,
-    field: 'commissionPercent' | 'taxPercent' | 'discountPercent' | 'vostokDiscountPercent',
+    // Тип берётся из profit.ts, где объявлены и сами ставки: здесь стояла
+    // ВТОРАЯ копия того же объединения из четырёх строк, а такие копии в этом
+    // проекте уже расходились (`priceCoefficient` — в четырёх местах).
+    field: TRateField,
     value: number,
   ): Promise<YandexMarketDocument | null> {
     // Перечисление по одному варианту, а не `{[field]: value}`: вычисляемый ключ
