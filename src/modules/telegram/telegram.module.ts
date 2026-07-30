@@ -6,6 +6,7 @@ import { YandexModule } from '../yandex/yandex.module';
 
 import { BotRegistry } from './bots/bot-registry.service';
 import { AccessGateHandler } from './bots/price-changer-bot/handlers/access-gate.handler';
+import { ActionLogHandler } from './bots/price-changer-bot/handlers/action-log.handler';
 import { AdminApprovalHandler } from './bots/price-changer-bot/handlers/admin-approval.handler';
 import { AdminUsersHandler } from './bots/price-changer-bot/handlers/admin-users.handler';
 import { ApiSettingsHandler } from './bots/price-changer-bot/handlers/api-settings.handler';
@@ -96,6 +97,7 @@ import { QUEUE_NAMES } from './index';
     PriceChangerKeyboard,
     AdminNotifierService,
     AccessGateHandler,
+    ActionLogHandler,
     AdminApprovalHandler,
     AdminUsersHandler,
     ReportsHandler,

@@ -1,0 +1,144 @@
+<script setup lang="ts">
+import type { IActionLogRow } from '../api';
+
+defineProps<{ rows: IActionLogRow[] }>();
+
+const KIND_LABELS: Record<string, string> = {
+  command: 'команда',
+  menu: 'меню',
+  callback: 'кнопка',
+  document: 'файл',
+  text: 'текст',
+  other: 'прочее',
+};
+
+/**
+ * Время по Москве.
+ *
+ * Панель открывают из разных часовых поясов, а расписания рассылок и все
+ * разговоры про «во сколько это было» ведутся в московском времени — тем же,
+ * в котором работает MOSCOW_TIME_ZONE на бэкенде.
+ */
+const formatter = new Intl.DateTimeFormat('ru-RU', {
+  timeZone: 'Europe/Moscow',
+  day: '2-digit',
+  month: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+function formatTime(iso: string): string {
+  return formatter.format(new Date(iso));
+}
+
+/** Кто: ник, если есть; иначе имя; иначе только id. */
+function who(row: IActionLogRow): string {
+  if (row.username) return `@${row.username}`;
+  return row.name || `id ${row.telegramUserId}`;
+}
+</script>
+
+<template>
+  <div class="wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Время (МСК)</th>
+          <th>Кто</th>
+          <th>Тип</th>
+          <th>Действие</th>
+          <th class="num">мс</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in rows" :key="row._id" :class="{ failed: row.status === 'error' }">
+          <td class="nowrap">{{ formatTime(row.createdAt) }}</td>
+          <td>
+            <div>{{ who(row) }}</div>
+            <!-- id показывается всегда: ник меняется, id — нет, и именно он
+                 нужен, чтобы отфильтровать историю конкретного продавца. -->
+            <div class="muted">{{ row.telegramUserId }}</div>
+          </td>
+          <td class="nowrap">{{ KIND_LABELS[row.kind] ?? row.kind }}</td>
+          <td>
+            <span class="action">{{ row.action }}</span>
+            <div v-if="row.error" class="muted err">{{ row.error }}</div>
+          </td>
+          <td class="num">{{ row.durationMs ?? '—' }}</td>
+        </tr>
+        <tr v-if="!rows.length">
+          <td colspan="5" class="empty">Записей нет</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</template>
+
+<style scoped>
+/* Таблица шире экрана телефона неизбежно — пусть прокручивается она, а не
+   страница целиком. */
+.wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+th,
+td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+th {
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--muted);
+  position: sticky;
+  top: 0;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+.failed {
+  background: var(--danger-bg);
+}
+
+.action {
+  word-break: break-word;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.err {
+  color: var(--danger);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 32px;
+}
+</style>

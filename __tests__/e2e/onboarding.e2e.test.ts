@@ -5,6 +5,9 @@ import axios from 'axios';
 
 import { PriceChangerComposer } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.composer';
 import { AccessGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/access-gate.handler';
+import { ActionLogHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/action-log.handler';
+import { ActionLogService } from '../../src/database/services/action-log.service';
+import { ActionLog } from '../../src/database/schemas/action-log.schema';
 import { StartHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/start.handler';
 import { MenuCommandsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/menu-commands.handler';
 import { SlashCommandsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/slash-commands.handler';
@@ -132,6 +135,7 @@ describe('Онбординг: от /start до отчёта', () => {
     );
 
     const accessModel = inMemoryModel();
+    const logsModel = inMemoryModel();
     const marketModel = inMemoryModel();
     const scheduleModel = inMemoryModel();
     // Цена ПРАЙСА 400; закуп — минус скидка 10 % = 360.
@@ -155,6 +159,10 @@ describe('Онбординг: от /start до отчёта', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         PriceChangerComposer,
+        // Журнал действий — часть живого пайплайна, поэтому он здесь настоящий:
+        // сквозной тест должен ловить и то, что запись действия сломает диалог.
+        ActionLogHandler,
+        ActionLogService,
         AccessGateHandler,
         StartHandler,
         MenuCommandsHandler,
@@ -180,6 +188,7 @@ describe('Онбординг: от /start до отчёта', () => {
         OrderReportsService,
         ProfitService,
         PurchasePriceService,
+        { provide: getModelToken(ActionLog.name), useValue: logsModel },
         { provide: getModelToken(UserAccess.name), useValue: accessModel },
         { provide: getModelToken(ReportSchedule.name), useValue: scheduleModel },
         { provide: getModelToken(YandexMarket.name), useValue: marketModel },

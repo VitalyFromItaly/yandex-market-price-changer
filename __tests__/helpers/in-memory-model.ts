@@ -1,8 +1,8 @@
 /**
  * Модель Mongoose в памяти — ровно в том объёме, который используют сервисы:
  * findOne / find / findOneAndUpdate (с $set, $setOnInsert, $unset и upsert) /
- * updateOne / deleteOne / countDocuments / bulkWrite, сортировка в findOne,
- * оператор $in в фильтре, плюс `new Model(doc).save()`.
+ * create / updateOne / deleteOne / countDocuments / bulkWrite, сортировка в
+ * findOne, оператор $in в фильтре, плюс `new Model(doc).save()`.
  *
  * Зачем не mongodb-memory-server и не живая Mongo: сквозной тест должен идти
  * из `npm test` на любой машине, без Docker и без сети. Настоящая база здесь
@@ -76,6 +76,9 @@ interface IBulkOperation {
 export interface IInMemoryModel {
   new (doc?: TDoc): { save(): Promise<TDoc> };
   documents: TDoc[];
+  create(doc: TDoc): Promise<TDoc>;
+  /** Уникальные поля: попытка записать дубль отвечает ошибкой с code 11000. */
+  uniqueBy(...fields: string[]): void;
   findOne(filter: TDoc): {
     sort(spec: Record<string, 1 | -1>): { exec(): Promise<TDoc | null> };
     exec(): Promise<TDoc | null>;
@@ -94,6 +97,7 @@ export interface IInMemoryModel {
 
 export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
   const documents: TDoc[] = [...seed];
+  const unique: string[][] = [];
 
   class Model {
     constructor(doc: TDoc = {}) {
@@ -107,6 +111,30 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
     }
 
     static documents = documents;
+
+    /**
+     * Model.create — им пишет ActionLogService. Пока метода не было, запись
+     * журнала в сквозном тесте падала внутрь catch внутри record() и тест
+     * «проходил», ничего не проверив.
+     */
+    static async create(doc: TDoc): Promise<TDoc> {
+      for (const fields of unique) {
+        const filter = Object.fromEntries(fields.map((f) => [f, doc[f]]));
+        if (documents.some((d) => matches(d, filter))) {
+          // Форма ошибки та же, что у Mongo: сервисы различают дубль по code.
+          throw Object.assign(new Error('E11000 duplicate key error'), { code: 11000 });
+        }
+      }
+
+      const plain = { ...doc, _id: String(documents.length + 1), createdAt: new Date() };
+      documents.push(plain);
+      return plain;
+    }
+
+    /** Объявить уникальный индекс — иначе create дублей не замечает. */
+    static uniqueBy(...fields: string[]): void {
+      unique.push(fields);
+    }
 
     static findOne(filter: TDoc) {
       const found = () => documents.filter((d) => matches(d, filter));

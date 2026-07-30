@@ -49,8 +49,9 @@ red-by-rights build kept looking green). `npm run lint` no longer crashes — 0 
 
 ## Runtime architecture
 
-`src/main.ts` → `NestFactory.create(AppModule)`, global prefix `/api`, global `LoggerInterceptor`,
-`listen(AppConfigService.port)`.
+`src/main.ts` → `NestFactory.create<NestExpressApplication>(AppModule)`, `useStaticAssets` for the
+admin panel (`web/dist`, see below), global prefix `/api`, global `LoggerInterceptor`,
+`enableShutdownHooks()`, `listen(AppConfigService.port)`.
 
 Configuration goes through `@nestjs/config` with Joi validation — **never `process.env` directly, and
 never `config.get('KEY')` outside `src/config/app-config.service.ts`**. Adding a variable means: a
@@ -59,7 +60,7 @@ and `docker-compose.yml`.
 
 `AppModule` → `AppConfigModule` (first, and deliberately so — Bull's factory needs config resolved),
 `CqrsModule.forRoot()` (imported but **no commands/queries exist**), `BullModule.forRootAsync`,
-`DatabaseModule`, `TelegramModule`.
+`DatabaseModule`, `AdminAuthModule`, `LogsModule`, `YandexModule`, `TelegramModule`.
 
 ### Bots are wired by Nest DI
 
@@ -119,13 +120,18 @@ serves any number of bots.
 source of truth and `__tests__/unit/composer-order.test.ts` pins it:
 
 ```
-accessGate → start → menu → slash → adminCallbacks → adminUsers → scheduleCallbacks
-           → reportCallbacks → onboardingCallbacks → callbacks → apiSettings → stockUpload
-           → fallback
+actionLog → accessGate → start → menu → slash → adminCallbacks → adminUsers
+          → scheduleCallbacks → reportCallbacks → onboardingCallbacks → callbacks
+          → apiSettings → stockUpload → fallback
 ```
 
-- `accessGate` is a `bot.use` and must stay **first** — a gate registered after handlers guards
-  nothing, because the update never reaches it.
+- `accessGate` is a `bot.use` and must be the **first step that can refuse an update** — a gate
+  registered after handlers guards nothing, because the update never reaches it. Only steps that
+  *always* call `next()` may precede it, and `composer-order.test.ts` pins that list
+  (`NON_BLOCKING_BEFORE_GATE`) rather than pinning "accessGate is index 0".
+- `actionLog` is such a step and sits **before** the gate deliberately: the most interesting entries
+  are attempts by *blocked* users, and the gate does not call `next()`, so a logger registered after
+  it would never see them.
 - **Every `bot.action` must precede `callbacks`.** `bot.action` is `on('callback_query')` plus a
   pattern match and does **not** call `next()`, so the general handler — which switches on exact
   strings and whose `default:` branch overwrites the message — swallows anything registered after
@@ -363,7 +369,7 @@ into one line and loses commission, tax and cost.
 
 Mongoose via `@nestjs/mongoose`. `database/database.module.ts` does `MongooseModule.forRootAsync`
 (uri/dbName from `AppConfigService`) + `forFeature([Bot, User, UserAccess, ReportSchedule,
-PurchasePrice, YandexMarket])` and
+PurchasePrice, YandexMarket, ActionLog])` and
 re-exports `MongooseModule` so feature modules can `@InjectModel`. Schemas are decorator classes in
 `database/schemas/*.schema.ts` with imperative `schema.index/methods/statics` appended after
 `SchemaFactory.createForClass`.
@@ -388,6 +394,84 @@ Adding an entity means **five** registrations plus the index script: `schemas/in
 the service in `providers` **and** `exports`, `services/index.ts`, and the `MODELS` list in
 `scripts/sync-indexes.ts` — then `npm run db:sync-indexes` once (mongoose creates missing indexes at
 connect but never alters an existing one with the same key set).
+
+### Action log
+
+Every update is journalled — to the console **and** to Mongo — by `ActionLogHandler`, the first step
+of the pipeline. Console alone was not enough: container logs in CapRover die on restart and cannot
+be queried per user, while the question is always "what did *this* seller do". Mongo alone was not
+enough either: it is exactly when the database is unreachable that a log line matters.
+
+- **Console shows nothing about user actions without it.** The only per-update line used to come from
+  `LoggerInterceptor` (`Incoming Request: POST /api/telegram/webhooks/...`) — HTTP-level, no who, no
+  what. Under `TELEGRAM_UPDATE_MODE=polling` even that disappears: updates no longer arrive over HTTP.
+- **Secrets are masked before storage** (`maskSecrets` in `bots/shared/action-log.domain.ts`), and this
+  is the point of the module, not a detail: during onboarding the seller pastes the Partner API token
+  as an **ordinary message**, so an unmasked journal would be a second copy of other people's
+  credentials. Masked: opaque strings ≥20 chars, `токен:`/`token:`/`api_key:` values, and 5–15 digit
+  runs (`campaign_id`/`business_id`, which no screen shows the seller either).
+  The label regex has **no `\b`** — in JavaScript `\b` is an ASCII word boundary and does not match
+  before Cyrillic «т», so with it the Russian label the bot itself asks for went unmasked. A test pins
+  this.
+- **`describeAction` deliberately does not reuse `classifyUpdate`** from `access.domain.ts`. That one
+  answers "may this pass" (hence `/start` is its own kind); this one answers "what did the person do"
+  (where `/start` is just a command). Merging them would mean a change to access rules silently
+  reshapes the journal.
+- The handler **awaits `next()`** to record outcome and duration, rethrows the error after recording
+  it (swallowing would leave the user without a reply and `telegraf.catch` unaware), and does **not**
+  await the Mongo write — `ActionLogService.record` never throws, so a dead database degrades the
+  journal to console-only instead of turning a button press into "Произошла ошибка".
+- Retention is a **TTL index** of `ACTION_LOG_TTL_DAYS` (90). Changing the number is not enough:
+  mongoose never alters an existing index with the same key set, so it needs `npm run db:sync-indexes`.
+
+**Reading it: the admin panel at `/`, or `GET /api/logs`.** Both sit behind `AdminJwtGuard`,
+applied to the whole `LogsController` (not to individual methods — the one that gets forgotten is
+the one left open).
+
+- **Login is a Telegram id from `TELEGRAM_ADMIN_IDS`; the password is one shared secret** generated
+  on first boot if absent and printed to the log **once**, as a banner. Printing it on every start
+  would park it in CapRover's log history forever. Lost password = delete the single document in
+  `admincredentials` and restart.
+- **Password hash and JWT secret live in Mongo** (`AdminCredential`, one document pinned by a unique
+  `key`), not in env. "Generate at deploy if absent" requires surviving a restart, and an in-memory
+  JWT secret would log every admin out on each redeploy. `bcrypt` at cost 12 — the package was
+  already installed and unused (this file used to list it as dead template weight).
+- `AdminAuthService.verify` **re-checks `sub` against `TELEGRAM_ADMIN_IDS`** instead of trusting the
+  signed token: revoking an admin must close the panel now, not in seven days when the token expires.
+- **`LoginThrottle`**: 5 failures per login → 15 minutes locked. One shared password behind which
+  sits users' correspondence is guessable at network speed without it. The lock is checked *before*
+  the password, or a locked attacker would keep guessing. Time is passed in as an argument so the
+  expiry is testable without timers.
+- `login()` runs `bcrypt.compare` **even for a non-admin id** — skipping it would make response time
+  reveal which ids are in `TELEGRAM_ADMIN_IDS`.
+- `JwtModule.register({})` carries **no** global secret: it comes from Mongo per call, so module
+  initialisation order never depends on the database being up.
+- The previous `ADMIN_API_TOKEN` + `X-Telegram-User-Id` scheme is **gone** — one static env secret,
+  the same for everyone and forever, pasted into a browser.
+
+Query params: `telegramUserId`, `kind`, `since`, `until`, `limit` (capped at `MAX_PAGE_SIZE`),
+`skip`; the response carries `total` from the same filter as the page (`filterOf` is one method for
+exactly that reason).
+
+### The admin panel is served by Nest itself
+
+`web/` is a Vue 3 + Vite SPA; `npm run build` is `nest build && vite build`, and
+`main.ts` does `useStaticAssets(join(__dirname, '..', 'web', 'dist'))` — one repo, one image, one
+container. The path resolves correctly both in prod (`/app/dist` → `/app/web/dist`) and under
+ts-node in dev (`src/` → `web/dist`).
+
+- **Vite build, not Vue from a CDN.** Prod is on a Russian host where external domains are as
+  unreachable as `api.telegram.org` — a CDN-loaded panel would work on the developer's machine and be
+  a blank page in production.
+- Static files are served by express middleware **before** the Nest router, so `LoggerInterceptor`
+  never fires for them and the log is not flooded with one line per asset.
+- The global `/api` prefix is what leaves `/` free for the panel. No `vue-router`: one screen, and a
+  router would demand an SPA fallback in the static handler for nothing.
+- `vite` is pinned to **5.x** in devDependencies. It was previously present only transitively via
+  vitest 2.1; installing vite 6/7 would split the dependency tree.
+- The JWT is kept in `sessionStorage`, not `localStorage`.
+- **No component tests** — that would mean `jsdom` + `@vue/test-utils` for ~250 lines of markup. What
+  needs proving (login, throttle, guard, one-shot password generation) is tested on the backend.
 
 ### Access control: admin approval, not subscriptions
 
@@ -514,7 +598,8 @@ The Express layer (`src/routes/`, `src/middleware/`, `src/controllers/`, `src/ty
   `createMainMenu`/`createBackMenu` are `@deprecated` (labels outside `menu.constants`).
 - `__tests__/vitest.config.ts` — superseded by the root `vitest.config.ts`.
 - `src/modules/yandex/index.ts` is empty. Unused deps left from templates: `@clickhouse/client`,
-  `technicalindicators`, `bcrypt`, `mitt`, `express`, `body-parser`.
+  `technicalindicators`, `mitt`, `express`, `body-parser`. (`bcrypt` is no longer among them — the
+  admin panel hashes its password with it.)
 
 ## Known correctness bugs (verify before relying on these paths)
 

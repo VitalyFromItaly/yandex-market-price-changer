@@ -157,6 +157,28 @@ describe('AdminUsersHandler: список', () => {
     expect(rows).toHaveLength(1);
     expect((rows[0][0] as { callback_data: string }).callback_data).toBe(`${REVOKE_PREFIX}1`);
   });
+
+  it('подпись кнопки — обычный текст, без HTML', async () => {
+    // Telegram применяет parse_mode только к тексту сообщения. На кнопке
+    // разметка показывается буквально: «⛔ <a href="https://t.me/artonik1">
+    // @artonik1</a> (Тема)» — ровно это и висело на экране у администратора.
+    const { handler } = build({
+      users: [{ telegramUserId: '1', status: 'approved', username: 'artonik1', firstName: 'Тема' }],
+    });
+    const ctx = fakeCtx(ADMIN_ID);
+    await handler.sendList(ctx as never);
+
+    const withButtons = ctx.reply.mock.calls.find(
+      (c) => (c[1] as { reply_markup?: unknown })?.reply_markup,
+    );
+    const rows = (withButtons![1] as { reply_markup: { inline_keyboard: unknown[][] } })
+      .reply_markup.inline_keyboard;
+    const label = (rows[0][0] as { text: string }).text;
+
+    expect(label).not.toContain('<');
+    expect(label).not.toContain('href');
+    expect(label).toBe('⛔ @artonik1 (Тема)');
+  });
 });
 
 describe('AdminUsersHandler: отзыв доступа', () => {

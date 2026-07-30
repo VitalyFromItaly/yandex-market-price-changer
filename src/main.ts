@@ -1,4 +1,7 @@
+import type { NestExpressApplication } from '@nestjs/platform-express';
+
 import { NestFactory } from '@nestjs/core';
+import { join } from 'path';
 
 import { AppModule } from './app.module';
 import { LoggerInterceptor } from './common/interceptors/logger.interceptor';
@@ -9,7 +12,20 @@ async function bootstrap() {
   // окружения выполняет ConfigModule внутри AppModule. При отсутствии
   // обязательной переменной приложение упадёт здесь же, на create(), с
   // перечислением сразу всех недостающих ключей.
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  /*
+   * Админ-панель (web/) раздаётся тем же приложением: одна репа, одна сборка,
+   * один контейнер. Конфликта с API нет — тот весь под префиксом /api, а
+   * панель живёт в корне.
+   *
+   * Путь одинаково верен в обоих режимах: в проде __dirname это /app/dist,
+   * в разработке через ts-node — <репозиторий>/src.
+   *
+   * Статику отдаёт middleware express ДО роутера Nest, поэтому LoggerInterceptor
+   * на неё не срабатывает и логи не засоряются строкой на каждый файл.
+   */
+  app.useStaticAssets(join(__dirname, '..', 'web', 'dist'));
 
   app.setGlobalPrefix('/api');
   app.useGlobalInterceptors(new LoggerInterceptor());
@@ -29,7 +45,7 @@ async function bootstrap() {
 // unhandled rejection — процесс умирает со стеком изнутри Node вместо внятной
 // причины и с непредсказуемым кодом выхода.
 bootstrap().catch((error) => {
-  // eslint-disable-next-line no-console -- логгер Nest на этом этапе может быть ещё не поднят
+   
   console.error('Не удалось запустить приложение:', error);
   process.exit(1);
 });

@@ -8,6 +8,8 @@ RUN npm ci
 
 COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
+# Админ-панель собирается тем же `npm run build` (nest build && vite build).
+COPY web ./web
 
 RUN npm run build
 
@@ -23,6 +25,8 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
+# Собранная панель; main.ts раздаёт её из ../web/dist относительно dist/.
+COPY --from=builder /app/web/dist ./web/dist
 
 # Каталог для временных файлов загрузок; в compose поверх монтируется том.
 RUN mkdir -p static/temp

@@ -6,6 +6,8 @@ import { UserAccessSchema } from '../src/database/schemas/user-access.schema';
 import { ReportScheduleSchema } from '../src/database/schemas/report-schedule.schema';
 import { PurchasePriceSchema } from '../src/database/schemas/purchase-price.schema';
 import { YandexMarketSchema } from '../src/database/schemas/yandex-market.schema';
+import { ActionLogSchema } from '../src/database/schemas/action-log.schema';
+import { AdminCredentialSchema } from '../src/database/schemas/admin-credential.schema';
 
 /**
  * Приведение индексов существующей базы к схемам.
@@ -31,6 +33,8 @@ const MODELS = [
   { name: 'ReportSchedule', schema: ReportScheduleSchema },
   { name: 'PurchasePrice', schema: PurchasePriceSchema },
   { name: 'YandexMarket', schema: YandexMarketSchema },
+  { name: 'ActionLog', schema: ActionLogSchema },
+  { name: 'AdminCredential', schema: AdminCredentialSchema },
 ];
 
 async function main(): Promise<void> {
