@@ -4,6 +4,7 @@ import { UserAccessService } from '../../../../../database/services/user-access.
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
+import { helpText } from '../help.text';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
@@ -74,34 +75,11 @@ export class SlashCommandsHandler {
     });
 
     // /help - помощь
+    // Текст — из help.text.ts, общий с кнопкой «Помощь». Пока их было два,
+    // они гарантированно расходились: у команды был свой текст, а кнопка
+    // вообще вела в главное меню.
     bot.command('help', async (ctx) => {
-      const helpMessage = `❓ <b>Справка по боту</b>
-
-        🎯 <b>Что умеет бот:</b>
-        • Показывает отчёты по заказам Яндекс.Маркета
-        • Работает только на чтение — ничего не меняет в вашем магазине
-
-        🔧 <b>Настройка:</b>
-        1. Добавьте API-ключ от Яндекс.Маркета
-        2. Укажите ID кампании и бизнеса
-
-        📋 <b>Команды:</b>
-        /start - Запуск бота
-        /menu - Главное меню
-        /settings - Настройки
-        /profile - Профиль
-        /help - Эта справка
-
-💬 <b>Поддержка:</b> @Vitality45
-🌐 <b>Канал новостей:</b> @YandexMarketBot`;
-
-      const keyboard = await this.keyboard.createInlineButtons([
-        { text: '🚀 Быстрый старт', callback_data: 'quick_start' },
-        { text: '📖 Подробная инструкция', callback_data: 'detailed_guide' },
-        { text: '💬 Связаться с поддержкой', callback_data: 'contact_support' },
-      ]);
-
-      await ctx.reply(helpMessage, htmlOptions(keyboard));
+      await ctx.reply(helpText(), htmlOptions());
     });
   }
 

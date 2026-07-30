@@ -3,7 +3,8 @@ import { Context } from 'telegraf';
 
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { TTelegrafBot } from '../../../domain.telegram';
-import { esc, htmlOptions } from '../../../formatting/telegram-format';
+import { code, esc, htmlOptions } from '../../../formatting/telegram-format';
+import { helpText } from '../help.text';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
@@ -51,7 +52,7 @@ export class MenuCommandsHandler {
       if (!this.adminUsers.isAdmin(ctx.from.id)) return;
       await this.adminUsers.sendList(ctx);
     });
-    bot.hears(MENU.HELP, (ctx) => this.showMainMenu(ctx));
+    bot.hears(MENU.HELP, async (ctx) => await ctx.reply(helpText(), htmlOptions()));
   }
 
   private async showMainMenu(ctx: Context) {
@@ -66,18 +67,38 @@ export class MenuCommandsHandler {
       ctx.from.id.toString(),
     );
 
-    const message = `⚙️ Настройки API
+    const configured = !!(
+      yandexSettings?.campaign_id &&
+      yandexSettings?.business_id &&
+      yandexSettings?.token
+    );
 
-🔑 <b>Campaign ID</b>: ${esc(yandexSettings?.campaign_id) || 'Не установлен'}
-🏢 <b>Business ID</b>: ${esc(yandexSettings?.business_id) || 'Не установлен'}
-🎫 <b>Token</b>: ${yandexSettings?.token ? '✅ Установлен' : '❌ Не установлен'}
+    const lines = [
+      '⚙️ <b>Настройки API</b>',
+      '',
+      `🎫 Токен: ${yandexSettings?.token ? '✅ установлен' : '❌ не установлен'}`,
+      `🔑 Campaign ID: ${esc(yandexSettings?.campaign_id) || '—'}`,
+      `🏢 Business ID: ${esc(yandexSettings?.business_id) || '—'}`,
+      '',
+    ];
 
-📝 Для изменения настроек просто отправьте новые данные в формате:
-<code>Campaign ID: ваш_id</code>
-<code>Business ID: ваш_id</code>
-<code>Token: ваш_токен</code>`;
+    if (configured) {
+      // Прежний текст предлагал прислать все три значения разом в формате
+      // «Campaign ID: ...». Так бот работал ДО визарда; теперь он спрашивает
+      // по одному, а два значения определяет сам, и старая инструкция уводила
+      // пользователя в сторону.
+      lines.push(
+        'Магазин подключён. Чтобы сменить магазин или токен —',
+        `пришлите новый токен сообщением: ${code('token: ваш_токен')}`,
+      );
+    } else {
+      lines.push(
+        'Магазин не подключён. Пришлите API-токен одним сообщением —',
+        'Campaign ID и Business ID бот определит сам.',
+      );
+    }
 
-    await ctx.reply(message, htmlOptions());
+    await ctx.reply(lines.join('\n'), htmlOptions());
   }
 
   private async showProfile(ctx: Context) {
