@@ -22,7 +22,7 @@ const total = ref(0);
 const skip = ref(0);
 
 function emptyFilters(): ILogsQuery {
-  return { telegramUserId: '', kind: '', since: '', until: '', limit: 100 };
+  return { telegramUserId: '', kind: '', direction: '', since: '', until: '', limit: 100 };
 }
 
 const filters = reactive<ILogsQuery>(emptyFilters());

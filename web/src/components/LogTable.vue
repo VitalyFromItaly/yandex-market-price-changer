@@ -3,7 +3,16 @@ import type { IActionLogRow } from '../api';
 
 defineProps<{ rows: IActionLogRow[] }>();
 
+/**
+ * Подписи методов Bot API — они приходят в том же поле kind у исходящих.
+ * Показывать «answerCallbackQuery» администратору незачем.
+ */
 const KIND_LABELS: Record<string, string> = {
+  sendMessage: 'сообщение',
+  sendDocument: 'файл',
+  sendPhoto: 'фото',
+  editMessageText: 'правка сообщения',
+  answerCallbackQuery: 'ответ на нажатие',
   command: 'команда',
   menu: 'меню',
   callback: 'кнопка',
@@ -45,6 +54,7 @@ function who(row: IActionLogRow): string {
       <thead>
         <tr>
           <th>Время (МСК)</th>
+          <th></th>
           <th>Кто</th>
           <th>Тип</th>
           <th>Действие</th>
@@ -54,6 +64,11 @@ function who(row: IActionLogRow): string {
       <tbody>
         <tr v-for="row in rows" :key="row._id" :class="{ failed: row.status === 'error' }">
           <td class="nowrap">{{ formatTime(row.createdAt) }}</td>
+          <!-- Стрелка вместо слова: направление читается мгновенно и не
+               занимает колонку шириной в «от пользователя». -->
+          <td class="dir" :title="row.direction === 'out' ? 'бот → пользователю' : 'пользователь → боту'">
+            {{ row.direction === 'out' ? '→' : '←' }}
+          </td>
           <td>
             <div>{{ who(row) }}</div>
             <!-- id показывается всегда: ник меняется, id — нет, и именно он
@@ -68,7 +83,7 @@ function who(row: IActionLogRow): string {
           <td class="num">{{ row.durationMs ?? '—' }}</td>
         </tr>
         <tr v-if="!rows.length">
-          <td colspan="5" class="empty">Записей нет</td>
+          <td colspan="6" class="empty">Записей нет</td>
         </tr>
       </tbody>
     </table>
@@ -112,6 +127,12 @@ tr:last-child td {
 
 .failed {
   background: var(--danger-bg);
+}
+
+.dir {
+  color: var(--muted);
+  font-size: 16px;
+  text-align: center;
 }
 
 .action {

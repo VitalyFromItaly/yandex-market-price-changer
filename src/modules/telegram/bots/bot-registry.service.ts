@@ -5,9 +5,11 @@ import { Telegraf } from 'telegraf';
 
 import { AppConfigService } from '../../../config/app-config.service';
 import { Bot, BotDocument } from '../../../database/schemas/bot.schema';
+import { ActionLogService } from '../../../database/services/action-log.service';
 import { EBotType, THandleUpdatePayload, TTelegrafBot, TWebHookResponse } from '../domain.telegram';
 
 import { PriceChangerComposer } from './price-changer-bot/price-changer.composer';
+import { OUTGOING_METHODS, describeOutgoing, outgoingSourceOf } from './shared/action-log.domain';
 
 export interface RegisteredBot {
   /** _id документа Bot в Mongo — по нему приходит вебхук. */
@@ -33,12 +35,15 @@ export interface RegisteredBot {
 @Injectable()
 export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(BotRegistry.name);
+  /** Отдельный контекст: исходящие видно в консоли рядом с входящими. */
+  private readonly outgoingLogger = new Logger('ActionLog');
   private readonly bots = new Map<string, Map<string, RegisteredBot>>();
 
   constructor(
     @InjectModel(Bot.name) private readonly botModel: Model<BotDocument>,
     private readonly composer: PriceChangerComposer,
     private readonly config: AppConfigService,
+    private readonly logs: ActionLogService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -104,6 +109,8 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
       telegram: { apiRoot: this.config.telegramApiUrl },
     });
 
+    this.logOutgoing(telegraf, doc);
+
     // Единая точка обработки ошибок вместо глотающего TryCatch (TASK-013):
     // ошибка логируется целиком и пользователь получает внятный ответ.
     telegraf.catch(async (err, ctx) => {
@@ -139,6 +146,58 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
     await this.startReceiving(telegraf, doc);
 
     this.logger.log(`Бот "${doc.name}" (${doc.type}/${doc.id}) готов`);
+  }
+
+  /**
+   * Журналирование ИСХОДЯЩИХ сообщений: что бот ответил пользователю.
+   *
+   * Перехват стоит на `telegram.callApi` — это единственная воронка, через
+   * которую telegraf проводит все вызовы Bot API: и `ctx.reply`, и
+   * `editMessageText`, и отправка файла отчёта. Оборачивать сами методы
+   * контекста бессмысленно — их десяток, и забытый означал бы молчаливую дыру
+   * в журнале ровно того вида, который журнал и должен был закрыть.
+   *
+   * Через ту же воронку идёт служебное — getMe, setWebhook, setMyCommands и, в
+   * режиме polling, непрерывный getUpdates. Поэтому пишется только то, что
+   * перечислено в OUTGOING_METHODS.
+   *
+   * Запись не ожидается и ошибку наружу не выпускает: журнал не имеет права
+   * помешать боту ответить.
+   */
+  private logOutgoing(telegraf: TTelegrafBot, doc: BotDocument): void {
+    const telegram = telegraf.telegram;
+    const original = telegram.callApi.bind(telegram);
+
+    // Приведение типов неизбежно: callApi объявлен дженериком по имени метода
+    // (`<M extends keyof Telegram>`), и обёртка, принимающая произвольную
+    // строку, под эту сигнатуру не подходит. Перехват при этом честный —
+    // аргументы и результат проходят насквозь.
+    type TCallApi = (method: string, payload: unknown, options?: unknown) => Promise<unknown>;
+
+    telegram.callApi = (async (method: string, payload: unknown, options?: unknown) => {
+      const result = await (original as unknown as TCallApi)(method, payload, options);
+
+      if (OUTGOING_METHODS.includes(method)) {
+        const source = outgoingSourceOf(method, payload);
+        const { kind, action } = describeOutgoing(source);
+        const chatId = source.chatId?.toString();
+
+        this.outgoingLogger.log(`→ ${chatId ?? '?'} · ${kind}: ${action}`);
+
+        void this.logs.record({
+          // Для лички chat_id совпадает с id пользователя, а бот рассчитан
+          // именно на неё — гейт доступа отсекает группы.
+          telegramUserId: chatId ?? 'unknown',
+          direction: 'out',
+          botId: telegraf.botInfo?.id?.toString() ?? doc.id,
+          chatId,
+          kind,
+          action,
+        });
+      }
+
+      return result;
+    }) as unknown as typeof telegram.callApi;
   }
 
   /**

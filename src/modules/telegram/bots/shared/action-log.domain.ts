@@ -121,3 +121,87 @@ export function fullName(firstName?: string, lastName?: string): string | undefi
   const name = [firstName, lastName].filter(Boolean).join(' ').trim();
   return name || undefined;
 }
+
+/* ────────────────────────── исходящие сообщения ────────────────────────── */
+
+/**
+ * Методы Bot API, которые считаются «бот ответил пользователю».
+ *
+ * Белый список, а не «всё подряд», потому что через ту же воронку callApi
+ * проходит служебное: getMe, setWebhook, setMyCommands и — главное —
+ * getUpdates, который в режиме polling дёргается непрерывно. Без списка журнал
+ * состоял бы из него одного.
+ *
+ * Имена — как в Bot API, а не как в telegraf: `ctx.answerCbQuery` вызывает
+ * метод `answerCallbackQuery`, и именно эта строка приходит в callApi.
+ */
+export const OUTGOING_METHODS: readonly string[] = [
+  'sendMessage',
+  'sendDocument',
+  'sendPhoto',
+  'editMessageText',
+  'answerCallbackQuery',
+];
+
+/** Полезная нагрузка вызова Bot API — те поля, что нужны журналу. */
+export interface IOutgoingSource {
+  method: string;
+  chatId?: string | number;
+  text?: string;
+  caption?: string;
+  documentName?: string;
+}
+
+export interface IOutgoingDescription {
+  kind: string;
+  action: string;
+}
+
+/**
+ * Маскировка для ИСХОДЯЩИХ, и она намеренно слабее входящей.
+ *
+ * Числовую маску применять здесь нельзя: бот шлёт отчёты, где почти всё —
+ * числа. `2456985` в выручке попал бы под то же правило, что `campaign_id`, и
+ * журнал превратился бы в «Продажи: «скрыто» ₽» — то есть в бесполезный.
+ *
+ * Опасности при этом нет: токен продавца бот не отправляет никогда, он его
+ * только принимает. Подпись `токен: …` всё же вырезается — на случай, если
+ * когда-нибудь появится экран, который его показывает.
+ */
+export function maskOutgoing(text: string): string {
+  return text.trim().replace(LABELLED_SECRET, (_m, label: string) => `${label}: ${SECRET_PLACEHOLDER}`);
+}
+
+/** Описание исходящего вызова: что за метод и что именно ушло пользователю. */
+export function describeOutgoing(input: IOutgoingSource): IOutgoingDescription {
+  const body = input.text ?? input.caption ?? input.documentName;
+
+  return {
+    kind: input.method,
+    // Без текста (например, answerCallbackQuery без подписи) действие всё
+    // равно осмысленно: важен сам факт ответа на нажатие.
+    action: body ? truncate(maskOutgoing(body)) : '—',
+  };
+}
+
+/** Достаёт из полезной нагрузки Bot API поля, интересные журналу. */
+export function outgoingSourceOf(method: string, payload: unknown): IOutgoingSource {
+  const body = (payload ?? {}) as {
+    chat_id?: string | number;
+    text?: string;
+    caption?: string;
+    document?: { filename?: string } | string;
+  };
+
+  const document = body.document;
+  const documentName =
+    typeof document === 'string' ? document : (document?.filename ?? undefined);
+
+  return {
+    method,
+    chatId: body.chat_id,
+    text: typeof body.text === 'string' ? body.text : undefined,
+    caption: body.caption,
+    documentName,
+  };
+}
