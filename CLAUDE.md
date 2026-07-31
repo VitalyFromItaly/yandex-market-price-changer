@@ -642,6 +642,48 @@ their cause. Do not reapply it.
 Nest's `LoggerInterceptor` (`src/common/interceptors/logger.interceptor.ts`) covers HTTP. There is no
 exception filter. Logging in newer code is Nest `Logger`; older handlers still use `console.*`.
 
+### Product cards (`src/modules/imaging`) — CLI only, off the live path
+
+Takes a supplier's photo of a watch on white, cuts the object out and stands it in the branded dark
+scene with a shadow and a reflection. Reached only through `scripts/compose-product-image.ts`; it is
+in no Nest module and the bot does not call it. The core is plain functions **because** the bot is
+the next step — wrapping in `@Injectable()` must not mean rewriting.
+
+- **The cutout is a segmentation model, not a threshold on white** (`isnet-general-use`, ONNX, local,
+  ~170 MB in `assets/models/`, gitignored). A luma threshold cuts a black G-Shock fine and falls
+  apart on a steel bracelet: highlights on polished steel are indistinguishable from the background,
+  and the gaps between links need clearing separately from the outer contour. The model is
+  **discriminative** — it answers "object or background" and draws nothing. A generative "enhancer"
+  would be free to rewrite the dial lettering, and the defect would surface at the buyer.
+- **Preprocessing constants are checked against rembg's sources** (`sessions/base.py`,
+  `sessions/dis_general_use.py`), not written from memory: a wrong mean/std does not crash, it
+  quietly degrades the mask and reads as "the model is bad". The same for the min-max stretch of the
+  output and for taking output **0**, channel **0** — isnet has side decoder heads.
+- **The white fringe is subtracted, not masked.** An edge pixel is a mixture of object and
+  background; invisible on white, a glowing contour on the dark scene. The background is known, so
+  the mixture resolves exactly: `F = (C − BG·(1 − α)) / α` (`mask-refine.ts`). This is why the
+  module is worth having at all rather than a two-line ImageMagick call.
+- **sharp returns a one-channel raw buffer as THREE channels.** The mask coming out of `resize` is
+  expanded to sRGB, so the buffer is three times longer than declared, rows shear, and the mask
+  arrives striped with a spreading fan — with no error, because sharp does not check the length.
+  `toColourspace('b-w')` fixes it and the length is asserted explicitly. `extractChannel('alpha')`,
+  by contrast, does return one channel. This cost a debugging session; the symptom points at the
+  model and the preprocessing, which are innocent.
+- **A blurred shadow is clipped by its own canvas**, so the canvas is extended by three sigmas
+  *before* `blur`, and whatever leaves the frame is cut by `clipToCanvas` — shifting the layer inwards
+  would move the shadow out from under the object.
+- Scene numbers live in a **JSON preset** (`assets/scenes/*.json`, Joi-validated, unknown keys
+  rejected), not in the composer: a background is a consumable. `reflection.maxHeight` exists because
+  `fade` is measured from the object while the podium's depth is not — without a cap, a tall watch on
+  a strap reflects off the podium onto the backdrop.
+- **The template PNG is committed** (2 MB) so the module works from a fresh clone; only the weights
+  are fetched. The preset's numbers were fitted **by eye** against that template — `anchor.y` is the
+  contact line on the podium's top face — and verified on a live G-Shock photo. A different
+  background means fitting them again: where the surface is is only visible on the picture.
+- **The model must not be downloaded at runtime once this moves into the bot.** Prod is on a Russian
+  host where external domains are as unreachable as `api.telegram.org` — the file goes into the image
+  via `COPY`.
+
 ## Conventions
 
 - **Relative imports only.** `tsconfig.json` defines no `paths`/`baseUrl`; all ~500 imports in `src`
@@ -732,6 +774,9 @@ CSV uploads, product creation, a price coefficient, Express):
   gate, the price-list upload, what is left alive in the Bull queues.
 - `src/modules/yandex/README.md` — client rules (Api-Key, per-method versions, repeated array params,
   non-queryable statuses, pagination), the five reports, profit, stock writing.
+- `src/modules/imaging/README.md` — the card pipeline, the CLI, the preset, and the rakes already
+  stepped on (sharp's one-channel raw, the clipped shadow blur, the pale ghost in low-confidence
+  mask areas).
 - `src/modules/parser/README.md` — states plainly that the module is off the live path, and what to
   delete it together with.
 

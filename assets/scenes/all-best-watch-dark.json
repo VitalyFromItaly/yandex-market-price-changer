@@ -1,0 +1,8 @@
+{
+  "template": "all-best-watch-dark.png",
+  "fit": { "maxWidth": 0.5, "maxHeight": 0.38 },
+  "anchor": { "x": 0.503, "y": 0.805 },
+  "shadow": { "opacity": 0.55, "blur": 18, "squash": 0.18, "offsetY": 4, "spread": 0.08 },
+  "reflection": { "opacity": 0.16, "blur": 2, "fade": 0.45, "maxHeight": 0.05, "gap": 2 },
+  "grade": { "brightness": 0.92, "saturation": 0.95 }
+}
