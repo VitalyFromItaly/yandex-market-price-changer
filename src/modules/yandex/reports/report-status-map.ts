@@ -182,7 +182,15 @@ export const REPORT_DEFINITIONS: Readonly<Record<TReportKey, IReportDefinition>>
 
   [REPORT.IN_TRANSIT]: {
     title: 'Едет до клиента',
-    statuses: [ORDER_STATUS.PROCESSING, ORDER_STATUS.DELIVERY, ORDER_STATUS.PICKUP],
+    // PROCESSING сюда НЕ входит, и это проверено на боевых данных 31-07-2026:
+    // кабинет показывал 192 заказа «в доставке», API на тех же секундах —
+    // DELIVERY 138 + PICKUP 54 = ровно 192, плюс PROCESSING 38 сверху.
+    // PROCESSING — это заказы, ещё лежащие у продавца (все с подстатусом
+    // STARTED): они никуда не едут, в службу доставки не переданы, и продавец
+    // их в «доставке» не видит. Пока они были в отчёте, цифра бота стабильно
+    // расходилась с кабинетом на размер собственной необработанной очереди —
+    // то есть отчёт выглядел сломанным ровно тогда, когда работы было много.
+    statuses: [ORDER_STATUS.DELIVERY, ORDER_STATUS.PICKUP],
     substatuses: [],
     // Это срез «что сейчас в пути», а не события за период — фильтра даты нет.
     dateFilter: 'none',

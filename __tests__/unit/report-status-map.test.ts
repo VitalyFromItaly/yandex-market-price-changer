@@ -52,14 +52,18 @@ describe('Определения отчётов', () => {
     expect(def.dateFilter).toBe('updatedAt');
   });
 
-  it('«едет до клиента» — PROCESSING, DELIVERY, PICKUP без фильтра даты', () => {
+  it('«едет до клиента» — DELIVERY и PICKUP без фильтра даты', () => {
     const def = reportDefinition(REPORT.IN_TRANSIT);
-    expect(def.statuses).toEqual([
-      ORDER_STATUS.PROCESSING,
-      ORDER_STATUS.DELIVERY,
-      ORDER_STATUS.PICKUP,
-    ]);
+    expect(def.statuses).toEqual([ORDER_STATUS.DELIVERY, ORDER_STATUS.PICKUP]);
     expect(def.dateFilter).toBe('none');
+  });
+
+  it('«едет до клиента» НЕ включает PROCESSING — иначе цифра расходится с кабинетом', () => {
+    // Сверка 31-07-2026: кабинет «в доставке» = 192, API = DELIVERY 138 +
+    // PICKUP 54. PROCESSING (38) — заказы, ещё не переданные в доставку.
+    const def = reportDefinition(REPORT.IN_TRANSIT);
+    expect(def.statuses).not.toContain(ORDER_STATUS.PROCESSING);
+    expect(matchesReport(REPORT.IN_TRANSIT, { status: ORDER_STATUS.PROCESSING })).toBe(false);
   });
 
   it('«едет обратно» содержит все пять подстатусов и требует метод возвратов', () => {

@@ -180,12 +180,14 @@ describe('Отчёт «едет обратно» (TASK-025)', () => {
 });
 
 describe('Отчёт «едет до клиента» (TASK-026)', () => {
-  it('берёт три статуса и НЕ ставит фильтр даты', async () => {
+  it('берёт статусы доставки и НЕ ставит фильтр даты', async () => {
     // Это срез «что сейчас в пути», а не события за период.
+    // PROCESSING в запрос не уходит: заказ в обработке у продавца ещё не едет,
+    // и кабинет его в «доставке» не показывает (сверка 31-07-2026).
     const { reports, queries } = await service();
     await reports.build(STORE, REPORT.IN_TRANSIT, NOW);
 
-    expect(queries[0].status).toEqual(['PROCESSING', 'DELIVERY', 'PICKUP']);
+    expect(queries[0].status).toEqual(['DELIVERY', 'PICKUP']);
     expect(queries[0]).not.toHaveProperty('updatedAtFrom');
     expect(queries[0]).not.toHaveProperty('supplierShipmentDateFrom');
   });
