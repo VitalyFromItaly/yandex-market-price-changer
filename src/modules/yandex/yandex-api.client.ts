@@ -458,7 +458,14 @@ export class YandexApiClient {
 
   private toDomainError(error: AxiosError): YandexApiError {
     const status = error.response?.status;
-    const domain = toYandexApiError(status, error.response?.data, error.message);
+    // Метод и путь известны ТОЛЬКО здесь. Раньше они попадали лишь в текст
+    // строки ниже, то есть на вопрос «на каком запросе упало» журнал ответить
+    // не мог. Теперь они едут вместе с ошибкой.
+    const domain = toYandexApiError(status, error.response?.data, error.message).withRequest(
+      error.config?.method,
+      error.config?.url,
+    );
+
     this.logger.error(
       `Partner API ${status ?? 'нет ответа'} на ${error.config?.url} (кампания ${this.credentials.campaignId}): ${domain.message}`,
     );

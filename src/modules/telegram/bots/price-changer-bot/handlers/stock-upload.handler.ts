@@ -4,6 +4,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { message } from 'telegraf/filters';
 
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { formatStockReport } from '../../../../yandex/stocks/stock-report';
 import { StockSyncService } from '../../../../yandex/stocks/stock-sync.service';
 import { YandexApiError } from '../../../../yandex/yandex-api.errors';
@@ -39,6 +40,7 @@ export class StockUploadHandler {
   constructor(
     private readonly stocks: StockSyncService,
     private readonly yandexMarketService: YandexMarketService,
+    private readonly errors: ErrorReporter,
   ) {}
 
   public register(bot: TTelegrafBot): void {
@@ -135,7 +137,16 @@ export class StockUploadHandler {
   }
 
   private async replyWithError(ctx: any, error: unknown): Promise<void> {
-    this.logger.error(`Загрузка остатков не удалась для ${ctx.from?.id}`, error as Error);
+    void this.errors.report({
+      error,
+      source: 'bot',
+      context: 'stock-upload',
+      telegramUserId: ctx.from?.id?.toString(),
+      username: ctx.from?.username,
+      chatId: ctx.chat?.id?.toString(),
+      botId: ctx.botInfo?.id?.toString(),
+      action: 'загрузка остатков',
+    });
 
     const text =
       error instanceof YandexApiError

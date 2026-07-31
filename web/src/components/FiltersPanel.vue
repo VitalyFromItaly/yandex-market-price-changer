@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import type { ILogsQuery } from '../api';
 
+/** Источник ошибки. Пусто — записи любого происхождения. */
+const SOURCES = [
+  { value: '', label: 'любой' },
+  { value: 'yandex', label: 'Яндекс.Маркет' },
+  { value: 'bot', label: 'бот' },
+  { value: 'http', label: 'HTTP' },
+  { value: 'queue', label: 'очередь' },
+  { value: 'process', label: 'процесс' },
+];
+
 /** Направление: кто кому. */
 const DIRECTIONS = [
   { value: '', label: 'всё' },
@@ -34,6 +44,24 @@ const emit = defineEmits<{ apply: []; reset: [] }>();
     <label>
       Telegram id
       <input v-model="filters.telegramUserId" inputmode="numeric" placeholder="все" />
+    </label>
+
+    <!-- Главный вопрос разбора — «что сломалось», поэтому переключатель
+         отдельной кнопкой, а не пунктом в выпадающем списке. -->
+    <label class="only-errors">
+      <input
+        type="checkbox"
+        :checked="filters.status === 'error'"
+        @change="filters.status = ($event.target as HTMLInputElement).checked ? 'error' : ''"
+      />
+      только ошибки
+    </label>
+
+    <label>
+      Источник
+      <select v-model="filters.source">
+        <option v-for="s in SOURCES" :key="s.value" :value="s.value">{{ s.label }}</option>
+      </select>
     </label>
 
     <label>
@@ -98,5 +126,13 @@ const emit = defineEmits<{ apply: []; reset: [] }>();
 .actions {
   display: flex;
   gap: 8px;
+}
+
+.only-errors {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding-bottom: 8px;
 }
 </style>

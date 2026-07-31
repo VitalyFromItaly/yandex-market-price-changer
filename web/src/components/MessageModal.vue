@@ -61,6 +61,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
         <div><dt>Тип</dt><dd>{{ row.kind }}</dd></div>
         <div v-if="row.durationMs !== undefined"><dt>Длительность</dt><dd>{{ row.durationMs }} мс</dd></div>
         <div v-if="row.chatId"><dt>Чат</dt><dd>{{ row.chatId }}</dd></div>
+        <div v-if="row.source"><dt>Источник</dt><dd>{{ row.source }}</dd></div>
+        <div v-if="row.errorType"><dt>Класс</dt><dd>{{ row.errorType }}</dd></div>
+        <div v-if="row.httpStatus"><dt>Код</dt><dd>{{ row.httpStatus }}</dd></div>
+        <div v-if="row.requestUrl"><dt>Запрос</dt><dd>{{ row.requestUrl }}</dd></div>
       </dl>
 
       <!-- Пузырь повторяет вид сообщения в телеграме: слева — то, что написал
@@ -73,6 +77,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
       </div>
 
       <p v-if="row.error" class="error">{{ row.error }}</p>
+
+      <!-- Стек прячем под disclosure: он занимает экран целиком, а нужен
+           только когда сообщения и места оказалось мало. -->
+      <details v-if="row.stack">
+        <summary>Стек вызовов</summary>
+        <pre>{{ row.stack }}</pre>
+      </details>
     </div>
   </div>
 </template>
@@ -169,6 +180,25 @@ header {
 
 .text :deep(a) {
   color: var(--accent);
+}
+
+details summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+details pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 8px 0 0;
+  max-height: 40vh;
+  overflow: auto;
 }
 
 .text :deep(code),

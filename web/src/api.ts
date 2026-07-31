@@ -12,6 +12,12 @@ export interface IActionLogRow {
   status: string;
   durationMs?: number;
   error?: string;
+  source?: string;
+  errorType?: string;
+  stack?: string;
+  httpStatus?: number;
+  requestUrl?: string;
+  context?: string;
   createdAt: string;
 }
 
@@ -26,6 +32,8 @@ export interface ILogsQuery {
   telegramUserId?: string;
   kind?: string;
   direction?: string;
+  status?: string;
+  source?: string;
   since?: string;
   until?: string;
   limit?: number;

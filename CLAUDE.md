@@ -251,6 +251,28 @@ into one line and loses commission, tax and cost.
   `creationDateParams` always shifts the upper bound one day forward. For a single day Yandex
   stretches the range itself and the bug is invisible; for «с 1 числа по сегодня» it would silently
   drop *today's* orders, the ones the seller opened the report for.
+- **One request may span at most 30 days, so a period is cut into windows** (`periodWindows` in
+  `report-period.ts`) and `collectOrders` walks them in sequence. This is not defensive coding: on
+  the **31st** «с 1 числа месяца» does not fit — `updatedAt` gives 30 days minus a second and the
+  creation filter, with its shift, exactly 31 — and every period report answered
+  `400 interval between … is more than 30 days`, i.e. the whole report died, on that day only.
+  Cutting rather than clamping keeps the month a month; the extra request happens in 31-day months
+  and nowhere else.
+  - **Merging deduplicates by `order.id`.** Yandex interprets window edges itself (a range shorter
+    than a day is stretched to a day), so an order at the boundary would otherwise be counted twice —
+    both as a unit and as money.
+  - `MAX_WINDOW_DAYS` is 30 and cannot be raised: the exclusive-`toDate` shift turns a 30-calendar-day
+    window into a 30-day interval exactly, the largest the API still accepts («more than 30» is
+    strict).
+  - `assertPeriodSupported` checks the **age** of the period's start, never its length — the length is
+    the windows' job. It is also why `splitIntoWindows` in `yandex-date-window.ts` stays unused:
+    that one does millisecond arithmetic over `Date`, the very thing `moscow-day.ts` avoids.
+- **«Едет до клиента» prints the moment it was taken** (`на 31-07-2026 09:12 МСК`), and the same
+  moment goes into the file name (`edet-do-klienta-31-07-2026-0912.xlsx`). It is a snapshot, not a
+  period, and a snapshot with no timestamp cannot be checked against the cabinet at all. The file
+  name carries the time for a second reason: Telegram deduplicates uploads by content and hands back
+  the **previously uploaded document together with its old name**, so a fresh export could appear
+  dated yesterday. When date and caption disagree, the caption is the one computed at build time.
 
 - **Arithmetic lives in `reports/profit.ts`**, a pure module beside `money.ts`. Both percentages are
   taken **from the sale sum**: `net = revenue − revenue×commission% − revenue×tax% − purchase`, i.e.
@@ -486,6 +508,50 @@ the one left open).
 Query params: `telegramUserId`, `kind`, `since`, `until`, `limit` (capped at `MAX_PAGE_SIZE`),
 `skip`; the response carries `total` from the same filter as the page (`filterOf` is one method for
 exactly that reason).
+
+### Error catching
+
+Every error goes through **one** service — `ErrorReporter`
+(`src/modules/errors/error-reporter.service.ts`, in a `@Global` module) — and lands in the same
+`actionlogs` collection as ordinary actions, with `status: 'error'` and `kind: 'error'`. One
+collection rather than two on purpose: the question is always "what was the user doing when it
+broke", and the answer is the neighbouring rows of one timeline, not a manual join of two lists by
+timestamp. Extra fields: `source`, `errorType`, `stack`, `httpStatus`, `requestUrl`, `context`.
+
+There is **no Sentry**: the cloud one is as unreachable from the Moscow host as `api.telegram.org`
+(the reason `TELEGRAM_API_URL` exists), and self-hosting it means ~10 containers and ClickHouse —
+larger than the bot. CapRover itself offers nothing beyond `docker logs`, which has no search, no
+per-user attribution and does not survive a restart.
+
+- `report()` **never throws and never blocks**: a catcher that crashes the app, or delays the reply
+  to the user, is worse than no catcher. Callers use `void this.errors.report(...)`.
+- **`telegramUserId` falls back to the string `system`** for HTTP and process failures. Not an empty
+  string — that silently matches the "all users" filter.
+- **Yandex errors are self-describing.** `YandexApiError.withRequest(method, url)` is filled in
+  `toDomainError`, the one place where the address is known; before that it reached only the text of
+  a log line, so "which request failed" was unanswerable. `source` is forced to `yandex` for these,
+  whatever layer caught them — the layer stays in `context`.
+- **Alerts to admins are throttled** (`AlertThrottle`, 15 min per `errorType + context`). One
+  failing upstream produces a *stream* of identical errors; without the throttle admins get a
+  hundred messages and stop reading alerts entirely — the catcher would make observability worse
+  than its absence. The key deliberately excludes the message text, which often carries an order id
+  and would make every error look new.
+- Alert delivery is wired by `ErrorAlertBridge` (`bots/error-alert.bridge.ts`) calling
+  `setAlertSender` at bootstrap. A direct dependency would be a DI cycle: `BotRegistry` calls the
+  reporter from `telegraf.catch`. A failure *while sending an alert* is logged, never reported —
+  otherwise it would generate another alert, forever.
+- 4xx does **not** alert (client behaviour), 5xx does. Both are recorded.
+
+Wired in: global `AllExceptionsFilter`, the error branch of `LoggerInterceptor` (`tap` with a single
+callback never fired on error), `process.on('unhandledRejection'|'uncaughtException')` in `main.ts`,
+`@OnQueueFailed`/`@OnQueueError`, the scheduled-digest catch, `telegraf.catch`, failed outgoing
+`callApi`, and the handlers that swallow their errors (`reports`, `stock-upload`) plus the silent
+degradation in `ProfitService` (returns unavailable → profit is reported *too high* with no hint in
+the text).
+
+**Known gap:** a request malformed at the HTTP level — raw non-ASCII in the query string — is
+rejected by Express *before* Nest, so no filter sees it and nothing is journalled. A properly
+percent-encoded request with the same bad value is caught normally.
 
 ### The admin panel is served by Nest itself
 

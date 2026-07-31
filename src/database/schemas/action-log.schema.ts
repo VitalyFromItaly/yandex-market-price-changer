@@ -86,11 +86,51 @@ export class ActionLog {
   @Prop({ type: String })
   error?: string;
 
+  /**
+   * Откуда пришла ошибка: `bot` | `http` | `queue` | `process` | `yandex`.
+   *
+   * У обычных действий не заполняется — поле существует ради вопроса «где
+   * сломалось», а он возникает только при разборе ошибки.
+   */
+  @Prop({ type: String })
+  source?: string;
+
+  /** Имя класса исключения. По нему ошибки группируются и троттлятся алерты. */
+  @Prop({ type: String })
+  errorType?: string;
+
+  /** Стек. Обрезается при записи: полный стек Node — это килобайты на запись. */
+  @Prop({ type: String })
+  stack?: string;
+
+  /** HTTP-код: наш ответ клиенту либо код, которым ответил Яндекс. */
+  @Prop({ type: Number })
+  httpStatus?: number;
+
+  /**
+   * Запрос, на котором сломалось: `GET /api/logs` или `GET v2/campaigns/…`.
+   * Ради него в YandexApiError добавлены method и url — до этого они
+   * терялись в toDomainError и попадали только в текст лога.
+   */
+  @Prop({ type: String })
+  requestUrl?: string;
+
+  /** Короткая метка места: `report:profit`, `stock-upload`, `digest`. */
+  @Prop({ type: String })
+  context?: string;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
 
 export const ActionLogSchema = SchemaFactory.createForClass(ActionLog);
+
+/*
+ * Выборка «все ошибки за период». Без этого индекса она читала бы коллекцию
+ * целиком: ошибки — доли процента записей, и статус в фильтре без индекса
+ * означает полный скан ради двух строк.
+ */
+ActionLogSchema.index({ status: 1, createdAt: -1 });
 
 // Основной запрос админа — «действия пользователя, свежие сверху».
 // Направление в индекс не входит: оно принимает два значения, и выборка по

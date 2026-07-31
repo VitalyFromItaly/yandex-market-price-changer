@@ -24,6 +24,7 @@ import {
 } from '../../../../../modules/yandex/reports/report-status-map';
 import { YandexApiError } from '../../../../../modules/yandex/yandex-api.errors';
 import { HISTORY_WINDOW_DAYS } from '../../../../../modules/yandex/yandex-api.paths';
+import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { MENU } from '../menu.constants';
@@ -78,6 +79,7 @@ export class ReportsHandler {
     private readonly yandexMarketService: YandexMarketService,
     private readonly keyboard: PriceChangerKeyboard,
     private readonly access: UserAccessService,
+    private readonly errors: ErrorReporter,
   ) {}
 
   /**
@@ -256,7 +258,16 @@ export class ReportsHandler {
    * остальное отвечаем общей фразой, не показывая внутренности.
    */
   private async replyWithError(ctx: Context, key: TReportKey, error: unknown): Promise<void> {
-    this.logger.error(`Не удалось собрать отчёт ${key} для ${ctx.from.id}`, error as Error);
+    void this.errors.report({
+      error,
+      source: 'bot',
+      context: `report:${key}`,
+      telegramUserId: ctx.from?.id?.toString(),
+      username: ctx.from?.username,
+      chatId: ctx.chat?.id?.toString(),
+      botId: ctx.botInfo?.id?.toString(),
+      action: `отчёт ${key}`,
+    });
 
     const message =
       error instanceof YandexApiError
