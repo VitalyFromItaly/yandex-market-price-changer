@@ -21,13 +21,15 @@ import {
   type IMoneyTotals,
   type IOrderSubsidy,
 } from './money';
-import { moscowDateParam } from './moscow-day';
+import { moscowClock, moscowDateParam } from './moscow-day';
 import {
   DEFAULT_PERIOD,
   assertPeriodSupported,
   creationDateParams,
+  periodWindows,
   shipmentDateParams,
   updatedAtParams,
+  type IPeriodBounds,
   type IReportPeriod,
 } from './report-period';
 import { buildOrdersWorkbook, workbookFileName } from './report-workbook';
@@ -166,6 +168,11 @@ export class OrderReportsService {
    *
    * Принимает ОПРЕДЕЛЕНИЕ, а не ключ отчёта: тем же кодом собирается
    * `PLACED_DEFINITION`, у которого ключа нет вовсе.
+   *
+   * Период уходит НЕ одним запросом: Partner API отвергает интервал длиннее
+   * 30 дней, а 31-го числа «с 1 числа месяца» — это 31 день. Окна даёт
+   * periodWindows, здесь они просто обходятся подряд (их максимум два, а квота
+   * метода часовая — параллелить нечего) и склеиваются с дедупликацией.
    */
   private async collectOrders(
     client: YandexApiClient,
@@ -173,10 +180,6 @@ export class OrderReportsService {
     now: Date,
     period: IReportPeriod,
   ): Promise<IReportOrder[]> {
-    // В запрос уходят только те статусы, которые Partner API принимает в
-    // фильтре: запрещённое значение отвечает 400 на ВЕСЬ отчёт (см. queryStatuses).
-    const query: IOrdersQuery = { status: queryStatuses(definition) };
-
     // Период проверяем ДО сети — но только там, где он вообще применяется.
     // У среза «что сейчас в пути» фильтра даты нет, и отклонять его из-за
     // слишком старой даты было бы отказом на ровном месте.
@@ -184,15 +187,54 @@ export class OrderReportsService {
       assertPeriodSupported(period, now);
     }
 
+    // У среза без фильтра даты окон нет — это один запрос «что сейчас».
+    const windows = definition.dateFilter === 'none' ? [null] : periodWindows(period, now);
+
+    const collected: IReportOrder[] = [];
+    const seen = new Set<number>();
+
+    for (const window of windows) {
+      for await (const page of client.iterateOrders(this.ordersQuery(definition, window, now))) {
+        for (const raw of page) {
+          const order = raw as IReportOrder;
+          if (!matchesDefinition(definition, order)) continue;
+
+          // Дедупликация обязательна: границы соседних окон Яндекс трактует
+          // сам (диапазон короче суток он растягивает до суток), и заказ с
+          // края попал бы в отчёт дважды — и штукой, и суммой.
+          if (order.id != null) {
+            if (seen.has(order.id)) continue;
+            seen.add(order.id);
+          }
+
+          collected.push(order);
+        }
+      }
+    }
+
+    return collected;
+  }
+
+  /** Запрос за одним окном периода. */
+  private ordersQuery(
+    definition: IReportDefinition,
+    window: IPeriodBounds | null,
+    now: Date,
+  ): IOrdersQuery {
+    // В запрос уходят только те статусы, которые Partner API принимает в
+    // фильтре: запрещённое значение отвечает 400 на ВЕСЬ отчёт (см. queryStatuses).
+    const query: IOrdersQuery = { status: queryStatuses(definition) };
+    if (!window) return query;
+
     switch (definition.dateFilter) {
       case 'supplierShipmentDate': {
-        const range = shipmentDateParams(period, now);
+        const range = shipmentDateParams(window);
         query.supplierShipmentDateFrom = range.from;
         query.supplierShipmentDateTo = range.to;
         break;
       }
       case 'updatedAt': {
-        const range = updatedAtParams(period, now);
+        const range = updatedAtParams(window, now);
         query.updatedAtFrom = range.from;
         query.updatedAtTo = range.to;
         break;
@@ -200,7 +242,7 @@ export class OrderReportsService {
       case 'creationDate': {
         // Верхняя граница у Яндекса исключающая — сдвиг на день делает
         // creationDateParams, см. комментарий там.
-        const range = creationDateParams(period, now);
+        const range = creationDateParams(window);
         query.fromDate = range.from;
         query.toDate = range.to;
         break;
@@ -210,14 +252,7 @@ export class OrderReportsService {
         break;
     }
 
-    const collected: IReportOrder[] = [];
-    for await (const page of client.iterateOrders(query)) {
-      for (const raw of page) {
-        const order = raw as IReportOrder;
-        if (matchesDefinition(definition, order)) collected.push(order);
-      }
-    }
-    return collected;
+    return query;
   }
 
   /**
@@ -283,7 +318,7 @@ export class OrderReportsService {
     return {
       empty: false,
       buffer: workbook.buffer,
-      filename: workbookFileName(moscowDateParam(now)),
+      filename: workbookFileName(moscowDateParam(now), moscowClock(now)),
       caption: formatReport(result, now) + truncated,
     };
   }

@@ -1,5 +1,6 @@
 import { b, esc } from '../../telegram/formatting/telegram-format';
 import { formatRubles } from './money';
+import { moscowStamp } from './moscow-day';
 import { DEFAULT_PERIOD, periodTitle } from './report-period';
 import { REPORT } from './report-status-map';
 import type { IReportResult } from './order-reports.service';
@@ -18,11 +19,16 @@ import type { IReportResult } from './order-reports.service';
  *
  * «Едет до клиента» — срез «что сейчас в пути», а не события за период
  * (`dateFilter: 'none'`), поэтому периода в его заголовке нет: подпись
- * «за сегодня» на срезе означала бы фильтр, которого не было.
+ * «за сегодня» на срезе означала бы фильтр, которого не было. Вместо периода
+ * печатается МОМЕНТ съёмки: срез без времени нечем проверить, а расхождение с
+ * кабинетом («почему у бота другое число заказов») объясняется именно им. Он же
+ * попадает в журнал действий вместе с исходящим сообщением.
  */
 function header(result: IReportResult, now: Date): string {
   const icon = ICONS[result.key] ?? '📊';
-  if (result.key === REPORT.IN_TRANSIT) return `${icon} ${b(result.title)}`;
+  if (result.key === REPORT.IN_TRANSIT) {
+    return `${icon} ${b(result.title)} ${esc(`на ${moscowStamp(now)} МСК`)}`;
+  }
 
   const period = result.period ?? DEFAULT_PERIOD;
   return `${icon} ${b(result.title)} ${esc(periodTitle(period, now))}`;
@@ -32,7 +38,9 @@ function header(result: IReportResult, now: Date): string {
 function emptyMessage(result: IReportResult, now: Date): string {
   switch (result.key) {
     case REPORT.IN_TRANSIT:
-      return `📦 ${b(result.title)}\n\nСейчас в пути нет ни одного заказа.`;
+      // Через тот же header(): момент съёмки нужен и когда заказов нет —
+      // «ничего не едет» без времени невозможно ни перепроверить, ни оспорить.
+      return `${header(result, now)}\n\nСейчас в пути нет ни одного заказа.`;
     case REPORT.RETURNING:
       return `↩️ ${b(result.title)}\n\nВозвратов и невыкупов нет.`;
     default:

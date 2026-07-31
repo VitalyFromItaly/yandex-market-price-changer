@@ -12,10 +12,12 @@ import {
   sumTotals,
 } from '../../src/modules/yandex/reports/money';
 import {
+  moscowClock,
   moscowDateParam,
   moscowDayBounds,
   moscowDayStart,
   moscowOffset,
+  moscowStamp,
 } from '../../src/modules/yandex/reports/moscow-day';
 
 /**
@@ -197,6 +199,22 @@ describe('Московские сутки', () => {
 
   it('формат даты — DD-MM-YYYY с ведущими нулями', () => {
     expect(moscowDateParam(new Date('2026-01-02T10:00:00Z'))).toBe('02-01-2026');
+  });
+
+  it('время тоже московское, а не серверное', () => {
+    // 06:12 UTC — это 09:12 в Москве. getHours() в контейнере вернул бы шесть,
+    // и подпись «на 06:12 МСК» разошлась бы с реальностью на три часа.
+    expect(moscowClock(new Date('2026-07-31T06:12:00Z'))).toBe('09:12');
+  });
+
+  it('полночь печатается как 00:00, а не как 24:00', () => {
+    expect(moscowClock(new Date('2026-07-30T21:00:00Z'))).toBe('00:00');
+  });
+
+  it('момент съёмки — дата и время вместе', () => {
+    // 23:30 МСК: сутки ещё сегодняшние, и дата не должна убежать вперёд.
+    expect(moscowStamp(new Date('2026-07-31T20:30:00Z'))).toBe('31-07-2026 23:30');
+    expect(moscowStamp(new Date('2026-07-31T06:12:00Z'))).toBe('31-07-2026 09:12');
   });
 
   it('границы суток — ISO со смещением, иначе Яндекс сдвинет отчёт на три часа', () => {

@@ -98,9 +98,16 @@ export function buildOrdersWorkbook(orders: readonly IReportOrder[]): IWorkbookR
   };
 }
 
-/** Имя файла с датой — в чате их накапливается много. */
-export function workbookFileName(dateParam: string): string {
-  return `edet-do-klienta-${dateParam}.xlsx`;
+/**
+ * Имя файла с датой И временем — в чате их накапливается много.
+ *
+ * Время не украшение: двух выгрузок за день достаточно, чтобы файлы стали
+ * неразличимы, а Telegram при совпадении содержимого отдаёт РАНЕЕ загруженный
+ * документ вместе с его старым именем — и свежая выгрузка выглядит вчерашней.
+ * Момент в имени (и такой же в подписи) снимает этот вопрос сразу.
+ */
+export function workbookFileName(dateParam: string, timeParam: string): string {
+  return `edet-do-klienta-${dateParam}-${timeParam.replace(':', '')}.xlsx`;
 }
 
 function round(value: number): number {

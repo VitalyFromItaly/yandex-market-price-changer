@@ -9,6 +9,7 @@ import {
   parseDayInput,
   periodBounds,
   periodTitle,
+  periodWindows,
   schedulePeriod,
   shipmentDateParams,
   updatedAtParams,
@@ -89,8 +90,15 @@ describe('Границы периода', () => {
 describe('Параметры Partner API', () => {
   const NOW = new Date('2026-07-30T12:00:00+03:00');
 
+  /** Единственное окно периода — параметры строятся уже по окнам, не по периоду. */
+  const only = (key: (typeof PERIOD)[keyof typeof PERIOD], now = NOW) => {
+    const windows = periodWindows({ key }, now);
+    expect(windows).toHaveLength(1);
+    return windows[0];
+  };
+
   it('supplierShipmentDate — DD-MM-YYYY', () => {
-    expect(shipmentDateParams({ key: PERIOD.WEEK }, NOW)).toEqual({
+    expect(shipmentDateParams(only(PERIOD.WEEK))).toEqual({
       from: '27-07-2026',
       to: '30-07-2026',
     });
@@ -100,14 +108,14 @@ describe('Параметры Partner API', () => {
     // «Заказы, созданные ДО 00:00 указанного дня». Без сдвига период «с 1 числа
     // по сегодня» молча терял бы СЕГОДНЯШНИЕ заказы — те самые, ради которых
     // продавец открывает отчёт.
-    expect(creationDateParams({ key: PERIOD.MONTH }, NOW)).toEqual({
+    expect(creationDateParams(only(PERIOD.MONTH))).toEqual({
       from: '01-07-2026',
       to: '31-07-2026',
     });
   });
 
   it('creationDate за сегодня — это ровно сегодняшние сутки', () => {
-    expect(creationDateParams({ key: PERIOD.TODAY }, NOW)).toEqual({
+    expect(creationDateParams(only(PERIOD.TODAY))).toEqual({
       from: '30-07-2026',
       to: '31-07-2026',
     });
@@ -117,22 +125,108 @@ describe('Параметры Partner API', () => {
     // Сдвиг календарной датой, а не миллисекундами: 31-12 + 1 день должно
     // давать 01-01 следующего года, а не «32-12».
     const lastDay = new Date('2026-12-31T12:00:00+03:00');
-    expect(creationDateParams({ key: PERIOD.TODAY }, lastDay)).toEqual({
+    expect(creationDateParams(only(PERIOD.TODAY, lastDay))).toEqual({
       from: '31-12-2026',
       to: '01-01-2027',
     });
   });
 
   it('updatedAt — ISO СО СМЕЩЕНИЕМ, иначе Яндекс сдвинет отчёт на три часа', () => {
-    const range = updatedAtParams({ key: PERIOD.TODAY }, NOW);
+    const range = updatedAtParams(only(PERIOD.TODAY), NOW);
     expect(range.from).toBe('2026-07-30T00:00:00+03:00');
     expect(range.to).toBe('2026-07-30T23:59:59+03:00');
   });
 
   it('диапазон покрывает сутки целиком: с 00:00:00 по 23:59:59', () => {
-    const range = updatedAtParams({ key: PERIOD.MONTH }, NOW);
+    const range = updatedAtParams(only(PERIOD.MONTH), NOW);
     expect(range.from).toBe('2026-07-01T00:00:00+03:00');
     expect(range.to).toBe('2026-07-30T23:59:59+03:00');
+  });
+});
+
+/**
+ * 31-е число — единственный день, когда «с 1 числа месяца» не помещается в
+ * лимит Яндекса. Именно так отчёты и упали в проде: «interval between
+ * updatedAtFrom and updatedAtTo is more than 30 days».
+ */
+describe('Нарезка периода на окна (лимит 30 дней)', () => {
+  const MS_IN_DAY = 24 * 60 * 60 * 1000;
+  const LAST_DAY = new Date('2026-07-31T09:12:00+03:00');
+
+  /** Длина интервала в днях — так же, как её считает Яндекс. */
+  const spanDays = (from: Date, to: Date) => (to.getTime() - from.getTime()) / MS_IN_DAY;
+  const fromDDMMYYYY = (value: string) => {
+    const [day, month, year] = value.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day));
+  };
+
+  it('месяц 31-го числа режется на два окна и покрывает его целиком', () => {
+    const windows = periodWindows({ key: PERIOD.MONTH }, LAST_DAY);
+
+    // toMatchObject, а не toEqual: границей «сегодня» служит moscowDay, у
+    // которого рядом с датой лежит ещё и смещение.
+    expect(windows).toHaveLength(2);
+    expect(windows[0]).toMatchObject({
+      from: { year: 2026, month: 7, day: 1 },
+      to: { year: 2026, month: 7, day: 30 },
+    });
+    expect(windows[1]).toMatchObject({
+      from: { year: 2026, month: 7, day: 31 },
+      to: { year: 2026, month: 7, day: 31 },
+    });
+  });
+
+  it('30-го числа окно по-прежнему одно — лишнего запроса нет', () => {
+    const windows = periodWindows({ key: PERIOD.MONTH }, new Date('2026-07-30T12:00:00+03:00'));
+    expect(windows).toHaveLength(1);
+  });
+
+  it('сегодня, неделя и конкретный день — всегда одно окно', () => {
+    for (const period of [
+      { key: PERIOD.TODAY },
+      { key: PERIOD.WEEK },
+      { key: PERIOD.DAY, day: { year: 2026, month: 7, day: 15 } },
+    ]) {
+      expect(periodWindows(period, LAST_DAY)).toHaveLength(1);
+    }
+  });
+
+  it('НИ ОДНО окно не длиннее 30 дней — ни по одному из фильтров', () => {
+    // Проверяем не ожидаемые строки, а суть отказа Яндекса: интервал строго
+    // больше 30 дней — это 400 на весь отчёт.
+    for (const window of periodWindows({ key: PERIOD.MONTH }, LAST_DAY)) {
+      const creation = creationDateParams(window);
+      expect(spanDays(fromDDMMYYYY(creation.from), fromDDMMYYYY(creation.to))).toBeLessThanOrEqual(
+        30,
+      );
+
+      const shipment = shipmentDateParams(window);
+      expect(spanDays(fromDDMMYYYY(shipment.from), fromDDMMYYYY(shipment.to))).toBeLessThanOrEqual(
+        30,
+      );
+
+      const updated = updatedAtParams(window, LAST_DAY);
+      expect(spanDays(new Date(updated.from), new Date(updated.to))).toBeLessThanOrEqual(30);
+    }
+  });
+
+  it('окна идут подряд и не пересекаются', () => {
+    // Дырка между окнами — молча потерянный день заказов, нахлёст — задвоенные
+    // суммы (от него страхует дедупликация по id, но лучше не создавать).
+    const windows = periodWindows({ key: PERIOD.MONTH }, LAST_DAY);
+    for (let i = 1; i < windows.length; i += 1) {
+      const previousEnd = Date.UTC(
+        windows[i - 1].to.year,
+        windows[i - 1].to.month - 1,
+        windows[i - 1].to.day,
+      );
+      const nextStart = Date.UTC(
+        windows[i].from.year,
+        windows[i].from.month - 1,
+        windows[i].from.day,
+      );
+      expect(nextStart - previousEnd).toBe(MS_IN_DAY);
+    }
   });
 });
 
