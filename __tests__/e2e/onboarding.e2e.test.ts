@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import axios from 'axios';
@@ -158,6 +159,9 @@ describe('Онбординг: от /start до отчёта', () => {
 
     const moduleRef = await Test.createTestingModule({
       providers: [
+        // Ловитель ошибок: в тестах он заглушка — предмет проверки здесь
+        // другой, а без провайдера DI не соберётся.
+        { provide: ErrorReporter, useValue: { report: async () => undefined } },
         PriceChangerComposer,
         // Журнал действий — часть живого пайплайна, поэтому он здесь настоящий:
         // сквозной тест должен ловить и то, что запись действия сломает диалог.

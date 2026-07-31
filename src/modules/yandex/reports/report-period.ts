@@ -2,6 +2,7 @@ import {
   calendarDateParam,
   calendarDayBounds,
   calendarDayStart,
+  compareDates,
   moscowDay,
   shiftDays,
   startOfMonth,
@@ -65,6 +66,15 @@ export interface IPeriodBounds {
   to: ICalendarDate;
 }
 
+/**
+ * Максимальная длина ОДНОГО запроса в календарных днях.
+ *
+ * Ограничение Partner API: интервал длиннее 30 дней отвергается с
+ * «interval between dateFrom and dateTo is more than 30 days». Совпадает с
+ * глубиной истории по величине, но это РАЗНЫЕ границы — см. yandex-date-window.ts.
+ */
+export const MAX_WINDOW_DAYS = HISTORY_WINDOW_DAYS;
+
 export function periodBounds(period: IReportPeriod, now: Date = new Date()): IPeriodBounds {
   const today = moscowDay(now);
 
@@ -84,12 +94,39 @@ export function periodBounds(period: IReportPeriod, now: Date = new Date()): IPe
   }
 }
 
-/** Параметры Partner API для фильтра `supplierShipmentDate` (DD-MM-YYYY). */
-export function shipmentDateParams(
-  period: IReportPeriod,
-  now: Date = new Date(),
-): { from: string; to: string } {
+/**
+ * Период, нарезанный на окна, каждое из которых Partner API согласен принять.
+ *
+ * Интервал длиннее 30 дней отвергается с 400 на ВЕСЬ отчёт — и 31-го числа
+ * «с 1 числа месяца» в лимит не влезает: по updatedAt это 30 суток без секунды,
+ * по дате оформления (верхняя граница сдвинута на день) — ровно 31. Поэтому
+ * период режется, а не обрезается: продавец просил месяц и получает месяц,
+ * ценой одного лишнего запроса и только в 31-дневных месяцах.
+ *
+ * Режем КАЛЕНДАРНЫМИ днями через shiftDays, а не splitIntoWindows из
+ * yandex-date-window.ts: та считает миллисекундами по Date — ровно тот способ,
+ * от которого moscow-day.ts сознательно ушёл (см. комментарий там).
+ */
+export function periodWindows(period: IReportPeriod, now: Date = new Date()): IPeriodBounds[] {
   const bounds = periodBounds(period, now);
+  const windows: IPeriodBounds[] = [];
+
+  let from = bounds.from;
+  while (compareDates(from, bounds.to) <= 0) {
+    const last = shiftDays(from, MAX_WINDOW_DAYS - 1);
+    const to = compareDates(last, bounds.to) < 0 ? last : bounds.to;
+    windows.push({ from, to });
+    from = shiftDays(to, 1);
+  }
+
+  // Перевёрнутый период окон не даёт вовсе, а вызывающий код рассчитывает хотя
+  // бы на один запрос. Такой период всё равно отсекает assertPeriodSupported —
+  // но не ценой пустого отчёта вместо ошибки.
+  return windows.length ? windows : [bounds];
+}
+
+/** Параметры Partner API для фильтра `supplierShipmentDate` (DD-MM-YYYY). */
+export function shipmentDateParams(bounds: IPeriodBounds): { from: string; to: string } {
   return { from: calendarDateParam(bounds.from), to: calendarDateParam(bounds.to) };
 }
 
@@ -104,12 +141,12 @@ export function shipmentDateParams(
  * а вот «с 1 числа по сегодня» молча отрезало бы СЕГОДНЯШНИЕ заказы — ровно те,
  * ради которых продавец и открывает отчёт. Поэтому сдвиг делается всегда, а не
  * только для диапазонов: одно правило вместо двух, и оно закреплено тестом.
+ *
+ * Из-за сдвига окно в 30 календарных дней превращается ровно в 30-дневный
+ * интервал — предел, который Яндекс ещё принимает («more than 30» — строго
+ * больше). Ради этого MAX_WINDOW_DAYS и не может быть 31.
  */
-export function creationDateParams(
-  period: IReportPeriod,
-  now: Date = new Date(),
-): { from: string; to: string } {
-  const bounds = periodBounds(period, now);
+export function creationDateParams(bounds: IPeriodBounds): { from: string; to: string } {
   return {
     from: calendarDateParam(bounds.from),
     to: calendarDateParam(shiftDays(bounds.to, 1)),
@@ -118,10 +155,9 @@ export function creationDateParams(
 
 /** Параметры Partner API для фильтра `updatedAt` (ISO 8601 со смещением). */
 export function updatedAtParams(
-  period: IReportPeriod,
+  bounds: IPeriodBounds,
   now: Date = new Date(),
 ): { from: string; to: string } {
-  const bounds = periodBounds(period, now);
   return {
     from: calendarDayBounds(bounds.from, now).from,
     to: calendarDayBounds(bounds.to, now).to,
@@ -136,6 +172,11 @@ export function updatedAtParams(
  * напрямую через iterateOrders, минуя iterateOrdersInRange с его встроенной
  * проверкой. «С 1 числа» 31-го числа даёт ровно 30 дней и проходит; а вот
  * конкретный день месячной давности — нет.
+ *
+ * Проверяется ВОЗРАСТ начала периода, а не его длина: длину обеспечивает
+ * periodWindows, разрезая период на окна, которые API принимает. Проверять её
+ * здесь значило бы отказывать в отчёте, который прекрасно собирается за два
+ * запроса.
  */
 export function assertPeriodSupported(period: IReportPeriod, now: Date = new Date()): void {
   const bounds = periodBounds(period, now);

@@ -238,18 +238,24 @@ describe('Текст отчёта', () => {
     expect(text).toContain(`1${NBSP}234${NBSP}₽`);
   });
 
-  it('в отчёте за период указана дата, а в срезе «в пути» — нет', async () => {
+  it('в отчёте за период указан ПЕРИОД, а в срезе «в пути» — МОМЕНТ съёмки', async () => {
     const { reports } = await service({
       orders: [{ id: 1, status: 'DELIVERY', itemsTotal: 1 }],
     });
     const shipped = await reports.build(STORE, REPORT.SHIPPED_TODAY, NOW);
-    expect(formatReport(shipped, NOW)).toContain('29-07-2026');
+    expect(formatReport(shipped, NOW)).toContain('за сегодня, 29-07-2026');
 
     const { reports: r2 } = await service({
       orders: [{ id: 1, status: 'DELIVERY', itemsTotal: 1 }],
     });
     const inTransit = await r2.build(STORE, REPORT.IN_TRANSIT, NOW);
-    expect(formatReport(inTransit, NOW)).not.toContain('29-07-2026');
+    const text = formatReport(inTransit, NOW);
+
+    // Момент съёмки — с временем: «что сейчас в пути» без него нечем сверить с
+    // кабинетом. Но подписи «за сегодня» тут быть не должно: фильтра по дате в
+    // срезе нет, и она обещала бы период, которого не было.
+    expect(text).toContain('на 29-07-2026 13:00 МСК');
+    expect(text).not.toContain('за сегодня');
   });
 });
 
@@ -321,9 +327,78 @@ describe('Выгрузка «едет до клиента» файлом (TASK-0
     expect(result.empty).toBe(false);
     if (!result.empty) {
       expect(Buffer.isBuffer(result.buffer)).toBe(true);
-      expect(result.filename).toBe('edet-do-klienta-29-07-2026.xlsx');
+      // Дата И время по Москве: за день выгрузок бывает несколько, а Telegram
+      // при совпадении содержимого отдаёт ранее загруженный документ со старым
+      // именем — и свежий файл выглядит вчерашним.
+      expect(result.filename).toBe('edet-do-klienta-29-07-2026-1300.xlsx');
       expect(result.caption).toContain('Заказов');
+      expect(result.caption).toContain('на 29-07-2026 13:00 МСК');
       expect(result.caption).not.toContain('не поместились');
     }
+  });
+});
+
+/**
+ * Нарезка периода на окна (лимит Partner API — 30 дней).
+ *
+ * 31-го числа «с 1 числа месяца» не помещается в один запрос, и отчёты падали с
+ * 400 «interval ... is more than 30 days» — весь отчёт целиком.
+ */
+describe('Период длиннее 30 дней собирается несколькими запросами', () => {
+  // Пятница, 31 июля 2026, 12:00 МСК — 31 календарный день с начала месяца.
+  const LAST_DAY = new Date('2026-07-31T12:00:00+03:00');
+  const MONTH = { key: 'month' } as never;
+
+  it('«выкуплено» за месяц 31-го числа — два запроса, оба в пределах лимита', async () => {
+    const { reports, queries } = await service();
+    await reports.build(STORE, REPORT.REDEEMED, LAST_DAY, MONTH);
+
+    expect(queries).toHaveLength(2);
+    expect(queries[0].updatedAtFrom).toBe('2026-07-01T00:00:00+03:00');
+    expect(queries[0].updatedAtTo).toBe('2026-07-30T23:59:59+03:00');
+    expect(queries[1].updatedAtFrom).toBe('2026-07-31T00:00:00+03:00');
+    expect(queries[1].updatedAtTo).toBe('2026-07-31T23:59:59+03:00');
+  });
+
+  it('«оформлено» за месяц 31-го числа — тоже два запроса, без дыры между ними', async () => {
+    const { reports, queries } = await service();
+    await reports.collectPlacedOrders(STORE, MONTH, LAST_DAY);
+
+    expect(queries).toHaveLength(2);
+    // Верхняя граница исключающая, поэтому конец первого окна и начало второго
+    // — одна и та же дата: ни потерянного дня, ни нахлёста.
+    expect(queries[0].fromDate).toBe('01-07-2026');
+    expect(queries[0].toDate).toBe('31-07-2026');
+    expect(queries[1].fromDate).toBe('31-07-2026');
+    expect(queries[1].toDate).toBe('01-08-2026');
+  });
+
+  it('30-го числа запрос остаётся ОДИН', async () => {
+    const { reports, queries } = await service();
+    await reports.build(STORE, REPORT.REDEEMED, new Date('2026-07-30T12:00:00+03:00'), MONTH);
+
+    expect(queries).toHaveLength(1);
+  });
+
+  it('заказ, попавший в оба окна, считается один раз', async () => {
+    // Заглушка отдаёт один и тот же список на каждый запрос — как Яндекс,
+    // растянувший короткий диапазон до суток. Без дедупликации заказ удвоил бы
+    // и количество, и сумму.
+    const { reports } = await service({
+      orders: [{ id: 777, status: 'DELIVERED', itemsTotal: 1000, deliveryTotal: 100 }],
+    });
+    const result = await reports.build(STORE, REPORT.REDEEMED, LAST_DAY, MONTH);
+
+    expect(result.count).toBe(1);
+    expect(result.totals.items).toBe(1000);
+  });
+
+  it('срез «в пути» окон не знает: один запрос и без дат', async () => {
+    const { reports, queries } = await service();
+    await reports.build(STORE, REPORT.IN_TRANSIT, LAST_DAY, MONTH);
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).not.toHaveProperty('updatedAtFrom');
+    expect(queries[0]).not.toHaveProperty('fromDate');
   });
 });

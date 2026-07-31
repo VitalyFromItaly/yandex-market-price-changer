@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 import { Test } from '@nestjs/testing';
 import {
   MENU_TO_REPORT,
@@ -75,6 +76,9 @@ async function build(
 
   const moduleRef = await Test.createTestingModule({
     providers: [
+        // Ловитель ошибок: в тестах он заглушка — предмет проверки здесь
+        // другой, а без провайдера DI не соберётся.
+        { provide: ErrorReporter, useValue: { report: async () => undefined } },
       ReportsHandler,
       PriceChangerKeyboard,
       { provide: OrderReportsService, useValue: reports },

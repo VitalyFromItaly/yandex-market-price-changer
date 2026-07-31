@@ -64,6 +64,34 @@ export function moscowDateParam(now: Date = new Date()): string {
 }
 
 /**
+ * Время в Москве, ЧЧ:ММ.
+ *
+ * Через Intl, как и дата: `getHours()` вернул бы час контейнера, то есть UTC, и
+ * подпись «на 06:12 МСК» разошлась бы с реальностью на три часа.
+ */
+export function moscowClock(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: MOSCOW_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
+  return `${get('hour')}:${get('minute')}`;
+}
+
+/**
+ * Момент по Москве целиком — «31-07-2026 09:12».
+ *
+ * Нужен там, где отчёт — это СРЕЗ, а не период: «что сейчас в пути» без момента
+ * съёмки нечем проверить, и расхождение с кабинетом невозможно объяснить.
+ */
+export function moscowStamp(now: Date = new Date()): string {
+  return `${moscowDateParam(now)} ${moscowClock(now)}`;
+}
+
+/**
  * Границы московских суток в ISO 8601 со смещением — формат, которого требуют
  * updatedAtFrom/updatedAtTo. Именно со смещением: без него Яндекс истолкует
  * время как UTC и отчёт сдвинется на три часа.
@@ -123,6 +151,16 @@ export function shiftDays(date: ICalendarDate, days: number): ICalendarDate {
 /** Понедельник той недели, в которую попадает дата. */
 export function startOfWeek(date: ICalendarDate): ICalendarDate {
   return shiftDays(date, -(moscowWeekday(date) - 1));
+}
+
+/**
+ * Сравнение календарных дат — как компаратор сортировки: <0, 0, >0.
+ *
+ * Через `Date.UTC`, а не через строки: «09-08» и «10-07» строками сравниваются
+ * неверно, а с моментами московской полуночи сравнение зависело бы от смещения.
+ */
+export function compareDates(a: ICalendarDate, b: ICalendarDate): number {
+  return Date.UTC(a.year, a.month - 1, a.day) - Date.UTC(b.year, b.month - 1, b.day);
 }
 
 /** Первое число того же месяца. */

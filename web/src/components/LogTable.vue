@@ -17,6 +17,7 @@ const KIND_LABELS: Record<string, string> = {
   sendPhoto: 'фото',
   editMessageText: 'правка сообщения',
   answerCallbackQuery: 'ответ на нажатие',
+  error: 'ошибка',
   command: 'команда',
   menu: 'меню',
   callback: 'кнопка',

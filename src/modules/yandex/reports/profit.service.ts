@@ -5,6 +5,7 @@ import type { IReportPeriod } from './report-period';
 import { Injectable, Logger } from '@nestjs/common';
 
 import { PurchasePriceService } from '../../../database/services/purchase-price.service';
+import { ErrorReporter } from '../../errors/error-reporter.service';
 import { YandexClientFactory } from '../yandex-client.factory';
 
 import { OrderReportsService } from './order-reports.service';
@@ -45,6 +46,7 @@ export class ProfitService {
     private readonly reports: OrderReportsService,
     private readonly purchasePrices: PurchasePriceService,
     private readonly clients: YandexClientFactory,
+    private readonly errors: ErrorReporter,
   ) {}
 
   public async build(
@@ -126,10 +128,16 @@ export class ProfitService {
         }
       }
     } catch (error) {
-      this.logger.warn(
-        `Возвраты для ${store.telegramUserId} получить не удалось, ` +
-          `прибыль посчитана БЕЗ их вычета: ${(error as Error)?.message}`,
-      );
+      // Пользователь получает отчёт с ЗАВЫШЕННОЙ прибылью и признака этого в
+      // тексте нет. Раз молчим перед ним — тем более нельзя молчать перед
+      // администратором: иначе расхождение всплывёт как «бот считает неверно».
+      void this.errors.report({
+        error,
+        source: 'yandex',
+        context: 'profit:returns',
+        telegramUserId: store.telegramUserId,
+        action: 'возвраты для расчёта прибыли',
+      });
     }
 
     return ids;

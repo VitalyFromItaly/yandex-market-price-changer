@@ -5,6 +5,7 @@ import { DatabaseModule } from '../../database/database.module';
 import { YandexModule } from '../yandex/yandex.module';
 
 import { BotRegistry } from './bots/bot-registry.service';
+import { ErrorAlertBridge } from './bots/error-alert.bridge';
 import { AccessGateHandler } from './bots/price-changer-bot/handlers/access-gate.handler';
 import { ActionLogHandler } from './bots/price-changer-bot/handlers/action-log.handler';
 import { AdminApprovalHandler } from './bots/price-changer-bot/handlers/admin-approval.handler';
@@ -93,6 +94,7 @@ import { QUEUE_NAMES } from './index';
     TelegramService,
     // Слой ботов: всё через DI, ручного `new` больше нет.
     BotRegistry,
+    ErrorAlertBridge,
     PriceChangerComposer,
     PriceChangerKeyboard,
     AdminNotifierService,

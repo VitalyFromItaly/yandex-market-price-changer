@@ -21,6 +21,26 @@ export class YandexApiError extends Error {
     this.name = new.target.name;
   }
 
+  /**
+   * Запрос, на котором сломалось: `GET v2/campaigns/123/orders`.
+   *
+   * Заполняется ПОСЛЕ создания, методом withRequest: фабрика toYandexApiError
+   * выбирает класс по коду ответа и про адрес не знает, а знает про него
+   * перехватчик в клиенте. Тащить метод и путь через все конструкторы
+   * подклассов (у сетевой ошибки сигнатура своя) — дороже, чем одно поле.
+   *
+   * Без него на вопрос «на каком запросе упало» ответить нечем: раньше адрес
+   * попадал только в текст лог-строки и наружу не выходил.
+   */
+  public request?: string;
+
+  /** Проставляет запрос и возвращает саму ошибку — удобно в `return`. */
+  public withRequest(method: string | undefined, url: string | undefined): this {
+    const parts = [method?.toUpperCase(), url].filter(Boolean);
+    if (parts.length) this.request = parts.join(' ');
+    return this;
+  }
+
   /** Имеет ли смысл повторить запрос. */
   public get retryable(): boolean {
     return false;

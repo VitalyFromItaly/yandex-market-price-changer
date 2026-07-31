@@ -6,6 +6,7 @@ import { Telegraf } from 'telegraf';
 import { AppConfigService } from '../../../config/app-config.service';
 import { Bot, BotDocument } from '../../../database/schemas/bot.schema';
 import { ActionLogService } from '../../../database/services/action-log.service';
+import { ErrorReporter } from '../../errors/error-reporter.service';
 import { EBotType, THandleUpdatePayload, TTelegrafBot, TWebHookResponse } from '../domain.telegram';
 
 import { PriceChangerComposer } from './price-changer-bot/price-changer.composer';
@@ -44,6 +45,7 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
     private readonly composer: PriceChangerComposer,
     private readonly config: AppConfigService,
     private readonly logs: ActionLogService,
+    private readonly errors: ErrorReporter,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -114,7 +116,20 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
     // Единая точка обработки ошибок вместо глотающего TryCatch (TASK-013):
     // ошибка логируется целиком и пользователь получает внятный ответ.
     telegraf.catch(async (err, ctx) => {
-      this.logger.error(`Ошибка при обработке апдейта (бот ${doc.id})`, err as Error);
+      // В журнал — со стеком, классом и пользователем. ActionLogHandler к
+      // этому моменту уже записал апдейт со status: 'error', но там есть
+      // только текст сообщения: по нему не отличить сетевой сбой Яндекса от
+      // опечатки в коде.
+      void this.errors.report({
+        error: err,
+        source: 'bot',
+        context: 'telegraf',
+        telegramUserId: ctx.from?.id?.toString(),
+        username: ctx.from?.username,
+        chatId: ctx.chat?.id?.toString(),
+        botId: ctx.botInfo?.id?.toString() ?? doc.id,
+      });
+
       try {
         await ctx.reply('Произошла ошибка. Попробуйте позже.');
       } catch {
@@ -175,7 +190,29 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
     type TCallApi = (method: string, payload: unknown, options?: unknown) => Promise<unknown>;
 
     telegram.callApi = (async (method: string, payload: unknown, options?: unknown) => {
-      const result = await (original as unknown as TCallApi)(method, payload, options);
+      let result: unknown;
+
+      try {
+        result = await (original as unknown as TCallApi)(method, payload, options);
+      } catch (error) {
+        // Неудачная отправка — самый заметный для пользователя класс сбоев:
+        // он нажал кнопку и не получил ничего. Раньше запись делалась только
+        // после успешного вызова, то есть именно такие случаи в журнал не
+        // попадали. Типовая причина — 403: пользователь заблокировал бота.
+        if (OUTGOING_METHODS.includes(method)) {
+          const failed = outgoingSourceOf(method, payload);
+          void this.errors.report({
+            error,
+            source: 'bot',
+            context: `send:${method}`,
+            telegramUserId: failed.chatId?.toString(),
+            chatId: failed.chatId?.toString(),
+            botId: telegraf.botInfo?.id?.toString() ?? doc.id,
+            action: describeOutgoing(failed).action,
+          });
+        }
+        throw error;
+      }
 
       if (OUTGOING_METHODS.includes(method)) {
         const source = outgoingSourceOf(method, payload);
@@ -278,6 +315,14 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
       for (const entry of byType.values()) {
         if (entry.telegramId === wanted) return entry;
       }
+    }
+    return null;
+  }
+
+  /** Первый попавшийся бот — для админских рассылок, не привязанных к чату. */
+  public first(): RegisteredBot | null {
+    for (const byType of this.bots.values()) {
+      for (const entry of byType.values()) return entry;
     }
     return null;
   }

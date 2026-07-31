@@ -1,12 +1,13 @@
 import type { IScheduledReportJob } from '../services/report-scheduler.service';
 
-import { Process, Processor } from '@nestjs/bull';
+import { OnQueueError, OnQueueFailed, Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
 
 import { ReportScheduleService } from '../../../../database/services/report-schedule.service';
 import { UserAccessService } from '../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../database/services/yandex-market.service';
+import { ErrorReporter } from '../../../errors/error-reporter.service';
 import { OrderReportsService } from '../../../yandex/reports/order-reports.service';
 import { formatProfitReport } from '../../../yandex/reports/profit-message';
 import { ProfitService } from '../../../yandex/reports/profit.service';
@@ -35,7 +36,44 @@ export class ReportsProcessor {
     private readonly reports: OrderReportsService,
     private readonly profit: ProfitService,
     private readonly schedules: ReportScheduleService,
+    private readonly errors: ErrorReporter,
   ) {}
+
+  /**
+   * Джоба упала насмерть.
+   *
+   * send() гасит свои ошибки сам, поэтому сюда попадает то, что случилось
+   * ВОКРУГ обработчика: битая полезная нагрузка, отвалившийся Redis в момент
+   * фиксации результата. Раньше такое было видно только как запись в failed-set
+   * Redis, куда никто не смотрит.
+   */
+  @OnQueueFailed()
+  onFailed(job: Job<IScheduledReportJob>, error: Error): void {
+    void this.errors.report({
+      error,
+      source: 'queue',
+      context: 'queue:reports',
+      telegramUserId: job?.data?.telegramUserId,
+      action: `джоба ${job?.name ?? '?'} #${job?.id ?? '?'}`,
+    });
+  }
+
+  /**
+   * Ошибка самой очереди — почти всегда недоступный Redis.
+   *
+   * Алерт выключен намеренно: при обрыве связи это событие повторяется на
+   * каждой попытке переподключения, а отправка алерта сама идёт через сеть.
+   * В журнале запись есть, и этого достаточно.
+   */
+  @OnQueueError()
+  onQueueError(error: Error): void {
+    void this.errors.report({
+      error,
+      source: 'queue',
+      context: 'queue:redis',
+      alert: false,
+    });
+  }
 
   @Process(JOB_TYPES.SEND_SCHEDULED_REPORT)
   async send(job: Job<IScheduledReportJob>): Promise<void> {
@@ -99,10 +137,16 @@ export class ReportsProcessor {
       // Ошибку ЛОГИРУЕМ и гасим. Пробрасывать её нельзя: у задачи attempts=1,
       // но даже единственный повтор упавшего отчёта жжёт часовую квоту
       // Partner API, а следующий запуск всё равно через сутки.
-      this.logger.error(
-        `Не удалось отправить отчёт ${reportKey} пользователю ${telegramUserId}`,
-        error as Error,
-      );
+      //
+      // Гасим — но не молча: пользователь не получит отчёт и не узнает почему,
+      // поэтому единственный, кто может заметить поломку, это администратор.
+      void this.errors.report({
+        error,
+        source: 'queue',
+        context: `digest:${reportKey}`,
+        telegramUserId,
+        action: `рассылка отчёта ${reportKey}`,
+      });
     }
   }
 }

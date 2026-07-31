@@ -18,6 +18,13 @@ export interface IActionLogEntry {
   status?: string;
   durationMs?: number;
   error?: string;
+  /** Поля ниже заполняет только ErrorReporter. */
+  source?: string;
+  errorType?: string;
+  stack?: string;
+  httpStatus?: number;
+  requestUrl?: string;
+  context?: string;
 }
 
 /** Фильтр выборки для админского API. */
@@ -25,6 +32,9 @@ export interface IActionLogQuery {
   telegramUserId?: string;
   kind?: string;
   direction?: string;
+  /** `ok` | `error`. Главный фильтр разбора: «покажи только сломавшееся». */
+  status?: string;
+  source?: string;
   since?: Date;
   until?: Date;
   limit?: number;
@@ -71,6 +81,8 @@ export class ActionLogService {
     if (query.telegramUserId) filter.telegramUserId = query.telegramUserId;
     if (query.kind) filter.kind = query.kind;
     if (query.direction) filter.direction = query.direction;
+    if (query.status) filter.status = query.status;
+    if (query.source) filter.source = query.source;
     if (query.since || query.until) {
       filter.createdAt = {};
       if (query.since) filter.createdAt.$gte = query.since;
