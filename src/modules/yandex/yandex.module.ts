@@ -5,6 +5,7 @@ import { DatabaseModule } from '../../database/database.module';
 import { OrderReportsService } from './reports/order-reports.service';
 import { ProfitService } from './reports/profit.service';
 import { StockSyncService } from './stocks/stock-sync.service';
+import { WarehousesService } from './warehouses/warehouses.service';
 import { YandexClientFactory } from './yandex-client.factory';
 
 /**
@@ -24,7 +25,19 @@ import { YandexClientFactory } from './yandex-client.factory';
  */
 @Module({
   imports: [DatabaseModule],
-  providers: [YandexClientFactory, OrderReportsService, ProfitService, StockSyncService],
-  exports: [YandexClientFactory, OrderReportsService, ProfitService, StockSyncService],
+  providers: [
+    YandexClientFactory,
+    OrderReportsService,
+    ProfitService,
+    StockSyncService,
+    WarehousesService,
+  ],
+  exports: [
+    YandexClientFactory,
+    OrderReportsService,
+    ProfitService,
+    StockSyncService,
+    WarehousesService,
+  ],
 })
 export class YandexModule {}

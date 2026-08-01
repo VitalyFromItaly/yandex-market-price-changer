@@ -39,6 +39,8 @@ export const FEATURE = {
   SCHEDULE: 'schedule',
   /** Приём прайса документом → запись остатков в Partner API */
   STOCK_UPLOAD: 'stock_upload',
+  /** «🏬 Склады» — обзор складов по типам (FBY и склад магазина) */
+  WAREHOUSES: 'warehouses',
 } as const;
 
 export type TFeatureKey = (typeof FEATURE)[keyof typeof FEATURE];
@@ -60,6 +62,7 @@ const FEATURE_KEY_SET: Record<TFeatureKey, true> = {
   [FEATURE.REPORT_PROFIT]: true,
   [FEATURE.SCHEDULE]: true,
   [FEATURE.STOCK_UPLOAD]: true,
+  [FEATURE.WAREHOUSES]: true,
 };
 
 export const FEATURE_KEYS = Object.keys(FEATURE_KEY_SET) as TFeatureKey[];
@@ -121,6 +124,14 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     description: 'Приём прайс-листа и обновление остатков на Яндекс.Маркете.',
     defaultEnabled: true,
   },
+  [FEATURE.WAREHOUSES]: {
+    label: MENU.WAREHOUSES,
+    description: 'Обзор складов по типам: FBY (склад Маркета) и склады магазина.',
+    // Единственная фича с умолчанием «выключено»: новая, ещё не обкатанная —
+    // включается точечно из панели тому продавцу, кому нужна. Ровно тот случай,
+    // ради которого defaultEnabled и различает «нет записи» и «выключено».
+    defaultEnabled: false,
+  },
 };
 
 /** Карта явных решений администратора. Отсутствие ключа — не «выключено». */
@@ -175,6 +186,7 @@ const MENU_TO_FEATURE: Readonly<Record<string, TFeatureKey>> = {
   [MENU.IN_TRANSIT]: FEATURE.REPORT_IN_TRANSIT,
   [MENU.PROFIT]: FEATURE.REPORT_PROFIT,
   [MENU.SCHEDULE]: FEATURE.SCHEDULE,
+  [MENU.WAREHOUSES]: FEATURE.WAREHOUSES,
 };
 
 /**
