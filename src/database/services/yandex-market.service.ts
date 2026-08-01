@@ -180,6 +180,18 @@ export class YandexMarketService {
   }
 
   /**
+   * Магазины сразу многих продавцов — ОДНИМ запросом.
+   *
+   * Нужен списку пользователей в панели. Звать `isConfigured` в цикле, как это
+   * делает админский список в Telegram, там нельзя: на полусотне продавцов это
+   * полсотни последовательных запросов ради одной галочки в таблице.
+   */
+  async findByTelegramUsers(telegramUserIds: string[]): Promise<YandexMarketDocument[]> {
+    if (telegramUserIds.length === 0) return [];
+    return await this.yandexMarketModel.find({ telegramUserId: { $in: telegramUserIds } }).exec();
+  }
+
+  /**
    * Получить по Telegram пользователю
    */
   async getByTelegramUser(telegramUserId: string): Promise<YandexMarketDocument | null> {

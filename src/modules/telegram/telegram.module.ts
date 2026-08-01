@@ -13,6 +13,7 @@ import { AdminUsersHandler } from './bots/price-changer-bot/handlers/admin-users
 import { ApiSettingsHandler } from './bots/price-changer-bot/handlers/api-settings.handler';
 import { CallbackQueryHandler } from './bots/price-changer-bot/handlers/callback-query.handler';
 import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.handler';
+import { FeatureGateHandler } from './bots/price-changer-bot/handlers/feature-gate.handler';
 import { MenuCommandsHandler } from './bots/price-changer-bot/handlers/menu-commands.handler';
 import { ReportsHandler } from './bots/price-changer-bot/handlers/reports.handler';
 import { ScheduleHandler } from './bots/price-changer-bot/handlers/schedule.handler';
@@ -99,6 +100,7 @@ import { QUEUE_NAMES } from './index';
     PriceChangerKeyboard,
     AdminNotifierService,
     AccessGateHandler,
+    FeatureGateHandler,
     ActionLogHandler,
     AdminApprovalHandler,
     AdminUsersHandler,
@@ -121,6 +123,8 @@ import { QUEUE_NAMES } from './index';
     ReportsProcessor,
     ReportSchedulerService,
   ],
-  exports: [TelegramService, FileProcessingService, BotRegistry],
+  // PriceChangerKeyboard наружу — веб-панель, открывая доступ, шлёт продавцу
+  // то же сообщение с тем же меню, что и кнопка «Одобрить» в Telegram.
+  exports: [TelegramService, FileProcessingService, BotRegistry, PriceChangerKeyboard],
 })
 export class TelegramModule {}

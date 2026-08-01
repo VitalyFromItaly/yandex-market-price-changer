@@ -33,14 +33,15 @@ export class AdminAuthService implements OnApplicationBootstrap {
   ) {}
 
   /**
-   * Генерация учётных данных при первом старте.
+   * Учётные данные при старте: пароль из `ADMIN_PASSWORD`, а если переменной
+   * нет — сгенерированный при первом запуске.
    *
    * Сбой не роняет приложение: бот и отчёты от админ-панели не зависят, и
    * падение на недоступной Mongo здесь означало бы, что панель уронила бота.
    */
   async onApplicationBootstrap(): Promise<void> {
     try {
-      await this.credentials.ensure();
+      await this.credentials.ensure(this.config.adminPassword);
     } catch (error) {
       this.logger.error('Не удалось создать учётные данные админ-панели', error as Error);
     }

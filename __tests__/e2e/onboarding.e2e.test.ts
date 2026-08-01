@@ -6,6 +6,7 @@ import axios from 'axios';
 
 import { PriceChangerComposer } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.composer';
 import { AccessGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/access-gate.handler';
+import { FeatureGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/feature-gate.handler';
 import { ActionLogHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/action-log.handler';
 import { ActionLogService } from '../../src/database/services/action-log.service';
 import { ActionLog } from '../../src/database/schemas/action-log.schema';
@@ -16,10 +17,8 @@ import { SharedCommandsHandler } from '../../src/modules/telegram/bots/price-cha
 import { CallbackQueryHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/callback-query.handler';
 import { AdminApprovalHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-approval.handler';
 import { ScheduleHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/schedule.handler';
-import {
-  ReportsHandler,
-  reportCallback,
-} from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
+import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
+import { reportCallback } from '../../src/modules/telegram/bots/price-changer-bot/report-buttons';
 import { PERIOD } from '../../src/modules/yandex/reports/report-period';
 import { REPORT } from '../../src/modules/yandex/reports/report-status-map';
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
@@ -168,6 +167,7 @@ describe('Онбординг: от /start до отчёта', () => {
         ActionLogHandler,
         ActionLogService,
         AccessGateHandler,
+        FeatureGateHandler,
         StartHandler,
         MenuCommandsHandler,
         SlashCommandsHandler,

@@ -62,9 +62,13 @@ describe('меню: единственный источник подписей',
   });
 
   it('потребители берут подписи из menu.constants, а не хардкодят', () => {
-    // Клавиатура и ветка main_menu — через menuLayout()
-    expect(read('price-changer.keyboard.ts')).toContain('menuLayout()');
-    expect(read('handlers/callback-query.handler.ts')).toContain('menuLayout()');
+    // Клавиатура собирает раскладку через featureMenuLayout — она прячет
+    // кнопки закрытых возможностей, а сами подписи по-прежнему приходят из
+    // menuLayout(), то есть из menu.constants.
+    expect(read('price-changer.keyboard.ts')).toContain('featureMenuLayout(');
+    expect(read('../shared/features.domain.ts')).toContain('menuLayout()');
+    // Ветка main_menu — через ту же клавиатуру, а не своей раскладкой.
+    expect(read('handlers/callback-query.handler.ts')).toContain('createMenuKeyboard(');
     // Фильтр «это кнопка меню?» — через MENU_LABELS
     expect(read('handlers/api-settings.handler.ts')).toContain('MENU_LABELS');
   });

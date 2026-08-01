@@ -119,6 +119,21 @@ export class AppConfigService {
     return this.telegramAdminIds.includes(Number(telegramUserId));
   }
 
+  /**
+   * Пароль админ-панели, если задан явно.
+   *
+   * `undefined` означает «сгенерировать при первом запуске и показать в логах»
+   * — прежнее поведение. Пустая строка приводится к `undefined` по той же
+   * причине, что и у `redisPassword`: забытый `ADMIN_PASSWORD=` в .env иначе
+   * стал бы паролем из нуля символов.
+   *
+   * Когда задан — он главнее хеша в базе; правило и его причина расписаны в
+   * `AdminCredentialService.ensure`.
+   */
+  get adminPassword(): string | undefined {
+    return this.config.get<string>('ADMIN_PASSWORD') || undefined;
+  }
+
   get yandexMarketBaseUrl(): string {
     return this.config.get<string>('YANDEX_MARKET_BASE_URL');
   }

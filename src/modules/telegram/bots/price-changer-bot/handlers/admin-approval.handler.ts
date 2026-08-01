@@ -6,8 +6,9 @@ import { UserAccessService } from '../../../../../database/services/user-access.
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
-import { ADMIN_CB_PATTERN, hoursUntilRetry, parseAdminCallback } from '../../shared/access.domain';
+import { ADMIN_CB_PATTERN, parseAdminCallback } from '../../shared/access.domain';
 import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
+import { ACCESS_GRANTED_TEXT, accessRejectedText } from '../access-decision.text';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
 /**
@@ -111,27 +112,18 @@ export class AdminApprovalHandler {
         // отношения не имеют.
         const kb = await this.keyboard.createMenuKeyboard(
           this.config.isAdmin(access.telegramUserId),
+          access.features,
         );
-        await ctx.telegram.sendMessage(
-          access.telegramChatId,
-          [
-            '✅ <b>Доступ открыт!</b>',
-            '',
-            'Администратор одобрил вашу заявку. Выберите действие из меню ниже:',
-          ].join('\n'),
-          htmlOptions(kb),
-        );
+        // Текст — из access-decision.text.ts, общего с веб-панелью: она умеет
+        // открывать доступ тем же тумблером, и две копии этой фразы разошлись
+        // бы ровно так же, как когда-то разошлись экраны справки.
+        await ctx.telegram.sendMessage(access.telegramChatId, ACCESS_GRANTED_TEXT, htmlOptions(kb));
         return;
       }
 
-      const hours = hoursUntilRetry(access.rejectedAt, new Date());
       await ctx.telegram.sendMessage(
         access.telegramChatId,
-        [
-          '⛔ <b>Заявка отклонена.</b>',
-          '',
-          `Введённые настройки удалены. Повторная регистрация будет доступна через ${hours} ч.`,
-        ].join('\n'),
+        accessRejectedText(access.rejectedAt),
         htmlOptions(),
       );
     } catch (error) {

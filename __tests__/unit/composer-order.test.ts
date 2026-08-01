@@ -11,6 +11,7 @@ import { SlashCommandsHandler } from '../../src/modules/telegram/bots/price-chan
 import { CallbackQueryHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/callback-query.handler';
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
 import { FallbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/fallback.handler';
+import { FeatureGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/feature-gate.handler';
 import { StockUploadHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
 import { AdminUsersHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-users.handler';
 import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
@@ -54,6 +55,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
         PriceChangerComposer,
         { provide: ActionLogHandler, useValue: stub('actionLog', order) },
         { provide: AccessGateHandler, useValue: stub('accessGate', order) },
+        { provide: FeatureGateHandler, useValue: stub('featureGate', order) },
         { provide: AdminApprovalHandler, useValue: stub('adminCallbacks', order) },
         { provide: ScheduleHandler, useValue: stub('scheduleCallbacks', order) },
         {
@@ -121,6 +123,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
     expect(order).toEqual([
       'actionLog',
       'accessGate',
+      'featureGate',
       'start',
       'menu',
       'slash',
@@ -149,6 +152,19 @@ describe('PriceChangerComposer: порядок регистрации', () => {
     const NON_BLOCKING_BEFORE_GATE = ['actionLog'];
 
     expect(order.slice(0, order.indexOf('accessGate'))).toEqual(NON_BLOCKING_BEFORE_GATE);
+  });
+
+  it('гейт возможностей идёт СРАЗУ ПОСЛЕ гейта доступа', async () => {
+    // Порядок именно такой: «вас ещё не одобрили» объясняет больше, чем «эта
+    // функция закрыта», и человеку без доступа второе бессмысленно. А стоять
+    // раньше конкретных обработчиков он обязан по той же причине, что и гейт
+    // доступа: bot.use после них ничего не защищает.
+    const { composer } = await buildComposer();
+    const order = composer.registrationOrder;
+    expect(order.indexOf('featureGate')).toBe(order.indexOf('accessGate') + 1);
+    expect(order.indexOf('featureGate')).toBeLessThan(order.indexOf('menu'));
+    expect(order.indexOf('featureGate')).toBeLessThan(order.indexOf('reportCallbacks'));
+    expect(order.indexOf('featureGate')).toBeLessThan(order.indexOf('stockUpload'));
   });
 
   it('журнал действий зарегистрирован ПЕРВЫМ', async () => {

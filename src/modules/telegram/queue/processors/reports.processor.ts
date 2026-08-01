@@ -15,6 +15,7 @@ import { formatReport } from '../../../yandex/reports/report-message';
 import { schedulePeriod, type IReportPeriod } from '../../../yandex/reports/report-period';
 import { REPORT, type TReportKey } from '../../../yandex/reports/report-status-map';
 import { BotRegistry } from '../../bots/bot-registry.service';
+import { FEATURE, isFeatureEnabled, isReportEnabled } from '../../bots/shared/features.domain';
 import { htmlOptions } from '../../formatting/telegram-format';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
 
@@ -91,6 +92,18 @@ export class ReportsProcessor {
       const account = await this.access.findByUserAndBot(telegramUserId, botId);
       if (!account || account.status !== 'approved') {
         this.logger.warn(`Рассылка для ${telegramUserId} пропущена: доступа нет`);
+        return;
+      }
+
+      // Возможность могли закрыть уже ПОСЛЕ включения рассылки. Расписание при
+      // этом остаётся в Redis, и без этой проверки закрытый отчёт продолжал бы
+      // приходить каждый день — расхождение между кнопкой и рассылкой здесь
+      // самый известный источник жалоб.
+      if (
+        !isFeatureEnabled(account.features, FEATURE.SCHEDULE) ||
+        !isReportEnabled(account.features, reportKey)
+      ) {
+        this.logger.warn(`Рассылка ${reportKey} для ${telegramUserId} пропущена: закрыта админом`);
         return;
       }
 

@@ -28,7 +28,14 @@ export class SlashCommandsHandler {
 
     // /menu - главное меню
     bot.command('menu', async (ctx) => {
-      const keyboard = await this.keyboard.createMenuKeyboard(this.config.isAdmin(ctx.from.id));
+      const account = await this.accessService.findByUserAndBot(
+        ctx.from.id.toString(),
+        ctx.botInfo.id.toString(),
+      );
+      const keyboard = await this.keyboard.createMenuKeyboard(
+        this.config.isAdmin(ctx.from.id),
+        account?.features,
+      );
       // Подпись та же, что у кнопки: раньше здесь было «📋 Главное меню:», в
       // ветке main_menu — «🏠 Главное меню:» плюс отдельное «Выберите
       // действие:», а у кнопки — «🏠 Главное меню». Три текста на один экран.

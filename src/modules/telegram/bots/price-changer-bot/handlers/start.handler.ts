@@ -1,3 +1,5 @@
+import type { TFeatureMap } from '../../shared/features.domain';
+
 import { Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
 
@@ -39,6 +41,8 @@ export class StartHandler {
       const botId = ctx.botInfo.id.toString();
 
       if (this.config.isAdmin(ctx.from.id)) {
+        // Записи доступа у администратора нет — раскладка соберётся по
+        // умолчаниям реестра возможностей, то есть полной.
         await this.replyApproved(ctx);
         return;
       }
@@ -54,7 +58,7 @@ export class StartHandler {
 
       switch (access.status) {
         case 'approved':
-          await this.replyApproved(ctx);
+          await this.replyApproved(ctx, access.features);
           return;
 
         case 'pending':
@@ -93,7 +97,7 @@ export class StartHandler {
    * закрывает собой длинное сообщение, и пользователь его просто не видит.
    * Подробности живут в /help, где клавиатуры нет.
    */
-  private async replyApproved(ctx: Context) {
+  private async replyApproved(ctx: Context, features?: TFeatureMap) {
     const isAdmin = this.config.isAdmin(ctx.from.id);
     const configured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
 
@@ -117,7 +121,7 @@ export class StartHandler {
       return;
     }
 
-    const kb = await this.keyboard.createMenuKeyboard(isAdmin);
+    const kb = await this.keyboard.createMenuKeyboard(isAdmin, features);
     await ctx.reply('🎉 С возвращением! Выберите отчёт:', htmlOptions(kb));
   }
 

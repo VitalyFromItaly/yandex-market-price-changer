@@ -13,6 +13,11 @@
   --danger: #b91c1c;
   --danger-bg: #fef2f2;
   --ok: #15803d;
+  /* Третий семантический цвет — «ждёт решения». Заявка не ошибка и не успех,
+     и красным её красить нельзя: сломано ничего, просто ход за человеком. */
+  --warn: #b45309;
+
+  --sidebar: 232px;
 
   color-scheme: light dark;
 }
@@ -28,6 +33,8 @@
     --danger: #f87171;
     --danger-bg: #2a1a1a;
     --ok: #4ade80;
+    /* На тёмном семантические цвета слегка приглушены — иначе жгут глаза. */
+    --warn: #fbbf24;
   }
 }
 
@@ -40,6 +47,17 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  /* Без этого macOS рендерит шрифт заметно жирнее, чем задумано. */
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Любое меняющееся число — моноширинными цифрами: счётчики и суммы иначе
+ * дёргают вёрстку при каждом обновлении, а в столбце таблицы не выравниваются
+ * по разрядам.
+ */
+.tnum {
+  font-variant-numeric: tabular-nums;
 }
 
 button {

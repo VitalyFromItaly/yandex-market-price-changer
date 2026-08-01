@@ -79,8 +79,16 @@ export class CallbackQueryHandler {
           // обход `createMenuKeyboard` собирал раскладку без ряда
           // «👥 Пользователи», и администратор терял кнопку при каждом
           // возврате в меню.
+          // features — чтобы возврат в меню не воскрешал кнопки закрытых
+          // возможностей: раскладка обязана быть одинаковой, каким бы путём в
+          // главное меню ни пришли.
+          const account = await this.accessService.findByUserAndBot(
+            ctx.from.id.toString(),
+            ctx.botInfo.id.toString(),
+          );
           const mainKeyboard = await this.keyboard.createMenuKeyboard(
             this.config.isAdmin(ctx.from.id),
+            account?.features,
           );
           // Два сообщения здесь неизбежны: editMessageText убирает inline-
           // кнопки из старого сообщения, а reply-клавиатуру можно прицепить

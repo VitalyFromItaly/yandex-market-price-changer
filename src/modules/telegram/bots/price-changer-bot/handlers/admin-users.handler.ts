@@ -8,6 +8,7 @@ import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { b, code, esc, htmlOptions, splitMessage } from '../../../formatting/telegram-format';
+import { ACCESS_REVOKED_TEXT } from '../access-decision.text';
 
 /**
  * Раздел администратора: кто пользуется ботом и как закрыть доступ.
@@ -203,10 +204,9 @@ export class AdminUsersHandler {
     // Уведомляем пользователя. Молчаливое отключение выглядит как поломка
     // бота, и он придёт разбираться именно как с поломкой.
     try {
-      await ctx.telegram.sendMessage(
-        revoked.telegramChatId,
-        '⛔ Доступ к боту закрыт администратором.',
-      );
+      // Текст — из access-decision.text.ts: тот же отзыв доступен тумблером в
+      // веб-панели, и вторая копия фразы разошлась бы с этой.
+      await ctx.telegram.sendMessage(revoked.telegramChatId, ACCESS_REVOKED_TEXT);
     } catch (error) {
       // Пользователь мог заблокировать бота — это не повод считать отзыв
       // неудавшимся, статус уже изменён.

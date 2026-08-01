@@ -1,9 +1,11 @@
+import type { TFeatureKey } from '../../modules/telegram/bots/shared/features.domain';
 import type { TRateField } from '../../modules/yandex/reports/profit';
 
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
+import { isFeatureKey } from '../../modules/telegram/bots/shared/features.domain';
 import { isRateField } from '../../modules/yandex/reports/profit';
 import { IAdminCard, UserAccess, UserAccessDocument } from '../schemas/user-access.schema';
 
@@ -90,6 +92,34 @@ export class UserAccessService {
     botId: string,
   ): Promise<UserAccessDocument | null> {
     return await this.model.findOne({ telegramUserId, botId }).exec();
+  }
+
+  /**
+   * Открыть или закрыть одну возможность бота этому пользователю.
+   *
+   * Ключ фичи попадает в путь `$set` (`features.<key>`), а приходит он из HTTP —
+   * поэтому проверяется по белому списку, ровно как поле черновика.
+   *
+   * Без upsert: запись доступа обязана существовать. `null` означает «такого
+   * пользователя у этого бота нет», и панель отвечает 404, а не заводит
+   * молча пустую запись с одним флагом.
+   */
+  async setFeature(
+    telegramUserId: string,
+    botId: string,
+    feature: TFeatureKey,
+    enabled: boolean,
+  ): Promise<UserAccessDocument | null> {
+    if (!isFeatureKey(feature)) {
+      throw new Error(`Недопустимая возможность: ${feature}`);
+    }
+    return await this.model
+      .findOneAndUpdate(
+        { telegramUserId, botId },
+        { $set: { [`features.${feature}`]: enabled } },
+        { new: true },
+      )
+      .exec();
   }
 
   /** Сохранить один кред в черновик. */
@@ -321,6 +351,16 @@ export class UserAccessService {
     return await this.model.find({ botId }).sort({ approvedAt: -1, appliedAt: -1, _id: -1 }).exec();
   }
 
+  /**
+   * Записи для панели администратора. `botId` необязателен: панель не знает
+   * про арендаторов, а бот в установке обычно один — фильтр нужен только там,
+   * где их несколько. Сортировка та же, что у списка в Telegram.
+   */
+  async list(botId?: string): Promise<UserAccessDocument[]> {
+    const filter = botId ? { botId } : {};
+    return await this.model.find(filter).sort({ approvedAt: -1, appliedAt: -1, _id: -1 }).exec();
+  }
+
   /** Счётчики по статусам одним запросом, а не пятью. */
   async countByStatus(botId: string): Promise<Record<string, number>> {
     const rows = await this.model
@@ -360,6 +400,57 @@ export class UserAccessService {
         },
         { new: true },
       )
+      .exec();
+  }
+
+  /**
+   * Открыть или закрыть доступ из веб-панели — одним тумблером.
+   *
+   * Отличается от `decide` и `revoke` намеренно. Те переводят из ОДНОГО
+   * ожидаемого статуса (`pending` и `approved` соответственно), и фильтр по
+   * нему — это и есть «первое решение администратора выигрывает»: два админа,
+   * одновременно нажавших кнопки в карточке заявки, не должны оба преуспеть.
+   *
+   * Тумблер отвечает на другой вопрос: «пусть у этого продавца будет вот
+   * такое состояние», причём с любого исходного — `new`, `pending`, `rejected`.
+   * Фильтр по исходному статусу здесь означал бы, что переключатель молча не
+   * срабатывает на пользователе, который ещё не подавал заявку. Поэтому запись
+   * одна и атомарная, но фильтруется только парой (пользователь × бот).
+   *
+   * Закрытие ставит `rejected` с `rejectedAt`, как и отзыв из Telegram: тем
+   * самым включается те же сутки запрета на повторную регистрацию.
+   */
+  async setApproved(
+    telegramUserId: string,
+    botId: string,
+    approved: boolean,
+    admin: IAdminIdentity,
+  ): Promise<UserAccessDocument | null> {
+    const now = new Date();
+
+    const update = approved
+      ? {
+          $set: {
+            status: 'approved',
+            approvedAt: now,
+            decidedBy: admin.id,
+            decidedByUsername: admin.username,
+          },
+          // Снимаем отметку отказа: иначе гейт продолжал бы считать сутки
+          // запрета по протухшему полю уже открытому продавцу.
+          $unset: { rejectedAt: '' },
+        }
+      : {
+          $set: {
+            status: 'rejected',
+            rejectedAt: now,
+            decidedBy: admin.id,
+            decidedByUsername: admin.username,
+          },
+        };
+
+    return await this.model
+      .findOneAndUpdate({ telegramUserId, botId }, update, { new: true })
       .exec();
   }
 

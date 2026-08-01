@@ -17,30 +17,15 @@ import { DEFAULT_SCHEDULE_TIME } from '../../../../../modules/yandex/reports/sch
 import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { ReportSchedulerService } from '../../../queue/services/report-scheduler.service';
+import {
+  FEATURE,
+  enabledReports,
+  isFeatureEnabled,
+  isReportEnabled,
+} from '../../shared/features.domain';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
-
-/**
- * callback_data раздела рассылки. Формирование и разбор рядом — чтобы формат не
- * разъехался между кнопкой и обработчиком.
- */
-export const SCHEDULE_CB_PATTERN = /^sch:(menu|on|off|time|period):([a-z_]*)$/;
-
-export function scheduleCallback(
-  action: 'menu' | 'on' | 'off' | 'time' | 'period',
-  reportKey = '',
-): string {
-  return `sch:${action}:${reportKey}`;
-}
-
-/** Порядок отчётов в разделе — тот же, что в главном меню. */
-const ORDER: TReportKey[] = [
-  REPORT.SHIPPED_TODAY,
-  REPORT.REDEEMED,
-  REPORT.RETURNING,
-  REPORT.IN_TRANSIT,
-  REPORT.PROFIT,
-];
+import { SCHEDULE_CB_PATTERN, scheduleCallback } from '../report-buttons';
 
 /**
  * Настройка ежедневной рассылки.
@@ -88,13 +73,20 @@ export class ScheduleHandler {
     });
   }
 
-  /** Показать состояние всех четырёх отчётов. */
+  /** Показать состояние доступных пользователю отчётов. */
   public async showMenu(ctx: Context, edit = false): Promise<void> {
     const telegramUserId = ctx.from.id.toString();
     const botId = ctx.botInfo.id.toString();
 
-    const saved = await this.schedules.listForUser(telegramUserId, botId);
+    const [saved, account] = await Promise.all([
+      this.schedules.listForUser(telegramUserId, botId),
+      this.access.findByUserAndBot(telegramUserId, botId),
+    ]);
     const byKey = new Map(saved.map((doc) => [doc.reportKey, doc]));
+    // Порядок — тот же, что в главном меню; отчёты, закрытые администратором,
+    // сюда не попадают: расписание для недоступного отчёта — расписание,
+    // которое никогда не сработает.
+    const order = enabledReports(account?.features);
 
     /**
      * Состояние живёт НА КНОПКАХ, а не списком в сообщении.
@@ -117,7 +109,7 @@ export class ScheduleHandler {
 
     const rows: { text: string; callback_data: string }[][] = [];
 
-    for (const key of ORDER) {
+    for (const key of order) {
       const doc = byKey.get(key);
       const enabled = !!doc?.enabled;
       const time = doc?.time ?? DEFAULT_SCHEDULE_TIME;
@@ -241,6 +233,18 @@ export class ScheduleHandler {
     const account = await this.access.findByUserAndBot(telegramUserId, botId);
     const reportKey = account?.pendingScheduleReport;
     if (!reportKey) return false;
+
+    // Пока вопрос про время оставался открытым, доступ могли закрыть. Ответ на
+    // него приходит обычным текстом — то есть мимо гейта фич, который видит
+    // только кнопки и документы.
+    if (
+      !isFeatureEnabled(account.features, FEATURE.SCHEDULE) ||
+      !isReportEnabled(account.features, reportKey)
+    ) {
+      await this.access.setPendingSchedule(telegramUserId, botId, null);
+      await ctx.reply('🔒 Рассылка этого отчёта сейчас недоступна.', htmlOptions());
+      return true;
+    }
 
     const key = { telegramUserId, botId, reportKey };
     const result = await this.schedules.setTime(key, text);

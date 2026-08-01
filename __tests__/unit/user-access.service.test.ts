@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { DRAFT_FIELDS, UserAccessService } from '../../src/database/services/user-access.service';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
+import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
 
 /**
  * Проверяются ФИЛЬТРЫ запросов, а не возвращаемые значения.
@@ -124,6 +125,63 @@ describe('UserAccessService: атомарность переходов', () => {
     expect([...DRAFT_FIELDS].sort()).toEqual(
       ['business_id', 'campaign_id', 'store_name', 'token'].sort(),
     );
+  });
+
+  it('setFeature пишет один флаг, не трогая соседние', async () => {
+    // Ключ попадает в путь $set (`features.<key>`) и приходит из HTTP — целиком
+    // карту переписывать нельзя, иначе правка одной галочки стирала бы все
+    // остальные решения администратора.
+    await service.setFeature('1', '2', FEATURE.REPORT_PROFIT, false);
+
+    expect(call()[filter]).toMatchObject({ telegramUserId: '1', botId: '2' });
+    expect(call()[update].$set).toEqual({ 'features.report_profit': false });
+  });
+
+  it('setFeature НЕ создаёт запись: неизвестный пользователь — это 404, а не новый документ', async () => {
+    await service.setFeature('1', '2', FEATURE.SCHEDULE, true);
+    expect(call()[options]).not.toMatchObject({ upsert: true });
+  });
+
+  it('setFeature отвергает ключ вне реестра', async () => {
+    await expect(service.setFeature('1', '2', 'status' as never, true)).rejects.toThrow();
+    await expect(service.setFeature('1', '2', 'draft.token' as never, true)).rejects.toThrow();
+  });
+
+  it('setApproved открывает доступ с ЛЮБОГО статуса', async () => {
+    // Тумблер в панели — не «решение по заявке»: фильтр по исходному статусу
+    // означал бы, что он молча не срабатывает на том, кто заявку ещё не подавал.
+    await service.setApproved('1', '2', true, { id: '7' });
+
+    expect(call()[filter]).toEqual({ telegramUserId: '1', botId: '2' });
+    expect(call()[update].$set).toMatchObject({ status: 'approved', decidedBy: '7' });
+  });
+
+  it('setApproved при открытии снимает отметку отказа', async () => {
+    // Иначе гейт продолжал бы считать сутки запрета по протухшему rejectedAt
+    // уже открытому продавцу.
+    await service.setApproved('1', '2', true, { id: '7' });
+    expect(call()[update].$unset).toEqual({ rejectedAt: '' });
+  });
+
+  it('setApproved при закрытии ставит rejectedAt — те же сутки запрета', async () => {
+    await service.setApproved('1', '2', false, { id: '7' });
+
+    expect(call()[update].$set).toMatchObject({ status: 'rejected', decidedBy: '7' });
+    expect(call()[update].$set.rejectedAt).toBeInstanceOf(Date);
+    // $unset при закрытии не нужен, а пустой объект Mongo не принимает.
+    expect(call()[update].$unset).toBeUndefined();
+  });
+
+  it('setApproved не заводит запись: неизвестный пользователь — это 404', async () => {
+    await service.setApproved('1', '2', true, { id: '7' });
+    expect(call()[options]).not.toMatchObject({ upsert: true });
+  });
+
+  it('decide по-прежнему требует статус pending — на этом держится «первый выигрывает»', async () => {
+    // setApproved его не заменяет: два администратора, одновременно нажавшие
+    // кнопки в карточке заявки, не должны преуспеть оба.
+    await service.decide('1', '2', 'approve', { id: '7' });
+    expect(call()[filter]).toMatchObject({ status: 'pending' });
   });
 
   it('clearDraftField убирает ОДНО поле, не трогая остальные', async () => {

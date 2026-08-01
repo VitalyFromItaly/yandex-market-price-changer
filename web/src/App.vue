@@ -1,228 +1,210 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 
-import type { IActionLogRow, ILogsQuery } from './api';
-
-import { ApiError, clearToken, fetchLogs, loadToken, login, me, saveToken } from './api';
-import FiltersPanel from './components/FiltersPanel.vue';
+import { me } from './api';
+import { authError, busy, signIn, signOut, token } from './auth';
 import LoginForm from './components/LoginForm.vue';
-import LogTable from './components/LogTable.vue';
-import MessageModal from './components/MessageModal.vue';
 
-const REFRESH_MS = 10_000;
-
-const token = ref<string | null>(loadToken());
-const authError = ref('');
-const loadError = ref('');
-const busy = ref(false);
-const loading = ref(false);
-const autoRefresh = ref(false);
-
-const rows = ref<IActionLogRow[]>([]);
-/** Открытая запись; null — модалка закрыта. */
-const selected = ref<IActionLogRow | null>(null);
-const total = ref(0);
-const skip = ref(0);
-
-function emptyFilters(): ILogsQuery {
-  return {
-    telegramUserId: '',
-    kind: '',
-    direction: '',
-    status: '',
-    source: '',
-    since: '',
-    until: '',
-    limit: 100,
-  };
-}
-
-const filters = reactive<ILogsQuery>(emptyFilters());
-
-const pageEnd = computed(() => Math.min(skip.value + rows.value.length, total.value));
-const hasPrev = computed(() => skip.value > 0);
-const hasNext = computed(() => pageEnd.value < total.value);
-
-let timer: number | undefined;
+/**
+ * Оболочка панели: вход, навигация, место под страницу.
+ *
+ * Сами экраны живут в pages/ и подключены роутером. Данные каждый грузит сам:
+ * общий загрузчик наверху означал бы, что журнал ходит за списком продавцов, а
+ * карточка продавца — за журналом.
+ */
+const adminId = ref('');
 
 onMounted(async () => {
   if (!token.value) return;
 
-  // Токен из прошлой сессии мог протухнуть. Проверяем его ДО загрузки данных,
-  // иначе пользователь видит пустую таблицу вместо формы входа.
+  // Токен из прошлой сессии мог протухнуть. Проверяем его ДО того, как
+  // страница пойдёт за данными, иначе пользователь видит пустую таблицу
+  // вместо формы входа.
   try {
-    await me(token.value);
-    await load();
+    adminId.value = await me(token.value);
   } catch {
     signOut();
   }
 });
-
-onBeforeUnmount(stopTimer);
-
-async function onLogin(id: string, password: string): Promise<void> {
-  busy.value = true;
-  authError.value = '';
-
-  try {
-    const issued = await login(id, password);
-    saveToken(issued);
-    token.value = issued;
-    await load();
-  } catch (error) {
-    authError.value = (error as ApiError).message;
-  } finally {
-    busy.value = false;
-  }
-}
-
-function signOut(): void {
-  clearToken();
-  token.value = null;
-  rows.value = [];
-  total.value = 0;
-  selected.value = null;
-  stopTimer();
-  autoRefresh.value = false;
-}
-
-async function load(): Promise<void> {
-  if (!token.value) return;
-
-  loading.value = true;
-  loadError.value = '';
-
-  try {
-    const response = await fetchLogs(token.value, { ...filters, skip: skip.value });
-    rows.value = response.items;
-    total.value = response.total;
-  } catch (error) {
-    const apiError = error as ApiError;
-    // Разница принципиальная: протухшая сессия требует входа, сетевой сбой —
-    // только повтора. Раньше на любой сбой панель выкидывала на форму входа.
-    if (apiError.isAuthError) {
-      signOut();
-      authError.value = apiError.message;
-    } else {
-      loadError.value = apiError.message;
-    }
-  } finally {
-    loading.value = false;
-  }
-}
-
-/** Смена фильтров всегда возвращает на первую страницу. */
-async function apply(): Promise<void> {
-  skip.value = 0;
-  await load();
-}
-
-async function reset(): Promise<void> {
-  Object.assign(filters, emptyFilters());
-  await apply();
-}
-
-async function move(direction: -1 | 1): Promise<void> {
-  const limit = filters.limit ?? 100;
-  skip.value = Math.max(0, skip.value + direction * limit);
-  await load();
-}
-
-function toggleAutoRefresh(): void {
-  autoRefresh.value = !autoRefresh.value;
-  if (!autoRefresh.value) return stopTimer();
-
-  // setInterval, а не рекурсивный setTimeout: запрос лёгкий, а пропущенный
-  // из-за медленного ответа тик здесь ничего не ломает — следующий покажет
-  // то же самое состояние.
-  timer = window.setInterval(() => void load(), REFRESH_MS);
-}
-
-function stopTimer(): void {
-  if (timer !== undefined) window.clearInterval(timer);
-  timer = undefined;
-}
 </script>
 
 <template>
-  <LoginForm v-if="!token" :error="authError" :busy="busy" @submit="onLogin" />
+  <LoginForm v-if="!token" :error="authError" :busy="busy" @submit="signIn" />
 
-  <main v-else>
-    <header>
-      <h1>Журнал действий</h1>
-      <div class="tools">
-        <button type="button" :disabled="loading" @click="load">
-          {{ loading ? 'Загрузка…' : 'Обновить' }}
-        </button>
-        <button type="button" :class="{ primary: autoRefresh }" @click="toggleAutoRefresh">
-          Авто {{ autoRefresh ? 'вкл' : 'выкл' }}
-        </button>
-        <button type="button" @click="signOut">Выйти</button>
+  <div v-else class="shell">
+    <!--
+      Сайдбар того же цвета, что и холст, — отличается только границей.
+      Другой фон разрезал бы экран на «мир меню» и «мир содержимого», хотя это
+      одна поверхность одного инструмента.
+    -->
+    <aside>
+      <div class="brand">
+        <span class="title">Панель бота</span>
+        <span class="who">id {{ adminId || '—' }}</span>
       </div>
-    </header>
 
-    <FiltersPanel v-model="filters" @apply="apply" @reset="reset" />
+      <nav>
+        <RouterLink to="/">Обзор</RouterLink>
+        <RouterLink to="/users">Пользователи</RouterLink>
+        <RouterLink to="/logs">Журнал действий</RouterLink>
+      </nav>
 
-    <p v-if="loadError" class="error">{{ loadError }}</p>
+      <button type="button" class="exit" @click="signOut">Выйти</button>
+    </aside>
 
-    <LogTable :rows="rows" @select="selected = $event" />
-
-    <MessageModal v-if="selected" :row="selected" @close="selected = null" />
-
-    <footer>
-      <span class="muted">
-        {{ total ? `${skip + 1}–${pageEnd} из ${total}` : 'Записей нет' }}
-      </span>
-      <span class="pager">
-        <button type="button" :disabled="!hasPrev || loading" @click="move(-1)">Назад</button>
-        <button type="button" :disabled="!hasNext || loading" @click="move(1)">Вперёд</button>
-      </span>
-    </footer>
-  </main>
+    <main><RouterView /></main>
+  </div>
 </template>
 
 <style scoped>
+.shell {
+  display: grid;
+  grid-template-columns: var(--sidebar) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+aside {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 20px 12px;
+  border-right: 1px solid var(--border);
+  /* Меню остаётся на месте при прокрутке длинного журнала: уходить за ним
+     вверх ему незачем. */
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  padding: 0 10px;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.who {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/*
+ * Пункт меню: сам по себе — просто текст. Активный получает подложку и
+ * accent-полосу слева. Цвет тут работает ровно один раз, на текущем разделе, —
+ * остальную структуру держат вес и отступы.
+ */
+nav a {
+  position: relative;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+nav a:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+nav a.router-link-active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 500;
+}
+
+nav a.router-link-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.exit {
+  /* Прижат к низу: это выход, а не пункт навигации. */
+  margin-top: auto;
+  font-size: 13px;
+  padding: 7px 10px;
+  text-align: left;
+  background: none;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.exit:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: transparent;
+  color: var(--text);
+}
+
 main {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 20px 16px 48px;
+  min-width: 0;
+  /* Ограничение ширины, а не растяжка на весь монитор: строка журнала длиной
+     в два метра нечитаема, а таблица внутри прокручивается сама. */
+  max-width: 1280px;
+  padding: 24px 24px 64px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-}
+/* На узком экране колонка разворачивается в шапку: 232 пикселя меню на
+   телефоне — это половина ширины под навигацию, которой пользуются раз. */
+@media (max-width: 720px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
 
-h1 {
-  margin: 0;
-  font-size: 20px;
-}
+  aside {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 12px;
+    overflow-x: auto;
+  }
 
-.tools {
-  display: flex;
-  gap: 8px;
-}
+  .brand {
+    display: none;
+  }
 
-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
+  nav {
+    flex-direction: row;
+  }
 
-.pager {
-  display: flex;
-  gap: 8px;
-}
+  nav a {
+    white-space: nowrap;
+  }
 
-.muted {
-  color: var(--muted);
-  font-size: 13px;
+  nav a.router-link-active::before {
+    left: 6px;
+    right: 6px;
+    top: auto;
+    bottom: 0;
+    width: auto;
+    height: 2px;
+  }
+
+  main {
+    padding: 16px 12px 48px;
+  }
 }
 </style>

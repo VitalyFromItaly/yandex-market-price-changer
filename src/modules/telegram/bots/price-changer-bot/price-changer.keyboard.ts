@@ -1,9 +1,12 @@
+import type { TFeatureMap } from '../shared/features.domain';
+
 import { Injectable } from '@nestjs/common';
 import { Markup } from 'telegraf';
 
 import { TelegramKeyboard } from '../../ui/keyboard.ui.telegram';
+import { featureMenuLayout } from '../shared/features.domain';
 
-import { menuLayout, unconfiguredMenuLayout, withAdminRow } from './menu.constants';
+import { unconfiguredMenuLayout, withAdminRow } from './menu.constants';
 
 @Injectable()
 export class PriceChangerKeyboard extends TelegramKeyboard {
@@ -13,10 +16,20 @@ export class PriceChangerKeyboard extends TelegramKeyboard {
     return await this.createKeyboard(isAdmin ? withAdminRow(layout) : layout);
   }
 
-  /** Меню с рядом администратора. */
-  public async createMenuKeyboard(isAdmin = false): Promise<Markup.Markup<any>> {
+  /**
+   * Меню с рядом администратора и без кнопок закрытых возможностей.
+   *
+   * `features` необязателен: там, где записи доступа под рукой нет, раскладка
+   * собирается по умолчанию из реестра. Полагаться на одну лишь раскладку
+   * нельзя — подпись кнопки можно прислать текстом, а старая inline-кнопка
+   * живёт в истории чата вечно; за это отвечает FeatureGateHandler.
+   */
+  public async createMenuKeyboard(
+    isAdmin = false,
+    features?: TFeatureMap,
+  ): Promise<Markup.Markup<any>> {
     // Подписи берутся из menu.constants — единственного источника (TASK-014).
-    const layout = menuLayout();
+    const layout = featureMenuLayout(features);
     return await this.createKeyboard(isAdmin ? withAdminRow(layout) : layout);
   }
 

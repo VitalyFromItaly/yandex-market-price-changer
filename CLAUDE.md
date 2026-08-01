@@ -120,7 +120,7 @@ serves any number of bots.
 source of truth and `__tests__/unit/composer-order.test.ts` pins it:
 
 ```
-actionLog → accessGate → start → menu → slash → adminCallbacks → adminUsers
+actionLog → accessGate → featureGate → start → menu → slash → adminCallbacks → adminUsers
           → scheduleCallbacks → reportCallbacks → onboardingCallbacks → callbacks
           → apiSettings → stockUpload → fallback
 ```
@@ -132,6 +132,9 @@ actionLog → accessGate → start → menu → slash → adminCallbacks → adm
 - `actionLog` is such a step and sits **before** the gate deliberately: the most interesting entries
   are attempts by *blocked* users, and the gate does not call `next()`, so a logger registered after
   it would never see them.
+- `featureGate` sits **immediately after** `accessGate` — see "Per-feature access" below. The order
+  is not cosmetic: "your application is still pending" explains more than "that function is closed",
+  and to somebody with no access at all the second message is meaningless.
 - **Every `bot.action` must precede `callbacks`.** `bot.action` is `on('callback_query')` plus a
   pattern match and does **not** call `next()`, so the general handler — which switches on exact
   strings and whose `default:` branch overwrites the message — swallows anything registered after
@@ -402,6 +405,8 @@ There are **no Mongoose refs** — relations are implicit:
   `telegramChatId`, which is a **different thing**: `botId` is the tenant, `telegramChatId` is
   `ctx.chat.id` and the only value you may pass to `sendMessage`. Do not conflate them —
   `YandexMarket.telegramChatId` historically holds the *bot's* id and is useless for messaging.
+  It also carries `features` — the per-user feature flags (see "Per-feature access"), a plain
+  `Record<string, boolean>` with **no index**: nothing ever queries by a flag, only by the user.
 - `YandexMarket` is keyed by `telegramUserId` (typed `string`). Its `campaign_id`/`business_id`/`token`
   are `required`, so the document is created **once, complete** — partial writes throw. It also carries
   the four profit rates: `commissionPercent` (23), `taxPercent` (7), `discountPercent` (10) and
@@ -484,14 +489,34 @@ journal the first time one is forgotten.
 applied to the whole `LogsController` (not to individual methods — the one that gets forgotten is
 the one left open).
 
-- **Login is a Telegram id from `TELEGRAM_ADMIN_IDS`; the password is one shared secret** generated
-  on first boot if absent and printed to the log **once**, as a banner. Printing it on every start
-  would park it in CapRover's log history forever. Lost password = delete the single document in
-  `admincredentials` and restart.
+- **Login is a Telegram id from `TELEGRAM_ADMIN_IDS`; the password is one shared secret** with **two
+  sources, and `ADMIN_PASSWORD` is the one that wins.** Set — it *is* the password, changed by
+  editing the variable and restarting. Unset — generated on first boot and printed to the log
+  **once**, as a banner (printing it every start would park it in CapRover's log history forever).
+  - The precedence is not arbitrary. Under "Mongo wins, env only seeds the first boot", editing the
+    variable in the deploy config would do **nothing**, and an admin would rotate a password that
+    never rotated. Here what is written in the deploy config is what actually works after a restart.
+  - **The comparison stays single**: `applyEnvPassword` writes a bcrypt hash into the same
+    `AdminCredential` document, and `login()` still does one `bcrypt.compare`. A second path
+    (comparing the env string directly) would be both a second place to get it wrong and a timing
+    difference between two branches — and `login()` deliberately runs bcrypt even for a non-admin id
+    so response time does not reveal who is in `TELEGRAM_ADMIN_IDS`.
+  - The hash is rewritten **only when it no longer matches the variable**: bcrypt at cost 12 is
+    ~0.3 s, and re-salting on every boot would also make "changed" indistinguishable from "untouched".
+    Only `passwordHash` is updated — `jwtSecret` must survive, or every redeploy would log all admins
+    out.
+  - The env password is **never printed**: whoever set the variable already has it.
+  - Removing the variable keeps the last password that was installed; it does not silently regenerate,
+    which would leave the admin holding a password they never saw. Empty string counts as "unset"
+    (the `REDIS_PASSWORD` precedent) — otherwise a forgotten `ADMIN_PASSWORD=` would be a zero-length
+    password. Joi demands ≥12 characters when non-empty.
+  - Lost password with no variable set = either set `ADMIN_PASSWORD` and restart, or delete the single
+    document in `admincredentials` and restart.
 - **Password hash and JWT secret live in Mongo** (`AdminCredential`, one document pinned by a unique
-  `key`), not in env. "Generate at deploy if absent" requires surviving a restart, and an in-memory
-  JWT secret would log every admin out on each redeploy. `bcrypt` at cost 12 — the package was
-  already installed and unused (this file used to list it as dead template weight).
+  `key`). "Generate at deploy if absent" requires surviving a restart, and an in-memory JWT secret
+  would log every admin out on each redeploy — which is why `ADMIN_PASSWORD` feeds *into* that
+  document rather than replacing it. `bcrypt` at cost 12 — the package was already installed and
+  unused (this file used to list it as dead template weight).
 - `AdminAuthService.verify` **re-checks `sub` against `TELEGRAM_ADMIN_IDS`** instead of trusting the
   signed token: revoking an admin must close the panel now, not in seven days when the token expires.
 - **`LoginThrottle`**: 5 failures per login → 15 minutes locked. One shared password behind which
@@ -565,8 +590,43 @@ ts-node in dev (`src/` → `web/dist`).
   a blank page in production.
 - Static files are served by express middleware **before** the Nest router, so `LoggerInterceptor`
   never fires for them and the log is not flooded with one line per asset.
-- The global `/api` prefix is what leaves `/` free for the panel. No `vue-router`: one screen, and a
-  router would demand an SPA fallback in the static handler for nothing.
+- The global `/api` prefix is what leaves `/` free for the panel. Four screens now — an overview, the
+  user list, one seller's card, and the log — so there **is** a `vue-router`, but on
+  **`createWebHashHistory`**. With normal history a refresh on `/users/999/222` would go to the
+  server, which has neither that file nor that route, so F5 on a seller's card would 404. That is
+  fixable with an SPA fallback in the static handler, but the fallback would have to carve out
+  `/api` — and any slip in it turns an API error into a silently served `index.html`. The hash never
+  reaches the server: address, back button and reload all work with no backend change at all.
+  Pages live in `web/src/pages/`, each fetching its own data; a shared loader in `App.vue` would mean
+  the log screen fetching sellers and the seller card fetching logs.
+- **Auth state is module-level `ref`s in `web/src/auth.ts`**, not Pinia — three fields do not justify
+  a store, and a module `ref` *is* the shared instance. It moved out of `App.vue` when routed pages
+  stopped receiving props from it.
+- The 10 s auto-refresh belongs to the log page **only**, and its `setInterval` is cleared in
+  `onBeforeUnmount`: under the router the component unmounts on navigation, and a live timer would
+  keep polling `/api/logs` from another screen.
+- **Toggles never hold their own state.** `ToggleSwitch` renders `modelValue` and emits `change`; the
+  page replaces its row with whatever `PATCH` returned. A self-toggling switch would confidently
+  claim access is closed while it is open, the moment a request fails. Inside it is a real hidden
+  `<input type="checkbox">`, not a `<div>` with a click handler — focus, space, screen readers and
+  `:disabled` then work for free.
+- Labels shared by the list and the card (`STATUS_LABEL`, `displayName`) live in
+  `web/src/users.domain.ts`. Two copies would name one state differently on the two screens.
+- **Navigation is a left sidebar, and it is the same colour as the canvas** — only a border divides
+  them. A different background would cut the screen into "menu world" and "content world" when it is
+  one surface of one tool. The active item gets a surface fill plus a 2px accent rule; that accent is
+  the only colour in the chrome, everything else is weight and spacing.
+- **The overview answers the two questions the panel is actually opened with** — "who is waiting on
+  me" and "did anything break" — not a row of KPI cards. Pending applications lead because they are
+  the only state that **blocks a human on the other side**: the seller sent a token and is sitting
+  without an answer. Totals sit below with no colour and no card frames, because they are background,
+  not a call to action. The empty state says «Всё спокойно», not «нет данных» — that is a good day and
+  should read like one. First load is a separate branch from empty, or the screen spends half a second
+  claiming all is quiet before it has asked.
+- `--warn` is a third semantic colour beside `--ok`/`--danger`: an application is neither success nor
+  failure, and painting it red would say something broke when the move is simply a human's.
+- Any changing number carries `.tnum` (`font-variant-numeric: tabular-nums`) — counters otherwise
+  jitter the layout on every refresh and table columns stop aligning by digit.
 - `vite` is pinned to **5.x** in devDependencies. It was previously present only transitively via
   vitest 2.1; installing vite 6/7 would split the dependency tree.
 - The JWT is kept in `sessionStorage`, not `localStorage`.
@@ -628,6 +688,79 @@ rejected   credentials wiped; 24h during which even entering credentials is refu
 > The previous subscription system is **gone** (TASK-036) — it granted every new user a free week,
 > its plan buttons charged nothing, and its only check sat in `/start`, so uploads bypassed it.
 > `__tests__/unit/subscription-removed.test.ts` fails if the concept creeps back.
+
+### Per-feature access: approval says *whether*, flags say *what*
+
+`UserAccess.status` is boolean — all or nothing. On top of it sits a registry of seven features
+(`src/modules/telegram/bots/shared/features.domain.ts`), each switchable **per user** from the admin
+panel. This is not a second access system: `canPass(status, kind)` still answers "may this person
+use the bot", `requiredFeatures(update)` answers "which function is being invoked". Merging the two
+tables would mean a change to access rules silently reshapes the feature set, and the reverse.
+
+The five report keys are **literally the values of `REPORT`** — a second taxonomy for the same five
+things would drift, and the digest already keys its schedules by them. Plus `schedule` and
+`stock_upload`. `/start`, «🏠 Главное меню», «⚙️ Настройки API», «❓ Помощь», «📊 Мой профиль»,
+the whole wizard and every admin button are **not** gateable: closing them locks the seller out of
+their own settings, with no way to fix a token or find out whom to ask.
+
+- **Storage is a `features` map on `UserAccess`**, not a separate collection like `ReportSchedule`.
+  It is read on every update that reaches a report, and the access record is already in the gate's
+  hands — a second collection would mean a second Mongo query where one suffices.
+- **Only explicit admin decisions are stored.** A missing key is *not* "off": it resolves to
+  `FEATURE_META[key].defaultEnabled`. That is why flags needed no one-off migration and existing
+  sellers lost nothing, and why a future experimental feature can ship with `defaultEnabled: false`
+  and be opened one seller at a time. All seven are `true` today.
+- **`FEATURE_KEYS` is built from a `Record<TFeatureKey, true>`**, for the `DRAFT_FIELD_SET` reason —
+  an array literal does not force the union to be complete, and TASK-052 already paid for that.
+  The key lands in a `$set` path (`features.<key>`) and arrives over HTTP, so `setFeature` whitelists
+  it exactly as `saveDraftField` does.
+- **`featureGate` is one `bot.use`, not a check per handler** — same argument as `accessGate`: a
+  check registered in the pipeline cannot be forgotten in a new handler, because the new handler is
+  registered after it. It **returns before touching Mongo** when the update maps to no feature, which
+  is most updates (free text, onboarding, settings, help). It reads `UserAccess` itself rather than
+  receiving it from `accessGate`: `ctx.state` is used nowhere in this repo, and introducing the
+  convention for one field costs more than a read on the updates that actually reached a report.
+- **The gate does not see free text**, so the two places that consume a *pending answer* re-check the
+  flag themselves: `ReportsHandler.run` (the date answering «за какой день?») and
+  `ScheduleHandler.handlePendingTime` (the time answering «во сколько присылать?»). Both close the
+  pending question when refusing, or the bot would answer every subsequent message with a refusal.
+- **The daily digest re-checks too** (`reports.processor.ts`). A schedule enabled before the flag was
+  closed stays in Redis, and without the check the closed report would keep arriving every day —
+  a divergence between button and digest is the known complaint pattern here.
+- Callback data uses `rep:`/`sch:`, parsed by `report-buttons.ts` — a **pure** module the codecs moved
+  into, because `features.domain.ts` must stay free of Nest and telegraf. Do **not** name a feature
+  callback with a `plan_` prefix and do not write «подписка» anywhere in `src`:
+  `subscription-removed.test.ts` scans for both.
+- **Two layers, deliberately.** `featureMenuLayout` drops closed buttons from the reply keyboard so
+  nobody is led into a dead end (the `MENU_LAYOUT_UNCONFIGURED` argument), but the gate is what
+  actually enforces: a label can be typed by hand and an old inline button lives in the chat history
+  forever.
+- **Admins bypass everything** and have no `UserAccess` row at all (the access gate returns before
+  `ensure`), so `findByUserAndBot` returns `null` and defaults apply — which is also why
+  `isReportEnabled(features, key)` treats an *unknown* report key as closed but an *absent record*
+  as open.
+- **Editing is web-panel only**, whole controller behind `AdminJwtGuard`:
+  `GET /api/access/features`, `GET /api/access/users`, `GET /api/access/users/:id?botId=`,
+  `PATCH /api/access/users/:id/features`, `PATCH /api/access/users/:id/status`. The panel takes
+  labels from `FEATURE_META` over the API instead of keeping its own copy — the `menu.constants.ts`
+  argument. `campaign_id`/`business_id` stay out of every response; `storeName` is enough. The user
+  list resolves stores with **one** `$in` query, not `isConfigured` per row the way the Telegram
+  admin list does.
+- **Access itself is a toggle on the same card**, `PATCH .../status` → `UserAccessService.setApproved`.
+  It is deliberately *not* `decide`/`revoke`: those filter on one expected status (`pending`,
+  `approved`), which is what makes "first admin decision wins" work for the application card. A
+  toggle answers a different question — "let this seller be in this state" — from `new`, `pending`
+  or `rejected` alike, and a status filter would make it silently no-op on somebody who never
+  applied. Closing writes `rejected` + `rejectedAt`, so the same 24 h cooldown applies as a Telegram
+  revoke. The author of the decision comes from the JWT (`req.adminId`), never from the body.
+- **The seller is told**, by `AccessNotifierService` — the Telegram paths always notify, and silent
+  cutoff reads as a broken bot. It never throws (the seller may have blocked the bot; the panel runs
+  without Telegram) and the controller does not await it: the status is already written, so a
+  reachable-Telegram problem must not answer "failed" to a succeeded action. The wording comes from
+  `access-decision.text.ts`, shared with both Telegram entry points and pinned by
+  `access-decision-text.test.ts` — three copies of "Доступ открыт!" would drift exactly as the help
+  screens once did. Revocation and application-rejection are **different** texts: a seller who was
+  working has no pending application, and «Заявка отклонена» would answer something they never sent.
 
 ### Error handling
 
@@ -705,7 +838,8 @@ the next step — wrapping in `@Injectable()` must not mean rewriting.
 list; `.env.example` documents every key. Required: `MONGODB_URL`, `MONGODB_DATABASE`, `REDIS_HOST`,
 `TELEGRAM_TOKEN`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_ADMIN_IDS`. Defaulted: `PORT`, `NODE_ENV`,
 `REDIS_PORT`, `YANDEX_MARKET_BASE_URL`, `TELEGRAM_API_URL`. Optional: `REDIS_PASSWORD` (empty means
-"no auth").
+"no auth") and `ADMIN_PASSWORD` (empty means "generate one and print it once"; when set it overrides
+the hash in Mongo — see "The admin panel is served by Nest itself").
 
 The two Telegram URLs are opposite directions and must not be swapped: `TELEGRAM_WEBHOOK_URL` is the
 public base Telegram posts updates **to** (ngrok/vk-tunnel in dev), `TELEGRAM_API_URL` is the Bot API

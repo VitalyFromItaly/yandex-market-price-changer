@@ -7,6 +7,7 @@ import { AppService } from './app.service';
 import { AppConfigModule } from './config/app-config.module';
 import { AppConfigService } from './config/app-config.service';
 import { DatabaseModule } from './database/database.module';
+import { AccessModule } from './modules/access/access.module';
 import { AdminAuthModule } from './modules/admin/admin-auth.module';
 import { ErrorsModule } from './modules/errors/errors.module';
 import { LogsModule } from './modules/logs/logs.module';
@@ -36,6 +37,7 @@ import { YandexModule } from './modules/yandex/yandex.module';
     ErrorsModule,
     AdminAuthModule,
     LogsModule,
+    AccessModule,
     YandexModule,
     TelegramModule,
   ],

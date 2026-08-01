@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { JwtModule } from '@nestjs/jwt';
 import { getModelToken } from '@nestjs/mongoose';
 import { UnauthorizedException, ServiceUnavailableException } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 
 import { AdminAuthService } from '../../src/modules/admin/admin-auth.service';
 import { AdminJwtGuard } from '../../src/modules/admin/admin-jwt.guard';
@@ -107,6 +108,96 @@ describe('AdminCredentialService', () => {
     const { service } = build();
     const password = await service.ensure();
     expect(password).toMatch(/^[A-HJ-NP-Za-km-z2-9]+$/);
+  });
+
+  describe('ADMIN_PASSWORD главнее базы', () => {
+    const ENV_PASSWORD = 'очень-секретный-пароль';
+
+    it('на пустой базе заводит учётные данные с паролем из окружения', async () => {
+      const { model, service } = build();
+
+      expect(await service.ensure(ENV_PASSWORD)).toBeNull();
+      expect(model.documents).toHaveLength(1);
+      expect(await bcrypt.compare(ENV_PASSWORD, model.documents[0].passwordHash)).toBe(true);
+      expect(model.documents[0].jwtSecret).toBeTruthy();
+    });
+
+    it('пароль из окружения в лог НЕ печатается', async () => {
+      // Он и так у того, кто задал переменную, а логи контейнера видит всякий,
+      // у кого есть доступ к CapRover.
+      const { service } = build();
+      expect(await service.ensure(ENV_PASSWORD)).toBeNull();
+    });
+
+    it('перебивает уже сгенерированный пароль, а не уступает ему', async () => {
+      // Обратное правило означало бы, что правка переменной в конфиге деплоя
+      // не делает ничего: администратор «сменил» пароль, который не сменился.
+      const { model, service } = build();
+      const generated = await service.ensure();
+
+      await service.ensure(ENV_PASSWORD);
+
+      expect(model.documents).toHaveLength(1);
+      expect(await bcrypt.compare(ENV_PASSWORD, model.documents[0].passwordHash)).toBe(true);
+      expect(await bcrypt.compare(generated!, model.documents[0].passwordHash)).toBe(false);
+    });
+
+    it('смена значения переменной меняет пароль', async () => {
+      const { model, service } = build();
+      await service.ensure(ENV_PASSWORD);
+      await service.ensure('другой-пароль-подлиннее');
+
+      expect(model.documents).toHaveLength(1);
+      expect(await bcrypt.compare('другой-пароль-подлиннее', model.documents[0].passwordHash)).toBe(
+        true,
+      );
+    });
+
+    it('jwtSecret переживает смену пароля', async () => {
+      // Иначе каждый деплой с новым ADMIN_PASSWORD разлогинивал бы всех
+      // администраторов, а секрет в базе именно для того и лежит, чтобы
+      // переживать рестарт.
+      const { model, service } = build();
+      await service.ensure(ENV_PASSWORD);
+      const secret = model.documents[0].jwtSecret;
+
+      await service.ensure('другой-пароль-подлиннее');
+
+      expect(model.documents[0].jwtSecret).toBe(secret);
+    });
+
+    it('неизменная переменная не перезаписывает хеш на каждом старте', async () => {
+      // bcrypt со стоимостью 12 — это ~0,3 с и запись в Mongo; на каждый
+      // рестарт без повода это лишнее. Плюс новый хеш того же пароля отличался
+      // бы солью, то есть отличить «поменяли» от «не трогали» стало бы нельзя.
+      const { model, service } = build();
+      await service.ensure(ENV_PASSWORD);
+      const hash = model.documents[0].passwordHash;
+
+      await service.ensure(ENV_PASSWORD);
+
+      expect(model.documents[0].passwordHash).toBe(hash);
+    });
+
+    it('убрали переменную — действует последний установленный пароль', async () => {
+      // Молча генерировать новый нельзя: администратор остался бы с паролем,
+      // которого он не видел, и без единой строчки об этом в логах.
+      const { model, service } = build();
+      await service.ensure(ENV_PASSWORD);
+
+      expect(await service.ensure()).toBeNull();
+      expect(await bcrypt.compare(ENV_PASSWORD, model.documents[0].passwordHash)).toBe(true);
+    });
+
+    it('пустая строка — это «не задан», а не пароль из нуля символов', async () => {
+      // Забытый `ADMIN_PASSWORD=` в .env иначе открывал бы панель пустым
+      // паролем. Приведение к undefined живёт в AppConfigService, здесь —
+      // страховка на случай, если сюда всё же дойдёт пустая строка.
+      const { service } = build();
+      const password = await service.ensure('');
+
+      expect(password).toHaveLength(24);
+    });
   });
 });
 

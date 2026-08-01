@@ -843,7 +843,7 @@ export class ApiSettingsHandler {
           '',
           'Отчёты доступны в меню ниже.',
         ].join('\n'),
-        keyboard: await this.keyboard.createMenuKeyboard(isAdmin),
+        keyboard: await this.keyboard.createMenuKeyboard(isAdmin, access?.features),
       };
     }
 

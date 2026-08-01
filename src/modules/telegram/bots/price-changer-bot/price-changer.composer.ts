@@ -9,6 +9,7 @@ import { AdminUsersHandler } from './handlers/admin-users.handler';
 import { ApiSettingsHandler } from './handlers/api-settings.handler';
 import { CallbackQueryHandler } from './handlers/callback-query.handler';
 import { FallbackHandler } from './handlers/fallback.handler';
+import { FeatureGateHandler } from './handlers/feature-gate.handler';
 import { MenuCommandsHandler } from './handlers/menu-commands.handler';
 import { ReportsHandler } from './handlers/reports.handler';
 import { ScheduleHandler } from './handlers/schedule.handler';
@@ -45,6 +46,10 @@ export class PriceChangerComposer {
       // зарегистрированный после хендлеров, ничего не защищает, так как
       // апдейт до него не дойдёт.
       { name: 'accessGate', register: (b) => this.accessGate.register(b) },
+      // Гейт возможностей — сразу после гейта доступа. Именно в таком порядке:
+      // «вас ещё не одобрили» объясняет больше, чем «эта функция закрыта», и
+      // человеку без доступа второе сообщение бессмысленно.
+      { name: 'featureGate', register: (b) => this.featureGate.register(b) },
       { name: 'start', register: (b) => this.start.register(b) },
       { name: 'menu', register: (b) => this.menu.register(b) },
       { name: 'slash', register: (b) => this.slash.register(b) },
@@ -82,6 +87,7 @@ export class PriceChangerComposer {
   constructor(
     private readonly actionLog: ActionLogHandler,
     private readonly accessGate: AccessGateHandler,
+    private readonly featureGate: FeatureGateHandler,
     private readonly start: StartHandler,
     private readonly menu: MenuCommandsHandler,
     private readonly slash: SlashCommandsHandler,

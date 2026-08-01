@@ -141,3 +141,99 @@ export async function fetchLogs(token: string, query: ILogsQuery): Promise<ILogs
     headers: { Authorization: `Bearer ${token}` },
   });
 }
+
+// --- пофичный доступ ---------------------------------------------------------
+
+/** Одна возможность бота — то, что отдаёт GET /api/access/features. */
+export interface IFeature {
+  key: string;
+  label: string;
+  description: string;
+  defaultEnabled: boolean;
+}
+
+/** Пользователь с разрешёнными значениями всех флагов. */
+export interface IUserRow {
+  telegramUserId: string;
+  botId: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  status: string;
+  storeName?: string;
+  configured: boolean;
+  features: Record<string, boolean>;
+  createdAt?: string;
+}
+
+/**
+ * Реестр возможностей приходит с сервера, а не описан здесь константой:
+ * вторая копия подписей неминуемо разъедется с той, что видит пользователь
+ * в боте.
+ */
+export async function fetchFeatures(token: string): Promise<IFeature[]> {
+  const { items } = await request<{ items: IFeature[] }>('/api/access/features', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return items;
+}
+
+export async function fetchUsers(token: string): Promise<IUserRow[]> {
+  const { items } = await request<{ total: number; items: IUserRow[] }>('/api/access/users', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return items;
+}
+
+/** Один продавец — для его карточки, чтобы не тянуть весь список ради строки. */
+export async function fetchUser(
+  token: string,
+  botId: string,
+  telegramUserId: string,
+): Promise<IUserRow> {
+  const query = `?botId=${encodeURIComponent(botId)}`;
+  return await request<IUserRow>(
+    `/api/access/users/${encodeURIComponent(telegramUserId)}${query}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+}
+
+/**
+ * Все правки возвращают обновлённую строку.
+ *
+ * Экран берёт состояние с сервера, а не собирает его сам: запрос может не
+ * пройти, и угаданное состояние уверенно врало бы о том, что доступ закрыт,
+ * пока он открыт.
+ */
+export async function setUserFeature(
+  token: string,
+  user: IUserRow,
+  feature: string,
+  enabled: boolean,
+): Promise<IUserRow> {
+  return await patchUser(token, user, 'features', { feature, enabled });
+}
+
+export async function setUserApproved(
+  token: string,
+  user: IUserRow,
+  approved: boolean,
+): Promise<IUserRow> {
+  return await patchUser(token, user, 'status', { approved });
+}
+
+function patchUser(
+  token: string,
+  user: IUserRow,
+  path: 'features' | 'status',
+  body: Record<string, unknown>,
+): Promise<IUserRow> {
+  return request<IUserRow>(
+    `/api/access/users/${encodeURIComponent(user.telegramUserId)}/${path}`,
+    {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ botId: user.botId, ...body }),
+    },
+  );
+}

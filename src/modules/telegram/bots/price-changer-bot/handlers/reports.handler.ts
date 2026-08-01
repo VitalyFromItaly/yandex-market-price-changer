@@ -15,7 +15,6 @@ import {
   parseDayInput,
   periodButtonLabel,
   type IReportPeriod,
-  type TPeriodKey,
 } from '../../../../../modules/yandex/reports/report-period';
 import {
   REPORT,
@@ -27,31 +26,9 @@ import { HISTORY_WINDOW_DAYS } from '../../../../../modules/yandex/yandex-api.pa
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
-import { MENU } from '../menu.constants';
+import { isReportEnabled } from '../../shared/features.domain';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
-
-/**
- * callback_data выбора периода. Формирование и разбор рядом — чтобы формат не
- * разъехался между кнопкой и обработчиком, как это уже случалось с подписями
- * меню (см. menu.constants.ts).
- *
- * Лимит Telegram на callback_data — 64 байта; самое длинное здесь
- * `rep:month:shipped_today` — 23.
- */
-export const REPORT_CB_PATTERN = /^rep:(today|day|week|month):([a-z_]+)$/;
-
-export function reportCallback(period: TPeriodKey, reportKey: TReportKey): string {
-  return `rep:${period}:${reportKey}`;
-}
-
-/** Кнопка меню → отчёт. Единственное место, где они связаны. */
-export const MENU_TO_REPORT: Readonly<Record<string, TReportKey>> = {
-  [MENU.SHIPPED_TODAY]: REPORT.SHIPPED_TODAY,
-  [MENU.REDEEMED]: REPORT.REDEEMED,
-  [MENU.RETURNING]: REPORT.RETURNING,
-  [MENU.IN_TRANSIT]: REPORT.IN_TRANSIT,
-  [MENU.PROFIT]: REPORT.PROFIT,
-};
+import { REPORT_CB_PATTERN, parseReportCallback, reportCallback } from '../report-buttons';
 
 /**
  * Показ отчётов пользователю.
@@ -92,17 +69,16 @@ export class ReportsHandler {
   public registerCallbacks(bot: TTelegrafBot): void {
     bot.action(REPORT_CB_PATTERN, async (ctx) => {
       const data = (ctx.callbackQuery as { data?: string }).data ?? '';
-      const [, periodKey, reportKey] = REPORT_CB_PATTERN.exec(data) ?? [];
+      const parsed = parseReportCallback(data);
       await ctx.answerCbQuery();
+      if (!parsed) return;
 
-      const key = reportKey as TReportKey;
-
-      if (periodKey === PERIOD.DAY) {
-        await this.askDay(ctx, key);
+      if (parsed.period === PERIOD.DAY) {
+        await this.askDay(ctx, parsed.reportKey);
         return;
       }
 
-      await this.run(ctx, key, { key: periodKey as TPeriodKey });
+      await this.run(ctx, parsed.reportKey, { key: parsed.period });
     });
   }
 
@@ -204,6 +180,14 @@ export class ReportsHandler {
     this.inFlight.add(lock);
 
     try {
+      // Перепроверка фичи. Гейт ловит нажатие кнопки, но не ответ ДАТОЙ на
+      // «за какой день?»: тот приходит обычным текстом и ни во что не
+      // маппится. Здесь единственная воронка обоих путей.
+      if (!(await this.featureAllowed(ctx, key))) {
+        await ctx.reply('🔒 Этот отчёт сейчас недоступен.', htmlOptions());
+        return;
+      }
+
       const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
       if (!store) {
         await ctx.reply('⚠️ Сначала заполните настройки API.', htmlOptions());
@@ -236,6 +220,21 @@ export class ReportsHandler {
       // для пользователя до перезапуска приложения.
       this.inFlight.delete(lock);
     }
+  }
+
+  /**
+   * Открыт ли отчёт этому пользователю.
+   *
+   * Отсутствие записи доступа считается «открыто»: её нет у администраторов —
+   * гейт пропускает их до `ensure()`, — и отказывать им здесь значило бы
+   * запереть отчёты ровно у тех, кто раздаёт доступ.
+   */
+  private async featureAllowed(ctx: Context, key: TReportKey): Promise<boolean> {
+    const account = await this.access.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
+    return isReportEnabled(account?.features, key);
   }
 
   private async sendExport(ctx: Context, store: YandexMarketDocument): Promise<void> {

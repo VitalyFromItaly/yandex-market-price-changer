@@ -1,10 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 import { Test } from '@nestjs/testing';
-import {
-  MENU_TO_REPORT,
-  ReportsHandler,
-} from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
+import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
+import { MENU_TO_REPORT } from '../../src/modules/telegram/bots/price-changer-bot/report-buttons';
+import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
 import { OrderReportsService } from '../../src/modules/yandex/reports/order-reports.service';
 import { ProfitService } from '../../src/modules/yandex/reports/profit.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
@@ -20,8 +19,22 @@ import { DEFAULT_PERIOD } from '../../src/modules/yandex/reports/report-period';
 
 const STORE = { token: 'ACMA:x', campaign_id: '1', business_id: '2' };
 
+/**
+ * Дать уже запущенным промисам доработать. Нужно там, где проверяется
+ * состояние ПОСЛЕ незавершённого вызова: сколько именно await'ов внутри
+ * `run()` — деталь реализации, и тест не должен от неё зависеть.
+ */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+}
+
 async function build(
-  opts: { store?: unknown; build?: () => Promise<unknown>; profit?: () => Promise<unknown> } = {},
+  opts: {
+    store?: unknown;
+    build?: () => Promise<unknown>;
+    profit?: () => Promise<unknown>;
+    features?: Record<string, boolean>;
+  } = {},
 ) {
   const reports = {
     build: vi.fn(
@@ -42,7 +55,11 @@ async function build(
 
   const access = {
     setPendingReportDay: vi.fn(async () => null),
-    findByUserAndBot: vi.fn(async () => null),
+    // null — «записи доступа нет» (так у администраторов): флаги тогда берутся
+    // из умолчаний реестра, то есть всё открыто.
+    findByUserAndBot: vi.fn(async () =>
+      'features' in opts ? ({ features: opts.features } as never) : null,
+    ),
   };
 
   const profit = {
@@ -150,12 +167,35 @@ describe('ReportsHandler', () => {
 
     const first = handler.run(ctx as never, REPORT.REDEEMED, DEFAULT_PERIOD);
     await handler.run(ctx as never, REPORT.REDEEMED, DEFAULT_PERIOD);
+    await flush();
 
     expect(reports.build).toHaveBeenCalledTimes(1);
     expect(ctx.texts().some((t) => t.includes('уже собирается'))).toBe(true);
 
     release!();
     await first;
+  });
+
+  it('закрытый администратором отчёт не собирается и не ходит в Partner API', async () => {
+    // Гейт возможностей ловит нажатие кнопки, но не ответ ДАТОЙ на «за какой
+    // день?»: тот приходит обычным текстом и мимо гейта. run() — единственная
+    // воронка обоих путей, поэтому проверка обязана быть и здесь.
+    const { handler, reports } = await build({ features: { [FEATURE.REPORT_REDEEMED]: false } });
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.REDEEMED, DEFAULT_PERIOD);
+
+    expect(reports.build).not.toHaveBeenCalled();
+    expect(ctx.texts().some((t) => t.includes('недоступен'))).toBe(true);
+  });
+
+  it('закрытие ОДНОГО отчёта не трогает остальные', async () => {
+    const { handler, reports } = await build({ features: { [FEATURE.REPORT_PROFIT]: false } });
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.REDEEMED, DEFAULT_PERIOD);
+
+    expect(reports.build).toHaveBeenCalledTimes(1);
   });
 
   it('после завершения защёлка снимается', async () => {

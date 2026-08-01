@@ -10,10 +10,11 @@ import { helpText } from '../help.text';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { profileText } from '../profile.text';
+import { MENU_TO_REPORT } from '../report-buttons';
 import { settingsKeyboardRows, settingsText } from '../settings.text';
 
 import { AdminUsersHandler } from './admin-users.handler';
-import { MENU_TO_REPORT, ReportsHandler } from './reports.handler';
+import { ReportsHandler } from './reports.handler';
 import { ScheduleHandler } from './schedule.handler';
 import { SharedCommandsHandler } from './shared-commands.handler';
 
@@ -66,7 +67,14 @@ export class MenuCommandsHandler {
     // isAdmin передаём обязательно: без него раскладка собирается без ряда
     // «👥 Пользователи», и администратор терял кнопку, просто нажав «Главное
     // меню» — вернуть её удавалось только через /start.
-    const keyboard = await this.keyboard.createMenuKeyboard(this.config.isAdmin(ctx.from.id));
+    const account = await this.accessService.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
+    const keyboard = await this.keyboard.createMenuKeyboard(
+      this.config.isAdmin(ctx.from.id),
+      account?.features,
+    );
     // await обязателен: без него ошибка отправки теряется мимо bot.catch, и
     // кнопка «Главное меню» молча не срабатывает.
     await ctx.reply(MENU.MAIN, keyboard);

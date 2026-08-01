@@ -105,6 +105,34 @@ describe('envValidationSchema', () => {
     expect(error).toBeUndefined();
   });
 
+  it('ADMIN_PASSWORD необязателен — без него пароль генерируется сам', () => {
+    const { error } = envValidationSchema.validate(VALID_ENV);
+    expect(error).toBeUndefined();
+  });
+
+  it('пустой ADMIN_PASSWORD допустим и означает «не задан»', () => {
+    // Забытый `ADMIN_PASSWORD=` в .env не должен превращаться в пароль из нуля
+    // символов; приведение к undefined живёт в AppConfigService.
+    const { error } = envValidationSchema.validate({ ...VALID_ENV, ADMIN_PASSWORD: '' });
+    expect(error).toBeUndefined();
+  });
+
+  it('ADMIN_PASSWORD короче 12 символов отвергается', () => {
+    // За паролем стоит переписка продавцов, он один на всех администраторов и
+    // живёт до следующего деплоя.
+    const { error } = envValidationSchema.validate({ ...VALID_ENV, ADMIN_PASSWORD: 'qwerty' });
+    expect(error).toBeDefined();
+    expect(error?.message).toContain('ADMIN_PASSWORD');
+  });
+
+  it('ADMIN_PASSWORD достаточной длины принимается', () => {
+    const { error } = envValidationSchema.validate({
+      ...VALID_ENV,
+      ADMIN_PASSWORD: 'достаточно-длинный-пароль',
+    });
+    expect(error).toBeUndefined();
+  });
+
   it('не ругается на посторонние переменные окружения (PATH, HOME и прочее)', () => {
     const { error } = envValidationSchema.validate({ ...VALID_ENV, SOME_OTHER_VAR: 'x' });
     expect(error).toBeUndefined();
@@ -226,6 +254,22 @@ describe('AppConfigService (smoke: модуль собирается через 
   it('непустой пароль Redis пробрасывается как есть', async () => {
     const config = await build({ ...VALID_ENV, REDIS_PASSWORD: 'secret' });
     expect(config.redisPassword).toBe('secret');
+  });
+
+  it('незаданный ADMIN_PASSWORD — это undefined: пароль сгенерируется сам', async () => {
+    const config = await build(VALID_ENV);
+    expect(config.adminPassword).toBeUndefined();
+  });
+
+  it('пустой ADMIN_PASSWORD превращается в undefined, а не в пароль из нуля символов', async () => {
+    // Иначе забытый `ADMIN_PASSWORD=` в .env открывал бы панель пустым паролем.
+    const config = await build({ ...VALID_ENV, ADMIN_PASSWORD: '' });
+    expect(config.adminPassword).toBeUndefined();
+  });
+
+  it('заданный ADMIN_PASSWORD пробрасывается как есть', async () => {
+    const config = await build({ ...VALID_ENV, ADMIN_PASSWORD: 'достаточно-длинный-пароль' });
+    expect(config.adminPassword).toBe('достаточно-длинный-пароль');
   });
 
   it('TELEGRAM_ADMIN_IDS разбирается в числа, а не в строки', async () => {
