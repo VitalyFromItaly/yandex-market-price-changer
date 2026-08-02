@@ -269,7 +269,9 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
   private startPolling(telegraf: TTelegrafBot, doc: BotDocument): void {
     void telegraf
       .launch(() => {
-        this.logger.log(`Long polling запущен (бот ${doc.type}/${doc.id}) через ${this.config.telegramApiUrl}`);
+        this.logger.log(
+          `Long polling запущен (бот ${doc.type}/${doc.id}) через ${this.config.telegramApiUrl}`,
+        );
       })
       .catch((error) => {
         // 409 Conflict здесь означает второй живой экземпляр бота с тем же

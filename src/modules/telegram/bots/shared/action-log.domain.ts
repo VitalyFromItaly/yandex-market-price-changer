@@ -179,7 +179,9 @@ export const MAX_OUTGOING_LENGTH = 500;
  * когда-нибудь появится экран, который его показывает.
  */
 export function maskOutgoing(text: string): string {
-  return text.trim().replace(LABELLED_SECRET, (_m, label: string) => `${label}: ${SECRET_PLACEHOLDER}`);
+  return text
+    .trim()
+    .replace(LABELLED_SECRET, (_m, label: string) => `${label}: ${SECRET_PLACEHOLDER}`);
 }
 
 /** Описание исходящего вызова: что за метод и что именно ушло пользователю. */
@@ -209,8 +211,7 @@ export function outgoingSourceOf(method: string, payload: unknown): IOutgoingSou
   };
 
   const document = body.document;
-  const documentName =
-    typeof document === 'string' ? document : (document?.filename ?? undefined);
+  const documentName = typeof document === 'string' ? document : (document?.filename ?? undefined);
 
   return {
     method,

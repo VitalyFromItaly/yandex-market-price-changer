@@ -46,7 +46,9 @@ export class ErrorAlertBridge implements OnApplicationBootstrap {
         // Через ErrorReporter эту ошибку пропускать НЕЛЬЗЯ: она возникла при
         // отправке алерта, и попытка сообщить о ней породила бы новый алерт —
         // и так по кругу.
-        this.logger.warn(`Алерт не доставлен администратору ${adminId}: ${(error as Error).message}`);
+        this.logger.warn(
+          `Алерт не доставлен администратору ${adminId}: ${(error as Error).message}`,
+        );
       }
     }
   }

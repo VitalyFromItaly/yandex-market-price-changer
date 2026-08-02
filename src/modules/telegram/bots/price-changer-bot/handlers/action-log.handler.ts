@@ -36,7 +36,9 @@ export class ActionLogHandler {
         callbackData: this.callbackDataOf(ctx),
         documentName: this.documentNameOf(ctx),
       });
-      const who = ctx.from.username ? `@${ctx.from.username}` : (fullName(ctx.from.first_name, ctx.from.last_name) ?? 'без имени');
+      const who = ctx.from.username
+        ? `@${ctx.from.username}`
+        : (fullName(ctx.from.first_name, ctx.from.last_name) ?? 'без имени');
 
       let status = 'ok';
       let error: string | undefined;
@@ -53,7 +55,9 @@ export class ActionLogHandler {
         throw e;
       } finally {
         const durationMs = Date.now() - started;
-        this.logger.log(`${who} (${ctx.from.id}) · ${kind}: ${action} · ${status} · ${durationMs}мс`);
+        this.logger.log(
+          `${who} (${ctx.from.id}) · ${kind}: ${action} · ${status} · ${durationMs}мс`,
+        );
 
         // Запись НЕ ожидается: поход в Mongo не должен добавляться к времени
         // ответа пользователю, а record() внутри себя не бросает.
