@@ -88,6 +88,12 @@ export interface IStoreRef {
   businessName: string;
   /** Домен магазина. Внутри одного кабинета магазины различаются им. */
   storeName: string;
+  /**
+   * Модель размещения кампании: FBS/FBY/DBS/Express. Нужна, чтобы различать
+   * кампании в пикере: у одного бизнеса без домена все магазины сворачиваются
+   * в одно название, и без пометки FBS/FBY выбор — лотерея.
+   */
+  placementType?: string;
 }
 
 /**
@@ -372,10 +378,11 @@ export class YandexApiClient {
     const campaigns = await this.getCampaigns();
 
     return campaigns
-      .map((raw) => {
+      .map((raw): IStoreRef | null => {
         const c = (raw ?? {}) as {
           id?: number;
           domain?: string;
+          placementType?: string;
           business?: { id?: number; name?: string };
         };
         if (!c.id || !c.business?.id) return null;
@@ -388,6 +395,7 @@ export class YandexApiClient {
           // подписываем по названию кабинета, но НЕ оставляем пустым: кнопка
           // без подписи Telegram отвергает.
           storeName: c.domain ?? businessName,
+          placementType: c.placementType,
         };
       })
       .filter((x): x is IStoreRef => x !== null);

@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  PICK_STORE_PREFIX,
+  PICK_STORE_SWITCH_PREFIX,
   decidePick,
   groupByBusiness,
+  storeLabel,
   uniqueLabels,
 } from '../../src/modules/telegram/bots/price-changer-bot/store-picker';
 
@@ -16,6 +19,28 @@ const store = (
   businessId,
   businessName,
   storeName,
+});
+
+describe('storeLabel: подпись различает кампании', () => {
+  it('добавляет модель размещения (FBS/FBY), когда она есть', () => {
+    // Боевой случай: 3 FBS + 1 FBY в одном бизнесе без домена — без пометки
+    // все выглядят одинаково.
+    expect(storeLabel({ ...store('1', '10', 'SBrand', 'SBrand'), placementType: 'FBY' })).toBe(
+      'SBrand · FBY',
+    );
+  });
+
+  it('без модели размещения — просто название', () => {
+    expect(storeLabel(store('1', '10', 'Кабинет', 'shop.ru'))).toBe('shop.ru');
+  });
+});
+
+it('префиксы онбординга и смены не пересекаются', () => {
+  // ^store_switch: не должен ловить store_pick: и наоборот — иначе смена
+  // магазина уводила бы в онбординговый черновик.
+  expect(PICK_STORE_SWITCH_PREFIX).not.toBe(PICK_STORE_PREFIX);
+  expect(PICK_STORE_SWITCH_PREFIX.startsWith(PICK_STORE_PREFIX)).toBe(false);
+  expect(`${PICK_STORE_SWITCH_PREFIX}123`.startsWith(PICK_STORE_PREFIX)).toBe(false);
 });
 
 describe('decidePick: сколько вопросов задать', () => {

@@ -6,11 +6,7 @@ import {
   settingsKeyboardRows,
   settingsText,
 } from '../../src/modules/telegram/bots/price-changer-bot/settings.text';
-import {
-  DEFAULT_RATES,
-  RATE_FIELDS,
-  rateCallback,
-} from '../../src/modules/yandex/reports/profit';
+import { DEFAULT_RATES, RATE_FIELDS, rateCallback } from '../../src/modules/yandex/reports/profit';
 import { profileText } from '../../src/modules/telegram/bots/price-changer-bot/profile.text';
 import { helpText } from '../../src/modules/telegram/bots/price-changer-bot/help.text';
 
@@ -264,12 +260,8 @@ describe('Кнопки правки ставок', () => {
       vostokDiscountPercent: 7,
     } as never).flat();
 
-    const commission = buttons.find(
-      (b) => b.callback_data === rateCallback('commissionPercent'),
-    )!;
-    const vostok = buttons.find(
-      (b) => b.callback_data === rateCallback('vostokDiscountPercent'),
-    )!;
+    const commission = buttons.find((b) => b.callback_data === rateCallback('commissionPercent'))!;
+    const vostok = buttons.find((b) => b.callback_data === rateCallback('vostokDiscountPercent'))!;
 
     expect(commission.text).toContain('25%');
     expect(vostok.text).toContain('7%');
@@ -285,6 +277,20 @@ describe('Кнопки правки ставок', () => {
     }
     // Выход из экрана остаётся: тупик без единой кнопки хуже.
     expect(buttons).toHaveLength(1);
+  });
+
+  it('кнопка «Сменить магазин» есть у подключённого и отсутствует без магазина', () => {
+    // Один токен открывает несколько кампаний; переключать нечего, пока магазин
+    // не подключён.
+    const connected = settingsKeyboardRows(STORE)
+      .flat()
+      .some((b) => b.callback_data === 'switch_store');
+    const notConnected = settingsKeyboardRows(null)
+      .flat()
+      .some((b) => b.callback_data === 'switch_store');
+
+    expect(connected).toBe(true);
+    expect(notConnected).toBe(false);
   });
 
   it('в подписях кнопок нет идентификаторов магазина', () => {

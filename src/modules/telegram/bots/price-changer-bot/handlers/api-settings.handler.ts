@@ -44,9 +44,12 @@ import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { settingsKeyboardRows, settingsText } from '../settings.text';
 import {
   PICK_BUSINESS_PREFIX,
+  PICK_BUSINESS_SWITCH_PREFIX,
   PICK_STORE_PREFIX,
+  PICK_STORE_SWITCH_PREFIX,
   decidePick,
   groupByBusiness,
+  storeLabel,
   uniqueLabels,
   type IBusinessGroup,
 } from '../store-picker';
@@ -158,6 +161,46 @@ export class ApiSettingsHandler {
       } catch (error) {
         this.logger.error('Не удалось подключить выбранный магазин', error as Error);
         await ctx.reply('❌ Не удалось подключить магазин. Попробуйте ещё раз.');
+      }
+    });
+
+    // Смена магазина уже подключённым продавцом. Отдельный путь от онбординга:
+    // токен берётся из YandexMarket (не из черновика), выбор пишется прямо в
+    // YandexMarket. Регистрируется здесь (до общего callback_query), иначе
+    // default-ветка ответила бы «Неизвестная команда».
+    bot.action(/^switch_store$/, async (ctx) => {
+      await ctx.answerCbQuery();
+      try {
+        await this.startSwitch(ctx);
+      } catch (error) {
+        this.logger.error('Не удалось начать смену магазина', error as Error);
+        await ctx.reply('❌ Не удалось получить список магазинов. Попробуйте позже.');
+      }
+    });
+
+    bot.action(new RegExp(`^${PICK_BUSINESS_SWITCH_PREFIX}`), async (ctx) => {
+      await ctx.answerCbQuery();
+      const businessId = this.callbackTail(ctx, PICK_BUSINESS_SWITCH_PREFIX);
+      const stores = await this.storesFromLiveToken(ctx);
+      const group = groupByBusiness(stores).find((g) => g.businessId === businessId);
+
+      if (!group) {
+        await ctx.reply('Не удалось получить список магазинов. Попробуйте позже.');
+        return;
+      }
+      await this.askStore(ctx, group.stores, {
+        prefix: PICK_STORE_SWITCH_PREFIX,
+        currentCampaignId: await this.currentCampaignId(ctx),
+      });
+    });
+
+    bot.action(new RegExp(`^${PICK_STORE_SWITCH_PREFIX}`), async (ctx) => {
+      await ctx.answerCbQuery();
+      try {
+        await this.switchStorePick(ctx);
+      } catch (error) {
+        this.logger.error('Не удалось переключить магазин', error as Error);
+        await ctx.reply('❌ Не удалось переключить магазин. Попробуйте ещё раз.');
       }
     });
 
@@ -567,6 +610,85 @@ export class ApiSettingsHandler {
     }
   }
 
+  /**
+   * Список магазинов для СМЕНЫ: токен берём из подключённого документа настроек,
+   * а не из черновика (после онбординга он стёрт). Список не кэшируем — как и в
+   * онбординге, один свежий запрос надёжнее протухающего кэша.
+   */
+  private async storesFromLiveToken(ctx: Context): Promise<IStoreRef[]> {
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    const token = store?.token;
+    if (!token) return [];
+
+    try {
+      return await this.clients.forTokenOnly(token).listStores();
+    } catch (error) {
+      this.logger.warn(
+        `Не удалось получить магазины для смены: ${
+          error instanceof Error ? error.constructor.name : 'неизвестная ошибка'
+        }`,
+      );
+      return [];
+    }
+  }
+
+  /** Активная кампания подключённого магазина — чтобы пометить её «✓» в пикере. */
+  private async currentCampaignId(ctx: Context): Promise<string | undefined> {
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    return store?.campaign_id;
+  }
+
+  /**
+   * Кнопка «🏪 Сменить магазин»: показать магазины токена и предложить выбор.
+   * Один магазин — переключать не на что; несколько кабинетов — сперва кабинет.
+   */
+  private async startSwitch(ctx: Context): Promise<void> {
+    const stores = await this.storesFromLiveToken(ctx);
+    const pick = decidePick(stores);
+
+    if (pick.kind === 'none') {
+      await ctx.reply('Не удалось получить список магазинов. Попробуйте позже.', htmlOptions());
+      return;
+    }
+    if (pick.kind === 'single') {
+      await ctx.reply('У вас один магазин — переключать не на что.', htmlOptions());
+      return;
+    }
+
+    const current = await this.currentCampaignId(ctx);
+    if (pick.kind === 'business') {
+      await this.askBusiness(ctx, pick.groups, { prefix: PICK_BUSINESS_SWITCH_PREFIX });
+      return;
+    }
+    await this.askStore(ctx, pick.stores, {
+      prefix: PICK_STORE_SWITCH_PREFIX,
+      currentCampaignId: current,
+    });
+  }
+
+  /**
+   * Выбран магазин для смены: перезаписываем campaign_id/business_id/name в том
+   * же документе. Токен и ставки прибыли не трогаем — продавец тот же.
+   */
+  private async switchStorePick(ctx: Context): Promise<void> {
+    const campaignId = this.callbackTail(ctx, PICK_STORE_SWITCH_PREFIX);
+    const stores = await this.storesFromLiveToken(ctx);
+    const store = stores.find((s) => s.campaignId === campaignId);
+
+    if (!store) {
+      await ctx.reply('Не удалось получить данные магазина. Попробуйте позже.', htmlOptions());
+      return;
+    }
+
+    await this.yandexMarketService.updateByTelegramUser(ctx.from.id.toString(), {
+      campaign_id: store.campaignId,
+      business_id: store.businessId,
+      name: store.storeName,
+    });
+
+    await ctx.reply(`✅ Магазин переключён: ${b(store.storeName)}`, htmlOptions());
+  }
+
   /** Сохранить выбранный магазин в черновик и подтвердить пользователю. */
   private async applyStore(
     ctx: Context,
@@ -594,7 +716,12 @@ export class ApiSettingsHandler {
     return saved?.draft ?? draft;
   }
 
-  private async askBusiness(ctx: Context, groups: IBusinessGroup[]): Promise<void> {
+  private async askBusiness(
+    ctx: Context,
+    groups: IBusinessGroup[],
+    opts: { prefix?: string } = {},
+  ): Promise<void> {
+    const prefix = opts.prefix ?? PICK_BUSINESS_PREFIX;
     const labels = uniqueLabels(groups.map((g) => g.businessName));
 
     await ctx.reply(
@@ -602,22 +729,36 @@ export class ApiSettingsHandler {
       htmlOptions({
         reply_markup: {
           inline_keyboard: groups.map((g, i) => [
-            { text: labels[i], callback_data: `${PICK_BUSINESS_PREFIX}${g.businessId}` },
+            { text: labels[i], callback_data: `${prefix}${g.businessId}` },
           ]),
         },
       }),
     );
   }
 
-  private async askStore(ctx: Context, stores: IStoreRef[]): Promise<void> {
-    const labels = uniqueLabels(stores.map((s) => s.storeName));
+  /**
+   * `prefix` различает онбординг (`store_pick:`) и смену (`store_switch:`).
+   * `currentCampaignId` помечает текущий магазин «✓» — при смене видно, где
+   * стоишь сейчас. Подпись включает FBS/FBY (storeLabel), иначе кампании одного
+   * бизнеса без домена неразличимы.
+   */
+  private async askStore(
+    ctx: Context,
+    stores: IStoreRef[],
+    opts: { prefix?: string; currentCampaignId?: string } = {},
+  ): Promise<void> {
+    const prefix = opts.prefix ?? PICK_STORE_PREFIX;
+    const labels = uniqueLabels(stores.map((s) => storeLabel(s)));
 
     await ctx.reply(
       'Выберите магазин:',
       htmlOptions({
         reply_markup: {
           inline_keyboard: stores.map((s, i) => [
-            { text: labels[i], callback_data: `${PICK_STORE_PREFIX}${s.campaignId}` },
+            {
+              text: s.campaignId === opts.currentCampaignId ? `✓ ${labels[i]}` : labels[i],
+              callback_data: `${prefix}${s.campaignId}`,
+            },
           ]),
         },
       }),

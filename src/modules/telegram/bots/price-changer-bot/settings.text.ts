@@ -132,6 +132,10 @@ export function settingsKeyboardRows(
         })),
       );
     }
+
+    // Смена магазина — только когда он подключён: один токен открывает
+    // несколько кампаний, и продавцу может понадобиться другая.
+    rows.push([{ text: '🏪 Сменить магазин', callback_data: 'switch_store' }]);
   }
 
   rows.push([{ text: MENU.MAIN, callback_data: 'main_menu' }]);

@@ -13,6 +13,29 @@ import type { IStoreRef } from '../../../yandex/yandex-api.client';
 export const PICK_BUSINESS_PREFIX = 'store_pick_business:';
 export const PICK_STORE_PREFIX = 'store_pick:';
 
+/**
+ * Отдельные префиксы для СМЕНЫ магазина уже подключённым продавцом.
+ *
+ * Онбординговый `store_pick:` жёстко завязан на черновик (пишет в
+ * UserAccess.draft, читает токен из draft.token), а после подключения черновик
+ * стёрт. Живая смена — зеркальные концы: токен из YandexMarket, запись в
+ * YandexMarket. Поэтому отдельный путь, а не флаг на общем. Двоеточие после
+ * `switch` не даёт `^store_switch:` совпасть со `store_switch_business:`.
+ */
+export const PICK_BUSINESS_SWITCH_PREFIX = 'store_switch_business:';
+export const PICK_STORE_SWITCH_PREFIX = 'store_switch:';
+
+/**
+ * Подпись магазина для кнопки: домен/кабинет + модель размещения (FBS/FBY).
+ *
+ * Без модели у одного бизнеса без домена все кампании сворачиваются в одно
+ * название и выбор становится лотереей — ровно случай боевого аккаунта
+ * (3×FBS + 1×FBY в одном кабинете).
+ */
+export function storeLabel(store: IStoreRef): string {
+  return store.placementType ? `${store.storeName} · ${store.placementType}` : store.storeName;
+}
+
 export interface IBusinessGroup {
   businessId: string;
   businessName: string;
