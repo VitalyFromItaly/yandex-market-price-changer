@@ -72,6 +72,7 @@ describe('Перевод в cron', () => {
 describe('ReportScheduleService', () => {
   let findOneAndUpdate: ReturnType<typeof vi.fn>;
   let find: ReturnType<typeof vi.fn>;
+  let deleteMany: ReturnType<typeof vi.fn>;
   let service: ReportScheduleService;
 
   const KEY = { telegramUserId: '222', botId: '999', reportKey: 'redeemed' };
@@ -80,13 +81,14 @@ describe('ReportScheduleService', () => {
   beforeEach(async () => {
     findOneAndUpdate = vi.fn(() => exec({ ...KEY, enabled: false, time: '09:00' }));
     find = vi.fn(() => exec([]));
+    deleteMany = vi.fn(() => exec({ deletedCount: 3 }));
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         ReportScheduleService,
         {
           provide: getModelToken(ReportSchedule.name),
-          useValue: { findOneAndUpdate, find, findOne: () => exec(null) },
+          useValue: { findOneAndUpdate, find, deleteMany, findOne: () => exec(null) },
         },
       ],
     }).compile();
@@ -147,5 +149,14 @@ describe('ReportScheduleService', () => {
   it('сверка при старте берёт только включённые', async () => {
     await service.listEnabled();
     expect(find.mock.calls[0][0]).toEqual({ enabled: true });
+  });
+
+  it('deleteForUser сносит расписания по паре (пользователь × бот)', async () => {
+    // Ключ — пара с botId, как у записи доступа: у одного telegramUserId в
+    // разных ботах свои расписания, чужие трогать нельзя.
+    const removed = await service.deleteForUser('222', '999');
+
+    expect(deleteMany).toHaveBeenCalledWith({ telegramUserId: '222', botId: '999' });
+    expect(removed).toBe(3);
   });
 });

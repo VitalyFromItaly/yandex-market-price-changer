@@ -5,6 +5,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   NotFoundException,
   Param,
@@ -14,6 +15,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
+import { PurchasePriceService } from '../../database/services/purchase-price.service';
+import { ReportScheduleService } from '../../database/services/report-schedule.service';
 import { UserAccessService } from '../../database/services/user-access.service';
 import { YandexMarketService } from '../../database/services/yandex-market.service';
 import { AdminJwtGuard } from '../admin/admin-jwt.guard';
@@ -55,6 +58,8 @@ export class AccessController {
   constructor(
     private readonly access: UserAccessService,
     private readonly stores: YandexMarketService,
+    private readonly prices: PurchasePriceService,
+    private readonly schedules: ReportScheduleService,
     private readonly notifier: AccessNotifierService,
   ) {}
 
@@ -177,6 +182,47 @@ export class AccessController {
     void this.notifier.notify(updated, body.approved);
 
     return await this.withStore(updated);
+  }
+
+  /**
+   * Полностью удалить пользователя — кнопка «Удалить» на карточке продавца.
+   *
+   * Стираем запись доступа И связанные с продавцом данные: магазин (токен),
+   * закупочные цены и расписания рассылки. Журнал действий (`actionlogs`) НЕ
+   * трогаем — это аудит, секреты в нём замаскированы, а TTL сам его чистит.
+   *
+   * После удаления продавец может зарегистрироваться заново: следующий `/start`
+   * пересоздаёт свежую запись `new`, а мастер перезапишет остаточный магазин
+   * (но мы его всё равно чистим — «удалить» значит удалить).
+   *
+   * Продавцу НЕ шлём уведомление, в отличие от закрытия доступа: удаление —
+   * административная уборка, а «вас удалили» продавцу бессмысленно (он просто
+   * пройдёт регистрацию снова).
+   */
+  @Delete('users/:telegramUserId')
+  async remove(
+    @Param('telegramUserId') telegramUserId: string,
+    @Query('botId') botId: string,
+  ): Promise<{ ok: true }> {
+    if (!botId) {
+      throw new BadRequestException('botId: обязателен — запись доступа уникальна парой с ним');
+    }
+
+    // Сначала запись доступа: её отсутствие — это 404, а не «удалили пустоту».
+    const existed = await this.access.deleteByUserAndBot(telegramUserId, botId);
+    if (!existed) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+
+    // Остальные данные — идемпотентно (deleteMany по отсутствующему вернёт 0),
+    // одним заходом: между собой они не зависят.
+    await Promise.all([
+      this.stores.deleteByTelegramUser(telegramUserId),
+      this.prices.deleteForUser(telegramUserId),
+      this.schedules.deleteForUser(telegramUserId, botId),
+    ]);
+
+    return { ok: true };
   }
 
   /** Одна строка вместе с её магазином — для методов, отдающих одного продавца. */

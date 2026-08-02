@@ -468,4 +468,17 @@ export class UserAccessService {
       )
       .exec();
   }
+
+  /**
+   * Полностью удалить запись доступа продавца.
+   *
+   * Возвращает `false`, если удалять было нечего, — контроллер по этому признаку
+   * отвечает 404, а не молча делает вид, что удалил несуществующего. После
+   * удаления следующий `/start` пересоздаёт свежую запись `new` (см. гейт),
+   * поэтому продавец может зарегистрироваться заново.
+   */
+  async deleteByUserAndBot(telegramUserId: string, botId: string): Promise<boolean> {
+    const result = await this.model.deleteOne({ telegramUserId, botId }).exec();
+    return result.deletedCount > 0;
+  }
 }

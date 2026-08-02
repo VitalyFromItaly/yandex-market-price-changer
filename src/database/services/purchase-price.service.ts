@@ -125,4 +125,14 @@ export class PurchasePriceService {
   async countForUser(telegramUserId: string): Promise<number> {
     return await this.model.countDocuments({ telegramUserId }).exec();
   }
+
+  /**
+   * Удалить все закупочные цены продавца — при удалении пользователя из панели.
+   * Ключ здесь только `telegramUserId` (цены пишутся без botId). Возвращает
+   * число удалённых строк; ноль — нормальный ответ, прайс мог и не грузиться.
+   */
+  async deleteForUser(telegramUserId: string): Promise<number> {
+    const result = await this.model.deleteMany({ telegramUserId }).exec();
+    return result.deletedCount ?? 0;
+  }
 }

@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import type { IFeature, IUserRow } from '../api';
 
-import { fetchFeatures, fetchUser, setUserApproved, setUserFeature } from '../api';
+import { deleteUser, fetchFeatures, fetchUser, setUserApproved, setUserFeature } from '../api';
 import { describeError, token } from '../auth';
+import ConfirmModal from '../components/ConfirmModal.vue';
 import ToggleSwitch from '../components/ToggleSwitch.vue';
 import { STATUS_LABEL, displayName, isApproved } from '../users.domain';
 
 const props = defineProps<{ botId: string; telegramUserId: string }>();
+const router = useRouter();
 
 const user = ref<IUserRow | null>(null);
 const features = ref<IFeature[]>([]);
@@ -16,6 +19,9 @@ const loading = ref(false);
 /** Ключ фичи, которая прямо сейчас сохраняется; 'status' — тумблер доступа. */
 const saving = ref('');
 const loadError = ref('');
+/** Открыта ли модалка подтверждения удаления и идёт ли само удаление. */
+const showConfirm = ref(false);
+const deleting = ref(false);
 
 const approved = computed(() => !!user.value && isApproved(user.value));
 
@@ -69,6 +75,27 @@ function toggleAccess(value: boolean): void {
 
 function toggleFeature(key: string, value: boolean): void {
   void save(key, (row) => setUserFeature(token.value!, row, key, value));
+}
+
+/**
+ * Удалить продавца. На успехе уходим к списку — карточки больше нет. При ошибке
+ * остаёмся, показываем её и закрываем модалку (состояние сервера не изменилось).
+ */
+async function remove(): Promise<void> {
+  if (!token.value || !user.value) return;
+
+  deleting.value = true;
+  loadError.value = '';
+
+  try {
+    await deleteUser(token.value, user.value);
+    await router.push({ name: 'users' });
+  } catch (error) {
+    loadError.value = describeError(error);
+    showConfirm.value = false;
+  } finally {
+    deleting.value = false;
+  }
 }
 </script>
 
@@ -130,6 +157,36 @@ function toggleFeature(key: string, value: boolean): void {
         />
       </div>
     </section>
+
+    <section>
+      <h2>Удаление</h2>
+      <div class="item">
+        <div class="text">
+          <span class="label">Удалить пользователя</span>
+          <span class="muted">
+            Сотрёт доступ, магазин с токеном, закупочные цены и расписания рассылки. Журнал действий
+            останется. После удаления продавец сможет зарегистрироваться заново.
+          </span>
+        </div>
+        <button
+          type="button"
+          class="danger"
+          :disabled="!!saving || deleting"
+          @click="showConfirm = true"
+        >
+          Удалить
+        </button>
+      </div>
+    </section>
+
+    <ConfirmModal
+      v-if="showConfirm"
+      title="Удалить пользователя?"
+      :message="`${displayName(user)} будет удалён вместе с магазином, закупочными ценами и расписаниями. Действие необратимо, но продавец сможет зарегистрироваться заново.`"
+      :busy="deleting"
+      @confirm="remove"
+      @cancel="showConfirm = false"
+    />
   </template>
 </template>
 

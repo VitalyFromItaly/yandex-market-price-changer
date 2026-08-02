@@ -109,4 +109,14 @@ export class ReportScheduleService {
   async listEnabled(): Promise<ReportScheduleDocument[]> {
     return await this.model.find({ enabled: true }).exec();
   }
+
+  /**
+   * Удалить все расписания продавца в этом боте — при удалении пользователя из
+   * панели. Ключ — пара `(telegramUserId, botId)`, как и у записи доступа.
+   * Возвращает число удалённых; ноль — нормально, рассылку могли не настраивать.
+   */
+  async deleteForUser(telegramUserId: string, botId: string): Promise<number> {
+    const result = await this.model.deleteMany({ telegramUserId, botId }).exec();
+    return result.deletedCount ?? 0;
+  }
 }

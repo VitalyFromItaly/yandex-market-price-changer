@@ -17,6 +17,7 @@ import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain'
 describe('UserAccessService: атомарность переходов', () => {
   let findOneAndUpdate: ReturnType<typeof vi.fn>;
   let updateOne: ReturnType<typeof vi.fn>;
+  let deleteOne: ReturnType<typeof vi.fn>;
   let service: UserAccessService;
 
   const exec = <T>(value: T) => ({ exec: async () => value });
@@ -24,13 +25,14 @@ describe('UserAccessService: атомарность переходов', () => {
   beforeEach(async () => {
     findOneAndUpdate = vi.fn(() => exec({ status: 'new' }));
     updateOne = vi.fn(() => exec({ acknowledged: true }));
+    deleteOne = vi.fn(() => exec({ deletedCount: 1 }));
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         UserAccessService,
         {
           provide: getModelToken(UserAccess.name),
-          useValue: { findOneAndUpdate, updateOne, findOne: () => exec(null) },
+          useValue: { findOneAndUpdate, updateOne, deleteOne, findOne: () => exec(null) },
         },
       ],
     }).compile();
@@ -209,5 +211,15 @@ describe('UserAccessService: атомарность переходов', () => {
     for (const c of findOneAndUpdate.mock.calls) {
       expect(c[filter]).toMatchObject({ telegramUserId: '1', botId: '2' });
     }
+  });
+
+  it('deleteByUserAndBot удаляет по паре и возвращает, было ли что удалять', async () => {
+    // Скоуп парой обязателен и здесь: удаление по одному telegramUserId снесло
+    // бы запись этого же продавца в другом боте.
+    expect(await service.deleteByUserAndBot('1', '2')).toBe(true);
+    expect(deleteOne).toHaveBeenCalledWith({ telegramUserId: '1', botId: '2' });
+
+    deleteOne.mockReturnValueOnce(exec({ deletedCount: 0 }));
+    expect(await service.deleteByUserAndBot('1', '2')).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 /**
  * Модель Mongoose в памяти — ровно в том объёме, который используют сервисы:
  * findOne / find / findOneAndUpdate (с $set, $setOnInsert, $unset и upsert) /
- * create / updateOne / deleteOne / countDocuments / bulkWrite, сортировка в
+ * create / updateOne / deleteOne / deleteMany / countDocuments / bulkWrite, сортировка в
  * findOne, оператор $in в фильтре, плюс `new Model(doc).save()`.
  *
  * Зачем не mongodb-memory-server и не живая Mongo: сквозной тест должен идти
@@ -93,6 +93,7 @@ export interface IInMemoryModel {
   ): { exec(): Promise<TDoc | null> };
   updateOne(filter: TDoc, update: TDoc): { exec(): Promise<{ acknowledged: true }> };
   deleteOne(filter: TDoc): { exec(): Promise<{ deletedCount: number }> };
+  deleteMany(filter: TDoc): { exec(): Promise<{ deletedCount: number }> };
 }
 
 export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
@@ -238,6 +239,18 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
           if (index < 0) return { deletedCount: 0 };
           documents.splice(index, 1);
           return { deletedCount: 1 };
+        },
+      };
+    }
+
+    static deleteMany(filter: TDoc) {
+      return {
+        exec: async () => {
+          const kept = documents.filter((d) => !matches(d, filter));
+          const deletedCount = documents.length - kept.length;
+          documents.length = 0;
+          documents.push(...kept);
+          return { deletedCount };
         },
       };
     }

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
+import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
+import { ReportScheduleService } from '../../src/database/services/report-schedule.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { AccessNotifierService } from '../../src/modules/access/access-notifier.service';
@@ -46,6 +48,10 @@ describe('AccessController', () => {
   let findByTelegramUsers: ReturnType<typeof vi.fn>;
   let findByTelegramUser: ReturnType<typeof vi.fn>;
   let notify: ReturnType<typeof vi.fn>;
+  let deleteByUserAndBot: ReturnType<typeof vi.fn>;
+  let deleteByTelegramUser: ReturnType<typeof vi.fn>;
+  let deletePricesForUser: ReturnType<typeof vi.fn>;
+  let deleteSchedulesForUser: ReturnType<typeof vi.fn>;
   let controller: AccessController;
 
   beforeEach(async () => {
@@ -56,15 +62,24 @@ describe('AccessController', () => {
     findByTelegramUsers = vi.fn(async () => [STORE]);
     findByTelegramUser = vi.fn(async () => STORE);
     notify = vi.fn(async () => undefined);
+    deleteByUserAndBot = vi.fn(async () => true);
+    deleteByTelegramUser = vi.fn(async () => true);
+    deletePricesForUser = vi.fn(async () => 4100);
+    deleteSchedulesForUser = vi.fn(async () => 2);
 
     const moduleRef = await Test.createTestingModule({
       controllers: [AccessController],
       providers: [
         {
           provide: UserAccessService,
-          useValue: { list, setFeature, setApproved, findByUserAndBot },
+          useValue: { list, setFeature, setApproved, findByUserAndBot, deleteByUserAndBot },
         },
-        { provide: YandexMarketService, useValue: { findByTelegramUsers, findByTelegramUser } },
+        {
+          provide: YandexMarketService,
+          useValue: { findByTelegramUsers, findByTelegramUser, deleteByTelegramUser },
+        },
+        { provide: PurchasePriceService, useValue: { deleteForUser: deletePricesForUser } },
+        { provide: ReportScheduleService, useValue: { deleteForUser: deleteSchedulesForUser } },
         { provide: AccessNotifierService, useValue: { notify } },
         // Гвард висит на классе, поэтому Nest поднимает его вместе с
         // контроллером. Здесь проверяется НАЛИЧИЕ гварда, а его собственная
@@ -241,6 +256,39 @@ describe('AccessController', () => {
       await expect(
         controller.setStatus('404', { botId: '999', approved: true }, req),
       ).rejects.toBeInstanceOf(NotFoundException);
+      expect(notify).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('удаление пользователя', () => {
+    it('стирает доступ И все связанные данные, кроме журнала', async () => {
+      const result = await controller.remove('222', '999');
+
+      expect(deleteByUserAndBot).toHaveBeenCalledWith('222', '999');
+      expect(deleteByTelegramUser).toHaveBeenCalledWith('222');
+      expect(deletePricesForUser).toHaveBeenCalledWith('222');
+      // Расписания — по паре с botId, как и запись доступа.
+      expect(deleteSchedulesForUser).toHaveBeenCalledWith('222', '999');
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('без botId отвергается — запись уникальна парой с ним', async () => {
+      await expect(controller.remove('222', '')).rejects.toBeInstanceOf(BadRequestException);
+      expect(deleteByUserAndBot).not.toHaveBeenCalled();
+    });
+
+    it('неизвестный пользователь — 404, и связанные данные не трогаем', async () => {
+      // Нечего удалять: запись доступа отсутствует. Иначе панель отрапортовала
+      // бы об успешном удалении несуществующего.
+      deleteByUserAndBot.mockResolvedValueOnce(false);
+      await expect(controller.remove('404', '999')).rejects.toBeInstanceOf(NotFoundException);
+      expect(deleteByTelegramUser).not.toHaveBeenCalled();
+      expect(deletePricesForUser).not.toHaveBeenCalled();
+      expect(deleteSchedulesForUser).not.toHaveBeenCalled();
+    });
+
+    it('уведомление продавцу НЕ шлётся — удаление это уборка, а не смена статуса', async () => {
+      await controller.remove('222', '999');
       expect(notify).not.toHaveBeenCalled();
     });
   });

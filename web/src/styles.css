@@ -46,7 +46,13 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  font:
+    15px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Arial,
+    sans-serif;
   /* Без этого macOS рендерит шрифт заметно жирнее, чем задумано. */
   -webkit-font-smoothing: antialiased;
 }
@@ -83,6 +89,19 @@ button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+/* Разрушающее действие (удаление). Красная заливка, а не только текст: цвет
+   здесь — предупреждение, а не украшение. */
+button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+button.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  opacity: 0.9;
 }
 
 input,

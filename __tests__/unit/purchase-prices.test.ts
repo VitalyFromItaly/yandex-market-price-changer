@@ -139,4 +139,21 @@ describe('PurchasePriceService', () => {
     expect(costs.has('A1')).toBe(true);
     expect(costs.get('A1').price).toBe(0);
   });
+
+  it('deleteForUser сносит цены только этого продавца и возвращает их число', async () => {
+    // Скоуп по telegramUserId: удаление одного продавца из панели не должно
+    // задеть закуп другого.
+    await service.upsertMany(USER, [
+      { sku: 'A1', price: 100 },
+      { sku: 'B2', price: 200 },
+    ]);
+    await service.upsertMany(OTHER, [{ sku: 'A1', price: 999 }]);
+
+    expect(await service.deleteForUser(USER)).toBe(2);
+    expect(model.documents).toHaveLength(1);
+    expect(model.documents[0]).toMatchObject({ telegramUserId: OTHER });
+
+    // Повторное удаление — ноль, а не ошибка.
+    expect(await service.deleteForUser(USER)).toBe(0);
+  });
 });

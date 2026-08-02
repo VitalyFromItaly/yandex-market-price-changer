@@ -228,12 +228,21 @@ function patchUser(
   path: 'features' | 'status',
   body: Record<string, unknown>,
 ): Promise<IUserRow> {
-  return request<IUserRow>(
-    `/api/access/users/${encodeURIComponent(user.telegramUserId)}/${path}`,
-    {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ botId: user.botId, ...body }),
-    },
+  return request<IUserRow>(`/api/access/users/${encodeURIComponent(user.telegramUserId)}/${path}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ botId: user.botId, ...body }),
+  });
+}
+
+/**
+ * Полностью удалить продавца. Строку возвращать нечего — сервер отвечает
+ * `{ ok: true }`. `botId` — query-параметром, как у fetchUser: у DELETE тела нет.
+ */
+export async function deleteUser(token: string, user: IUserRow): Promise<void> {
+  const query = `?botId=${encodeURIComponent(user.botId)}`;
+  await request<{ ok: boolean }>(
+    `/api/access/users/${encodeURIComponent(user.telegramUserId)}${query}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
   );
 }
