@@ -6,6 +6,7 @@ import { FbyService } from '../../../../../modules/yandex/fby/fby.service';
 import { YandexApiError } from '../../../../../modules/yandex/yandex-api.errors';
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { htmlOptions } from '../../../formatting/telegram-format';
+import { StorePromptService } from '../../shared/services/store-prompt.service';
 
 /**
  * Сводка FBY одним экраном: остатки по типам, проблемные позиции, заявки на
@@ -30,6 +31,7 @@ export class FbyHandler {
     private readonly fby: FbyService,
     private readonly stores: YandexMarketService,
     private readonly errors: ErrorReporter,
+    private readonly storePrompt: StorePromptService,
   ) {}
 
   public async handle(ctx: Context): Promise<void> {
@@ -43,7 +45,7 @@ export class FbyHandler {
     try {
       const store = await this.stores.findByTelegramUser(ctx.from.id.toString());
       if (!store) {
-        await ctx.reply('⚠️ Сначала заполните настройки API.', htmlOptions());
+        await this.storePrompt.replyNeedsStore(ctx);
         return;
       }
 

@@ -9,6 +9,7 @@ import { formatStockReport } from '../../../../yandex/stocks/stock-report';
 import { StockSyncService } from '../../../../yandex/stocks/stock-sync.service';
 import { YandexApiError } from '../../../../yandex/yandex-api.errors';
 import { htmlOptions } from '../../../formatting/telegram-format';
+import { StorePromptService } from '../../shared/services/store-prompt.service';
 
 /**
  * Приём прайс-листа и обновление остатков.
@@ -41,6 +42,7 @@ export class StockUploadHandler {
     private readonly stocks: StockSyncService,
     private readonly yandexMarketService: YandexMarketService,
     private readonly errors: ErrorReporter,
+    private readonly storePrompt: StorePromptService,
   ) {}
 
   public register(bot: TTelegrafBot): void {
@@ -90,7 +92,7 @@ export class StockUploadHandler {
     // Креды проверяем ДО скачивания: без них загрузка бессмысленна.
     const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
     if (!store?.campaign_id || !store?.business_id || !store?.token) {
-      await ctx.reply('⚠️ Сначала заполните настройки API.', htmlOptions());
+      await this.storePrompt.replyNeedsStore(ctx);
       return;
     }
 

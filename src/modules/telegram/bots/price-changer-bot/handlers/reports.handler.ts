@@ -27,6 +27,7 @@ import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { isReportEnabled } from '../../shared/features.domain';
+import { StorePromptService } from '../../shared/services/store-prompt.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { REPORT_CB_PATTERN, parseReportCallback, reportCallback } from '../report-buttons';
 
@@ -57,6 +58,7 @@ export class ReportsHandler {
     private readonly keyboard: PriceChangerKeyboard,
     private readonly access: UserAccessService,
     private readonly errors: ErrorReporter,
+    private readonly storePrompt: StorePromptService,
   ) {}
 
   /**
@@ -140,6 +142,15 @@ export class ReportsHandler {
    * там была бы кнопкой, которая ничего не меняет.
    */
   public async handle(ctx: Context, key: TReportKey): Promise<void> {
+    // Нет магазина — сразу отвечаем «нужен магазин» и сбрасываем залипшее меню,
+    // не спрашивая период. Иначе для периодных отчётов клавиатура схлопнулась бы
+    // только после выбора периода (стена в run()), а тут — на первом нажатии.
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    if (!store) {
+      await this.storePrompt.replyNeedsStore(ctx);
+      return;
+    }
+
     if (key === REPORT.IN_TRANSIT) {
       await this.run(ctx, key, DEFAULT_PERIOD);
       return;
@@ -190,7 +201,9 @@ export class ReportsHandler {
 
       const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
       if (!store) {
-        await ctx.reply('⚠️ Сначала заполните настройки API.', htmlOptions());
+        // Путь ответа датой (handlePendingDay → run) минует handle, поэтому
+        // стена нужна и здесь — и тоже сбрасывает залипшее меню.
+        await this.storePrompt.replyNeedsStore(ctx);
         return;
       }
 

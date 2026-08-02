@@ -15,6 +15,8 @@ import {
 import { YandexAuthError, YandexRateLimitError } from '../../src/modules/yandex/yandex-api.errors';
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
+import { StorePromptService } from '../../src/modules/telegram/bots/shared/services/store-prompt.service';
+import { AppConfigService } from '../../src/config/app-config.service';
 import { DEFAULT_PERIOD } from '../../src/modules/yandex/reports/report-period';
 
 const STORE = { token: 'ACMA:x', campaign_id: '1', business_id: '2' };
@@ -93,11 +95,13 @@ async function build(
 
   const moduleRef = await Test.createTestingModule({
     providers: [
-        // Ловитель ошибок: в тестах он заглушка — предмет проверки здесь
-        // другой, а без провайдера DI не соберётся.
-        { provide: ErrorReporter, useValue: { report: async () => undefined } },
+      // Ловитель ошибок: в тестах он заглушка — предмет проверки здесь
+      // другой, а без провайдера DI не соберётся.
+      { provide: ErrorReporter, useValue: { report: async () => undefined } },
       ReportsHandler,
       PriceChangerKeyboard,
+      StorePromptService,
+      { provide: AppConfigService, useValue: { isAdmin: () => false } },
       { provide: OrderReportsService, useValue: reports },
       { provide: ProfitService, useValue: profit },
       { provide: YandexMarketService, useValue: yandexMarketService },
@@ -252,7 +256,7 @@ describe('ReportsHandler', () => {
     expect(last).not.toContain('ECONNREFUSED');
   });
 
-  it('без настроек API отчёт не запрашивается', async () => {
+  it('без настроек API отчёт не запрашивается и меню схлопывается', async () => {
     const { handler, reports } = await build({ store: null });
     const ctx = fakeCtx();
 
@@ -260,6 +264,27 @@ describe('ReportsHandler', () => {
 
     expect(reports.build).not.toHaveBeenCalled();
     expect(ctx.texts().at(-1)).toContain('настройки API');
+    // Залипшее полное меню заменяется сокращённым: приходит новый reply_markup
+    // без кнопок отчётов.
+    const options = ctx.reply.mock.calls.at(-1)[1] as {
+      reply_markup?: { keyboard?: string[][] };
+    };
+    const buttons = (options?.reply_markup?.keyboard ?? []).flat();
+    expect(buttons).toContain(MENU.SETTINGS);
+    expect(buttons).not.toContain(MENU.PROFIT);
+  });
+
+  it('без магазина кнопка периодного отчёта НЕ спрашивает период, а зовёт стену', async () => {
+    // Иначе продавец без магазина проходил бы бессмысленный выбор периода и
+    // только потом упирался в «нужен магазин».
+    const { handler, reports } = await build({ store: null });
+    const ctx = fakeCtx();
+
+    await handler.handle(ctx as never, REPORT.REDEEMED);
+
+    expect(ctx.texts().some((t) => t.includes('за какой период'))).toBe(false);
+    expect(ctx.texts().at(-1)).toContain('настройки API');
+    expect(reports.build).not.toHaveBeenCalled();
   });
 
   it('пустая выгрузка отправляет сообщение, а не документ', async () => {

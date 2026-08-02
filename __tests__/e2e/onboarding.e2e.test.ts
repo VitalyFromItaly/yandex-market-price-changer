@@ -32,6 +32,7 @@ import { StockSyncService } from '../../src/modules/yandex/stocks/stock-sync.ser
 import { FallbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/fallback.handler';
 import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
 import { AdminNotifierService } from '../../src/modules/telegram/bots/shared/services/admin-notifier.service';
+import { StorePromptService } from '../../src/modules/telegram/bots/shared/services/store-prompt.service';
 import { ReportSchedulerService } from '../../src/modules/telegram/queue/services/report-scheduler.service';
 
 import { UserAccessService } from '../../src/database/services/user-access.service';
@@ -193,6 +194,7 @@ describe('Онбординг: от /start до отчёта', () => {
         FallbackHandler,
         PriceChangerKeyboard,
         AdminNotifierService,
+        StorePromptService,
         UserAccessService,
         ReportScheduleService,
         YandexMarketService,

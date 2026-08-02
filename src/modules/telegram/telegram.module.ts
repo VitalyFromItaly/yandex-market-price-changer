@@ -26,6 +26,7 @@ import { WarehousesHandler } from './bots/price-changer-bot/handlers/warehouses.
 import { PriceChangerComposer } from './bots/price-changer-bot/price-changer.composer';
 import { PriceChangerKeyboard } from './bots/price-changer-bot/price-changer.keyboard';
 import { AdminNotifierService } from './bots/shared/services/admin-notifier.service';
+import { StorePromptService } from './bots/shared/services/store-prompt.service';
 import { FileProcessingProcessor } from './queue/processors/file-processing.processor';
 import { NotificationsProcessor } from './queue/processors/notifications.processor';
 import { ReportsProcessor } from './queue/processors/reports.processor';
@@ -101,6 +102,7 @@ import { QUEUE_NAMES } from './index';
     PriceChangerComposer,
     PriceChangerKeyboard,
     AdminNotifierService,
+    StorePromptService,
     AccessGateHandler,
     FeatureGateHandler,
     ActionLogHandler,

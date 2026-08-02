@@ -7,6 +7,7 @@ import { WarehousesService } from '../../../../../modules/yandex/warehouses/ware
 import { YandexApiError } from '../../../../../modules/yandex/yandex-api.errors';
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { htmlOptions } from '../../../formatting/telegram-format';
+import { StorePromptService } from '../../shared/services/store-prompt.service';
 
 /**
  * Обзор складов продавца по типам (FBY и склад магазина).
@@ -32,6 +33,7 @@ export class WarehousesHandler {
     private readonly warehouses: WarehousesService,
     private readonly stores: YandexMarketService,
     private readonly errors: ErrorReporter,
+    private readonly storePrompt: StorePromptService,
   ) {}
 
   public async handle(ctx: Context): Promise<void> {
@@ -45,7 +47,7 @@ export class WarehousesHandler {
     try {
       const store = await this.stores.findByTelegramUser(ctx.from.id.toString());
       if (!store) {
-        await ctx.reply('⚠️ Сначала заполните настройки API.', htmlOptions());
+        await this.storePrompt.replyNeedsStore(ctx);
         return;
       }
 
