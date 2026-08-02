@@ -86,7 +86,11 @@ export class CallbackQueryHandler {
             ctx.from.id.toString(),
             ctx.botInfo.id.toString(),
           );
-          const mainKeyboard = await this.keyboard.createMenuKeyboard(
+          // Без магазина возвращаем сокращённое меню — кнопки отчётов иначе
+          // ведут в тупик. Та же развилка, что в «Главное меню», /menu и /start.
+          const configured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
+          const mainKeyboard = await this.keyboard.buildMainKeyboard(
+            configured,
             this.config.isAdmin(ctx.from.id),
             account?.features,
           );

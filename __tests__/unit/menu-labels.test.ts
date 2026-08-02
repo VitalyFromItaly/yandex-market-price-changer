@@ -67,8 +67,8 @@ describe('меню: единственный источник подписей',
     // menuLayout(), то есть из menu.constants.
     expect(read('price-changer.keyboard.ts')).toContain('featureMenuLayout(');
     expect(read('../shared/features.domain.ts')).toContain('menuLayout()');
-    // Ветка main_menu — через ту же клавиатуру, а не своей раскладкой.
-    expect(read('handlers/callback-query.handler.ts')).toContain('createMenuKeyboard(');
+    // Ветка main_menu — через общий store-aware сборщик, а не своей раскладкой.
+    expect(read('handlers/callback-query.handler.ts')).toContain('buildMainKeyboard(');
     // Фильтр «это кнопка меню?» — через MENU_LABELS
     expect(read('handlers/api-settings.handler.ts')).toContain('MENU_LABELS');
   });

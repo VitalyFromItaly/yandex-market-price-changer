@@ -32,7 +32,10 @@ export class SlashCommandsHandler {
         ctx.from.id.toString(),
         ctx.botInfo.id.toString(),
       );
-      const keyboard = await this.keyboard.createMenuKeyboard(
+      // Без магазина — сокращённое меню, как в «Главное меню» и /start.
+      const configured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
+      const keyboard = await this.keyboard.buildMainKeyboard(
+        configured,
         this.config.isAdmin(ctx.from.id),
         account?.features,
       );

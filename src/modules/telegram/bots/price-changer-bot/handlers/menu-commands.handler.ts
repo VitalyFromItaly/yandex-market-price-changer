@@ -80,7 +80,12 @@ export class MenuCommandsHandler {
       ctx.from.id.toString(),
       ctx.botInfo.id.toString(),
     );
-    const keyboard = await this.keyboard.createMenuKeyboard(
+    // Без подключённого магазина — сокращённое меню: кнопки отчётов иначе
+    // ведут в тупик «сначала подключите магазин». Касается и администратора
+    // без своего магазина (он минует гейт, но не магазин).
+    const configured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
+    const keyboard = await this.keyboard.buildMainKeyboard(
+      configured,
       this.config.isAdmin(ctx.from.id),
       account?.features,
     );

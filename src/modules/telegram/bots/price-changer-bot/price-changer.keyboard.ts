@@ -33,6 +33,28 @@ export class PriceChangerKeyboard extends TelegramKeyboard {
     return await this.createKeyboard(isAdmin ? withAdminRow(layout) : layout);
   }
 
+  /**
+   * Главное меню С УЧЁТОМ подключённого магазина.
+   *
+   * Без магазина кнопки отчётов бессмысленны: каждая ответит «сначала подключите
+   * магазин». Поэтому несконфигуренному пользователю (в т.ч. администратору без
+   * своего магазина) отдаём сокращённую раскладку — настройки и помощь, а
+   * администратору ещё и ряд «Пользователи». С магазином — полное меню по фичам.
+   *
+   * Единственный источник этой развилки: `/start`, кнопка «Главное меню», /menu
+   * и inline-возврат в меню зовут ОДИН метод, иначе раскладка в них разъедется —
+   * та же беда, ради которой существует menu.constants.
+   */
+  public async buildMainKeyboard(
+    configured: boolean,
+    isAdmin = false,
+    features?: TFeatureMap,
+  ): Promise<Markup.Markup<any>> {
+    return configured
+      ? await this.createMenuKeyboard(isAdmin, features)
+      : await this.createUnconfiguredKeyboard(isAdmin);
+  }
+
   public async createStartKeyboard(commands: string[][] = []): Promise<Markup.Markup<any>> {
     // Раньше здесь добавлялись строка «Установить коэффициент цены» и строка
     // с ПУСТОЙ подписью [''] — последнюю Telegram отвергает как некорректную
