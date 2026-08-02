@@ -77,7 +77,6 @@ function catchProcessFailures(reporter: ErrorReporter): void {
 }
 
 bootstrap().catch((error) => {
-   
   console.error('Не удалось запустить приложение:', error);
   process.exit(1);
 });

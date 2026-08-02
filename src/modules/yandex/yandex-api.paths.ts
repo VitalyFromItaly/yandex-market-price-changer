@@ -22,6 +22,12 @@ export const API_VERSIONS = {
   offerMappings: 'v2',
   /** Остатки. Проверено: v2 -> 200, v1 -> 404 Resource not found. */
   stocks: 'v2',
+  /**
+   * Склады: список складов Маркета (FBY) и складов магазина (FBS/DBS/Express).
+   * Версия — v2, как и у остальных актуальных методов (campaigns/stocks/
+   * offerMappings): вся модель Partner API переехала на v2 одновременно.
+   */
+  warehouses: 'v2',
 } as const;
 
 export function campaignsPath(): string {
@@ -43,6 +49,23 @@ export function businessOrdersPath(businessId: string): string {
 /** Каталог товаров продавца (POST). Отдаёт offerId — это и есть артикул. */
 export function offerMappingsPath(businessId: string): string {
   return `/${API_VERSIONS.offerMappings}/businesses/${encodeURIComponent(businessId)}/offer-mappings`;
+}
+
+/**
+ * Склады Маркета (FBY), GET. Отдаёт идентификаторы и названия складов, на
+ * которых Маркет хранит товар по модели FBY. Кампания/бизнес не нужны —
+ * список общий для токена.
+ */
+export function fulfillmentWarehousesPath(): string {
+  return `/${API_VERSIONS.warehouses}/warehouses`;
+}
+
+/**
+ * Склады магазина (FBS/DBS/Express) и их группы, GET. В отличие от FBY,
+ * привязаны к бизнесу продавца: возвращаются его собственные склады отгрузки.
+ */
+export function businessWarehousesPath(businessId: string): string {
+  return `/${API_VERSIONS.warehouses}/businesses/${encodeURIComponent(businessId)}/warehouses`;
 }
 
 /**

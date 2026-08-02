@@ -6,7 +6,9 @@ import axios from 'axios';
 
 import { toYandexApiError } from './yandex-api.errors';
 import {
+  businessWarehousesPath,
   campaignsPath,
+  fulfillmentWarehousesPath,
   offerMappingsPath,
   ordersPath,
   PAGE_LIMITS,
@@ -83,6 +85,31 @@ export interface IStoreRef {
   businessName: string;
   /** Домен магазина. Внутри одного кабинета магазины различаются им. */
   storeName: string;
+}
+
+/**
+ * Склад в терминах обзора. `type` различает две принципиально разные модели:
+ * `fby` — склад Маркета, товар хранит Яндекс; `store` — собственный склад
+ * продавца, с которого он отгружает сам (FBS/DBS/Express).
+ */
+export interface IWarehouseInfo {
+  id: number;
+  name: string;
+  type: 'fby' | 'store';
+  /** Только для склада магазина: возможна ли экспресс-доставка. */
+  express?: boolean;
+  /** Только для склада магазина: имя группы, если склад в неё входит. */
+  groupName?: string;
+  /** Человекочитаемый адрес, если Маркет его вернул. */
+  address?: string;
+}
+
+/** Обзор складов продавца по типам. */
+export interface IWarehousesOverview {
+  /** Склады Маркета (FBY). */
+  fulfillment: IWarehouseInfo[];
+  /** Склады магазина (FBS/DBS/Express). */
+  store: IWarehouseInfo[];
 }
 
 /** Одна позиция для записи остатка. */
@@ -406,6 +433,64 @@ export class YandexApiClient {
     return id;
   }
 
+  /**
+   * Обзор складов по типам: FBY (склад Маркета) и склады магазина.
+   *
+   * Оба запроса — GET и только чтение. Идут ОДНИМ Promise.all: это разные
+   * методы разных разделов API, между собой не зависят, и ждать их
+   * последовательно незачем. Пустой список у любого типа — нормальный ответ:
+   * у продавца может не быть FBY вовсе, либо ни одного своего склада.
+   */
+  public async getWarehousesOverview(): Promise<IWarehousesOverview> {
+    const [fulfillment, store] = await Promise.all([
+      this.listFulfillmentWarehouses(),
+      this.listStoreWarehouses(),
+    ]);
+    return { fulfillment, store };
+  }
+
+  /** Склады Маркета (FBY). */
+  public async listFulfillmentWarehouses(): Promise<IWarehouseInfo[]> {
+    const data = await this.get<{
+      result?: { warehouses?: Array<{ id?: number; name?: string; address?: unknown }> };
+    }>(fulfillmentWarehousesPath(), {});
+
+    return (data.result?.warehouses ?? [])
+      .filter(
+        (w): w is { id: number; name?: string; address?: unknown } => typeof w?.id === 'number',
+      )
+      .map((w) => ({
+        id: w.id,
+        name: w.name ?? `Склад ${w.id}`,
+        type: 'fby' as const,
+        address: formatWarehouseAddress(w.address),
+      }));
+  }
+
+  /**
+   * Склады магазина (FBS/DBS/Express) и их группы.
+   *
+   * Склады, входящие в группу, приходят отдельным списком `warehouseGroups` и
+   * в общий `warehouses` не дублируются — поэтому собираем оба, помечая
+   * групповые именем группы.
+   */
+  public async listStoreWarehouses(): Promise<IWarehouseInfo[]> {
+    const data = await this.get<{
+      result?: {
+        warehouses?: Array<TRawStoreWarehouse>;
+        warehouseGroups?: Array<{ name?: string; warehouses?: Array<TRawStoreWarehouse> }>;
+      };
+    }>(businessWarehousesPath(this.credentials.businessId), {});
+
+    const standalone = (data.result?.warehouses ?? []).map((w) => toStoreWarehouse(w));
+
+    const grouped = (data.result?.warehouseGroups ?? []).flatMap((group) =>
+      (group.warehouses ?? []).map((w) => toStoreWarehouse(w, group.name)),
+    );
+
+    return [...standalone, ...grouped].filter((w): w is IWarehouseInfo => w !== null);
+  }
+
   private async get<T>(path: string, params: Record<string, unknown>): Promise<T> {
     // Логируем путь и кампанию, но НИКОГДА заголовки: там токен продавца.
     this.logger.debug(`GET ${path} (кампания ${this.credentials.campaignId})`);
@@ -489,6 +574,41 @@ function toReturnRecord(raw: unknown): IReturnRecord {
     partnerCompensationAmount: item.partnerCompensationAmount,
     raw,
   };
+}
+
+/** Сырой склад магазина из ответа Partner API. */
+type TRawStoreWarehouse = { id?: number; name?: string; express?: boolean; address?: unknown };
+
+/** Один склад магазина в терминах обзора, либо null, если у него нет id. */
+function toStoreWarehouse(raw: TRawStoreWarehouse, groupName?: string): IWarehouseInfo | null {
+  if (typeof raw?.id !== 'number') return null;
+  return {
+    id: raw.id,
+    name: raw.name ?? `Склад ${raw.id}`,
+    type: 'store',
+    express: !!raw.express,
+    groupName,
+    address: formatWarehouseAddress(raw.address),
+  };
+}
+
+/**
+ * Адрес склада одной строкой. Маркет присылает его разобранным на город/улицу/
+ * дом; собираем непустые части через запятую. Возвращаем undefined, если не
+ * пришло ничего, — в сообщении такая строка просто не печатается.
+ */
+function formatWarehouseAddress(address: unknown): string | undefined {
+  const a = (address ?? {}) as {
+    city?: string;
+    street?: string;
+    number?: string;
+    building?: string;
+    block?: string;
+  };
+  const parts = [a.city, a.street, a.number, a.building, a.block]
+    .map((part) => (typeof part === 'string' ? part.trim() : ''))
+    .filter((part) => part.length > 0);
+  return parts.length ? parts.join(', ') : undefined;
 }
 
 /** undefined-параметры убираем: axios иначе шлёт `?limit=50&status=`. */

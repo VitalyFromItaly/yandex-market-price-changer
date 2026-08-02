@@ -17,6 +17,7 @@ import { AdminUsersHandler } from './admin-users.handler';
 import { ReportsHandler } from './reports.handler';
 import { ScheduleHandler } from './schedule.handler';
 import { SharedCommandsHandler } from './shared-commands.handler';
+import { WarehousesHandler } from './warehouses.handler';
 
 @Injectable()
 export class MenuCommandsHandler {
@@ -27,6 +28,7 @@ export class MenuCommandsHandler {
     private adminUsers: AdminUsersHandler,
     private reportsHandler: ReportsHandler,
     private scheduleHandler: ScheduleHandler,
+    private warehousesHandler: WarehousesHandler,
     private accessService: UserAccessService,
     private config: AppConfigService,
   ) {}
@@ -50,6 +52,9 @@ export class MenuCommandsHandler {
       this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.IN_TRANSIT]),
     );
     bot.hears(MENU.PROFIT, (ctx) => this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.PROFIT]));
+    // Обзор складов. Работа — в WarehousesHandler; здесь только пара
+    // «метка ↔ hears», которую требует инвариант menu-labels.
+    bot.hears(MENU.WAREHOUSES, (ctx) => this.warehousesHandler.handle(ctx));
     bot.hears(MENU.SCHEDULE, (ctx) => this.scheduleHandler.showMenu(ctx));
     bot.hears(MENU.SETTINGS, (ctx) => this.showApiSettings(ctx));
     bot.hears(MENU.PROFILE, (ctx) => this.showProfile(ctx));

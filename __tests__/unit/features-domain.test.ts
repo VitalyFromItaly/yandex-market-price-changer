@@ -51,11 +51,14 @@ describe('Реестр возможностей', () => {
     expect(new Set(FEATURE_KEYS).size).toBe(FEATURE_KEYS.length);
   });
 
-  it('сегодня все возможности открыты по умолчанию', () => {
+  it('старые возможности открыты по умолчанию, новая — нет', () => {
     // Флаги появились позже самих функций: существующие продавцы не должны
-    // были ничего потерять, и разовой миграции для этого не потребовалось.
+    // были ничего потерять, и разовой миграции для этого не потребовалось —
+    // все прежние фичи остаются default-on. «Склады» — первая обкатываемая
+    // функция, введённая с default-off: она включается точечно из панели.
     for (const key of FEATURE_KEYS) {
-      expect(FEATURE_META[key].defaultEnabled).toBe(true);
+      const expected = key === FEATURE.WAREHOUSES ? false : true;
+      expect(FEATURE_META[key].defaultEnabled, key).toBe(expected);
     }
   });
 
@@ -127,6 +130,10 @@ describe('Какие возможности нужны апдейту', () => {
     expect(requiredFeatures({ text: MENU.SCHEDULE })).toEqual([FEATURE.SCHEDULE]);
   });
 
+  it('кнопка складов требует фичу складов', () => {
+    expect(requiredFeatures({ text: MENU.WAREHOUSES })).toEqual([FEATURE.WAREHOUSES]);
+  });
+
   it('кнопки, без которых пользователь запрётся снаружи, не гейтятся', () => {
     for (const label of [MENU.MAIN, MENU.SETTINGS, MENU.HELP, MENU.PROFILE, MENU.USERS]) {
       expect(requiredFeatures({ text: label })).toEqual([]);
@@ -183,8 +190,17 @@ describe('Какие возможности нужны апдейту', () => {
 });
 
 describe('Раскладка меню по возможностям', () => {
-  it('без ограничений раскладка та же, что и была', () => {
-    expect(featureMenuLayout(undefined)).toEqual(menuLayout());
+  it('без ограничений видны все default-on кнопки, но не выключенные по умолчанию', () => {
+    // «Склады» — default-off, поэтому у продавца без явного решения кнопки нет;
+    // её ряд схлопывается целиком. Остальная раскладка — прежняя.
+    const layout = featureMenuLayout(undefined);
+    expect(layout.flat()).not.toContain(MENU.WAREHOUSES);
+    expect(layout).toEqual(menuLayout().map((row) => row.filter((l) => l !== MENU.WAREHOUSES)).filter((row) => row.length));
+  });
+
+  it('явно включённая default-off кнопка появляется', () => {
+    const layout = featureMenuLayout({ [FEATURE.WAREHOUSES]: true }).flat();
+    expect(layout).toContain(MENU.WAREHOUSES);
   });
 
   it('кнопка закрытой возможности исчезает', () => {
@@ -209,9 +225,11 @@ describe('Раскладка меню по возможностям', () => {
   });
 
   it('раскладка мутабельна — телеграф ждёт обычный массив', () => {
+    const pristine = featureMenuLayout(undefined);
     const layout = featureMenuLayout(undefined);
     layout.push(['x']);
-    expect(featureMenuLayout(undefined)).toEqual(menuLayout());
+    // Мутация одной копии не задевает следующий вызов.
+    expect(featureMenuLayout(undefined)).toEqual(pristine);
   });
 });
 

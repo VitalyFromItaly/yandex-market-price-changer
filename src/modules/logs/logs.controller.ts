@@ -43,7 +43,12 @@ export class LogsController {
     // страницы, а выдача ограничена потолком MAX_PAGE_SIZE.
     const [items, total] = await Promise.all([this.logs.list(query), this.logs.count(query)]);
 
-    return { total, limit: Math.min(query.limit ?? 100, MAX_PAGE_SIZE), skip: query.skip ?? 0, items };
+    return {
+      total,
+      limit: Math.min(query.limit ?? 100, MAX_PAGE_SIZE),
+      skip: query.skip ?? 0,
+      items,
+    };
   }
 
   /**
