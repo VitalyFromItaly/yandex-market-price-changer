@@ -51,14 +51,14 @@ describe('Реестр возможностей', () => {
     expect(new Set(FEATURE_KEYS).size).toBe(FEATURE_KEYS.length);
   });
 
-  it('старые возможности открыты по умолчанию, новая — нет', () => {
+  it('старые возможности открыты по умолчанию, новые обкатываемые — нет', () => {
     // Флаги появились позже самих функций: существующие продавцы не должны
     // были ничего потерять, и разовой миграции для этого не потребовалось —
-    // все прежние фичи остаются default-on. «Склады» — первая обкатываемая
-    // функция, введённая с default-off: она включается точечно из панели.
+    // все прежние фичи остаются default-on. Новые, ещё не обкатанные («Склады»,
+    // «FBY»), вводятся с default-off и включаются точечно из панели.
+    const DEFAULT_OFF: string[] = [FEATURE.WAREHOUSES, FEATURE.FBY];
     for (const key of FEATURE_KEYS) {
-      const expected = key === FEATURE.WAREHOUSES ? false : true;
-      expect(FEATURE_META[key].defaultEnabled, key).toBe(expected);
+      expect(FEATURE_META[key].defaultEnabled, key).toBe(!DEFAULT_OFF.includes(key));
     }
   });
 
@@ -134,6 +134,10 @@ describe('Какие возможности нужны апдейту', () => {
     expect(requiredFeatures({ text: MENU.WAREHOUSES })).toEqual([FEATURE.WAREHOUSES]);
   });
 
+  it('кнопка FBY требует фичу FBY', () => {
+    expect(requiredFeatures({ text: MENU.FBY })).toEqual([FEATURE.FBY]);
+  });
+
   it('кнопки, без которых пользователь запрётся снаружи, не гейтятся', () => {
     for (const label of [MENU.MAIN, MENU.SETTINGS, MENU.HELP, MENU.PROFILE, MENU.USERS]) {
       expect(requiredFeatures({ text: label })).toEqual([]);
@@ -171,7 +175,13 @@ describe('Какие возможности нужны апдейту', () => {
   });
 
   it('прочие inline-кнопки не гейтятся', () => {
-    for (const data of ['main_menu', 'check_settings', 'onboarding_restart', 'adm:ap:1', 'rate:x']) {
+    for (const data of [
+      'main_menu',
+      'check_settings',
+      'onboarding_restart',
+      'adm:ap:1',
+      'rate:x',
+    ]) {
       expect(requiredFeatures({ callbackData: data })).toEqual([]);
     }
   });
@@ -191,16 +201,21 @@ describe('Какие возможности нужны апдейту', () => {
 
 describe('Раскладка меню по возможностям', () => {
   it('без ограничений видны все default-on кнопки, но не выключенные по умолчанию', () => {
-    // «Склады» — default-off, поэтому у продавца без явного решения кнопки нет;
-    // её ряд схлопывается целиком. Остальная раскладка — прежняя.
+    // «Склады» и «FBY» — default-off, поэтому у продавца без явного решения их
+    // кнопок нет; ряды схлопываются целиком. Остальная раскладка — прежняя.
+    const DEFAULT_OFF: string[] = [MENU.WAREHOUSES, MENU.FBY];
     const layout = featureMenuLayout(undefined);
-    expect(layout.flat()).not.toContain(MENU.WAREHOUSES);
-    expect(layout).toEqual(menuLayout().map((row) => row.filter((l) => l !== MENU.WAREHOUSES)).filter((row) => row.length));
+    for (const label of DEFAULT_OFF) expect(layout.flat()).not.toContain(label);
+    expect(layout).toEqual(
+      menuLayout()
+        .map((row) => row.filter((l) => !DEFAULT_OFF.includes(l)))
+        .filter((row) => row.length),
+    );
   });
 
   it('явно включённая default-off кнопка появляется', () => {
-    const layout = featureMenuLayout({ [FEATURE.WAREHOUSES]: true }).flat();
-    expect(layout).toContain(MENU.WAREHOUSES);
+    expect(featureMenuLayout({ [FEATURE.WAREHOUSES]: true }).flat()).toContain(MENU.WAREHOUSES);
+    expect(featureMenuLayout({ [FEATURE.FBY]: true }).flat()).toContain(MENU.FBY);
   });
 
   it('кнопка закрытой возможности исчезает', () => {

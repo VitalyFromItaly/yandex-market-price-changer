@@ -12,8 +12,11 @@ import {
   offerMappingsPath,
   ordersPath,
   PAGE_LIMITS,
+  reportInfoPath,
   returnsPath,
+  stocksOnWarehousesGeneratePath,
   stocksPath,
+  supplyRequestsPath,
 } from './yandex-api.paths';
 import { assertWithinHistoryWindow, toDateParam, type IDateRange } from './yandex-date-window';
 import {
@@ -118,6 +121,36 @@ export interface IStockUpdate {
   sku: string;
   /** Остаток. 0 — валидное значение: означает «нет в наличии». */
   count: number;
+}
+
+/** Статус генерации асинхронного отчёта и ссылка на готовый файл. */
+export interface IReportInfo {
+  /** PENDING | PROCESSING | DONE | FAILED — приходит строкой, не валидируем жёстко. */
+  status: string;
+  /** Ссылка на файл — только когда status === DONE. */
+  fileUrl?: string;
+}
+
+/**
+ * Заявка FBY на вывоз/утилизацию в терминах сводки.
+ *
+ * `status`/`type`/`subtype` — сырые коды Маркета: на боевом их набор ШИРЕ, чем
+ * enum в openapi (встречаются NEED_PREPARATION, WAREHOUSE_SIGNED_ACT и др.),
+ * поэтому это строки, а подписи маппятся на стороне сообщения с fallback на код.
+ */
+export interface IFbySupplyRequest {
+  /** Человекочитаемый номер заявки (marketplaceRequestId) — он виден в кабинете. */
+  id: string;
+  type: string;
+  subtype?: string;
+  status: string;
+  /** Позиций с браком в заявке (counters.defectCount), 0 если не пришло. */
+  defectCount: number;
+  /** Всего позиций в заявке (counters.planCount), 0 если не пришло. */
+  planCount: number;
+  updatedAt?: string;
+  /** Куда едет/откуда забирают — targetLocation.name. */
+  targetName?: string;
 }
 
 export interface IPagedResult<T> {
@@ -491,6 +524,95 @@ export class YandexApiClient {
     return [...standalone, ...grouped].filter((w): w is IWarehouseInfo => w !== null);
   }
 
+  /**
+   * Запустить генерацию отчёта об остатках на складах (FBY) в формате CSV.
+   *
+   * Асинхронно: возвращает reportId, дальше статус и файл — через getReportInfo.
+   * Формат CSV (а не FILE) выбран намеренно: FILE отдаёт декорированный xlsx с
+   * шапкой и без строк данных, а CSV — чистую плоскую таблицу SKU×склад.
+   *
+   * Генерация лимитирована 1/мин на бизнес: при отказе Яндекс отвечает телом со
+   * `status: ERROR` (без reportId) — бросаем ошибку с его текстом, чтобы блок
+   * остатков деградировал с понятным сообщением, а не молча.
+   */
+  public async generateStocksOnWarehousesReport(): Promise<string> {
+    const data = await this.post<{
+      result?: { reportId?: string };
+      errors?: Array<{ code?: string; message?: string }>;
+    }>(
+      stocksOnWarehousesGeneratePath(),
+      { format: 'CSV' },
+      {
+        campaignId: Number(this.credentials.campaignId),
+      },
+    );
+
+    const reportId = data.result?.reportId;
+    if (!reportId) {
+      const reason = data.errors?.[0]?.message ?? 'Partner API не вернул reportId';
+      throw new Error(`Не удалось запустить отчёт об остатках: ${reason}`);
+    }
+    return reportId;
+  }
+
+  /** Статус готовности отчёта и ссылка на файл, когда он готов. */
+  public async getReportInfo(reportId: string): Promise<IReportInfo> {
+    const data = await this.get<{
+      result?: { status?: string; file?: string };
+    }>(reportInfoPath(reportId), {});
+
+    return { status: data.result?.status ?? 'UNKNOWN', fileUrl: data.result?.file };
+  }
+
+  /**
+   * Скачать готовый файл отчёта по ссылке из getReportInfo.
+   *
+   * Отдельным axios, а не через this.http: ссылка АБСОЛЮТНАЯ и на другой хост
+   * (самоподписанный URL хранилища), Api-Key ей не нужен, а baseURL клиента
+   * только помешал бы.
+   */
+  public async downloadReportFile(url: string): Promise<Buffer> {
+    const response = await axios.get<ArrayBuffer>(url, {
+      responseType: 'arraybuffer',
+      timeout: 60_000,
+    });
+    return Buffer.from(response.data);
+  }
+
+  /**
+   * Заявки FBY выбранных типов (для сводки — WITHDRAW+UTILIZATION).
+   *
+   * Полный обход страниц: пагинация — query `page_token`/`limit`, токен
+   * следующей страницы в `result.paging.nextPageToken`. Тело несёт фильтр
+   * `requestTypes`.
+   */
+  public async loadSupplyRequests(types: string[]): Promise<IFbySupplyRequest[]> {
+    const out: IFbySupplyRequest[] = [];
+    let pageToken: string | undefined;
+    let page = 0;
+
+    do {
+      const data = await this.post<{
+        result?: {
+          requests?: Array<TRawSupplyRequest>;
+          paging?: { nextPageToken?: string };
+        };
+      }>(
+        supplyRequestsPath(this.credentials.campaignId),
+        { page_token: pageToken, limit: 50 },
+        { requestTypes: types },
+      );
+
+      for (const raw of data.result?.requests ?? []) {
+        out.push(toSupplyRequest(raw));
+      }
+
+      pageToken = data.result?.paging?.nextPageToken;
+    } while (pageToken && ++page < this.maxPages);
+
+    return out;
+  }
+
   private async get<T>(path: string, params: Record<string, unknown>): Promise<T> {
     // Логируем путь и кампанию, но НИКОГДА заголовки: там токен продавца.
     this.logger.debug(`GET ${path} (кампания ${this.credentials.campaignId})`);
@@ -573,6 +695,37 @@ function toReturnRecord(raw: unknown): IReturnRecord {
     amount: item.amount,
     partnerCompensationAmount: item.partnerCompensationAmount,
     raw,
+  };
+}
+
+/** Сырая заявка FBY из ответа Partner API. */
+type TRawSupplyRequest = {
+  id?: { marketplaceRequestId?: string; id?: number };
+  type?: string;
+  subtype?: string;
+  status?: string;
+  counters?: { defectCount?: number; planCount?: number };
+  updatedAt?: string;
+  targetLocation?: { name?: string };
+};
+
+/**
+ * Разбор одной заявки FBY. counters — ЧАСТИЧНЫЙ объект (на боевом у заявки
+ * приходит лишь подмножество счётчиков), поэтому каждое поле опционально и
+ * подстраховано нулём. id для показа — marketplaceRequestId (номер из кабинета),
+ * а не внутренний числовой id.
+ */
+function toSupplyRequest(raw: TRawSupplyRequest): IFbySupplyRequest {
+  const r = raw ?? {};
+  return {
+    id: r.id?.marketplaceRequestId ?? (r.id?.id != null ? String(r.id.id) : '—'),
+    type: r.type ?? 'UNKNOWN',
+    subtype: r.subtype,
+    status: r.status ?? 'UNKNOWN',
+    defectCount: Number(r.counters?.defectCount) || 0,
+    planCount: Number(r.counters?.planCount) || 0,
+    updatedAt: r.updatedAt,
+    targetName: r.targetLocation?.name,
   };
 }
 

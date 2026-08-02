@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
 
+import { FbyService } from './fby/fby.service';
 import { OrderReportsService } from './reports/order-reports.service';
 import { ProfitService } from './reports/profit.service';
 import { StockSyncService } from './stocks/stock-sync.service';
@@ -31,6 +32,7 @@ import { YandexClientFactory } from './yandex-client.factory';
     ProfitService,
     StockSyncService,
     WarehousesService,
+    FbyService,
   ],
   exports: [
     YandexClientFactory,
@@ -38,6 +40,7 @@ import { YandexClientFactory } from './yandex-client.factory';
     ProfitService,
     StockSyncService,
     WarehousesService,
+    FbyService,
   ],
 })
 export class YandexModule {}

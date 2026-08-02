@@ -13,6 +13,7 @@ import { AdminUsersHandler } from './bots/price-changer-bot/handlers/admin-users
 import { ApiSettingsHandler } from './bots/price-changer-bot/handlers/api-settings.handler';
 import { CallbackQueryHandler } from './bots/price-changer-bot/handlers/callback-query.handler';
 import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.handler';
+import { FbyHandler } from './bots/price-changer-bot/handlers/fby.handler';
 import { FeatureGateHandler } from './bots/price-changer-bot/handlers/feature-gate.handler';
 import { MenuCommandsHandler } from './bots/price-changer-bot/handlers/menu-commands.handler';
 import { ReportsHandler } from './bots/price-changer-bot/handlers/reports.handler';
@@ -108,6 +109,7 @@ import { QUEUE_NAMES } from './index';
     ReportsHandler,
     ScheduleHandler,
     WarehousesHandler,
+    FbyHandler,
     StartHandler,
     MenuCommandsHandler,
     SlashCommandsHandler,

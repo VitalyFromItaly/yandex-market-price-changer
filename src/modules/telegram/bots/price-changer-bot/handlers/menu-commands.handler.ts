@@ -14,6 +14,7 @@ import { MENU_TO_REPORT } from '../report-buttons';
 import { settingsKeyboardRows, settingsText } from '../settings.text';
 
 import { AdminUsersHandler } from './admin-users.handler';
+import { FbyHandler } from './fby.handler';
 import { ReportsHandler } from './reports.handler';
 import { ScheduleHandler } from './schedule.handler';
 import { SharedCommandsHandler } from './shared-commands.handler';
@@ -29,6 +30,7 @@ export class MenuCommandsHandler {
     private reportsHandler: ReportsHandler,
     private scheduleHandler: ScheduleHandler,
     private warehousesHandler: WarehousesHandler,
+    private fbyHandler: FbyHandler,
     private accessService: UserAccessService,
     private config: AppConfigService,
   ) {}
@@ -55,6 +57,8 @@ export class MenuCommandsHandler {
     // Обзор складов. Работа — в WarehousesHandler; здесь только пара
     // «метка ↔ hears», которую требует инвариант menu-labels.
     bot.hears(MENU.WAREHOUSES, (ctx) => this.warehousesHandler.handle(ctx));
+    // Сводка FBY. Работа — в FbyHandler; здесь только пара «метка ↔ hears».
+    bot.hears(MENU.FBY, (ctx) => this.fbyHandler.handle(ctx));
     bot.hears(MENU.SCHEDULE, (ctx) => this.scheduleHandler.showMenu(ctx));
     bot.hears(MENU.SETTINGS, (ctx) => this.showApiSettings(ctx));
     bot.hears(MENU.PROFILE, (ctx) => this.showProfile(ctx));

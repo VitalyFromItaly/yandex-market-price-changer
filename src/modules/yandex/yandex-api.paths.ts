@@ -28,6 +28,16 @@ export const API_VERSIONS = {
    * offerMappings): вся модель Partner API переехала на v2 одновременно.
    */
   warehouses: 'v2',
+  /**
+   * Асинхронные отчёты (в т.ч. остатки FBY по типам: stocks-on-warehouses).
+   * Проверено на боевом FBY-аккаунте: generate → v2 отвечает 200 и reportId.
+   */
+  reports: 'v2',
+  /**
+   * Заявки на поставку/вывоз/утилизацию FBY. Проверено на боевом:
+   * v2 → 200, v1 → 404 Resource not found.
+   */
+  supplyRequests: 'v2',
 } as const;
 
 export function campaignsPath(): string {
@@ -75,6 +85,29 @@ export function businessWarehousesPath(businessId: string): string {
  */
 export function stocksPath(campaignId: string): string {
   return `/${API_VERSIONS.stocks}/campaigns/${encodeURIComponent(campaignId)}/offers/stocks`;
+}
+
+/**
+ * Генерация отчёта об остатках на складах (FBY), POST. Асинхронный: возвращает
+ * reportId, статус и файл забираются через reportInfoPath. Единственный
+ * источник остатков FBY по типам — синхронный offers/stocks для FBY отдаёт
+ * пусто (проверено на боевом).
+ */
+export function stocksOnWarehousesGeneratePath(): string {
+  return `/${API_VERSIONS.reports}/reports/stocks-on-warehouses/generate`;
+}
+
+/** Статус и ссылка на готовый отчёт по его reportId, GET. */
+export function reportInfoPath(reportId: string): string {
+  return `/${API_VERSIONS.reports}/reports/info/${encodeURIComponent(reportId)}`;
+}
+
+/**
+ * Заявки FBY (поставка/вывоз/утилизация), POST. Для сводки FBY фильтруем
+ * WITHDRAW+UTILIZATION — то, что надо физически забрать со склада Маркета.
+ */
+export function supplyRequestsPath(campaignId: string): string {
+  return `/${API_VERSIONS.supplyRequests}/campaigns/${encodeURIComponent(campaignId)}/supply-requests`;
 }
 
 /**

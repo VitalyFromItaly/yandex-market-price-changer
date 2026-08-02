@@ -41,6 +41,8 @@ export const FEATURE = {
   STOCK_UPLOAD: 'stock_upload',
   /** «🏬 Склады» — обзор складов по типам (FBY и склад магазина) */
   WAREHOUSES: 'warehouses',
+  /** «📦 FBY» — сводка по складу Маркета: остатки, брак, заявки, доставка */
+  FBY: 'fby',
 } as const;
 
 export type TFeatureKey = (typeof FEATURE)[keyof typeof FEATURE];
@@ -63,6 +65,7 @@ const FEATURE_KEY_SET: Record<TFeatureKey, true> = {
   [FEATURE.SCHEDULE]: true,
   [FEATURE.STOCK_UPLOAD]: true,
   [FEATURE.WAREHOUSES]: true,
+  [FEATURE.FBY]: true,
 };
 
 export const FEATURE_KEYS = Object.keys(FEATURE_KEY_SET) as TFeatureKey[];
@@ -127,9 +130,16 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
   [FEATURE.WAREHOUSES]: {
     label: MENU.WAREHOUSES,
     description: 'Обзор складов по типам: FBY (склад Маркета) и склады магазина.',
-    // Единственная фича с умолчанием «выключено»: новая, ещё не обкатанная —
-    // включается точечно из панели тому продавцу, кому нужна. Ровно тот случай,
-    // ради которого defaultEnabled и различает «нет записи» и «выключено».
+    // Фича с умолчанием «выключено»: новая, ещё не обкатанная — включается
+    // точечно из панели тому продавцу, кому нужна. Ровно тот случай, ради
+    // которого defaultEnabled и различает «нет записи» и «выключено».
+    defaultEnabled: false,
+  },
+  [FEATURE.FBY]: {
+    label: MENU.FBY,
+    description: 'Сводка FBY: остатки по типам, брак/просрочка, заявки на вывоз, доставка.',
+    // Тоже default-off и по той же причине — точечная выкатка. Экран небыстрый
+    // (остатки из асинхронного отчёта Маркета), поэтому обкатываем на желающих.
     defaultEnabled: false,
   },
 };
@@ -187,6 +197,7 @@ const MENU_TO_FEATURE: Readonly<Record<string, TFeatureKey>> = {
   [MENU.PROFIT]: FEATURE.REPORT_PROFIT,
   [MENU.SCHEDULE]: FEATURE.SCHEDULE,
   [MENU.WAREHOUSES]: FEATURE.WAREHOUSES,
+  [MENU.FBY]: FEATURE.FBY,
 };
 
 /**
