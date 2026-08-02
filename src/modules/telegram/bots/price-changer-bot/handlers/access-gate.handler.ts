@@ -1,7 +1,7 @@
 import type { UserAccessDocument } from '../../../../../database/schemas/user-access.schema';
 
 import { Injectable, Logger } from '@nestjs/common';
-import { Context } from 'telegraf';
+import { Context, Markup } from 'telegraf';
 
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
@@ -112,7 +112,12 @@ export class AccessGateHandler {
       return;
     }
 
-    await ctx.reply(text, htmlOptions());
+    // Снимаем reply-клавиатуру. Она в Telegram персистентна: у продавца, доступ
+    // которого закрыли или удалили из панели, на экране осталось бы полное меню
+    // отчётов — мёртвых кнопок, каждая из которых теперь отвечает «подайте
+    // заявку». Убираем его, чтобы неодобренный не тыкал в то, что ему закрыто.
+    // Только на message-пути: из всплывашки callback'а клавиатуру не поменять.
+    await ctx.reply(text, htmlOptions(Markup.removeKeyboard()));
   }
 
   private blockText(access: UserAccessDocument): string {

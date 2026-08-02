@@ -101,6 +101,15 @@ describe('AccessGateHandler', () => {
     expect(ctx.reply).toHaveBeenCalledTimes(1);
   });
 
+  it('блокировка снимает залипшее reply-меню', async () => {
+    // Reply-клавиатура персистентна: у удалённого/неодобренного продавца на
+    // экране осталось бы полное меню мёртвых кнопок. Ответ-отказ должен унести
+    // клавиатуру с собой.
+    const { ctx } = await run({ text: MENU.PROFILE });
+    const options = ctx.reply.mock.calls[0][1] as { reply_markup?: { remove_keyboard?: boolean } };
+    expect(options?.reply_markup?.remove_keyboard).toBe(true);
+  });
+
   it('pending блокируется одним понятным сообщением', async () => {
     access.status = 'pending';
     const { next, ctx } = await run({ text: 'campaign_id: 12345' });
