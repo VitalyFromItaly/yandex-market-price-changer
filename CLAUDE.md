@@ -35,8 +35,8 @@ six pre-existing `TS2307` errors in dead files; those files are gone.)
 
 `npm test` works: **Vitest** (not Jest), config at the repo **root** `vitest.config.ts`, transform is
 **swc via `unplugin-swc`** — chosen because esbuild does not emit `emitDecoratorMetadata`, so
-`@nestjs/mongoose` `@Prop()` could not infer types and every Nest-DI test died with *"Cannot
-determine a type for the Bot.name field"*. `@nestjs/testing` **is** installed; `Test.createTestingModule`
+`@nestjs/mongoose` `@Prop()` could not infer types and every Nest-DI test died with _"Cannot
+determine a type for the Bot.name field"_. `@nestjs/testing` **is** installed; `Test.createTestingModule`
 works. Run a single file with `npx vitest run <file>` (or `-t "<name>"`). Note
 `__tests__/vitest.config.ts` still exists but is **dead** — nothing references it.
 
@@ -100,7 +100,7 @@ startup means the update never arrived.
 
 `apiRoot` comes from `AppConfigService.telegramApiUrl` (`TELEGRAM_API_URL`, default
 `https://api.telegram.org`) — outbound Bot API calls go through **our own mirror**, not directly.
-This is the single place that sets it: telegraf routes every method call *and* the `getFileLink`
+This is the single place that sets it: telegraf routes every method call _and_ the `getFileLink`
 download URL off `apiRoot`, so price-list downloads follow automatically. The value must be
 scheme+host only — telegraf resolves `new URL('./bot<token>/<method>', apiRoot)`, which **drops** a
 path prefix, so `https://h/tg` would silently 404 every call; `env.validation.ts` rejects it at
@@ -127,10 +127,10 @@ actionLog → accessGate → featureGate → start → menu → slash → adminC
 
 - `accessGate` is a `bot.use` and must be the **first step that can refuse an update** — a gate
   registered after handlers guards nothing, because the update never reaches it. Only steps that
-  *always* call `next()` may precede it, and `composer-order.test.ts` pins that list
+  _always_ call `next()` may precede it, and `composer-order.test.ts` pins that list
   (`NON_BLOCKING_BEFORE_GATE`) rather than pinning "accessGate is index 0".
 - `actionLog` is such a step and sits **before** the gate deliberately: the most interesting entries
-  are attempts by *blocked* users, and the gate does not call `next()`, so a logger registered after
+  are attempts by _blocked_ users, and the gate does not call `next()`, so a logger registered after
   it would never see them.
 - `featureGate` sits **immediately after** `accessGate` — see "Per-feature access" below. The order
   is not cosmetic: "your application is still pending" explains more than "that function is closed",
@@ -153,6 +153,70 @@ actionLog → accessGate → featureGate → start → menu → slash → adminC
   prices (see "Profit"). The options object is not cosmetic: while `dryRun` was a positional boolean,
   a forgotten third argument meant a **live** stock write where only a check was asked for, so `sync`
   now throws without `telegramUserId`.
+- **On FBY, stocks are read-only — the rule lives in `stocks/placement.ts`.** FBS/DBS/Express keep the
+  goods in the _seller's_ warehouse, so the seller reports the counts. FBY goods sit in **Market's**
+  warehouse, where the count is moved by intake and sales; a number from a price list is a fiction
+  about somebody else's warehouse. Without the check the write actually lands there: `getWarehouseId()`
+  takes the first warehouse of the campaign without asking whose it is, and on the live account
+  (business `164225008`) the FBY campaign `148704883` yields warehouse **147 «Ростов-на-Дону-1»** —
+  which is in `GET v2/warehouses`, the list of Market's fulfilment warehouses. The FBS campaigns
+  `148655119`/`124425371` correctly yield `1826207`/`1519714`.
+  - **The file is still accepted on FBY — only the stock write is skipped.** The price list is the
+    only source of purchase prices, and `PurchasePrice` is keyed by `(telegramUserId, sku)` with no
+    store scope, so one upload serves every store the seller has. Refusing the file outright (as an
+    earlier revision did) left an FBY-only seller with no «Прибыль» at all. `stock-upload.handler`
+    therefore **warns before downloading** and then continues: cached `YandexMarket.stores` first
+    (after a switch in the bot the model is known, and the picker itself runs off that cache, so the
+    normal case costs no request), otherwise one `StockSyncService.placementFor()` call. The warning
+    must precede the download — promising «загружаю остатки» and reporting «остатки не записаны» a
+    minute later reads as a malfunction, which is why `progressText` has three states, not two.
+  - **Writing stocks requires `STOCK_WRITE_ENABLED=true`, declared per deployment.** Development runs
+    against the *live* store — the token in `.env` is real — so a local run with an uploaded price
+    list would move a real seller's stock, and nothing can undo it. The variable is **required with
+    no default**, and a default in either direction is what makes it so: "writes allowed by default"
+    eventually rewrites a live seller's stock from somebody's laptop; "writes forbidden by default"
+    silently turns uploads off in production and is found a week later by complaint. A forgotten
+    variable fails startup with a Russian message naming it, per the repo's env convention.
+    - Deliberately **not** derived from `NODE_ENV`: "is this production" and "may this process touch
+      someone else's warehouse" are different questions, and coupling them means changing the second
+      by editing the first. `isProduction` stays where it is, still unused.
+    - The Joi rule is `valid('true','false')`, not `Joi.boolean()` — coercion makes the string
+      `'false'` truthy, and that typo would enable writes silently. Same reason as
+      `TELEGRAM_UPDATE_MODE`.
+    - Checked **before** the placement, so a run with writes off does not even ask Market for the
+      model.
+  - **Three barriers, and the handler is not the enforcing one.** `StockSyncService.sync` resolves
+    the placement itself from a live `listStores()`; the **last barrier sits inside `writeInBatches`**,
+    next to the single `updateStocks` call and _before_ `getWarehouseId()`, so no future write path
+    can slip past. Same argument as `featureGate` vs `featureMenuLayout`. The handler asks the
+    service rather than calling `listStores` itself — the rule and the way to resolve it stay in one
+    place or they drift.
+  - **An unknown placement counts as forbidden everywhere**, so a failed `listStores()` blocks the
+    write too. An unfair refusal is fixed by switching stores in two taps; a write onto Market's
+    warehouse is fixed by nothing — Yandex does not report what applied. "Could not determine"
+    gets its **own** text (`PLACEMENT_UNKNOWN`): telling a seller their store is FBY when Market is
+    merely unreachable sends them to switch a store that needs no switching.
+  - **A forbidden write degrades to a check rather than a refusal.** The file is still parsed and the
+    purchase prices still land in **our** Mongo, so «Прибыль» works for an FBY seller. Downgrading is
+    the safe direction; the opposite one is what the `dryRun` options object exists to prevent.
+  - **There are three reasons not to write, so the result carries a `writeSkipReason` discriminant
+    (`'placement' | 'write-disabled'`), not three booleans.** The outcome is identical — nothing
+    reached Yandex — but the seller's next move differs: switch stores, resend without «проверка», or
+    nothing at all (writes being off is a deployment decision, so `skipAdvice` returns null there).
+    Three flags with one outcome would leave the report unable to say which happened. `dryRun` stays
+    a **separate** field on purpose: it is a request, not a refusal. Within `'placement'`,
+    `placementType` distinguishes "FBY" from "could not determine".
+  - **`getWarehouseId` picks the seller's own warehouse, it does not take the first one.** The
+    `offers/stocks` response lists warehouses holding the campaign's goods, and one of them can
+    belong to Market: the fulfilment warehouse on FBY, or — and this the placement rule does _not_
+    catch, because the model there is a writable one — **Market's returns warehouse on FBS**, which
+    `getStocks` documents outright ("возврат поступил в указанную продавцом точку возвратов и долго
+    не был забран"). With the old `limit: 1` the choice was whatever Yandex listed first, so a whole
+    store's stock could land on the returns warehouse. Now the probe asks for
+    `WAREHOUSE_PROBE_LIMIT` and intersects with `GET v2/businesses/{id}/warehouses` — **grouped
+    warehouses included**, they arrive in `warehouseGroups` and are not duplicated into `warehouses`.
+    An empty intersection throws rather than falling back to the first: writing blind is worse than
+    not writing.
 
 Routing is not table-driven: reply-keyboard buttons via `bot.hears(MENU.X)`, inline buttons via one
 large `switch (callbackData)` in `callback-query.handler.ts`, free text via `ApiSettingsHandler`
@@ -219,7 +283,7 @@ excluded from tsconfig, imported nowhere, and its `core/request.ts` only emits
 ### Profit
 
 The fifth report (`REPORT.PROFIT`) is the only screen that shows money **after** costs. It prints
-**two order sets**, and they are *not* whole-and-part — the wording in `profit-message.ts` exists to
+**two order sets**, and they are _not_ whole-and-part — the wording in `profit-message.ts` exists to
 say so:
 
 - **Оформлено за период** (`PLACED_DEFINITION`, `dateFilter: 'creationDate'`) — the figure the seller
@@ -253,7 +317,7 @@ into one line and loses commission, tax and cost.
 - **`toDate` is exclusive** — «заказы, созданные ДО 00:00 указанного дня» — so
   `creationDateParams` always shifts the upper bound one day forward. For a single day Yandex
   stretches the range itself and the bug is invisible; for «с 1 числа по сегодня» it would silently
-  drop *today's* orders, the ones the seller opened the report for.
+  drop _today's_ orders, the ones the seller opened the report for.
 - **One request may span at most 30 days, so a period is cut into windows** (`periodWindows` in
   `report-period.ts`) and `collectOrders` walks them in sequence. This is not defensive coding: on
   the **31st** «с 1 числа месяца» does not fit — `updatedAt` gives 30 days minus a second and the
@@ -284,7 +348,7 @@ into one line and loses commission, tax and cost.
   both look equally plausible.
 - **Revenue is `itemsTotal` + Market subsidies**, goods only. `itemsTotal` is documented as «Платёж
   покупателя» and `item.price` as «цена без учёта вознаграждения партнёру за скидки по промокодам,
-  купонам и акциям (параметр `subsidies`)» — the Market's discount is paid *by the Market* and
+  купонам и акциям (параметр `subsidies`)» — the Market's discount is paid _by the Market_ and
   **reimbursed to the seller**, so the seller's revenue exceeds what the buyer paid. Verified on the
   live store for July (394 redeemed orders, cost 1 649 259 ₽): `itemsTotal` alone gave revenue
   2 456 985 ₽ and 4 % margin, adding subsidies gave 2 877 765 ₽ and 22 % — the latter is what the
@@ -303,7 +367,7 @@ into one line and loses commission, tax and cost.
   - Earlier revisions of this file claimed the opposite (that `itemsTotal` includes subsidy
     compensation while `Σ(item.price × count)` does not). On live data those two sums matched **to the
     rouble** (2 456 985) and neither contains subsidies.
-- **A returned order is excluded whole, and returns come from a second endpoint.** A return *after*
+- **A returned order is excluded whole, and returns come from a second endpoint.** A return _after_
   redemption does **not** move the order out of `DELIVERED` — it lives as its own entity in
   `GET v2/campaigns/{id}/returns`, so `ProfitService.returnedOrderIds` queries that method and
   `profitOf` drops those orders: goods came back, so there is no revenue, no commission, no tax and no
@@ -319,7 +383,7 @@ into one line and loses commission, tax and cost.
   `orderPurchase` returns `null`, not `0`, and why `normalizeRate` rejects `null` separately
   (`Number(null) === 0`, so "no rate" would have become "zero commission").
 - **A row missing from the catalog still yields a purchase price.** `StockSyncService` skips the
-  *stock* write when `resolveSku` finds nothing (an unknown sku 400s the whole batch) but stores the
+  _stock_ write when `resolveSku` finds nothing (an unknown sku 400s the whole batch) but stores the
   price anyway, keyed by the first candidate `stripBrand(name)` — the bare code is exactly what an
   order item's `offerId` carries. Dropping the row wholesale is how prices went missing: for July, 6
   of 7 skus with no cost were present in the uploaded price list with a price (`Daniel Klein 14081-4`,
@@ -346,7 +410,7 @@ into one line and loses commission, tax and cost.
 - **Rates are edited by button, and still by message.** Both paths live in
   `api-settings.handler.ts` and both write through `YandexMarketService.updateRate`.
   - **By button:** the settings screen carries one inline button per rate, built by
-    `settingsKeyboardRows(store)` in `settings.text.ts` — the *same* module as the screen text, and
+    `settingsKeyboardRows(store)` in `settings.text.ts` — the _same_ module as the screen text, and
     for the same reason: the screen has three entry points (`MENU.SETTINGS`, `/settings`,
     `check_settings`), and three copies of the keyboard would drift exactly as three copies of the
     text did. The value is printed **on** the button (`📉 Комиссия 23%`) rather than in a separate
@@ -404,7 +468,7 @@ There are **no Mongoose refs** — relations are implicit:
 - `UserAccess` is keyed by `(telegramUserId, botId)` — unique compound index. It also carries
   `telegramChatId`, which is a **different thing**: `botId` is the tenant, `telegramChatId` is
   `ctx.chat.id` and the only value you may pass to `sendMessage`. Do not conflate them —
-  `YandexMarket.telegramChatId` historically holds the *bot's* id and is useless for messaging.
+  `YandexMarket.telegramChatId` historically holds the _bot's_ id and is useless for messaging.
   It also carries `features` — the per-user feature flags (see "Per-feature access"), a plain
   `Record<string, boolean>` with **no index**: nothing ever queries by a flag, only by the user.
 - `YandexMarket` is keyed by `telegramUserId` (typed `string`). Its `campaign_id`/`business_id`/`token`
@@ -426,17 +490,17 @@ connect but never alters an existing one with the same key set).
 
 Every update is journalled — to the console **and** to Mongo — by `ActionLogHandler`, the first step
 of the pipeline. Console alone was not enough: container logs in CapRover die on restart and cannot
-be queried per user, while the question is always "what did *this* seller do". Mongo alone was not
+be queried per user, while the question is always "what did _this_ seller do". Mongo alone was not
 enough either: it is exactly when the database is unreachable that a log line matters.
 
 - **Console shows nothing about user actions without it.** The only per-update line used to come from
   `LoggerInterceptor` (`Incoming Request: POST /api/telegram/webhooks/...`) — HTTP-level, no who, no
   what. Under `TELEGRAM_UPDATE_MODE=polling` even that disappears: updates no longer arrive over HTTP.
-**Both directions are journalled**, distinguished by `direction` (`in` | `out`, default `in` so
-pre-existing rows stay meaningful). Outgoing messages are caught by wrapping `telegram.callApi` in
-`BotRegistry.logOutgoing` — the single funnel every Bot API call passes through, `ctx.reply`
-included. Wrapping the context methods instead would mean a dozen wrappers and a silent hole in the
-journal the first time one is forgotten.
+  **Both directions are journalled**, distinguished by `direction` (`in` | `out`, default `in` so
+  pre-existing rows stay meaningful). Outgoing messages are caught by wrapping `telegram.callApi` in
+  `BotRegistry.logOutgoing` — the single funnel every Bot API call passes through, `ctx.reply`
+  included. Wrapping the context methods instead would mean a dozen wrappers and a silent hole in the
+  journal the first time one is forgotten.
 
 - Only `OUTGOING_METHODS` are recorded. The same funnel carries `getMe`, `setWebhook`,
   `setMyCommands` and — under polling — a **continuous** `getUpdates`; without the allow-list the
@@ -444,10 +508,10 @@ journal the first time one is forgotten.
 - `kind` holds the Bot API method name for outgoing rows (`sendMessage`, `answerCallbackQuery` —
   the API name, not telegraf's `answerCbQuery`). That is why `direction` is a separate field and not
   another `kind` value: sharing one field would make "show me commands" match replies too.
-- **Outgoing text is masked more weakly on purpose** (`maskOutgoing`): the numeric rule is *not*
+- **Outgoing text is masked more weakly on purpose** (`maskOutgoing`): the numeric rule is _not_
   applied. The bot sends reports where almost everything is a number, and revenue `2456985` would be
   caught by the same rule as a `campaign_id`, turning the journal into «Продажи: «скрыто» ₽». There is
-  no risk: the bot only ever *receives* the seller's token, never sends it.
+  no risk: the bot only ever _receives_ the seller's token, never sends it.
 - The only live outgoing path outside telegraf is `TelegramApiService` (raw `fetch`), and it is used
   solely by the **dead** notifications processor — the scheduled digest goes through
   `bot.telegraf.telegram.sendMessage`, i.e. through `callApi`.
@@ -457,6 +521,7 @@ journal the first time one is forgotten.
   **no imports**, used by both the backend and the browser bundle — provides `toPlainText` (one-line
   table cell) and `toSafeHtml` (modal). One implementation rather than two, because that pair drifts
   silently: the panel would start showing something other than what is stored.
+
   - `toSafeHtml` works **from the deny side**: it neutralises every `<`/`>` first and then re-enables
     an allow-list of tags. Stripping known-bad tags instead lets any unanticipated construct through.
   - It deliberately does **not** escape `&`. The stored string is already HTML — user data was run
@@ -490,7 +555,7 @@ applied to the whole `LogsController` (not to individual methods — the one tha
 the one left open).
 
 - **Login is a Telegram id from `TELEGRAM_ADMIN_IDS`; the password is one shared secret** with **two
-  sources, and `ADMIN_PASSWORD` is the one that wins.** Set — it *is* the password, changed by
+  sources, and `ADMIN_PASSWORD` is the one that wins.** Set — it _is_ the password, changed by
   editing the variable and restarting. Unset — generated on first boot and printed to the log
   **once**, as a banner (printing it every start would park it in CapRover's log history forever).
   - The precedence is not arbitrary. Under "Mongo wins, env only seeds the first boot", editing the
@@ -514,13 +579,13 @@ the one left open).
     document in `admincredentials` and restart.
 - **Password hash and JWT secret live in Mongo** (`AdminCredential`, one document pinned by a unique
   `key`). "Generate at deploy if absent" requires surviving a restart, and an in-memory JWT secret
-  would log every admin out on each redeploy — which is why `ADMIN_PASSWORD` feeds *into* that
+  would log every admin out on each redeploy — which is why `ADMIN_PASSWORD` feeds _into_ that
   document rather than replacing it. `bcrypt` at cost 12 — the package was already installed and
   unused (this file used to list it as dead template weight).
 - `AdminAuthService.verify` **re-checks `sub` against `TELEGRAM_ADMIN_IDS`** instead of trusting the
   signed token: revoking an admin must close the panel now, not in seven days when the token expires.
 - **`LoginThrottle`**: 5 failures per login → 15 minutes locked. One shared password behind which
-  sits users' correspondence is guessable at network speed without it. The lock is checked *before*
+  sits users' correspondence is guessable at network speed without it. The lock is checked _before_
   the password, or a locked attacker would keep guessing. Time is passed in as an argument so the
   expiry is testable without timers.
 - `login()` runs `bcrypt.compare` **even for a non-admin id** — skipping it would make response time
@@ -557,13 +622,13 @@ per-user attribution and does not survive a restart.
   a log line, so "which request failed" was unanswerable. `source` is forced to `yandex` for these,
   whatever layer caught them — the layer stays in `context`.
 - **Alerts to admins are throttled** (`AlertThrottle`, 15 min per `errorType + context`). One
-  failing upstream produces a *stream* of identical errors; without the throttle admins get a
+  failing upstream produces a _stream_ of identical errors; without the throttle admins get a
   hundred messages and stop reading alerts entirely — the catcher would make observability worse
   than its absence. The key deliberately excludes the message text, which often carries an order id
   and would make every error look new.
 - Alert delivery is wired by `ErrorAlertBridge` (`bots/error-alert.bridge.ts`) calling
   `setAlertSender` at bootstrap. A direct dependency would be a DI cycle: `BotRegistry` calls the
-  reporter from `telegraf.catch`. A failure *while sending an alert* is logged, never reported —
+  reporter from `telegraf.catch`. A failure _while sending an alert_ is logged, never reported —
   otherwise it would generate another alert, forever.
 - 4xx does **not** alert (client behaviour), 5xx does. Both are recorded.
 
@@ -571,11 +636,11 @@ Wired in: global `AllExceptionsFilter`, the error branch of `LoggerInterceptor` 
 callback never fired on error), `process.on('unhandledRejection'|'uncaughtException')` in `main.ts`,
 `@OnQueueFailed`/`@OnQueueError`, the scheduled-digest catch, `telegraf.catch`, failed outgoing
 `callApi`, and the handlers that swallow their errors (`reports`, `stock-upload`) plus the silent
-degradation in `ProfitService` (returns unavailable → profit is reported *too high* with no hint in
+degradation in `ProfitService` (returns unavailable → profit is reported _too high_ with no hint in
 the text).
 
 **Known gap:** a request malformed at the HTTP level — raw non-ASCII in the query string — is
-rejected by Express *before* Nest, so no filter sees it and nothing is journalled. A properly
+rejected by Express _before_ Nest, so no filter sees it and nothing is journalled. A properly
 percent-encoded request with the same bad value is caught normally.
 
 ### The admin panel is served by Nest itself
@@ -600,7 +665,7 @@ ts-node in dev (`src/` → `web/dist`).
   Pages live in `web/src/pages/`, each fetching its own data; a shared loader in `App.vue` would mean
   the log screen fetching sellers and the seller card fetching logs.
 - **Auth state is module-level `ref`s in `web/src/auth.ts`**, not Pinia — three fields do not justify
-  a store, and a module `ref` *is* the shared instance. It moved out of `App.vue` when routed pages
+  a store, and a module `ref` _is_ the shared instance. It moved out of `App.vue` when routed pages
   stopped receiving props from it.
 - The 10 s auto-refresh belongs to the log page **only**, and its `setInterval` is cleared in
   `onBeforeUnmount`: under the router the component unmounts on navigation, and a live timer would
@@ -689,7 +754,7 @@ rejected   credentials wiped; 24h during which even entering credentials is refu
 > its plan buttons charged nothing, and its only check sat in `/start`, so uploads bypassed it.
 > `__tests__/unit/subscription-removed.test.ts` fails if the concept creeps back.
 
-### Per-feature access: approval says *whether*, flags say *what*
+### Per-feature access: approval says _whether_, flags say _what_
 
 `UserAccess.status` is boolean — all or nothing. On top of it sits a registry of seven features
 (`src/modules/telegram/bots/shared/features.domain.ts`), each switchable **per user** from the admin
@@ -706,7 +771,7 @@ their own settings, with no way to fix a token or find out whom to ask.
 - **Storage is a `features` map on `UserAccess`**, not a separate collection like `ReportSchedule`.
   It is read on every update that reaches a report, and the access record is already in the gate's
   hands — a second collection would mean a second Mongo query where one suffices.
-- **Only explicit admin decisions are stored.** A missing key is *not* "off": it resolves to
+- **Only explicit admin decisions are stored.** A missing key is _not_ "off": it resolves to
   `FEATURE_META[key].defaultEnabled`. That is why flags needed no one-off migration and existing
   sellers lost nothing, and why a future experimental feature can ship with `defaultEnabled: false`
   and be opened one seller at a time. All seven are `true` today.
@@ -720,7 +785,7 @@ their own settings, with no way to fix a token or find out whom to ask.
   is most updates (free text, onboarding, settings, help). It reads `UserAccess` itself rather than
   receiving it from `accessGate`: `ctx.state` is used nowhere in this repo, and introducing the
   convention for one field costs more than a read on the updates that actually reached a report.
-- **The gate does not see free text**, so the two places that consume a *pending answer* re-check the
+- **The gate does not see free text**, so the two places that consume a _pending answer_ re-check the
   flag themselves: `ReportsHandler.run` (the date answering «за какой день?») and
   `ScheduleHandler.handlePendingTime` (the time answering «во сколько присылать?»). Both close the
   pending question when refusing, or the bot would answer every subsequent message with a refusal.
@@ -737,7 +802,7 @@ their own settings, with no way to fix a token or find out whom to ask.
   forever.
 - **Admins bypass everything** and have no `UserAccess` row at all (the access gate returns before
   `ensure`), so `findByUserAndBot` returns `null` and defaults apply — which is also why
-  `isReportEnabled(features, key)` treats an *unknown* report key as closed but an *absent record*
+  `isReportEnabled(features, key)` treats an _unknown_ report key as closed but an _absent record_
   as open.
 - **Editing is web-panel only**, whole controller behind `AdminJwtGuard`:
   `GET /api/access/features`, `GET /api/access/users`, `GET /api/access/users/:id?botId=`,
@@ -747,7 +812,7 @@ their own settings, with no way to fix a token or find out whom to ask.
   list resolves stores with **one** `$in` query, not `isConfigured` per row the way the Telegram
   admin list does.
 - **Access itself is a toggle on the same card**, `PATCH .../status` → `UserAccessService.setApproved`.
-  It is deliberately *not* `decide`/`revoke`: those filter on one expected status (`pending`,
+  It is deliberately _not_ `decide`/`revoke`: those filter on one expected status (`pending`,
   `approved`), which is what makes "first admin decision wins" work for the application card. A
   toggle answers a different question — "let this seller be in this state" — from `new`, `pending`
   or `rejected` alike, and a status filter would make it silently no-op on somebody who never
@@ -803,7 +868,7 @@ the next step — wrapping in `@Injectable()` must not mean rewriting.
   by contrast, does return one channel. This cost a debugging session; the symptom points at the
   model and the preprocessing, which are innocent.
 - **A blurred shadow is clipped by its own canvas**, so the canvas is extended by three sigmas
-  *before* `blur`, and whatever leaves the frame is cut by `clipToCanvas` — shifting the layer inwards
+  _before_ `blur`, and whatever leaves the frame is cut by `clipToCanvas` — shifting the layer inwards
   would move the shadow out from under the object.
 - Scene numbers live in a **JSON preset** (`assets/scenes/*.json`, Joi-validated, unknown keys
   rejected), not in the composer: a background is a consumable. `reflection.maxHeight` exists because
@@ -835,7 +900,8 @@ the next step — wrapping in `@Injectable()` must not mean rewriting.
 ## Environment
 
 `.env` (gitignored) is loaded by `ConfigModule`. `src/config/env.validation.ts` is the authoritative
-list; `.env.example` documents every key. Required: `MONGODB_URL`, `MONGODB_DATABASE`, `REDIS_HOST`,
+list; `.env.example` documents every key. Required: `STOCK_WRITE_ENABLED`, `MONGODB_URL`,
+`MONGODB_DATABASE`, `REDIS_HOST`,
 `TELEGRAM_TOKEN`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_ADMIN_IDS`. Defaulted: `PORT`, `NODE_ENV`,
 `REDIS_PORT`, `YANDEX_MARKET_BASE_URL`, `TELEGRAM_API_URL`. Optional: `REDIS_PASSWORD` (empty means
 "no auth") and `ADMIN_PASSWORD` (empty means "generate one and print it once"; when set it overrides
@@ -914,4 +980,4 @@ CSV uploads, product creation, a price coefficient, Express):
 - `src/modules/parser/README.md` — states plainly that the module is off the live path, and what to
   delete it together with.
 
-They repeat the *rules*; this file keeps the *reasons*. When both change, change both.
+They repeat the _rules_; this file keeps the _reasons_. When both change, change both.
