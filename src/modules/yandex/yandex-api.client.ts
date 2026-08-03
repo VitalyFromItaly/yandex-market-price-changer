@@ -17,6 +17,7 @@ import {
   stocksOnWarehousesGeneratePath,
   stocksPath,
   supplyRequestsPath,
+  WAREHOUSE_PROBE_LIMIT,
 } from './yandex-api.paths';
 import { assertWithinHistoryWindow, toDateParam, type IDateRange } from './yandex-date-window';
 import {
@@ -461,17 +462,62 @@ export class YandexApiClient {
     this.logger.log(`Остатки обновлены: ${items.length} позиций (склад ${warehouseId})`);
   }
 
-  /** Идентификатор склада продавца — нужен для записи остатков. */
+  /**
+   * Идентификатор склада ПРОДАВЦА — нужен для записи остатков.
+   *
+   * Склад сверяется со списком собственных складов бизнеса, а не берётся первым
+   * из ответа. Ответ `offers/stocks` перечисляет склады, на которых лежит товар
+   * кампании, и среди них бывает ЧУЖОЙ:
+   *
+   * - на FBY это склад Маркета (у живого продавца — 147 «Ростов-на-Дону-1»);
+   *   писать туда нельзя, и это отсекается раньше правилом из `stocks/placement.ts`;
+   * - на FBS в ответе может оказаться склад возвратов Маркета — документация
+   *   `getStocks` описывает это прямо: «возврат поступил в указанную продавцом
+   *   точку возвратов и долго не был забран». Правило по модели такой случай НЕ
+   *   ловит: модель-то пишущая, чужой здесь конкретный склад.
+   *
+   * Раньше при `limit: 1` выбор зависел от того, какой склад Яндекс поставит
+   * первым, — то есть остатки всего магазина могли уехать на склад возвратов.
+   * Поэтому `limit` поднят, а решение принимается пересечением со списком
+   * `GET v2/businesses/{id}/warehouses`.
+   *
+   * Пустое пересечение — ошибка, а не «возьмём первый»: писать наугад хуже, чем
+   * не писать. Список складов бизнеса недоступен (сбой сети) — тоже ошибка, по
+   * той же причине.
+   */
   public async getWarehouseId(): Promise<number> {
-    const data = await this.post<{
-      result?: { warehouses?: Array<{ warehouseId?: number }> };
-    }>(stocksPath(this.credentials.campaignId), { limit: 1 }, {});
+    const [data, own] = await Promise.all([
+      this.post<{
+        result?: { warehouses?: Array<{ warehouseId?: number }> };
+      }>(stocksPath(this.credentials.campaignId), { limit: WAREHOUSE_PROBE_LIMIT }, {}),
+      this.listStoreWarehouses(),
+    ]);
 
-    const id = data.result?.warehouses?.[0]?.warehouseId;
-    if (!id) {
+    const candidates = (data.result?.warehouses ?? [])
+      .map((w) => w?.warehouseId)
+      .filter((id): id is number => typeof id === 'number');
+
+    if (!candidates.length) {
       throw new Error('Не удалось определить склад: Partner API не вернул warehouseId');
     }
-    return id;
+
+    const ownIds = new Set(own.map((w) => w.id));
+    const mine = candidates.find((id) => ownIds.has(id));
+
+    if (mine === undefined) {
+      throw new Error(
+        `Не удалось определить склад магазина: в ответе только чужие склады ` +
+          `(${candidates.join(', ')}), собственные — ${[...ownIds].join(', ') || 'не найдены'}`,
+      );
+    }
+
+    if (mine !== candidates[0]) {
+      // Первый склад в ответе оказался чужим — ровно тот случай, ради которого
+      // сверка и появилась. В лог, чтобы это было видно, а не только «сработало».
+      this.logger.warn(`Склад записи ${mine} выбран вместо чужого ${candidates[0]}`);
+    }
+
+    return mine;
   }
 
   /**
