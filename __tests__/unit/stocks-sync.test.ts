@@ -23,13 +23,36 @@ function fakePurchasePrices() {
   };
 }
 
-/** Клиент-заглушка: сети не касаемся, но записываем всё, что бы ушло. */
-function fakeClient(catalog: string[], opts: { failBatch?: number } = {}) {
+/**
+ * Клиент-заглушка: сети не касаемся, но записываем всё, что бы ушло.
+ *
+ * `listStores` отдаёт FBS по умолчанию — это модель, при которой запись
+ * разрешена, то есть прежнее поведение всех тестов ниже. Модель размещения
+ * сервис выясняет сам (см. правило в placement.ts), поэтому заглушка обязана
+ * уметь на этот вопрос отвечать.
+ */
+function fakeClient(
+  catalog: string[],
+  opts: { failBatch?: number; placementType?: string; listStoresFails?: boolean } = {},
+) {
   const calls: Array<{ items: Array<{ sku: string; count: number }>; warehouseId: number }> = [];
   let batch = 0;
 
   return {
     calls,
+    listStores: vi.fn(async () => {
+      if (opts.listStoresFails) throw new Error('ECONNRESET');
+      return [
+        // Чужая кампания в списке — рядом намеренно: модель обязана искаться по
+        // campaignId, а не браться первой.
+        { campaignId: 'другая', businessId: 'b', placementType: 'FBY' },
+        {
+          campaignId: CREDENTIALS.campaignId,
+          businessId: 'b',
+          placementType: opts.placementType ?? 'FBS',
+        },
+      ];
+    }),
     loadCatalogOfferIds: vi.fn(async () => new Set(catalog)),
     getWarehouseId: vi.fn(async () => 777),
     updateStocks: vi.fn(async (items: never[], warehouseId: number) => {
@@ -40,11 +63,23 @@ function fakeClient(catalog: string[], opts: { failBatch?: number } = {}) {
   };
 }
 
+/**
+ * Сервис со ВКЛЮЧЁННОЙ записью по умолчанию.
+ *
+ * При `STOCK_WRITE_ENABLED=false` запись запрещена целиком (см. describe ниже),
+ * поэтому все тесты про саму загрузку идут с `stockWriteEnabled: true` — иначе
+ * они проверяли бы не запись, а запрет.
+ */
 function serviceWith(
   client: ReturnType<typeof fakeClient>,
   prices: ReturnType<typeof fakePurchasePrices> = fakePurchasePrices(),
+  stockWriteEnabled = true,
 ) {
-  return new StockSyncService({ forTenant: () => client } as never, prices as never);
+  return new StockSyncService(
+    { forTenant: () => client } as never,
+    prices as never,
+    { stockWriteEnabled } as never,
+  );
 }
 
 describe('StockSyncService', () => {
@@ -147,6 +182,171 @@ describe('StockSyncService', () => {
       /telegramUserId/,
     );
     expect(client.updateStocks).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Правило «на FBY остатки только читаются» — со стороны сервиса.
+ *
+ * Сама таблица моделей проверена в stocks-placement.test.ts; здесь важно другое:
+ * что сервис её СПРАШИВАЕТ и что запрет доходит до места записи. Ровно это и
+ * ломается при рефакторинге — правило остаётся верным, а вызывать его перестают.
+ */
+describe('StockSyncService: запрет записи на FBY', () => {
+  const file = readFileSync(FIXTURE);
+
+  it('на FBY не пишет остатки и даже не спрашивает склад', async () => {
+    const client = fakeClient(['FAA02006M'], { placementType: 'FBY' });
+    const result = await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
+
+    expect(client.updateStocks).not.toHaveBeenCalled();
+    // getWarehouseId на FBY-кампании вернул бы склад МАРКЕТА (147
+    // «Ростов-на-Дону-1» у живого продавца) — узнавать его незачем.
+    expect(client.getWarehouseId).not.toHaveBeenCalled();
+    expect(result.writeSkipReason).toBe('placement');
+    expect(result.placementType).toBe('FBY');
+    expect(result.updated).toBe(0);
+  });
+
+  it('но закуп на FBY сохраняется — иначе «Прибыль» у такого продавца не считалась бы', async () => {
+    const client = fakeClient(['FAA02006M'], { placementType: 'FBY' });
+    const prices = fakePurchasePrices();
+    const result = await serviceWith(client, prices).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+    });
+
+    expect(prices.upsertMany).toHaveBeenCalledTimes(1);
+    expect(result.purchasePricesSaved).toBeGreaterThan(0);
+    // Файл разобран целиком: отказ касается только записи в Яндекс.
+    expect(result.matched).toBeGreaterThan(0);
+  });
+
+  it('запрет — это НЕ dryRun: поводы разные, и отчёт обязан их различать', async () => {
+    const client = fakeClient(['FAA02006M'], { placementType: 'FBY' });
+    const result = await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
+
+    expect(result.dryRun).toBe(false);
+    expect(result.writeSkipReason).toBe('placement');
+  });
+
+  it('модель определяется по campaignId, а не по первой в списке', async () => {
+    // В заглушке первой идёт чужая FBY-кампания; наша — FBS.
+    const client = fakeClient(['FAA02006M'], { placementType: 'FBS' });
+    const result = await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
+
+    expect(result.placementType).toBe('FBS');
+    expect(result.writeSkipReason).toBeUndefined();
+    expect(client.updateStocks).toHaveBeenCalled();
+  });
+
+  it('не смогли определить модель — не пишем', async () => {
+    // Отказ определить модель не должен превращаться в разрешение писать.
+    const client = fakeClient(['FAA02006M'], { listStoresFails: true });
+    const result = await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
+
+    expect(client.updateStocks).not.toHaveBeenCalled();
+    expect(result.writeSkipReason).toBe('placement');
+    expect(result.placementType).toBeUndefined();
+    // И не роняет загрузку: файл разобран, закуп сохранён.
+    expect(result.matched).toBeGreaterThan(0);
+  });
+
+  it('отчёт объясняет причину и ведёт к смене магазина', async () => {
+    const client = fakeClient(['FAA02006M'], { placementType: 'FBY' });
+    const result = await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
+    const text = formatStockReport(result);
+
+    expect(text).toContain('FBY');
+    expect(text).toContain('Сменить магазин');
+    // «Записано: 0» выглядит как неудачная запись, тогда как записи не было и
+    // быть не должно.
+    expect(text).not.toContain('Записано');
+    expect(text).not.toContain('Остатки обновлены');
+  });
+
+  it('при неизвестной модели отчёт не приписывает магазину FBY', async () => {
+    const client = fakeClient(['FAA02006M'], { listStoresFails: true });
+    const result = await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
+    const text = formatStockReport(result);
+
+    expect(text).toContain('Не удалось определить модель');
+    expect(text).not.toContain('FBY');
+  });
+});
+
+/**
+ * Запрет записи остатков вне прода.
+ *
+ * Разработка идёт против БОЕВОГО магазина: токен в `.env` настоящий, и локальный
+ * запуск с присланным прайсом менял бы остатки живого продавца. Откатить это
+ * нечем — Яндекс не сообщает, что именно применилось. Поэтому ограничение живёт
+ * в коде, а не в дисциплине разработчика, и проверяется тестом.
+ */
+describe('StockSyncService: запись выключена настройкой среды', () => {
+  const file = readFileSync(FIXTURE);
+  const localService = (
+    client: ReturnType<typeof fakeClient>,
+    prices?: ReturnType<typeof fakePurchasePrices>,
+  ) => serviceWith(client, prices, false);
+
+  it('вне прода остатки не отправляются, даже на пишущей модели', async () => {
+    const client = fakeClient(['FAA02006M'], { placementType: 'FBS' });
+    const result = await localService(client).sync(CREDENTIALS, file, { telegramUserId: USER });
+
+    expect(client.updateStocks).not.toHaveBeenCalled();
+    expect(client.getWarehouseId).not.toHaveBeenCalled();
+    expect(result.writeSkipReason).toBe('write-disabled');
+    expect(result.updated).toBe(0);
+  });
+
+  it('модель у Маркета даже не спрашивается — писать всё равно не будем', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const result = await localService(client).sync(CREDENTIALS, file, { telegramUserId: USER });
+
+    expect(client.listStores).not.toHaveBeenCalled();
+    expect(result.placementType).toBeUndefined();
+  });
+
+  it('среда важнее модели: на FBY повод всё равно «локальная среда»', async () => {
+    // Иначе отчёт посоветовал бы сменить магазин там, где дело вообще не в нём.
+    const client = fakeClient(['FAA02006M'], { placementType: 'FBY' });
+    const result = await localService(client).sync(CREDENTIALS, file, { telegramUserId: USER });
+
+    expect(result.writeSkipReason).toBe('write-disabled');
+  });
+
+  it('закупочные цены при этом сохраняются — ради «Прибыли»', async () => {
+    const prices = fakePurchasePrices();
+    const result = await localService(fakeClient(['FAA02006M']), prices).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+    });
+
+    expect(prices.upsertMany).toHaveBeenCalledTimes(1);
+    expect(result.purchasePricesSaved).toBeGreaterThan(0);
+    expect(result.matched).toBeGreaterThan(0);
+  });
+
+  it('отчёт называет локальный запуск и НЕ советует продавцу ничего', async () => {
+    const result = await localService(fakeClient(['FAA02006M'])).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+    });
+    const text = formatStockReport(result);
+
+    expect(text).toContain('Запись остатков выключена');
+    expect(text).toContain('STOCK_WRITE_ENABLED');
+    // Совет «переключитесь на FBS» здесь увёл бы не туда: дело не в магазине.
+    expect(text).not.toContain('Сменить магазин');
+    expect(text).not.toContain('Остатки обновлены');
+  });
+
+  it('в проде поведение прежнее — запись идёт', async () => {
+    // Парный кейс: без него тест выше проходил бы и у сломанной записи вообще.
+    const client = fakeClient(['FAA02006M'], { placementType: 'FBS' });
+    const result = await serviceWith(client).sync(CREDENTIALS, file, { telegramUserId: USER });
+
+    expect(client.updateStocks).toHaveBeenCalled();
+    expect(result.writeSkipReason).toBeUndefined();
+    expect(result.updated).toBe(1);
   });
 });
 

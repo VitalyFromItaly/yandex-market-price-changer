@@ -5,6 +5,12 @@ import { message } from 'telegraf/filters';
 
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
+import {
+  FBY_STOCKS_READONLY,
+  PLACEMENT_UNKNOWN,
+  isStockWritable,
+  placementOfCampaign,
+} from '../../../../yandex/stocks/placement';
 import { formatStockReport } from '../../../../yandex/stocks/stock-report';
 import { StockSyncService } from '../../../../yandex/stocks/stock-sync.service';
 import { YandexApiError } from '../../../../yandex/yandex-api.errors';
@@ -96,15 +102,45 @@ export class StockUploadHandler {
       return;
     }
 
+    const credentials = {
+      token: store.token,
+      campaignId: store.campaign_id,
+      businessId: store.business_id,
+    };
+
+    /**
+     * ПРАВИЛО «на FBY остатки только читаются» — см. placement.ts.
+     *
+     * Файл при этом ПРИНИМАЕТСЯ, а не отвергается: из него сохраняются
+     * закупочные цены, и без них «Прибыль» у FBY-продавца не считалась бы вовсе
+     * — прайс её единственный источник. `PurchasePrice` ключуется по продавцу,
+     * а не по магазину, поэтому одна загрузка обслуживает и FBS, и FBY.
+     *
+     * Но сказать об этом надо ДО скачивания: обещать «загружаю остатки», а через
+     * минуту прислать «остатки не записаны», значит выглядеть сломанным.
+     *
+     * Сначала КЭШ `store.stores`: он уже в документе, сети не нужно, и после
+     * смены магазина в боте (она сама идёт из этого кэша) модель заведомо
+     * известна — то есть типовой случай закрывается без единого запроса. Если
+     * кэш не знает, спрашиваем через `StockSyncService`: правило и способ его
+     * выяснить остаются в одном месте.
+     */
+    const placementType =
+      placementOfCampaign(store.stores, store.campaign_id) ??
+      (await this.stocks.placementFor(credentials));
+
+    const stocksReadOnly = !isStockWritable(placementType);
+    if (stocksReadOnly) {
+      await ctx.reply(placementType ? FBY_STOCKS_READONLY : PLACEMENT_UNKNOWN, htmlOptions());
+    }
+
     const dryRun = String(ctx.message.caption ?? '')
       .toLowerCase()
       .includes(UPLOAD_LIMITS.dryRunKeyword);
 
-    await ctx.reply(
-      dryRun
-        ? '🔍 Проверяю файл, в Яндекс ничего записывать не буду…'
-        : '⏳ Загружаю остатки, это займёт минуту…',
-    );
+    // Обещаем ровно то, что сделаем. «Загружаю остатки» там, где их не будет, —
+    // обещание, которое отчёт следом опровергнет.
+    await ctx.reply(this.progressText(dryRun, stocksReadOnly));
 
     // Файл держим В ПАМЯТИ, на диск не пишем.
     //
@@ -120,15 +156,10 @@ export class StockUploadHandler {
     }
     const buffer = Buffer.from(await response.arrayBuffer());
 
-    const result = await this.stocks.sync(
-      {
-        token: store.token,
-        campaignId: store.campaign_id,
-        businessId: store.business_id,
-      },
-      buffer,
-      { dryRun, telegramUserId: ctx.from.id.toString() },
-    );
+    const result = await this.stocks.sync(credentials, buffer, {
+      dryRun,
+      telegramUserId: ctx.from.id.toString(),
+    });
 
     this.logger.log(
       `Остатки (${dryRun ? 'проверка' : 'запись'}) для ${ctx.from.id}: ` +
@@ -136,6 +167,19 @@ export class StockUploadHandler {
     );
 
     await ctx.reply(formatStockReport(result), htmlOptions());
+  }
+
+  /**
+   * Что бот обещает сделать с файлом.
+   *
+   * Три состояния, а не два: «проверка» — просьба продавца, «только цены» — наш
+   * отказ писать остатки. Слить их в одну фразу значит перестать различать
+   * «я так попросил» и «мне отказали».
+   */
+  private progressText(dryRun: boolean, stocksReadOnly: boolean): string {
+    if (stocksReadOnly) return '🔍 Разбираю файл — сохраню закупочные цены, остатки не трогаю…';
+    if (dryRun) return '🔍 Проверяю файл, в Яндекс ничего записывать не буду…';
+    return '⏳ Загружаю остатки, это займёт минуту…';
   }
 
   private async replyWithError(ctx: any, error: unknown): Promise<void> {

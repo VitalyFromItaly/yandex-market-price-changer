@@ -12,6 +12,10 @@ services:
       # Раньше здесь были MONGODB_URI и REDIS_URL, которых код не знает:
       # Mongoose получал undefined, а Bull молча уходил на localhost:6379.
       - PORT=3000
+      # Запись остатков в Яндекс — единственная операция, меняющая чужой магазин.
+      # Без `:-` и без умолчания в Joi: каждая среда заявляет решение сама, и
+      # забытая переменная роняет старт, а не включает запись молча.
+      - STOCK_WRITE_ENABLED=${STOCK_WRITE_ENABLED:?нужно задать STOCK_WRITE_ENABLED в .env (true в проде, false локально)}
       - MONGODB_URL=mongodb://root:secret@mongodb:27017/
       - MONGODB_DATABASE=${MONGODB_DATABASE:-yandex-market-price-changer}
       - REDIS_HOST=redis

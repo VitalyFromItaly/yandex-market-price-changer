@@ -6,6 +6,7 @@ import { AppConfigService } from '../../src/config/app-config.service';
 
 /** Полный валидный набор — база для сценариев «убрали одну переменную». */
 const VALID_ENV = {
+  STOCK_WRITE_ENABLED: 'false',
   MONGODB_URL: 'mongodb://root:secret@localhost:27018/',
   MONGODB_DATABASE: 'yandex-market-price-changer',
   REDIS_HOST: 'localhost',
@@ -21,6 +22,7 @@ describe('envValidationSchema', () => {
   });
 
   it.each([
+    'STOCK_WRITE_ENABLED',
     'MONGODB_URL',
     'MONGODB_DATABASE',
     'REDIS_HOST',
@@ -42,6 +44,26 @@ describe('envValidationSchema', () => {
     );
     expect(error).toBeDefined();
     expect(error!.details.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('STOCK_WRITE_ENABLED не имеет умолчания — среда обязана заявить решение', () => {
+    // Умолчание любого знака плохо: «можно» однажды перепишет остатки живого
+    // продавца с локальной машины, «нельзя» тихо выключит загрузку в проде.
+    const env = { ...VALID_ENV };
+    delete (env as Record<string, string>).STOCK_WRITE_ENABLED;
+    const { error, value } = envValidationSchema.validate(env);
+
+    expect(error).toBeDefined();
+    expect(value.STOCK_WRITE_ENABLED).toBeUndefined();
+    // Сообщение обязано объяснить, что ставить локально.
+    expect(error!.message).toContain('false');
+  });
+
+  it.each(['1', '0', 'yes', 'True', ''])('STOCK_WRITE_ENABLED отвергает %o', (value) => {
+    // Только точные true/false: 'True' или '1' — это опечатка, а не намерение,
+    // и трактовать её как «включено» нельзя.
+    const { error } = envValidationSchema.validate({ ...VALID_ENV, STOCK_WRITE_ENABLED: value });
+    expect(error).toBeDefined();
   });
 
   it('REDIS_HOST обязателен — без него Bull молча уходит на localhost', () => {
@@ -289,5 +311,28 @@ describe('AppConfigService (smoke: модуль собирается через 
   it('isProduction отражает NODE_ENV', async () => {
     expect((await build({ ...VALID_ENV, NODE_ENV: 'production' })).isProduction).toBe(true);
     expect((await build(VALID_ENV)).isProduction).toBe(false);
+  });
+
+  it('stockWriteEnabled читает СТРОКУ, а не приводит к булеву', async () => {
+    // Классическая ловушка коэрции: Boolean('false') === true. Такая опечатка
+    // включила бы запись остатков в чужой магазин молча.
+    expect((await build({ ...VALID_ENV, STOCK_WRITE_ENABLED: 'true' })).stockWriteEnabled).toBe(
+      true,
+    );
+    expect((await build({ ...VALID_ENV, STOCK_WRITE_ENABLED: 'false' })).stockWriteEnabled).toBe(
+      false,
+    );
+  });
+
+  it('stockWriteEnabled НЕ выводится из NODE_ENV', async () => {
+    // «Продовость» и «можно ли трогать чужой склад» — разные вопросы. Связать
+    // их значило бы менять второе, правя первое.
+    const prodNoWrite = await build({
+      ...VALID_ENV,
+      NODE_ENV: 'production',
+      STOCK_WRITE_ENABLED: 'false',
+    });
+    expect(prodNoWrite.isProduction).toBe(true);
+    expect(prodNoWrite.stockWriteEnabled).toBe(false);
   });
 });

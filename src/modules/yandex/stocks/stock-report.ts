@@ -17,12 +17,23 @@ const SKIPPED_PREVIEW = 10;
 export function formatStockReport(result: IStockSyncResult): string {
   const lines: string[] = [];
 
-  lines.push(
-    result.dryRun
-      ? `🔍 ${b('Пробная сверка')} — в Яндекс ничего не записано`
-      : `✅ ${b('Остатки обновлены')}`,
-  );
+  /**
+   * Заголовок отвечает на «что произошло с моим файлом», и поводов НЕ записать
+   * ТРИ. Итог у всех общий — «в Яндекс ничего не ушло», — а действие от продавца
+   * требуется разное: прислать файл без пометки, сменить магазин, либо вообще
+   * никакое (запись выключена настройкой). Один заголовок на всех означал бы «записано 0»
+   * без объяснения.
+   *
+   * Запрет проверяется РАНЬШЕ просьбы: если продавец попросил сверку на
+   * FBY-магазине, важнее сказать, что записать туда нельзя в принципе.
+   */
+  lines.push(headline(result));
   lines.push('');
+
+  const explanation = skipExplanation(result);
+  if (explanation) {
+    lines.push(explanation, 'Файл разобран, ниже — что в нём нашлось.', '');
+  }
 
   lines.push(`📄 Строк в прайсе: ${b(result.totalRows)}`);
   lines.push(`📚 Артикулов в каталоге: ${b(result.catalogSize)}`);
@@ -35,7 +46,9 @@ export function formatStockReport(result: IStockSyncResult): string {
     lines.push(`🚫 Нет в наличии: ${b(result.zeroed)} → остаток 0`);
   }
 
-  if (!result.dryRun) {
+  // «Записано: 0» при запрете — строка, которая только путает: она выглядит как
+  // неудача записи, тогда как записи не было и не должно было быть.
+  if (!result.dryRun && !result.writeSkipReason) {
     lines.push(`📤 Записано: ${b(result.updated)}`);
   }
 
@@ -99,10 +112,61 @@ export function formatStockReport(result: IStockSyncResult): string {
     lines.push('⚠️ Эти позиции остались со старым остатком. Загрузите файл ещё раз.');
   }
 
-  if (result.dryRun) {
-    lines.push('');
-    lines.push('Чтобы применить — пришлите файл ещё раз без пометки «проверка».');
-  }
+  // Совет даём ровно один и по фактическому поводу: «пришлите ещё раз без
+  // пометки» на FBY-магазине отправило бы продавца делать то, что снова не
+  // сработает.
+  const advice = skipAdvice(result);
+  if (advice) lines.push('', advice);
 
   return lines.join('\n');
+}
+
+/** Заголовок: что произошло с файлом. */
+function headline(result: IStockSyncResult): string {
+  if (result.writeSkipReason === 'write-disabled') {
+    return `🧪 ${b('Запись остатков выключена')} — в Яндекс ничего не отправлено`;
+  }
+  if (result.writeSkipReason === 'placement') {
+    return `🏬 ${b('Остатки не записаны')} — магазин на модели ${esc(placement(result))}`;
+  }
+  if (result.dryRun) {
+    return `🔍 ${b('Пробная сверка')} — в Яндекс ничего не записано`;
+  }
+  return `✅ ${b('Остатки обновлены')}`;
+}
+
+/** Почему не записали. Пусто — записали или продавец сам просил сверку. */
+function skipExplanation(result: IStockSyncResult): string | null {
+  if (result.writeSkipReason === 'write-disabled') {
+    return 'В этой среде запись остатков отключена настройкой (STOCK_WRITE_ENABLED=false).';
+  }
+  if (result.writeSkipReason !== 'placement') return null;
+
+  return result.placementType
+    ? 'Товаром на складе Маркета распоряжается сам Маркет — прайсом его остатки не меняются.'
+    : 'Не удалось определить модель магазина, поэтому записывать остатки не стали.';
+}
+
+/** Что продавцу делать дальше. При выключенной записи — ничего. */
+function skipAdvice(result: IStockSyncResult): string | null {
+  // Выключенная запись — решение развёртывания, а не продавца: советовать ему
+  // нечего, и фраза про смену магазина увела бы не туда.
+  if (result.writeSkipReason === 'write-disabled') return null;
+
+  if (result.writeSkipReason === 'placement') {
+    return result.placementType
+      ? 'Чтобы обновить остатки, переключитесь на магазин FBS — «🏪 Сменить магазин».'
+      : 'Попробуйте ещё раз через пару минут.';
+  }
+
+  if (result.dryRun) {
+    return 'Чтобы применить — пришлите файл ещё раз без пометки «проверка».';
+  }
+
+  return null;
+}
+
+/** Как назвать модель в заголовке, когда определить её не удалось. */
+function placement(result: IStockSyncResult): string {
+  return result.placementType ?? 'неизвестной модели';
 }

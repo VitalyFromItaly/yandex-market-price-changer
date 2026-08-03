@@ -31,6 +31,19 @@ export class AppConfigService {
     return this.config.get<number>('PORT');
   }
 
+  /**
+   * Разрешена ли запись остатков в Partner API — единственная мутация всего
+   * приложения.
+   *
+   * Не выводится из NODE_ENV: «продовость» и «можно ли трогать чужой склад» —
+   * разные вопросы, и связывать их значило бы менять второе, правя первое.
+   * Переменная обязательна и без умолчания (см. env.validation.ts), так что
+   * `undefined` сюда не доедет — Joi уронит приложение раньше.
+   */
+  get stockWriteEnabled(): boolean {
+    return this.config.get<string>('STOCK_WRITE_ENABLED') === 'true';
+  }
+
   get mongoUrl(): string {
     return this.config.get<string>('MONGODB_URL');
   }

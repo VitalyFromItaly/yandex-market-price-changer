@@ -3,10 +3,12 @@ import type { IYandexTenantCredentials, IStockUpdate } from '../yandex-api.clien
 
 import { Injectable, Logger } from '@nestjs/common';
 
+import { AppConfigService } from '../../../config/app-config.service';
 import { PurchasePriceService } from '../../../database/services/purchase-price.service';
 import { STOCKS_BATCH_SIZE } from '../yandex-api.paths';
 import { YandexClientFactory } from '../yandex-client.factory';
 
+import { isStockWritable, placementOfCampaign } from './placement';
 import { parsePriceList } from './price-list.parser';
 import { resolveSku, stripBrand } from './sku-resolver';
 
@@ -39,11 +41,49 @@ export interface IStockSyncResult {
   matchedBy: Record<string, number>;
   /** Батчи, которые Partner API отверг. */
   errors: Array<{ batch: number; skus: string[]; message: string }>;
-  /** true — ничего не записывали, только сверяли. */
+  /** true — ничего не записывали, только сверяли. Это ПРОСЬБА продавца. */
   dryRun: boolean;
   catalogSize: number;
   /** Сколько закупочных цен сохранено в нашу базу. */
   purchasePricesSaved: number;
+  /** Модель размещения подключённой кампании — как её вернул Маркет. */
+  placementType?: string;
+  /**
+   * Почему запись пропущена. Отсутствует — писали (либо продавец просил сверку).
+   *
+   * РАЗРЯД, а не набор булевых. Поводов не писать стало три, итог у всех общий
+   * («в Яндекс ничего не ушло»), а действия продавца — разные: сменить магазин,
+   * прислать файл без пометки, или вообще ничего (запись выключена). Три флага
+   * с общим итогом лишили бы отчёт возможности сказать, что именно произошло —
+   * ровно поэтому `stockWriteForbidden` когда-то и отделили от `dryRun`.
+   *
+   * `dryRun` при этом остаётся ОТДЕЛЬНЫМ полем: это не отказ, а просьба.
+   */
+  writeSkipReason?: TWriteSkipReason;
+}
+
+/**
+ * Повод не отправлять остатки в Partner API.
+ *
+ * - `placement` — модель магазина не даёт продавцу управлять остатками (FBY)
+ *   либо её не удалось определить; какой из двух случаев, различает
+ *   `placementType`;
+ * - `write-disabled` — запись выключена настройкой среды
+ *   (`STOCK_WRITE_ENABLED=false`), то есть решение развёртывания, а не магазина.
+ */
+export type TWriteSkipReason = 'placement' | 'write-disabled';
+
+/**
+ * Единственное место, где решается, писать ли остатки.
+ *
+ * Отдельной функцией, а не выражением на месте: порядок поводов значим
+ * (настройка среды важнее модели — при выключенной записи модель даже не
+ * спрашивается), а `no-nested-ternary` в этом проекте запрещён не зря.
+ */
+function skipReasonOf(writeEnabled: boolean, placementType?: string): TWriteSkipReason | undefined {
+  if (!writeEnabled) return 'write-disabled';
+  if (!isStockWritable(placementType)) return 'placement';
+  return undefined;
 }
 
 /** Кому принадлежит прайс. Закуп скоупится по продавцу, как и всё остальное. */
@@ -66,6 +106,7 @@ export class StockSyncService {
   constructor(
     private readonly clients: YandexClientFactory,
     private readonly purchasePrices: PurchasePriceService,
+    private readonly config: AppConfigService,
   ) {}
 
   /**
@@ -92,6 +133,34 @@ export class StockSyncService {
 
     const dryRun = options.dryRun ?? false;
     const client = this.clients.forTenant(credentials);
+
+    /**
+     * НАСТРОЙКА СРЕДЫ проверяется первой — раньше модели размещения.
+     *
+     * `STOCK_WRITE_ENABLED` объявляется каждым развёртыванием явно и без
+     * умолчания: разработка идёт против боевого магазина (токен в `.env`
+     * настоящий), и локальный запуск с присланным прайсом менял бы остатки
+     * живого продавца — откатить это нечем, Яндекс не сообщает, что именно
+     * применилось.
+     *
+     * Первой ещё и потому, что решение не зависит ни от чего внешнего: раз
+     * писать всё равно не будем, незачем и спрашивать Маркет о модели.
+     */
+    const writeEnabled = this.config.stockWriteEnabled;
+
+    /**
+     * Модель размещения сервис выясняет САМ, а не принимает в опциях.
+     *
+     * Переданное вызывающим можно не передать — ровно так уже терялся `dryRun`.
+     * Здесь цена ошибки выше: остатки ушли бы на склад Маркета. Один запрос
+     * `GET v2/campaigns` против двадцати шести страниц каталога, которые будут
+     * прочитаны следом, — незаметен.
+     */
+    const placementType = !writeEnabled
+      ? undefined
+      : await this.resolvePlacement(client, credentials.campaignId);
+
+    const writeSkipReason = skipReasonOf(writeEnabled, placementType);
 
     const { rows, invalid } = parsePriceList(file);
 
@@ -181,6 +250,8 @@ export class StockSyncService {
       dryRun,
       catalogSize: catalog.size,
       purchasePricesSaved: 0,
+      placementType,
+      writeSkipReason,
     };
 
     /**
@@ -198,8 +269,61 @@ export class StockSyncService {
       return result;
     }
 
+    /**
+     * Запрошенная запись ПОНИЖАЕТСЯ до сверки, а не отвергается целиком.
+     *
+     * Разбор файла и закуп уже сделаны, и они полезны: закуп ложится в НАШУ базу
+     * (см. комментарий выше), без него «Прибыль» у FBY-продавца не считалась бы
+     * вовсе — а прайс у него единственный источник закупочных цен, потому что
+     * `PurchasePrice` ключуется по продавцу, а не по магазину. Понижение
+     * безопасно: «просили запись, сделали проверку» стоит времени, а обратное
+     * направление стоило этому проекту бага, ради которого `sync` принимает
+     * объект опций. Молчать при этом нельзя — `writeSkipReason` уходит в отчёт и
+     * объясняется там текстом.
+     */
+    if (writeSkipReason) {
+      this.logger.warn(
+        writeSkipReason === 'write-disabled'
+          ? 'Запись остатков пропущена: STOCK_WRITE_ENABLED=false'
+          : `Запись остатков пропущена: модель «${placementType ?? 'неизвестна'}» ` +
+              `не даёт продавцу управлять остатками (кампания ${credentials.campaignId})`,
+      );
+      return result;
+    }
+
     result.updated = await this.writeInBatches(client, updates, result);
     return result;
+  }
+
+  /**
+   * Модель размещения подключённой кампании — по живому ответу Маркета.
+   *
+   * Публичный: этим же ответом пользуется `stock-upload.handler`, чтобы выйти ДО
+   * скачивания файла, когда кэш `YandexMarket.stores` модель не знает. Своего
+   * запроса он не делает намеренно — правило и способ его выяснить должны
+   * оставаться в одном месте, иначе они разойдутся.
+   *
+   * Не из кэша: тот мог устареть (кампанию перевели на другую модель), а
+   * решение принимается о ЗАПИСИ.
+   *
+   * Сбой сети отдаёт `undefined`, то есть «нельзя писать»: невозможность
+   * определить модель не должна превращаться в разрешение. Не бросает — на пути
+   * `sync` файл всё равно будет разобран, а закуп сохранён.
+   */
+  public async placementFor(credentials: IYandexTenantCredentials): Promise<string | undefined> {
+    return await this.resolvePlacement(this.clients.forTenant(credentials), credentials.campaignId);
+  }
+
+  private async resolvePlacement(
+    client: ReturnType<YandexClientFactory['forTenant']>,
+    campaignId: string,
+  ): Promise<string | undefined> {
+    try {
+      return placementOfCampaign(await client.listStores(), campaignId);
+    } catch (error) {
+      this.logger.warn(`Не удалось определить модель размещения: ${String(error)}`);
+      return undefined;
+    }
   }
 
   /**
@@ -232,6 +356,27 @@ export class StockSyncService {
     result: IStockSyncResult,
   ): Promise<number> {
     if (!updates.length) return 0;
+
+    /**
+     * ВТОРОЙ РУБЕЖ запрета записи — и по модели, и по среде.
+     *
+     * Проверка стоит вплотную к `updateStocks` — единственному вызову записи во
+     * всём приложении, — а не только наверху `sync`: любой будущий путь сюда
+     * (очередь, скрипт, админка) пройдёт мимо верхней проверки, но не мимо этой.
+     * Тот же довод, по которому `accessGate` — это `bot.use`, а не проверка,
+     * повторённая в каждом обработчике.
+     *
+     * Важно и то, что выход происходит ДО `getWarehouseId()`: на FBY-кампании он
+     * возвращает склад МАРКЕТА (у живого продавца — 147 «Ростов-на-Дону-1»), и
+     * даже узнавать его здесь незачем.
+     */
+    if (result.writeSkipReason) {
+      this.logger.warn(
+        `writeInBatches вызван при запрещённой записи (${result.writeSkipReason}) — ` +
+          'остатки не отправлены',
+      );
+      return 0;
+    }
 
     const warehouseId = await client.getWarehouseId();
     let written = 0;
