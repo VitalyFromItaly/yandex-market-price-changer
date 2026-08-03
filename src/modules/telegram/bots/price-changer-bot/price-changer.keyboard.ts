@@ -6,7 +6,7 @@ import { Markup } from 'telegraf';
 import { TelegramKeyboard } from '../../ui/keyboard.ui.telegram';
 import { featureMenuLayout } from '../shared/features.domain';
 
-import { unconfiguredMenuLayout, withAdminRow } from './menu.constants';
+import { unconfiguredMenuLayout, withAdminRow, withSwitchStore } from './menu.constants';
 
 @Injectable()
 export class PriceChangerKeyboard extends TelegramKeyboard {
@@ -27,9 +27,14 @@ export class PriceChangerKeyboard extends TelegramKeyboard {
   public async createMenuKeyboard(
     isAdmin = false,
     features?: TFeatureMap,
+    showSwitchStore = false,
   ): Promise<Markup.Markup<any>> {
     // Подписи берутся из menu.constants — единственного источника (TASK-014).
-    const layout = featureMenuLayout(features);
+    const base = featureMenuLayout(features);
+    // Кнопка смены магазина — в ряд к «Прибыли», наверх (см. withSwitchStore), и
+    // только когда токен открывает больше одного магазина (флаг считает хендлер
+    // из кэша `stores`, без похода в API).
+    const layout = showSwitchStore ? withSwitchStore(base) : base;
     return await this.createKeyboard(isAdmin ? withAdminRow(layout) : layout);
   }
 
@@ -49,9 +54,10 @@ export class PriceChangerKeyboard extends TelegramKeyboard {
     configured: boolean,
     isAdmin = false,
     features?: TFeatureMap,
+    showSwitchStore = false,
   ): Promise<Markup.Markup<any>> {
     return configured
-      ? await this.createMenuKeyboard(isAdmin, features)
+      ? await this.createMenuKeyboard(isAdmin, features, showSwitchStore)
       : await this.createUnconfiguredKeyboard(isAdmin);
   }
 

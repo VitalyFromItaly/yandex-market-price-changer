@@ -1,5 +1,7 @@
 import type { IStoreRef } from '../../../yandex/yandex-api.client';
 
+import { withPlacement } from './store-title';
+
 /**
  * Выбор магазина, когда токен открывает доступ к нескольким.
  *
@@ -31,9 +33,14 @@ export const PICK_STORE_SWITCH_PREFIX = 'store_switch:';
  * Без модели у одного бизнеса без домена все кампании сворачиваются в одно
  * название и выбор становится лотереей — ровно случай боевого аккаунта
  * (3×FBS + 1×FBY в одном кабинете).
+ *
+ * Склейка делегирована `store-title.ts`: ту же подпись печатают настройки,
+ * профиль, подтверждение смены и админская карточка, и разделитель обязан быть
+ * один — иначе кнопка пикера и следующее за ней сообщение назовут магазин
+ * по-разному.
  */
 export function storeLabel(store: IStoreRef): string {
-  return store.placementType ? `${store.storeName} · ${store.placementType}` : store.storeName;
+  return withPlacement(store.storeName, store.placementType);
 }
 
 export interface IBusinessGroup {

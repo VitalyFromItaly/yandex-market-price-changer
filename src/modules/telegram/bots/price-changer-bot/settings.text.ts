@@ -8,9 +8,11 @@ import {
   rateShortLabel,
   ratesOf,
 } from '../../../yandex/reports/profit';
+import { isStockWritable, placementOfCampaign } from '../../../yandex/stocks/placement';
 import { b, code, esc } from '../../formatting/telegram-format';
 
 import { MENU } from './menu.constants';
+import { storeTitle } from './store-title';
 
 /**
  * Экран настроек — ОДИН текст на кнопку «⚙️ Настройки API» и на `/settings`.
@@ -45,7 +47,24 @@ export function settingsText(store: YandexMarketDocument | null): string {
   const lines = [`⚙️ ${b('Настройки API')}`, ''];
 
   if (configured) {
-    lines.push(`🏪 Магазин: ${esc(store?.name) || '✅ подключён'}`, '');
+    // Название вместе с моделью размещения: одноимённые FBS и FBY иначе
+    // неразличимы, а от модели зависит, примет ли бот прайс.
+    lines.push(`🏪 Магазин: ${esc(storeTitle(store)) || '✅ подключён'}`, '');
+
+    /**
+     * На FBY загрузка остатков не работает, и спрашивают об этом именно здесь —
+     * на экране, где магазин назван. Сказать причину рядом с названием дешевле,
+     * чем ждать, пока продавец пришлёт прайс и получит отказ.
+     *
+     * Условие «модель ИЗВЕСТНА и не пишущая», а не просто `!isStockWritable`:
+     * та на `undefined` отвечает «нельзя» — и правильно делает, когда решается
+     * вопрос о записи, — но здесь это означало бы показать «только чтение»
+     * продавцу на FBS, у которого просто ещё не заполнен кэш магазинов.
+     */
+    const placement = placementOfCampaign(store?.stores, store?.campaign_id);
+    if (placement && !isStockWritable(placement)) {
+      lines.push('📦 Остатки: только чтение — на FBY ими распоряжается Маркет.', '');
+    }
     // Строку состояния не пересказываем прозой. Было «🏪 Магазин: … » и следом
     // «Магазин подключён.» — одно и то же дважды подряд.
     lines.push(
@@ -132,10 +151,6 @@ export function settingsKeyboardRows(
         })),
       );
     }
-
-    // Смена магазина — только когда он подключён: один токен открывает
-    // несколько кампаний, и продавцу может понадобиться другая.
-    rows.push([{ text: '🏪 Сменить магазин', callback_data: 'switch_store' }]);
   }
 
   rows.push([{ text: MENU.MAIN, callback_data: 'main_menu' }]);

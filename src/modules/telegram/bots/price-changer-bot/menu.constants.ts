@@ -38,6 +38,18 @@ export const MENU = {
   FBY: '📦 FBY',
   SCHEDULE: '⏰ Рассылка',
   SETTINGS: '⚙️ Настройки API',
+  /**
+   * Смена активного магазина. В общей раскладке её НЕТ: кнопка добавляется в
+   * главное меню динамически и только когда токен открывает больше одного
+   * магазина (см. createMenuKeyboard/showSwitchStore). Поэтому она есть в
+   * MENU_LABELS (и в MENU_TO... нет), но отсутствует в MENU_LAYOUT — как MAIN и
+   * USERS. `hears` на неё зарегистрирован в menu-commands.
+   *
+   * Садится в ряд к «Прибыли» — самый ВЕРХНИЙ (см. `withSwitchStore`). Отдельным
+   * рядом в конце её не видно: рядов семь, восьмой уходит за нижнюю границу
+   * клавиатуры, и продавец кнопку просто не находит.
+   */
+  SWITCH_STORE: '🏪 Сменить магазин',
   PROFILE: '📊 Мой профиль',
   HELP: '❓ Помощь',
   /** Видна ТОЛЬКО администраторам — в общей раскладке её нет. */
@@ -65,11 +77,13 @@ export const MENU_LABELS: readonly TMenuLabel[] = Object.values(MENU);
  * в MENU_LABELS, но отсутствует в раскладке.
  */
 export const MENU_LAYOUT: readonly (readonly TMenuLabel[])[] = [
+  // Прибыль ВЕДЁТ меню: это не ещё один срез заказов, а единственный экран, где
+  // видны деньги после комиссии, налога и закупа. Ряд первый ещё и потому, что
+  // в него садится «🏪 Сменить магазин» (см. withSwitchStore), а в конце
+  // раскладки её не видно без прокрутки.
+  [MENU.PROFIT],
   [MENU.SHIPPED_TODAY, MENU.REDEEMED],
   [MENU.RETURNING, MENU.IN_TRANSIT],
-  // Прибыль — своим рядом во всю ширину: это не ещё один срез заказов, а
-  // единственный экран, где видны деньги после комиссии, налога и закупа.
-  [MENU.PROFIT],
   // Склады и FBY — каждый своим рядом: это не срезы заказов, а отдельные
   // экраны. Обе фичи по умолчанию выключены, поэтому featureMenuLayout убирает
   // их ряды у всех, кому не открыли, и пустых рядов не остаётся (схлопываются).
@@ -111,4 +125,30 @@ export function unconfiguredMenuLayout(): string[][] {
  */
 export function withAdminRow(layout: string[][]): string[][] {
   return [...layout, [MENU.USERS]];
+}
+
+/**
+ * Посадить «🏪 Сменить магазин» в ряд к «Прибыли».
+ *
+ * Не отдельным рядом в конец: рядов семь, восьмой уходит за нижнюю границу
+ * клавиатуры Telegram, и кнопку приходится искать прокруткой — то есть её как бы
+ * и нет. «Прибыль» занимает свой ряд одна и стоит первой, так что соседнее место
+ * свободно и видно сразу.
+ *
+ * Если «Прибыли» в раскладке нет (администратор закрыл `report_profit`, и
+ * `featureMenuLayout` вырезал ряд), кнопка идёт ПЕРВЫМ рядом сама. Дописать её
+ * в конец значило бы вернуть ту же проблему, только другому продавцу.
+ *
+ * Вход не мутируется — как в `menuLayout()` и `withAdminRow`.
+ */
+export function withSwitchStore(layout: string[][]): string[][] {
+  const rows = layout.map((row) => [...row]);
+  const profitRow = rows.find((row) => row.includes(MENU.PROFIT));
+
+  if (profitRow) {
+    profitRow.push(MENU.SWITCH_STORE);
+    return rows;
+  }
+
+  return [[MENU.SWITCH_STORE], ...rows];
 }

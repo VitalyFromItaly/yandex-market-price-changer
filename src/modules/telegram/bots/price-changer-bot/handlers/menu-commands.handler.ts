@@ -12,8 +12,10 @@ import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { profileText } from '../profile.text';
 import { MENU_TO_REPORT } from '../report-buttons';
 import { settingsKeyboardRows, settingsText } from '../settings.text';
+import { storeTitle } from '../store-title';
 
 import { AdminUsersHandler } from './admin-users.handler';
+import { ApiSettingsHandler } from './api-settings.handler';
 import { FbyHandler } from './fby.handler';
 import { ReportsHandler } from './reports.handler';
 import { ScheduleHandler } from './schedule.handler';
@@ -22,6 +24,10 @@ import { WarehousesHandler } from './warehouses.handler';
 
 @Injectable()
 export class MenuCommandsHandler {
+  // Роутер reply-кнопок: держит обработчики, к которым разводит нажатия. Он и
+  // есть список зависимостей — «сгруппировать» их в контейнер значило бы спрятать
+  // состав меню за лишним слоем (тот же довод, что у PriceChangerComposer).
+  // eslint-disable-next-line max-params
   constructor(
     private keyboard: PriceChangerKeyboard,
     private yandexMarketService: YandexMarketService,
@@ -31,6 +37,7 @@ export class MenuCommandsHandler {
     private scheduleHandler: ScheduleHandler,
     private warehousesHandler: WarehousesHandler,
     private fbyHandler: FbyHandler,
+    private apiSettings: ApiSettingsHandler,
     private accessService: UserAccessService,
     private config: AppConfigService,
   ) {}
@@ -60,6 +67,9 @@ export class MenuCommandsHandler {
     // Сводка FBY. Работа — в FbyHandler; здесь только пара «метка ↔ hears».
     bot.hears(MENU.FBY, (ctx) => this.fbyHandler.handle(ctx));
     bot.hears(MENU.SCHEDULE, (ctx) => this.scheduleHandler.showMenu(ctx));
+    // Смена магазина. Кнопка появляется в меню только при >1 магазине; работа —
+    // в ApiSettingsHandler. Пара «метка ↔ hears» требуется инвариантом menu-labels.
+    bot.hears(MENU.SWITCH_STORE, (ctx) => this.apiSettings.startSwitch(ctx));
     bot.hears(MENU.SETTINGS, (ctx) => this.showApiSettings(ctx));
     bot.hears(MENU.PROFILE, (ctx) => this.showProfile(ctx));
     // Раздел администратора. Кнопки нет в общей раскладке, но проверка прав
@@ -82,12 +92,22 @@ export class MenuCommandsHandler {
     );
     // Без подключённого магазина — сокращённое меню: кнопки отчётов иначе
     // ведут в тупик «сначала подключите магазин». Касается и администратора
-    // без своего магазина (он минует гейт, но не магазин).
-    const configured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
+    // без своего магазина (он минует гейт, но не магазин). Кнопку «Сменить
+    // магазин» показываем, только когда токен открывает больше одного (из
+    // кэша `stores`, без похода в API).
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    const configured = !!(store?.campaign_id && store?.business_id && store?.token);
+
+    // Добор кэша для подключившихся до появления кнопки — фоном, см.
+    // ensureStoresCached. Здесь тоже, а не только в /start: главное меню
+    // открывают куда чаще, и ждать от продавца перезапуска бота незачем.
+    this.apiSettings.ensureStoresCached(ctx, store);
+
     const keyboard = await this.keyboard.buildMainKeyboard(
       configured,
       this.config.isAdmin(ctx.from.id),
       account?.features,
+      (store?.stores?.length ?? 0) > 1,
     );
     // await обязателен: без него ошибка отправки теряется мимо bot.catch, и
     // кнопка «Главное меню» молча не срабатывает.
@@ -118,7 +138,7 @@ export class MenuCommandsHandler {
         telegramUserId: ctx.from.id,
         username: ctx.from.username,
         accessStatus: access?.status,
-        storeName: store?.name,
+        storeName: storeTitle(store),
         configured: !!(store?.campaign_id && store?.business_id && store?.token),
         registeredAt: access?.createdAt ? new Date(access.createdAt) : undefined,
       }),

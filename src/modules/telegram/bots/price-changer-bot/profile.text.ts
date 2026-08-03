@@ -19,7 +19,14 @@ export interface IProfileView {
   telegramUserId: number | string;
   username?: string;
   accessStatus?: TAccessStatus;
-  /** Название подключённого магазина; пусто — магазин не подключён. */
+  /**
+   * Подпись подключённого магазина — имя и модель размещения («… · FBY»);
+   * пусто — магазин не подключён.
+   *
+   * Собирается вызывающим через `storeTitle(store)`, а не здесь: модель выводится
+   * из кэша `stores` документа, а профиль о документе ничего не знает и знать не
+   * должен — он рендерит готовую вьюху.
+   */
   storeName?: string;
   configured: boolean;
   registeredAt?: Date;

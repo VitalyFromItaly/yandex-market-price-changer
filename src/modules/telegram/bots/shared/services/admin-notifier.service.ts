@@ -11,6 +11,7 @@ import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { PriceChangerKeyboard } from '../../price-changer-bot/price-changer.keyboard';
+import { storeTitle } from '../../price-changer-bot/store-title';
 import { formatAdminCallback } from '../access.domain';
 
 /**
@@ -148,7 +149,10 @@ export class AdminNotifierService {
       // Раньше карточка состояла из одних идентификаторов, и понять, кто
       // именно просится, было нельзя. Идентификаторы оставляем — здесь адресат
       // технический, в отличие от экранов продавца.
-      `🏪 Магазин: ${esc(store?.name) || '—'}`,
+      // Модель размещения — той же подписью, что видит продавец: у одного
+      // продавца бывают одноимённые FBS и FBY, и без неё карточка не отвечает,
+      // о каком из них речь.
+      `🏪 Магазин: ${esc(storeTitle(store)) || '—'}`,
       `🔑 Campaign ID: <code>${esc(store?.campaign_id) || '—'}</code>`,
       `🏢 Business ID: <code>${esc(store?.business_id) || '—'}</code>`,
       // Токен продавца — секрет. В карточку идёт только начало, чтобы админ мог
