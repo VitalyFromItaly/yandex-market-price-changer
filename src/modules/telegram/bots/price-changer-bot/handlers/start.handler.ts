@@ -99,7 +99,8 @@ export class StartHandler {
    */
   private async replyApproved(ctx: Context, features?: TFeatureMap) {
     const isAdmin = this.config.isAdmin(ctx.from.id);
-    const configured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    const configured = !!(store?.campaign_id && store?.business_id && store?.token);
 
     if (!configured) {
       /**
@@ -121,7 +122,16 @@ export class StartHandler {
       return;
     }
 
-    const kb = await this.keyboard.createMenuKeyboard(isAdmin, features);
+    // Кэш магазинов у подключившихся ДО появления «🏪 Сменить магазин» пуст, а
+    // заполняется он только при подключении токена — без этого добора кнопка не
+    // появилась бы у них никогда. Фоном: кнопка придёт со следующей отрисовкой.
+    this.apiSettings.ensureStoresCached(ctx, store);
+
+    const kb = await this.keyboard.createMenuKeyboard(
+      isAdmin,
+      features,
+      (store?.stores?.length ?? 0) > 1,
+    );
     await ctx.reply('🎉 С возвращением! Выберите отчёт:', htmlOptions(kb));
   }
 

@@ -5,6 +5,7 @@ import { Module } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { AppConfigModule } from '../src/config/app-config.module';
+import { ErrorsModule } from '../src/modules/errors/errors.module';
 import { YandexMarketService } from '../src/database/services/yandex-market.service';
 import { PurchasePriceService } from '../src/database/services/purchase-price.service';
 import { StockSyncService } from '../src/modules/yandex/stocks/stock-sync.service';
@@ -35,7 +36,10 @@ import { YandexModule } from '../src/modules/yandex/yandex.module';
  *   npx ts-node scripts/load-purchase-prices.ts --user=<telegramUserId> --file=stock.xlsx
  */
 
-@Module({ imports: [AppConfigModule, YandexModule] })
+// ErrorsModule импортируется ЯВНО, хотя он @Global(): глобальность делает
+// провайдеры видимыми из уже загруженного модуля, но сам модуль в контекст не
+// втягивает — без него сборка падает на ErrorReporter внутри ProfitService.
+@Module({ imports: [AppConfigModule, ErrorsModule, YandexModule] })
 class PricesModule {}
 
 function parseArgs(argv: string[]): { user: string; file: string } {

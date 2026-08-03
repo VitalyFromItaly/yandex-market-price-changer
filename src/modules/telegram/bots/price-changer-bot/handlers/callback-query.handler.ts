@@ -87,12 +87,14 @@ export class CallbackQueryHandler {
             ctx.botInfo.id.toString(),
           );
           // Без магазина возвращаем сокращённое меню — кнопки отчётов иначе
-          // ведут в тупик. Та же развилка, что в «Главное меню», /menu и /start.
-          const configured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
+          // ведут в тупик. Та же развилка, что в «Главное меню», /menu и /start;
+          // «Сменить магазин» — при >1 магазине (из кэша `stores`).
+          const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
           const mainKeyboard = await this.keyboard.buildMainKeyboard(
-            configured,
+            !!(store?.campaign_id && store?.business_id && store?.token),
             this.config.isAdmin(ctx.from.id),
             account?.features,
+            (store?.stores?.length ?? 0) > 1,
           );
           // Два сообщения здесь неизбежны: editMessageText убирает inline-
           // кнопки из старого сообщения, а reply-клавиатуру можно прицепить

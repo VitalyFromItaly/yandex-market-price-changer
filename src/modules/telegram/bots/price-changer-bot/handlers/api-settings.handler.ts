@@ -1,3 +1,4 @@
+import type { YandexMarketDocument } from '../../../../../database/schemas/yandex-market.schema';
 import type { IStoreRef } from '../../../../yandex/yandex-api.client';
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -9,6 +10,7 @@ import {
   type TDraftField,
 } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import {
   DEFAULT_RATES,
   RATE_CB_CANCEL,
@@ -75,6 +77,12 @@ interface IAutofillResult {
    * ввод, а не забраковать токен.
    */
   rejected?: string;
+  /**
+   * Показан пикер выбора магазина — визард должен ОСТАНОВИТЬСЯ и ждать нажатия,
+   * а не слать следующий шаг. Иначе под списком «Выберите магазин» появлялся бы
+   * второй вопрос «введите Campaign ID вручную».
+   */
+  awaitingPick?: boolean;
 }
 
 /**
@@ -107,7 +115,27 @@ export class ApiSettingsHandler {
     private scheduleHandler: ScheduleHandler,
     private readonly clients: YandexClientFactory,
     private readonly reportsHandler: ReportsHandler,
+    private readonly errors: ErrorReporter,
   ) {}
+
+  /**
+   * Записать в журнал (и панель) сбой обращения к Partner API при работе с
+   * магазином. Токен НЕ попадает в отчёт: у доменной ошибки есть только метод и
+   * путь (/v2/campaigns), статус и тип — этого хватает, чтобы понять «сеть/
+   * таймаут/лимит/отказ», не раскрывая секрет. Не блокирует — `void`.
+   */
+  private reportStoreError(ctx: Context, error: unknown, context: string, action: string): void {
+    void this.errors.report({
+      error,
+      source: 'yandex',
+      context,
+      telegramUserId: ctx.from?.id?.toString(),
+      username: ctx.from?.username,
+      chatId: ctx.chat?.id?.toString(),
+      botId: ctx.botInfo?.id?.toString(),
+      action,
+    });
+  }
 
   /**
    * Inline-кнопки визарда.
@@ -168,20 +196,12 @@ export class ApiSettingsHandler {
     // токен берётся из YandexMarket (не из черновика), выбор пишется прямо в
     // YandexMarket. Регистрируется здесь (до общего callback_query), иначе
     // default-ветка ответила бы «Неизвестная команда».
-    bot.action(/^switch_store$/, async (ctx) => {
-      await ctx.answerCbQuery();
-      try {
-        await this.startSwitch(ctx);
-      } catch (error) {
-        this.logger.error('Не удалось начать смену магазина', error as Error);
-        await ctx.reply('❌ Не удалось получить список магазинов. Попробуйте позже.');
-      }
-    });
-
+    // Точка входа в смену — кнопка меню «🏪 Сменить магазин» (bot.hears в
+    // menu-commands → startSwitch). Инлайн-кнопки на этом шаге нет.
     bot.action(new RegExp(`^${PICK_BUSINESS_SWITCH_PREFIX}`), async (ctx) => {
       await ctx.answerCbQuery();
       const businessId = this.callbackTail(ctx, PICK_BUSINESS_SWITCH_PREFIX);
-      const stores = await this.storesFromLiveToken(ctx);
+      const stores = await this.switchStores(ctx);
       const group = groupByBusiness(stores).find((g) => g.businessId === businessId);
 
       if (!group) {
@@ -464,8 +484,28 @@ export class ApiSettingsHandler {
     // Явно подписанное значение относим к названному полю: тип назвал сам
     // пользователь, догадки по форме строки здесь нет.
     const labelled = parseLabelledValue(text);
-    const field: TDraftField = labelled?.field ?? current;
-    const value = labelled?.value ?? text;
+    let field: TDraftField = labelled?.field ?? current;
+    let value = labelled?.value ?? text;
+
+    // Токен узнаётся по форме ОДНОЗНАЧНО и всегда перебивает текущий шаг: если на
+    // шаге «Campaign ID» вставили API-токен (частый случай — после неудачного
+    // автоопределения человек шлёт токен ещё раз), это «возьми магазины по
+    // токену», а не ответ «неправильное число». Показать список магазинов
+    // полезнее, чем ругать «это не число».
+    //
+    // Это НЕ то угадывание по длине, от которого ушли (см. шапку onboarding):
+    // `/\D/` требует хотя бы один НЕцифровой символ, поэтому 5–15-значный
+    // Campaign ID (чистые цифры) сюда не попадает и остаётся Campaign ID'ом.
+    // Токен же всегда содержит буквы/двоеточие (`ACMA:…`).
+    if (
+      !labelled &&
+      field !== 'token' &&
+      /\D/.test(text.trim()) &&
+      validateStep('token', text).ok
+    ) {
+      field = 'token';
+      value = text.trim();
+    }
 
     const validation = validateStep(field, value);
     if (!validation.ok) {
@@ -494,6 +534,11 @@ export class ApiSettingsHandler {
           keyboard: await this.restartKeyboard('token'),
         };
       }
+
+      // Показан пикер магазина — дальше по визарду не идём. Само сообщение
+      // «Выберите магазин» уже отправлено; отвечать пустотой = не слать ничего
+      // (см. `if (!reply.message) return` в обработчике текста).
+      if (autofill.awaitingPick) return { message: '' };
 
       newDraft = autofill.draft;
     }
@@ -550,6 +595,14 @@ export class ApiSettingsHandler {
           error instanceof Error ? error.constructor.name : 'неизвестная ошибка'
         }`,
       );
+      // В панель тоже: иначе «не удалось определить по токену» видно только в
+      // docker logs, и причину (сеть/таймаут/лимит/отказ) не отличить.
+      this.reportStoreError(
+        ctx,
+        error,
+        'onboarding:autofill',
+        'автоопределение магазина по токену',
+      );
 
       if (error instanceof YandexAuthError) {
         return { draft, rejected: error.userMessage };
@@ -564,14 +617,17 @@ export class ApiSettingsHandler {
     if (pick.kind === 'none') return { draft };
 
     // Несколько магазинов — спрашиваем, какой подключить. Молча выбрать за
-    // продавца нельзя: он узнал бы об ошибке по пустым отчётам.
+    // продавца нельзя: он узнал бы об ошибке по пустым отчётам. `awaitingPick`
+    // говорит визарду остановиться: пикер уже показан, дальше решает выбор
+    // пользователя, а второй вопрос («введите Campaign ID») тут был бы лишним и
+    // противоречил бы списку выше.
     if (pick.kind === 'business') {
       await this.askBusiness(ctx, pick.groups);
-      return { draft };
+      return { draft, awaitingPick: true };
     }
     if (pick.kind === 'store') {
       await this.askStore(ctx, pick.stores);
-      return { draft };
+      return { draft, awaitingPick: true };
     }
 
     return { draft: await this.applyStore(ctx, pick.store, draft) };
@@ -597,7 +653,15 @@ export class ApiSettingsHandler {
     );
     const token = access?.draft?.token;
     if (!token) return [];
+    return await this.listStoresSafe(ctx, token, 'onboarding:store-list');
+  }
 
+  /**
+   * Один запрос списка магазинов по токену, никогда не бросает: при сбое пишет
+   * в журнал и панель (без токена) и отдаёт []. Единая воронка для онбординга,
+   * смены и обновления кэша.
+   */
+  private async listStoresSafe(ctx: Context, token: string, context: string): Promise<IStoreRef[]> {
     try {
       return await this.clients.forTokenOnly(token).listStores();
     } catch (error) {
@@ -606,30 +670,77 @@ export class ApiSettingsHandler {
           error instanceof Error ? error.constructor.name : 'неизвестная ошибка'
         }`,
       );
+      this.reportStoreError(ctx, error, context, 'получение списка магазинов');
       return [];
     }
   }
 
   /**
-   * Список магазинов для СМЕНЫ: токен берём из подключённого документа настроек,
-   * а не из черновика (после онбординга он стёрт). Список не кэшируем — как и в
-   * онбординге, один свежий запрос надёжнее протухающего кэша.
+   * Обновить кэш магазинов в базе (`stores`) по токену. Fire-and-forget: не
+   * блокирует подключение и не роняет его при сбое сети — кнопка смены просто не
+   * появится до следующего успешного обновления.
+   *
+   * НИКОГДА не бросает. Оба вызывающих места пускают её через `void`, а
+   * отклонённый промис под `void` — это unhandledRejection на весь процесс:
+   * `listStoresSafe` свои ошибки гасит, но недоступная Mongo в `update` — нет.
    */
-  private async storesFromLiveToken(ctx: Context): Promise<IStoreRef[]> {
-    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
-    const token = store?.token;
-    if (!token) return [];
-
+  private async refreshStores(ctx: Context, telegramUserId: string, token: string): Promise<void> {
     try {
-      return await this.clients.forTokenOnly(token).listStores();
+      const stores = await this.listStoresSafe(ctx, token, 'connect:store-list');
+      if (stores.length) {
+        await this.yandexMarketService.updateByTelegramUser(telegramUserId, { stores });
+      }
     } catch (error) {
       this.logger.warn(
-        `Не удалось получить магазины для смены: ${
-          error instanceof Error ? error.constructor.name : 'неизвестная ошибка'
+        `Не удалось сохранить кэш магазинов для ${telegramUserId}: ${
+          error instanceof Error ? error.message : 'неизвестная ошибка'
         }`,
       );
-      return [];
     }
+  }
+
+  /**
+   * Досыпать кэш магазинов тому, кто подключил токен ДО появления кнопки
+   * «🏪 Сменить магазин».
+   *
+   * Без этого кнопка не появится у существующих продавцов НИКОГДА, и дело не в
+   * забытой миграции, а в замкнутом круге: кнопку рисуют по непустому `stores`,
+   * `stores` заполняет `refreshStores` только в момент подключения токена, а
+   * ленивый доборе в `switchStores` живёт за `startSwitch` — то есть за самой
+   * кнопкой. Ровно те, ради кого фолбэк написан, до него не доходят.
+   *
+   * Синхронный `void`, а не `await`: это фоновая починка данных, и задерживать
+   * ради неё ответ на /start нельзя. Кнопка появится на следующей отрисовке
+   * меню — цена одноразовая и только у тех, у кого кэша ещё нет.
+   *
+   * Условие — «список ПУСТ», а не «поля нет»: у mongoose массивный путь на
+   * старом документе читается как `[]`, и проверка на `undefined` не сработала
+   * бы ни разу. Побочный эффект удачный — после неудачного запроса (пустой
+   * ответ) попытка повторится, а после успешного (даже с одним магазином)
+   * больше нет.
+   */
+  public ensureStoresCached(ctx: Context, store: YandexMarketDocument | null | undefined): void {
+    if (!store?.token || !store.telegramUserId || store.stores?.length) return;
+    void this.refreshStores(ctx, store.telegramUserId, store.token);
+  }
+
+  /**
+   * Список магазинов для СМЕНЫ — из КЭША в базе (`YandexMarket.stores`), без
+   * похода в API: список сложили при подключении. Если кэш пуст (аккаунт
+   * подключён до появления фичи), один раз спрашиваем API и сохраняем —
+   * дальнейшие смены снова без сети.
+   */
+  private async switchStores(ctx: Context): Promise<IStoreRef[]> {
+    const telegramUserId = ctx.from.id.toString();
+    const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+    if (store?.stores?.length) return store.stores;
+
+    if (!store?.token) return [];
+    const fresh = await this.listStoresSafe(ctx, store.token, 'switch:store-list');
+    if (fresh.length) {
+      await this.yandexMarketService.updateByTelegramUser(telegramUserId, { stores: fresh });
+    }
+    return fresh;
   }
 
   /** Активная кампания подключённого магазина — чтобы пометить её «✓» в пикере. */
@@ -639,40 +750,47 @@ export class ApiSettingsHandler {
   }
 
   /**
-   * Кнопка «🏪 Сменить магазин»: показать магазины токена и предложить выбор.
+   * Кнопка «🏪 Сменить магазин» (из главного меню): показать магазины и
+   * предложить выбор. Публичный — точка входа `bot.hears` в menu-commands.
    * Один магазин — переключать не на что; несколько кабинетов — сперва кабинет.
+   * Свой try/catch: это команда текстом, отвечать за неё некому.
    */
-  private async startSwitch(ctx: Context): Promise<void> {
-    const stores = await this.storesFromLiveToken(ctx);
-    const pick = decidePick(stores);
+  public async startSwitch(ctx: Context): Promise<void> {
+    try {
+      const stores = await this.switchStores(ctx);
+      const pick = decidePick(stores);
 
-    if (pick.kind === 'none') {
-      await ctx.reply('Не удалось получить список магазинов. Попробуйте позже.', htmlOptions());
-      return;
-    }
-    if (pick.kind === 'single') {
-      await ctx.reply('У вас один магазин — переключать не на что.', htmlOptions());
-      return;
-    }
+      if (pick.kind === 'none') {
+        await ctx.reply('Не удалось получить список магазинов. Попробуйте позже.', htmlOptions());
+        return;
+      }
+      if (pick.kind === 'single') {
+        await ctx.reply('У вас один магазин — переключать не на что.', htmlOptions());
+        return;
+      }
 
-    const current = await this.currentCampaignId(ctx);
-    if (pick.kind === 'business') {
-      await this.askBusiness(ctx, pick.groups, { prefix: PICK_BUSINESS_SWITCH_PREFIX });
-      return;
+      const current = await this.currentCampaignId(ctx);
+      if (pick.kind === 'business') {
+        await this.askBusiness(ctx, pick.groups, { prefix: PICK_BUSINESS_SWITCH_PREFIX });
+        return;
+      }
+      await this.askStore(ctx, pick.stores, {
+        prefix: PICK_STORE_SWITCH_PREFIX,
+        currentCampaignId: current,
+      });
+    } catch (error) {
+      this.logger.error('Не удалось начать смену магазина', error as Error);
+      await ctx.reply('❌ Не удалось получить список магазинов. Попробуйте позже.');
     }
-    await this.askStore(ctx, pick.stores, {
-      prefix: PICK_STORE_SWITCH_PREFIX,
-      currentCampaignId: current,
-    });
   }
 
   /**
    * Выбран магазин для смены: перезаписываем campaign_id/business_id/name в том
-   * же документе. Токен и ставки прибыли не трогаем — продавец тот же.
+   * же документе. Токен, ставки и кэш `stores` не трогаем — продавец тот же.
    */
   private async switchStorePick(ctx: Context): Promise<void> {
     const campaignId = this.callbackTail(ctx, PICK_STORE_SWITCH_PREFIX);
-    const stores = await this.storesFromLiveToken(ctx);
+    const stores = await this.switchStores(ctx);
     const store = stores.find((s) => s.campaignId === campaignId);
 
     if (!store) {
@@ -686,7 +804,12 @@ export class ApiSettingsHandler {
       name: store.storeName,
     });
 
-    await ctx.reply(`✅ Магазин переключён: ${b(store.storeName)}`, htmlOptions());
+    // Модель размещения называем ОБЯЗАТЕЛЬНО, той же подписью, что стояла на
+    // кнопке пикера. Названия магазинов не уникальны: на боевом аккаунте две
+    // кампании зовутся «Время с SBrand» — FBS и FBY, — и без модели это
+    // сообщение не отвечает на вопрос, куда переключились. А разница
+    // принципиальная: на FBY остатки записать нельзя.
+    await ctx.reply(`✅ Магазин переключён: ${b(storeLabel(store))}`, htmlOptions());
   }
 
   /** Сохранить выбранный магазин в черновик и подтвердить пользователю. */
@@ -710,8 +833,9 @@ export class ApiSettingsHandler {
     );
 
     // Идентификаторы пользователю НЕ показываем: это технический шум, который
-    // ни о чём ему не говорит, а перепутать их легко.
-    await ctx.reply(`🔎 Подключаю магазин: ${b(store.storeName)}`, htmlOptions());
+    // ни о чём ему не говорит, а перепутать их легко. Модель размещения —
+    // наоборот, показываем: одноимённые FBS и FBY иначе неразличимы.
+    await ctx.reply(`🔎 Подключаю магазин: ${b(storeLabel(store))}`, htmlOptions());
 
     return saved?.draft ?? draft;
   }
@@ -932,13 +1056,22 @@ export class ApiSettingsHandler {
         name: draft.store_name,
       };
       const existing = await this.yandexMarketService.findByTelegramUser(telegramUserId);
-      return existing
+      const saved = existing
         ? await this.yandexMarketService.updateByTelegramUser(telegramUserId, fields)
         : await this.yandexMarketService.create({
             ...fields,
             telegramUserId,
             telegramChatId: ctx.chat.id.toString(),
           });
+
+      // Кэшируем все магазины токена для кнопки «🏪 Сменить магазин» и пикера
+      // смены. Не ждём и не роняем подключение: при сбое кнопка просто не
+      // появится до следующего успешного обновления.
+      if (draft.token) {
+        void this.refreshStores(ctx, telegramUserId, draft.token);
+      }
+
+      return saved;
     };
 
     const isAdmin = this.config.isAdmin(ctx.from.id);

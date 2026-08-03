@@ -10,6 +10,7 @@ import { AdminNotifierService } from '../../src/modules/telegram/bots/shared/ser
 import { AppConfigService } from '../../src/config/app-config.service';
 import { ScheduleHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/schedule.handler';
 import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
+import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 
 /**
  * Подача заявки: ветка, где сходятся черновик кредов, атомарный переход статуса
@@ -96,6 +97,8 @@ describe('ApiSettingsHandler: подача заявки', () => {
       sendApplication: vi.fn(async () => opts.delivered ?? 1),
     };
 
+    const errors = { report: vi.fn(async () => undefined) };
+
     const moduleRef = await Test.createTestingModule({
       providers: [
         ApiSettingsHandler,
@@ -128,6 +131,7 @@ describe('ApiSettingsHandler: подача заявки', () => {
           provide: AppConfigService,
           useValue: { isAdmin: (id: number) => id === ADMIN_ID, telegramAdminIds: [ADMIN_ID] },
         },
+        { provide: ErrorReporter, useValue: errors },
       ],
     }).compile();
 
@@ -136,6 +140,7 @@ describe('ApiSettingsHandler: подача заявки', () => {
       accessService,
       yandexMarketService,
       adminNotifier,
+      errors,
     };
   }
 
@@ -577,13 +582,65 @@ describe('ApiSettingsHandler: подача заявки', () => {
   it('недоступность Яндекса токен НЕ бракует — визард отступает на ручной ввод', async () => {
     // Запереть человека из-за того, что Яндекс лежит, хуже, чем спросить
     // два числа. Отказ в доступе и недоступность API — разные вещи.
-    const { handler, accessService } = await build({
+    const { handler, accessService, errors } = await build({
       listStoresError: new YandexNetworkError('ECONNRESET'),
     });
     const { reply } = await send(handler, FULL.token);
 
     expect(accessService.clearDraftField).not.toHaveBeenCalled();
     expect(reply()).toContain('Campaign ID');
+    // Сбой автоопределения уходит и в панель, а не только в docker logs — иначе
+    // причину (сеть/таймаут/лимит) не увидеть без доступа к контейнеру.
+    expect(errors.report).toHaveBeenCalledWith(
+      expect.objectContaining({ context: 'onboarding:autofill', source: 'yandex' }),
+    );
+  });
+
+  it('на шаге Campaign ID присланный ТОКЕН распознаётся и ведёт к списку магазинов', async () => {
+    // Токен узнаётся по форме (буквы/двоеточие) и перебивает шаг: показать
+    // магазины полезнее, чем ругать «это не число». Чистое число сюда не попало
+    // бы — оно осталось бы Campaign ID'ом.
+    const { handler } = await build({
+      draft: { token: 'ACMA:old_token_value' }, // визард уже на шаге Campaign ID
+      stores: [
+        { campaignId: '1', businessId: '10', businessName: 'SBrand', storeName: 'SBrand' },
+        { campaignId: '2', businessId: '10', businessName: 'SBrand', storeName: 'SBrand' },
+      ] as never,
+    });
+    const { allReplies } = await send(handler, 'ACMA:0Cj6l6bNEWtoken:abcd');
+
+    expect(allReplies()).toContain('Выберите магазин');
+    expect(allReplies()).not.toContain('это число из 5');
+  });
+
+  it('на шаге Campaign ID число остаётся Campaign ID, а не принимается за токен', async () => {
+    // Страховка: распознавание токена не должно сломать ручной ввод числа.
+    const { handler } = await build({
+      draft: { token: 'ACMA:old_token_value' },
+      stores: [
+        { campaignId: '9', businessId: '10', businessName: 'S', storeName: 's.ru' },
+      ] as never,
+    });
+    const { allReplies } = await send(handler, '148704883');
+
+    // Число приняли как Campaign ID (следующий шаг — Business ID), список не звали.
+    expect(allReplies()).not.toContain('Выберите магазин');
+    expect(allReplies()).toContain('Business ID');
+  });
+
+  it('несколько магазинов — показывается ТОЛЬКО пикер, без вопроса про Campaign ID', async () => {
+    // Под списком «Выберите магазин» второй вопрос «введите Campaign ID» и
+    // нелогичен, и противоречив: визард обязан остановиться и ждать нажатия.
+    const { handler } = await build({
+      stores: [
+        { campaignId: '1', businessId: '10', businessName: 'SBrand', storeName: 'SBrand' },
+        { campaignId: '2', businessId: '10', businessName: 'SBrand', storeName: 'SBrand' },
+      ] as never,
+    });
+    const { allReplies } = await send(handler, FULL.token);
+
+    expect(allReplies()).toContain('Выберите магазин');
+    expect(allReplies()).not.toContain('Campaign ID');
   });
 
   it('одобренный меняет магазин новым токеном, а не получает «заявка уже отправлена»', async () => {

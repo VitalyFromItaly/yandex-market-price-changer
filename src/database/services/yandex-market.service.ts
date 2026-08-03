@@ -4,7 +4,11 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
-import { YandexMarket, YandexMarketDocument } from '../schemas/yandex-market.schema';
+import {
+  YandexMarket,
+  YandexMarketDocument,
+  type IStoreEntry,
+} from '../schemas/yandex-market.schema';
 
 export interface CreateYandexMarketDto {
   campaign_id?: string;
@@ -34,6 +38,7 @@ export interface UpdateYandexMarketDto {
   discountPercent?: number;
   vostokDiscountPercent?: number;
   name?: string;
+  stores?: IStoreEntry[];
 }
 
 @Injectable()

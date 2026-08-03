@@ -10,6 +10,19 @@ import {
 
 export type YandexMarketDocument = YandexMarket & Document;
 
+/**
+ * Один магазин токена в кэше `stores`. Форма совпадает с `IStoreRef` из
+ * yandex-клиента (тот и наполняет список), но объявлена здесь, чтобы слой БД не
+ * зависел от модуля yandex — присваивание работает структурно.
+ */
+export interface IStoreEntry {
+  campaignId: string;
+  businessId: string;
+  businessName: string;
+  storeName: string;
+  placementType?: string;
+}
+
 @Schema({ timestamps: true })
 export class YandexMarket {
   @Prop({ required: true })
@@ -58,6 +71,18 @@ export class YandexMarket {
 
   @Prop()
   name?: string;
+
+  /**
+   * Все магазины (кампании), которые открывает токен продавца. Кэшируем список
+   * в базе, чтобы не ходить в API: он нужен и для кнопки «🏪 Сменить магазин» в
+   * главном меню (клавиатура собирается синхронно — запрос к API там недопустим),
+   * и для самого пикера смены (переключение без сети). Заполняется при
+   * подключении и при первой смене; кнопка показывается, только когда магазинов
+   * больше одного. Может устареть (добавили/убрали кампанию) — тогда достаточно
+   * переподключить токен.
+   */
+  @Prop({ type: [Object] })
+  stores?: IStoreEntry[];
 
   @Prop()
   telegramUserId?: string;

@@ -10,6 +10,7 @@ import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { profileText } from '../profile.text';
 import { settingsKeyboardRows, settingsText } from '../settings.text';
+import { storeTitle } from '../store-title';
 
 import { SharedCommandsHandler } from './shared-commands.handler';
 
@@ -32,12 +33,14 @@ export class SlashCommandsHandler {
         ctx.from.id.toString(),
         ctx.botInfo.id.toString(),
       );
-      // Без магазина — сокращённое меню, как в «Главное меню» и /start.
-      const configured = await this.yandexMarketService.isConfigured(ctx.from.id.toString());
+      // Без магазина — сокращённое меню, как в «Главное меню» и /start; кнопка
+      // «Сменить магазин» — при >1 магазине (из кэша `stores`, без API).
+      const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
       const keyboard = await this.keyboard.buildMainKeyboard(
-        configured,
+        !!(store?.campaign_id && store?.business_id && store?.token),
         this.config.isAdmin(ctx.from.id),
         account?.features,
+        (store?.stores?.length ?? 0) > 1,
       );
       // Подпись та же, что у кнопки: раньше здесь было «📋 Главное меню:», в
       // ветке main_menu — «🏠 Главное меню:» плюс отдельное «Выберите
@@ -85,7 +88,7 @@ export class SlashCommandsHandler {
           telegramUserId: ctx.from.id,
           username: ctx.from.username,
           accessStatus: access?.status,
-          storeName: store?.name,
+          storeName: storeTitle(store),
           configured: !!(store?.campaign_id && store?.business_id && store?.token),
           registeredAt: access?.createdAt ? new Date(access.createdAt) : undefined,
         }),

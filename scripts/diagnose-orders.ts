@@ -5,6 +5,7 @@ import { Module } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { AppConfigModule } from '../src/config/app-config.module';
+import { ErrorsModule } from '../src/modules/errors/errors.module';
 
 import { PurchasePriceSchema } from '../src/database/schemas/purchase-price.schema';
 import { YandexMarketSchema } from '../src/database/schemas/yandex-market.schema';
@@ -150,7 +151,10 @@ async function collect(
  * Здесь только Yandex: `AppModule` поднял бы `BotRegistry`, а тот на старте
  * переставляет вебхуки — диагностика отобрала бы обновления у живого бота.
  */
-@Module({ imports: [AppConfigModule, YandexModule] })
+// ErrorsModule импортируется ЯВНО, хотя он @Global(): глобальность делает
+// провайдеры видимыми из уже загруженного модуля, но сам модуль в контекст не
+// втягивает — без него сборка падает на ErrorReporter внутри ProfitService.
+@Module({ imports: [AppConfigModule, ErrorsModule, YandexModule] })
 class DiagnosticsModule {}
 
 /**

@@ -279,18 +279,13 @@ describe('Кнопки правки ставок', () => {
     expect(buttons).toHaveLength(1);
   });
 
-  it('кнопка «Сменить магазин» есть у подключённого и отсутствует без магазина', () => {
-    // Один токен открывает несколько кампаний; переключать нечего, пока магазин
-    // не подключён.
-    const connected = settingsKeyboardRows(STORE)
+  it('кнопки «Сменить магазин» на экране настроек НЕТ — она переехала в главное меню', () => {
+    // Раньше была inline-кнопкой в настройках; теперь reply-кнопка главного меню
+    // (показывается при >1 магазине). На экране настроек её быть не должно.
+    const inSettings = settingsKeyboardRows(STORE)
       .flat()
       .some((b) => b.callback_data === 'switch_store');
-    const notConnected = settingsKeyboardRows(null)
-      .flat()
-      .some((b) => b.callback_data === 'switch_store');
-
-    expect(connected).toBe(true);
-    expect(notConnected).toBe(false);
+    expect(inSettings).toBe(false);
   });
 
   it('в подписях кнопок нет идентификаторов магазина', () => {
