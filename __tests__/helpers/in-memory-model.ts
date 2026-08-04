@@ -161,7 +161,14 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
     }
 
     static find(filter: TDoc = {}) {
-      return { exec: async () => documents.filter((d) => matches(d, filter)) };
+      // select/lean — no-op'ы: проекция здесь экономила бы память, которой в
+      // тесте нет, а вернуть больше полей безопасно — сервис берёт нужные.
+      const chain = {
+        select: () => chain,
+        lean: () => chain,
+        exec: async () => documents.filter((d) => matches(d, filter)),
+      };
+      return chain;
     }
 
     static countDocuments(filter: TDoc = {}) {

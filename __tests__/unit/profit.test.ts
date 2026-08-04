@@ -9,7 +9,6 @@ import {
   RATE_CB_CANCEL,
   RATE_FIELDS,
   applyDiscounts,
-  discountGroup,
   isRateField,
   normalizeRate,
   purchaseCost,
@@ -341,35 +340,28 @@ describe('Возвраты', () => {
  * давал убыток — «закуп» составлял 75,8 % выручки.
  */
 describe('Скидки от прайса', () => {
-  it('«Восток» узнаётся и по категории, и по названию', () => {
-    expect(discountGroup({ price: 1, category: 'Восток' })).toBe('vostok');
-    expect(discountGroup({ price: 1, category: 'Командирские' })).toBe('vostok');
-    expect(discountGroup({ price: 1, category: 'Партнер' })).toBe('vostok');
-    // «Амфибия» отдельной категорией не идёт — она внутри «Востока», но видна
-    // в наименовании.
-    expect(discountGroup({ price: 1, name: 'Восток Амфибия 420831' })).toBe('vostok');
-    expect(discountGroup({ price: 1, name: 'Командирские 350501 К-35' })).toBe('vostok');
-  });
-
-  it('всё остальное — общая группа', () => {
-    expect(
-      discountGroup({ price: 1, category: 'ORIENT кварцевые', name: 'ORIENT FAA02006M' }),
-    ).toBe('other');
-    expect(discountGroup({ price: 1, category: 'CASIO COLLECTION' })).toBe('other');
-    expect(discountGroup({ price: 1 })).toBe('other');
-  });
-
-  it('закуп = цена прайса минус скидка своей группы', () => {
-    // Восток: 4 % → 9600. Остальное: 10 % → 9000.
+  // Определение бренда (brandOf) пинится в brands.test.ts; здесь — что скидка
+  // бренда действительно доезжает до закупа.
+  it('закуп = цена прайса минус скидка своего бренда', () => {
+    // Восток: 4 % (легаси-фолбэк) → 9600. Бренд без записи: дефолт 10 % → 9000.
     expect(purchaseCost({ price: 10000, category: 'Восток' })).toBe(9600);
     expect(purchaseCost({ price: 10000, category: 'CASIO COLLECTION' })).toBe(9000);
   });
 
-  it('свои проценты применяются', () => {
+  it('свои проценты применяются: легаси-поле «Востока» и карта брендов', () => {
     const rates = { ...DEFAULT_RATES, discountPercent: 20, vostokDiscountPercent: 50 };
 
     expect(purchaseCost({ price: 1000, category: 'Восток' }, rates)).toBe(500);
     expect(purchaseCost({ price: 1000, category: 'ORIENT' }, rates)).toBe(800);
+
+    // Явная запись карты сильнее и легаси-поля, и дефолта.
+    const withMap = {
+      ...DEFAULT_RATES,
+      brandDiscounts: { vostok: 30, orient: 5 },
+    };
+    expect(purchaseCost({ price: 1000, category: 'Восток' }, withMap)).toBe(700);
+    expect(purchaseCost({ price: 1000, category: 'ORIENT' }, withMap)).toBe(950);
+    expect(purchaseCost({ price: 1000, category: 'CASIO' }, withMap)).toBe(900);
   });
 
   it('нулевая скидка означает «закуп равен прайсу», а не дефолт', () => {
@@ -453,24 +445,11 @@ describe('Ставки', () => {
     expect(parseRateInput('tax: 7')).toEqual({ field: 'taxPercent', value: 7 });
   });
 
-  it('двухсловная подпись скидки не путается с общей', () => {
-    // «скидка восток» частнее «скидки»: если общая подпись съест частную,
-    // продавец молча изменит не тот процент.
+  it('общая скидка разбирается, брендовая подпись сюда не входит', () => {
     expect(parseRateInput('скидка: 10')).toEqual({ field: 'discountPercent', value: 10 });
-    expect(parseRateInput('скидка восток: 4')).toEqual({
-      field: 'vostokDiscountPercent',
-      value: 4,
-    });
-    expect(parseRateInput('Скидка на Восток: 4')).toEqual({
-      field: 'vostokDiscountPercent',
-      value: 4,
-    });
-    expect(parseRateInput('скидка   восток : 4')).toEqual({
-      field: 'vostokDiscountPercent',
-      value: 4,
-    });
     expect(parseRateInput('discount: 10')).toEqual({ field: 'discountPercent', value: 10 });
-    // Незнакомая двухсловная подпись — не догадка, а отказ.
+    // «скидка восток» — забота parseBrandDiscountInput (brands.test.ts); этот
+    // парсер обязан её отвергнуть, чтобы обработчик успел спросить брендовый.
     expect(parseRateInput('скидка орient: 5')).toBeNull();
   });
 
@@ -506,7 +485,6 @@ describe('Ставки', () => {
   it('у ставки есть человеческое название', () => {
     expect(rateTitle('commissionPercent')).toContain('Комиссия');
     expect(rateTitle('taxPercent')).toContain('Налог');
-    expect(rateTitle('vostokDiscountPercent')).toContain('Восток');
     expect(rateTitle('discountPercent')).toBe('Скидка от прайса');
   });
 
@@ -515,14 +493,19 @@ describe('Ставки', () => {
    * по нему же проверяется, что пришло в `pendingRate`. Пропущенное поле — это
    * ставка, которую нельзя изменить и которая не видна на экране.
    */
-  it('в списке все четыре ставки, и каждая — известное поле', () => {
-    expect(RATE_FIELDS).toHaveLength(4);
-    expect([...RATE_FIELDS].sort()).toEqual(Object.keys(DEFAULT_RATES).sort());
+  it('в списке все три ставки, и каждая — известное поле', () => {
+    expect(RATE_FIELDS).toHaveLength(3);
 
+    // В DEFAULT_RATES ключей больше НАМЕРЕННО: vostokDiscountPercent остался
+    // легаси-фолбэком бренда «Восток» и кнопкой-ставкой быть перестал, а
+    // brandDiscounts — карта, не ставка. Ставки обязаны быть подмножеством.
+    const rateKeys = Object.keys(DEFAULT_RATES);
     for (const field of RATE_FIELDS) {
+      expect(rateKeys).toContain(field);
       expect(isRateField(field)).toBe(true);
     }
 
+    expect(isRateField('vostokDiscountPercent')).toBe(false);
     expect(isRateField('priceCoefficient')).toBe(false);
     expect(isRateField(undefined)).toBe(false);
     expect(isRateField(null)).toBe(false);
@@ -557,9 +540,6 @@ describe('Ставки', () => {
       expect(parseRateInput(`${label}: 5`)).toEqual({ field, value: 5 });
     }
 
-    // Частная подпись раньше общей: у «Востока» своя скидка, и предлагать ему
-    // «скидка» значило бы предлагать изменить не ту ставку.
-    expect(rateInputLabel('vostokDiscountPercent')).toBe('скидка восток');
     expect(rateInputLabel('discountPercent')).toBe('скидка');
   });
 

@@ -3,7 +3,9 @@ import type { IProfitTotals } from './profit';
 
 import { b, code, esc } from '../../telegram/formatting/telegram-format';
 
+import { BRAND_KEYS, brandTitle } from './brands';
 import { formatRubles } from './money';
+import { brandDiscountOf, discountsOf } from './profit';
 import { moscowDateParam } from './moscow-day';
 import { periodTitle } from './report-period';
 import { reportDefinition, REPORT } from './report-status-map';
@@ -178,11 +180,21 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
     // Скидки печатаются рядом с датой прайса: закуп — не то, что стоит в файле, и
     // продавец должен видеть, из чего он получен, иначе сумма выглядит взятой
     // с потолка.
+    //
+    // В скобках — только бренды, чья скидка ОТЛИЧАЕТСЯ от общей: перечислять
+    // все шесть с одинаковым процентом значило бы утопить полезное в шуме.
+    // У нетронутого продавца это ровно «(Восток 4%)» — легаси-фолбэк
+    // vostokDiscountPercent запечён в конфиг (см. discountsOf).
     const rates = placed?.rates ?? totals.rates;
+    const config = discountsOf(rates);
+    const overrides = BRAND_KEYS.filter(
+      (key) => brandDiscountOf(config, key) !== config.defaultPercent,
+    ).map((key) => `${brandTitle(key)} ${percent(brandDiscountOf(config, key))}%`);
+
     lines.push(
       `💵 Закуп: прайс от ${esc(moscowDateParam(report.pricesUpdatedAt))} ` +
-        `минус ${percent(rates.discountPercent)}% ` +
-        `(Восток ${percent(rates.vostokDiscountPercent)}%).`,
+        `минус ${percent(config.defaultPercent)}%` +
+        (overrides.length ? ` (${esc(overrides.join(', '))}).` : '.'),
     );
   } else {
     lines.push('💵 Закупочных цен пока нет — пришлите прайс, и прибыль посчитается.');

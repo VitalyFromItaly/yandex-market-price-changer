@@ -4,6 +4,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
+import { isBrandKey, type TBrandKey } from '../../modules/yandex/reports/brands';
 import {
   YandexMarket,
   YandexMarketDocument,
@@ -21,8 +22,6 @@ export interface CreateYandexMarketDto {
   taxPercent?: number;
   /** Скидка от цены прайса, % — из неё получается закуп. */
   discountPercent?: number;
-  /** Скидка от цены прайса на «Восток», %. */
-  vostokDiscountPercent?: number;
   name?: string;
   telegramUserId?: string;
   telegramChatId?: string;
@@ -36,7 +35,6 @@ export interface UpdateYandexMarketDto {
   commissionPercent?: number;
   taxPercent?: number;
   discountPercent?: number;
-  vostokDiscountPercent?: number;
   name?: string;
   stores?: IStoreEntry[];
 }
@@ -167,9 +165,41 @@ export class YandexMarketService {
     if (field === 'commissionPercent') data.commissionPercent = value;
     if (field === 'taxPercent') data.taxPercent = value;
     if (field === 'discountPercent') data.discountPercent = value;
-    if (field === 'vostokDiscountPercent') data.vostokDiscountPercent = value;
 
     return await this.updateByTelegramUser(telegramUserId, data);
+  }
+
+  /**
+   * Записать скидку одного бренда, % — в карту `brandDiscounts`.
+   *
+   * НЕ через DTO/updateByTelegramUser: запись идёт по dot-path
+   * (`brandDiscounts.vostok`), а не полем документа, — иначе `$set` целой карты
+   * стирал бы скидки остальных брендов при параллельной правке.
+   *
+   * Белый список обязателен и несущий: ключ уходит в путь `$set`, то есть
+   * решает, КУДА писать в документе, — тот же довод, что у `setFeature`.
+   */
+  async updateBrandDiscount(
+    telegramUserId: string,
+    brand: TBrandKey,
+    value: number,
+  ): Promise<YandexMarketDocument | null> {
+    if (!isBrandKey(brand)) {
+      throw new Error(`Недопустимый бренд: ${brand}`);
+    }
+
+    return await this.yandexMarketModel
+      .findOneAndUpdate(
+        { telegramUserId },
+        {
+          $set: {
+            [`brandDiscounts.${brand}`]: value,
+            updatedAt: new Date(),
+          },
+        },
+        { new: true },
+      )
+      .exec();
   }
 
   /**

@@ -7,6 +7,7 @@ import {
   settingsText,
 } from '../../src/modules/telegram/bots/price-changer-bot/settings.text';
 import { DEFAULT_RATES, RATE_FIELDS, rateCallback } from '../../src/modules/yandex/reports/profit';
+import { BRAND_CB_MENU } from '../../src/modules/yandex/reports/brands';
 import { profileText } from '../../src/modules/telegram/bots/price-changer-bot/profile.text';
 import { helpText } from '../../src/modules/telegram/bots/price-changer-bot/help.text';
 
@@ -53,6 +54,15 @@ describe('Экраны собираются из одного источника
 
   it('кнопки «Автообновление» больше нет — у неё не было обработчика', () => {
     expect(slashHandler).not.toContain('settings_auto_update');
+  });
+
+  it('экран скидок по брендам рендерится только из brand-discounts.text', () => {
+    // Экран показывается из трёх мест (кнопка настроек, после сохранения,
+    // после отмены) — все через один showBrandDiscounts, который обязан звать
+    // общий модуль, а не собирать текст на месте.
+    const apiSettings = read('handlers/api-settings.handler.ts');
+    expect(apiSettings).toContain('brandDiscountsText(');
+    expect(apiSettings).toContain('brandDiscountsKeyboardRows(');
   });
 
   it('главное меню подписано одинаково во всех входах', () => {
@@ -153,15 +163,15 @@ describe('Ставки расчёта прибыли на экране наст�
     expect(text).not.toContain('23%');
   });
 
-  it('видны обе скидки от прайса и формат их правки', () => {
+  it('видна общая скидка от прайса, формат правки и дорога к брендам', () => {
     const text = settingsText(STORE);
 
     expect(text).toContain('Скидка от прайса');
     expect(text).toContain('10%');
-    expect(text).toContain('Восток');
-    expect(text).toContain('4%');
     expect(text).toContain('скидка: 10');
-    expect(text).toContain('скидка восток: 4');
+    // Скидки по брендам на этом экране НЕ перечисляются — их список зависит от
+    // прайса продавца, — но дорога к ним обязана быть названа.
+    expect(text).toContain('Скидки по брендам');
   });
 
   it('сказано, что в прайсе цена поставщика, а не закуп', () => {
@@ -170,15 +180,13 @@ describe('Ставки расчёта прибыли на экране наст�
     expect(settingsText(STORE)).toContain('цена поставщика');
   });
 
-  it('свои скидки показываются вместо дефолтных', () => {
+  it('своя скидка показывается вместо дефолтной', () => {
     const text = settingsText({
       ...STORE,
       discountPercent: 15,
-      vostokDiscountPercent: 7,
     } as never);
 
     expect(text).toContain('15%');
-    expect(text).toContain('7%');
     expect(text).not.toContain('10%');
   });
 
@@ -257,14 +265,23 @@ describe('Кнопки правки ставок', () => {
     const buttons = settingsKeyboardRows({
       ...STORE,
       commissionPercent: 25,
-      vostokDiscountPercent: 7,
+      discountPercent: 7,
     } as never).flat();
 
     const commission = buttons.find((b) => b.callback_data === rateCallback('commissionPercent'))!;
-    const vostok = buttons.find((b) => b.callback_data === rateCallback('vostokDiscountPercent'))!;
+    const discount = buttons.find((b) => b.callback_data === rateCallback('discountPercent'))!;
 
     expect(commission.text).toContain('25%');
-    expect(vostok.text).toContain('7%');
+    expect(discount.text).toContain('7%');
+  });
+
+  it('кнопка «Скидки по брендам» есть у подключённого магазина и только у него', () => {
+    const configured = settingsKeyboardRows(STORE).flat();
+    expect(configured.some((b) => b.callback_data === BRAND_CB_MENU)).toBe(true);
+
+    // Без магазина скидки писать некуда — и кнопки быть не должно.
+    const empty = settingsKeyboardRows(null).flat();
+    expect(empty.some((b) => b.callback_data === BRAND_CB_MENU)).toBe(false);
   });
 
   it('до подключения магазина кнопок ставок нет', () => {

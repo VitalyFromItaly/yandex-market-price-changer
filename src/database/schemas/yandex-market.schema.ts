@@ -54,14 +54,30 @@ export class YandexMarket {
    * Скидка от цены прайса, % — из неё получается закуп.
    *
    * В прайсе стоит цена поставщика, а не закупочная: закуп = цена × (1 − скидка).
-   * По «Востоку» скидка своя, поэтому их две.
+   * Это ДЕФОЛТ для брендов без своей записи в `brandDiscounts`.
    */
   @Prop({ type: Number, default: DEFAULT_DISCOUNT_PERCENT })
   discountPercent: number;
 
-  /** Скидка от цены прайса на «Восток», %. */
+  /**
+   * ЛЕГАСИ: скидка на «Восток» до появления скидок по брендам. Читается как
+   * фолбэк бренда `vostok`, когда в `brandDiscounts` записи нет (`discountsOf`
+   * в reports/profit.ts); новые значения пишутся только в карту. Поле не
+   * удаляется, чтобы продавцы, настроившие его, не потеряли значение.
+   */
   @Prop({ type: Number, default: DEFAULT_VOSTOK_DISCOUNT_PERCENT })
   vostokDiscountPercent: number;
+
+  /**
+   * Явные скидки по брендам, % — ключи `TBrandKey` из reports/brands.ts.
+   *
+   * Plain Object, как `UserAccess.features`, и по той же логике «хранятся
+   * только явные решения»: нет ключа — действует дефолт (`discountPercent`).
+   * Писать ТОЛЬКО через `$set` по dot-path (`updateBrandDiscount`) — мутация
+   * вложенного объекта с последующим save() теряется без markModified.
+   */
+  @Prop({ type: Object })
+  brandDiscounts?: Record<string, number>;
 
   @Prop({ default: Date.now })
   createdAt: Date;

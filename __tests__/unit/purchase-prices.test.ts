@@ -56,6 +56,24 @@ describe('PurchasePriceService', () => {
     expect(model.documents[0].price).toBe(150);
   });
 
+  it('список названий и категорий — только свои строки и только два поля', async () => {
+    // Источник экрана «Скидки по брендам»: бренд матчится и по названию, и по
+    // категории, поэтому отдаются оба, а не distinct по категории.
+    await service.upsertMany(USER, [
+      { sku: 'A1', price: 100, name: 'ORIENT A1', category: 'ORIENT' },
+      { sku: 'B2', price: 200, name: 'Восток Амфибия 420831' },
+    ]);
+    await service.upsertMany(OTHER, [{ sku: 'C3', price: 300, name: 'CASIO C3' }]);
+
+    const rows = await service.listNamesAndCategories(USER);
+
+    expect(rows).toHaveLength(2);
+    expect(rows).toContainEqual({ name: 'ORIENT A1', category: 'ORIENT' });
+    expect(rows).toContainEqual({ name: 'Восток Амфибия 420831', category: undefined });
+    // Чужой продавец не виден — сервис мультитенантный.
+    expect(rows.some((r) => r.name === 'CASIO C3')).toBe(false);
+  });
+
   it('позиции, которых нет в новом файле, НЕ удаляются', async () => {
     // Прайс может прийти по одному бренду: удаление обнулило бы закуп по
     // остальному каталогу.

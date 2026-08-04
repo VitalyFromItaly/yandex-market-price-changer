@@ -11,6 +11,7 @@ import { AppConfigService } from '../../src/config/app-config.service';
 import { ScheduleHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/schedule.handler';
 import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
 import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
+import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 
 /**
  * Подача заявки: ветка, где сходятся черновик кредов, атомарный переход статуса
@@ -89,8 +90,14 @@ describe('ApiSettingsHandler: подача заявки', () => {
       findByTelegramUser: vi.fn(async () => opts.store ?? null),
       updateByTelegramUser: vi.fn(async () => opts.store ?? null),
       updateRate: vi.fn(async () => opts.store ?? null),
+      updateBrandDiscount: vi.fn(async () => opts.store ?? null),
       create: vi.fn(async (data: unknown) => data),
       deleteByTelegramUser: vi.fn(async () => true),
+    };
+
+    // Список брендов на экране скидок; в этих сценариях сам список не важен.
+    const purchasePrices = {
+      listNamesAndCategories: vi.fn(async () => [{ name: 'Восток Амфибия 420831' }]),
     };
 
     const adminNotifier = {
@@ -132,6 +139,7 @@ describe('ApiSettingsHandler: подача заявки', () => {
           useValue: { isAdmin: (id: number) => id === ADMIN_ID, telegramAdminIds: [ADMIN_ID] },
         },
         { provide: ErrorReporter, useValue: errors },
+        { provide: PurchasePriceService, useValue: purchasePrices },
       ],
     }).compile();
 
@@ -141,6 +149,7 @@ describe('ApiSettingsHandler: подача заявки', () => {
       yandexMarketService,
       adminNotifier,
       errors,
+      purchasePrices,
     };
   }
 
@@ -463,7 +472,7 @@ describe('ApiSettingsHandler: подача заявки', () => {
     expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
     expect(allReplies()).toContain('25%');
     // И сразу экран настроек — чтобы правка второй ставки была следующим тапом.
-    expect(allReplies()).toContain('Настройки API');
+    expect(allReplies()).toContain('Настройки');
   });
 
   it('ответ вне 0–100 не сохраняется, а вопрос остаётся открытым', async () => {
@@ -521,7 +530,115 @@ describe('ApiSettingsHandler: подача заявки', () => {
 
     expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
     expect(yandexMarketService.updateRate).not.toHaveBeenCalled();
-    expect(allReplies()).toContain('Настройки API');
+    expect(allReplies()).toContain('Настройки');
+  });
+
+  /**
+   * Скидки по брендам живут в том же диалоге, что и ставки: вопрос открывает
+   * кнопка `bdisc:<ключ>`, ответ разбирает handlePendingRate по значению
+   * `brand:<ключ>` в pendingRate, запись идёт в updateBrandDiscount, а не в
+   * updateRate.
+   */
+  it('кнопка бренда открывает вопрос, ответ пишет скидку бренда', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    const { allReplies } = await tap(handler, 'bdisc:casio');
+
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      '999',
+      'brand:casio',
+    );
+    expect(yandexMarketService.updateBrandDiscount).not.toHaveBeenCalled();
+    expect(allReplies()).toContain('CASIO');
+  });
+
+  it('ответ числом на брендовый вопрос сохраняет скидку бренда и закрывает вопрос', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'brand:casio',
+    });
+    const { allReplies } = await send(handler, '5');
+
+    expect(yandexMarketService.updateBrandDiscount).toHaveBeenCalledWith(
+      String(USER_ID),
+      'casio',
+      5,
+    );
+    expect(yandexMarketService.updateRate).not.toHaveBeenCalled();
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
+    // Возврат на экран брендов, а не в настройки: продавец правил его.
+    expect(allReplies()).toContain('Скидки по брендам');
+  });
+
+  it('легаси-вопрос про «⌚ Восток» разрешается скидкой бренда vostok', async () => {
+    // pendingRate='vostokDiscountPercent' мог остаться открытым с прежней
+    // версии, где Восток был ставкой; ответ не должен зависнуть.
+    const { handler, yandexMarketService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'vostokDiscountPercent',
+    });
+    await send(handler, '3');
+
+    expect(yandexMarketService.updateBrandDiscount).toHaveBeenCalledWith(
+      String(USER_ID),
+      'vostok',
+      3,
+    );
+  });
+
+  it('старая кнопка «⌚ Восток» из истории чата открывает брендовый вопрос', async () => {
+    const { handler, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    await tap(handler, 'rate:vostokDiscountPercent');
+
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      '999',
+      'brand:vostok',
+    );
+  });
+
+  it('«скидка casio: 5» сообщением пишет скидку бренда, «скидка: 10» — общую', async () => {
+    const first = await build({ status: 'approved', store: { ...FULL } });
+    await send(first.handler, 'скидка casio: 5');
+
+    expect(first.yandexMarketService.updateBrandDiscount).toHaveBeenCalledWith(
+      String(USER_ID),
+      'casio',
+      5,
+    );
+    expect(first.yandexMarketService.updateRate).not.toHaveBeenCalled();
+
+    // Общая подпись не должна перехватываться брендовым парсером.
+    const second = await build({ status: 'approved', store: { ...FULL } });
+    await send(second.handler, 'скидка: 10');
+
+    expect(second.yandexMarketService.updateRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      'discountPercent',
+      10,
+    );
+    expect(second.yandexMarketService.updateBrandDiscount).not.toHaveBeenCalled();
+  });
+
+  it('кнопка «Скидки по брендам» показывает бренды из закупочных цен', async () => {
+    const { handler, purchasePrices } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    const { allReplies } = await tap(handler, 'bdisc:menu');
+
+    expect(purchasePrices.listNamesAndCategories).toHaveBeenCalledWith(String(USER_ID));
+    expect(allReplies()).toContain('Скидки по брендам');
+    // В фейке лежит «Восток Амфибия …» — бренд обязан быть найден.
+    expect(allReplies()).toContain('Восток');
   });
 
   it('ставка НЕ путается с токеном и не уезжает в визард', async () => {

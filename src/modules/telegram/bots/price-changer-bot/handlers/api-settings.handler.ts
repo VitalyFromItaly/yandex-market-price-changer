@@ -5,6 +5,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
 
 import { AppConfigService } from '../../../../../config/app-config.service';
+import { PurchasePriceService } from '../../../../../database/services/purchase-price.service';
 import {
   UserAccessService,
   type TDraftField,
@@ -12,10 +13,25 @@ import {
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import {
+  BRAND_CB_CANCEL,
+  BRAND_CB_PATTERN,
+  brandDiscountTitle,
+  brandInputLabel,
+  brandPendingValue,
+  parseBrandCallback,
+  parseBrandDiscountInput,
+  parseBrandPending,
+  type IBrandDiscountInput,
+  type TBrandKey,
+} from '../../../../yandex/reports/brands';
+import {
   DEFAULT_RATES,
+  DEFAULT_VOSTOK_DISCOUNT_PERCENT,
   RATE_CB_CANCEL,
   RATE_CB_PATTERN,
   RATE_FIELDS,
+  brandDiscountOf,
+  discountsOf,
   isRateField,
   parseRateCallback,
   parseRateInput,
@@ -23,6 +39,7 @@ import {
   rateInputLabel,
   rateTitle,
   ratesOf,
+  validatePercent,
   validateRate,
   type IRateInput,
   type TRateField,
@@ -32,6 +49,11 @@ import { YandexClientFactory } from '../../../../yandex/yandex-client.factory';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { b, esc, htmlOptions } from '../../../formatting/telegram-format';
 import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
+import {
+  brandDiscountsKeyboardRows,
+  brandDiscountsText,
+  brandUsageOf,
+} from '../brand-discounts.text';
 import { MENU, MENU_LABELS, SUPPORT_CONTACT } from '../menu.constants';
 import {
   nextStep,
@@ -116,6 +138,8 @@ export class ApiSettingsHandler {
     private readonly clients: YandexClientFactory,
     private readonly reportsHandler: ReportsHandler,
     private readonly errors: ErrorReporter,
+    // Закупочные цены — источник списка брендов для экрана «Скидки по брендам».
+    private readonly purchasePrices: PurchasePriceService,
   ) {}
 
   /**
@@ -249,6 +273,52 @@ export class ApiSettingsHandler {
         await ctx.reply('❌ Не удалось открыть настройку. Попробуйте ещё раз.');
       }
     });
+
+    // Скидки по брендам: экран списка, вопрос по бренду, отмена вопроса.
+    // Здесь же, где ставки, — ответ разбирает тот же обработчик текста.
+    bot.action(BRAND_CB_PATTERN, async (ctx) => {
+      await ctx.answerCbQuery();
+      try {
+        const data = (ctx.callbackQuery as { data?: string } | undefined)?.data ?? '';
+        const target = parseBrandCallback(data);
+
+        if (target === 'menu') {
+          await this.showBrandDiscounts(ctx);
+          return;
+        }
+
+        if (target === 'cancel') {
+          await this.accessService.setPendingRate(
+            ctx.from.id.toString(),
+            ctx.botInfo.id.toString(),
+            null,
+          );
+          // Возврат на экран брендов, а не в настройки: отменивший вопрос
+          // остаётся там, откуда его задал.
+          await this.showBrandDiscounts(ctx);
+          return;
+        }
+
+        if (target) await this.askBrandDiscount(ctx, target);
+      } catch (error) {
+        this.logger.error('Не удалось открыть скидки по брендам', error as Error);
+        await ctx.reply('❌ Не удалось открыть настройку. Попробуйте ещё раз.');
+      }
+    });
+
+    // ЛЕГАСИ: кнопка «⌚ Восток» со старого экрана настроек. Такой ставки
+    // больше нет (Восток стал брендом), но inline-кнопка живёт в истории чата
+    // вечно — без этого обработчика она падала бы в default-ветку общего
+    // callback_query с «Неизвестной командой».
+    bot.action(/^rate:vostokDiscountPercent$/, async (ctx) => {
+      await ctx.answerCbQuery();
+      try {
+        await this.askBrandDiscount(ctx, 'vostok');
+      } catch (error) {
+        this.logger.error('Не удалось открыть скидку «Востока»', error as Error);
+        await ctx.reply('❌ Не удалось открыть настройку. Попробуйте ещё раз.');
+      }
+    });
   }
 
   /**
@@ -305,6 +375,69 @@ export class ApiSettingsHandler {
   }
 
   /**
+   * Экран «Скидки по брендам»: бренды из закупочных цен продавца, действующий
+   * процент на каждой кнопке. Текст и клавиатура — из brand-discounts.text.ts,
+   * единственного источника для всех показов этого экрана.
+   */
+  private async showBrandDiscounts(ctx: Context): Promise<void> {
+    const telegramUserId = ctx.from.id.toString();
+
+    const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+    if (!store) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return;
+    }
+
+    const rows = await this.purchasePrices.listNamesAndCategories(telegramUserId);
+    const { usage, otherCount } = brandUsageOf(rows);
+
+    const keyboard = await this.keyboard.createInlineKeyboardMatrix(
+      brandDiscountsKeyboardRows(store, usage, otherCount),
+    );
+
+    await ctx.reply(
+      brandDiscountsText(store, usage, otherCount),
+      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    );
+  }
+
+  /**
+   * Спросить новое значение скидки бренда — зеркало askRate: тот же вопрос
+   * «пришлите процент», только цель записи кодируется в pendingRate значением
+   * `brand:<ключ>`.
+   */
+  private async askBrandDiscount(ctx: Context, brand: TBrandKey): Promise<void> {
+    const telegramUserId = ctx.from.id.toString();
+
+    const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+    if (!store) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return;
+    }
+
+    await this.accessService.setPendingRate(
+      telegramUserId,
+      ctx.botInfo.id.toString(),
+      brandPendingValue(brand),
+    );
+
+    const current = brandDiscountOf(discountsOf(store), brand);
+    const keyboard = await this.keyboard.createInlineButtons([
+      { text: '⬅️ Отмена', callback_data: BRAND_CB_CANCEL },
+    ]);
+
+    await ctx.reply(
+      [
+        `${esc(brandDiscountTitle(brand))} — сейчас ${b(`${current}%`)}.`,
+        '',
+        'Пришлите новое значение в процентах — например <code>5</code>.',
+        `Можно и с подписью: <code>${esc(brandInputLabel(brand))}: ${current}</code>.`,
+      ].join('\n'),
+      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    );
+  }
+
+  /**
    * Ответ на вопрос «пришлите новое значение ставки».
    *
    * Забирает ТОЛЬКО числовой ввод. Это и делает безопасным вызов раньше вопросов
@@ -321,6 +454,13 @@ export class ApiSettingsHandler {
 
     const account = await this.accessService.findByUserAndBot(telegramUserId, botId);
     const field = account?.pendingRate;
+
+    // Вопрос о скидке бренда живёт в том же поле со значением `brand:<ключ>`
+    // (и легаси-литералом vostokDiscountPercent — вопрос, открытый до деплоя).
+    // Ветка РАНЬШЕ isRateField: тот такие значения не пропустит.
+    const brand = parseBrandPending(field);
+    if (brand) return await this.handlePendingBrandDiscount(ctx, brand, text);
+
     if (!isRateField(field)) return false;
 
     const value = parseRateValue(text);
@@ -347,6 +487,49 @@ export class ApiSettingsHandler {
 
     await ctx.reply(`✅ ${esc(rateTitle(field))}: ${b(`${value}%`)}`, htmlOptions());
     await this.showSettings(ctx);
+    return true;
+  }
+
+  /**
+   * Ответ на вопрос «пришлите новую скидку бренда». Правила те же, что у
+   * ставки: только числовой ввод, нечисло закрывает вопрос и идёт дальше,
+   * ошибка валидации оставляет вопрос открытым. После сохранения — экран
+   * брендов, а не настроек: продавец возвращается туда, откуда пришёл.
+   */
+  private async handlePendingBrandDiscount(
+    ctx: Context,
+    brand: TBrandKey,
+    text: string,
+  ): Promise<boolean> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+
+    const value = parseRateValue(text);
+    if (value === null) {
+      await this.accessService.setPendingRate(telegramUserId, botId, null);
+      return false;
+    }
+
+    const validation = validatePercent(brandDiscountTitle(brand), value);
+    if (!validation.ok) {
+      await ctx.reply(`❌ ${esc(validation.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
+      return true;
+    }
+
+    const updated = await this.yandexMarketService.updateBrandDiscount(
+      telegramUserId,
+      brand,
+      value,
+    );
+    await this.accessService.setPendingRate(telegramUserId, botId, null);
+
+    if (!updated) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return true;
+    }
+
+    await ctx.reply(`✅ ${esc(brandDiscountTitle(brand))}: ${b(`${value}%`)}`, htmlOptions());
+    await this.showBrandDiscounts(ctx);
     return true;
   }
 
@@ -919,8 +1102,14 @@ export class ApiSettingsHandler {
   private async editSetting(ctx: Context, text: string): Promise<IReply> {
     const telegramUserId = ctx.from.id.toString();
 
-    // Ставки прибыли разбираются ПЕРВЫМИ и своим парсером: расширять
-    // parseLabelledValue нельзя, он возвращает поле черновика онбординга.
+    // Скидка бренда — РАНЬШЕ общих ставок: «скидка восток: 4» частнее, чем
+    // «скидка: 10», и общий парсер съел бы подпись бренда как мусор.
+    const brandRate = parseBrandDiscountInput(text);
+    if (brandRate) return await this.editBrandDiscount(ctx, brandRate);
+
+    // Ставки прибыли разбираются ПЕРВЫМИ среди остального и своим парсером:
+    // расширять parseLabelledValue нельзя, он возвращает поле черновика
+    // онбординга.
     const rate = parseRateInput(text);
     if (rate) return await this.editRate(ctx, rate);
 
@@ -945,6 +1134,9 @@ export class ApiSettingsHandler {
           ...RATE_FIELDS.map(
             (field) => `<code>${esc(rateInputLabel(field))}: ${DEFAULT_RATES[field]}</code>`,
           ),
+          // Брендовая подсказка тоже выводится, не пишется литералом: подпись
+          // обязана быть той, которую принимает parseBrandDiscountInput.
+          `<code>${esc(brandInputLabel('vostok'))}: ${DEFAULT_VOSTOK_DISCOUNT_PERCENT}</code>`,
         ].join('\n'),
       };
     }
@@ -1014,6 +1206,36 @@ export class ApiSettingsHandler {
     return {
       message:
         `✅ ${esc(rateTitle(rate.field))}: <b>${rate.value}%</b>\n\n` +
+        'Прибыль пересчитается при следующем открытии отчёта.',
+      keyboard: await this.settingsKeyboard(),
+    };
+  }
+
+  /**
+   * Изменение скидки бренда сообщением («скидка casio: 5»).
+   *
+   * Как и editRate, в визард такой текст не отдаётся: «пришлите токен» в ответ
+   * на «скидка восток: 4» — это бот, не понявший, о чём его просят.
+   */
+  private async editBrandDiscount(ctx: Context, input: IBrandDiscountInput): Promise<IReply> {
+    const validation = validatePercent(brandDiscountTitle(input.brand), input.value);
+    if (!validation.ok) {
+      return { message: `❌ ${esc(validation.error)}` };
+    }
+
+    const updated = await this.yandexMarketService.updateBrandDiscount(
+      ctx.from.id.toString(),
+      input.brand,
+      input.value,
+    );
+
+    if (!updated) {
+      return { message: this.NO_STORE_FOR_RATES };
+    }
+
+    return {
+      message:
+        `✅ ${esc(brandDiscountTitle(input.brand))}: <b>${input.value}%</b>\n\n` +
         'Прибыль пересчитается при следующем открытии отчёта.',
       keyboard: await this.settingsKeyboard(),
     };

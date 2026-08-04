@@ -1,6 +1,7 @@
 import type { YandexMarketDocument } from '../../../../database/schemas/yandex-market.schema';
 import type { TRateField } from '../../../yandex/reports/profit';
 
+import { BRAND_CB_MENU } from '../../../yandex/reports/brands';
 import {
   RATE_FIELDS,
   rateCallback,
@@ -15,7 +16,7 @@ import { MENU } from './menu.constants';
 import { storeTitle } from './store-title';
 
 /**
- * Экран настроек — ОДИН текст на кнопку «⚙️ Настройки API» и на `/settings`.
+ * Экран настроек — ОДИН текст на кнопку «⚙️ Настройки» и на `/settings`.
  *
  * Отдельный файл по образцу help.text.ts и ровно по той же причине: входов в
  * экран было два, и вели они в разные места. Кнопка показывала состояние
@@ -44,7 +45,7 @@ function hint(field: TRateField, value: number): string {
 export function settingsText(store: YandexMarketDocument | null): string {
   const configured = isConfigured(store);
 
-  const lines = [`⚙️ ${b('Настройки API')}`, ''];
+  const lines = [`⚙️ ${b('Настройки')}`, ''];
 
   if (configured) {
     // Название вместе с моделью размещения: одноимённые FBS и FBY иначе
@@ -100,11 +101,13 @@ export function settingsText(store: YandexMarketDocument | null): string {
       b('Закуп'),
       'Берётся из прайса — того же файла, которым вы обновляете остатки.',
       `📦 Скидка от прайса: ${b(`${rates.discountPercent}%`)}`,
-      `⌚ Скидка на «Восток»: ${b(`${rates.vostokDiscountPercent}%`)}`,
       '',
       'В прайсе цена поставщика, закуп — она минус скидка. Чтобы изменить:',
       hint('discountPercent', rates.discountPercent),
-      hint('vostokDiscountPercent', rates.vostokDiscountPercent),
+      '',
+      // Сами проценты по брендам здесь не печатаются: их список зависит от
+      // прайса продавца, и это отдельный экран — кнопка ниже.
+      'У брендов скидка своя — кнопка «🏷 Скидки по брендам» ниже.',
     );
   } else {
     lines.push('🏪 Магазин: ❌ не подключён', '');
@@ -151,6 +154,11 @@ export function settingsKeyboardRows(
         })),
       );
     }
+
+    // Inline-only кнопка — БЕЗ ключа в MENU (правило menu-labels): попасть на
+    // экран брендов можно только отсюда, значений на ней нет, список брендов
+    // зависит от прайса и рисуется уже на самом экране.
+    rows.push([{ text: '🏷 Скидки по брендам', callback_data: BRAND_CB_MENU }]);
   }
 
   rows.push([{ text: MENU.MAIN, callback_data: 'main_menu' }]);

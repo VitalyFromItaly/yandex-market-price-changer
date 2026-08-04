@@ -108,6 +108,27 @@ export class PurchasePriceService {
   }
 
   /**
+   * Название и категория каждой строки закупа — для экрана «Скидки по брендам».
+   *
+   * НЕ `distinct('category')`: бренд определяется и по названию тоже — строки
+   * «(без категории)» с «CASIO …» в имени distinct по категории потерял бы.
+   * Проекция из двух полей + lean: даже на выросшем файле (19 143 строки) это
+   * мегабайт-другой на один тап по кнопке настроек, а не полный документ на
+   * строку.
+   */
+  async listNamesAndCategories(
+    telegramUserId: string,
+  ): Promise<{ name?: string; category?: string }[]> {
+    const documents = await this.model
+      .find({ telegramUserId })
+      .select('name category')
+      .lean()
+      .exec();
+
+    return documents.map((doc) => ({ name: doc.name, category: doc.category }));
+  }
+
+  /**
    * Когда последний раз загружали прайс.
    *
    * Печатается в отчёте о прибыли: закуп месячной давности даёт правдоподобную,

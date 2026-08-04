@@ -58,7 +58,7 @@ export interface IParseResult {
  * Строки-заголовки категорий: колонка A заполнена, B пуста. В `stock.xlsx` их 33
  * («ORIENT механические», «CASIO COLLECTION», «СЕВЕР Спорт», …). Их надо не
  * пропускать молча, а запоминать: категория попадает и в отчёт, и в определение
- * группы скидки (см. discountGroup в reports/profit.ts).
+ * бренда скидки (см. brandOf в reports/brands.ts).
  */
 function isCategoryHeader(row: unknown[]): boolean {
   const a = String(row[0] ?? '').trim();

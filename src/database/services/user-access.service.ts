@@ -6,6 +6,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
 import { isFeatureKey } from '../../modules/telegram/bots/shared/features.domain';
+import { parseBrandPending } from '../../modules/yandex/reports/brands';
 import { isRateField } from '../../modules/yandex/reports/profit';
 import { IAdminCard, UserAccess, UserAccessDocument } from '../schemas/user-access.schema';
 
@@ -211,16 +212,17 @@ export class UserAccessService {
   /**
    * Незакрытый вопрос «какую ставку прибыли меняем».
    *
-   * Имя поля проверяется по белому списку `RATE_FIELDS`: в `pendingRate` оно
-   * потом читается обратно и уходит в `updateRate`, то есть решает, КАКУЮ
-   * настройку магазина перезаписать.
+   * Значение проверяется по белому списку: либо ставка (`RATE_FIELDS`), либо
+   * скидка бренда (`brand:<ключ>` из brands.ts). В `pendingRate` оно потом
+   * читается обратно и уходит в `updateRate`/`updateBrandDiscount`, то есть
+   * решает, КАКУЮ настройку магазина перезаписать.
    */
   async setPendingRate(
     telegramUserId: string,
     botId: string,
-    field: TRateField | null,
+    field: TRateField | string | null,
   ): Promise<UserAccessDocument | null> {
-    if (field !== null && !isRateField(field)) {
+    if (field !== null && !isRateField(field) && parseBrandPending(field) === null) {
       throw new Error(`Недопустимая ставка: ${field}`);
     }
 

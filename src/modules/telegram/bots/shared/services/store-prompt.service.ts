@@ -16,7 +16,7 @@ import { PriceChangerKeyboard } from '../../price-changer-bot/price-changer.keyb
  * и сбросить залипшее меню на сокращённое — и делать это в ОДНОМ месте, иначе
  * стены разъедутся (та же причина, ради которой существует menu.constants).
  *
- * `createUnconfiguredKeyboard(isAdmin)` отдаёт «⚙️ Настройки API» + «❓ Помощь»
+ * `createUnconfiguredKeyboard(isAdmin)` отдаёт «⚙️ Настройки» + «❓ Помощь»
  * (+ ряд «👥 Пользователи» у администратора) — ровно то, что нужно без магазина.
  */
 @Injectable()

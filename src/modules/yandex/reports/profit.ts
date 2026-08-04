@@ -40,6 +40,7 @@
  * содержит ни одна.
  */
 
+import { brandOf, isBrandKey, type TBrandKey } from './brands';
 import { orderTotals, subsidiesTotal, type IOrderMoney } from './money';
 
 /**
@@ -57,13 +58,19 @@ export const DEFAULT_TAX_PERCENT = 7;
  * Скидки от прайса поставщика.
  *
  * В прайсе стоит НЕ закупочная цена, а цена поставщика; закуп — это она минус
- * согласованная скидка. По «Востоку» скидка своя, 4 %, по остальному — 10 %.
+ * согласованная скидка. Скидка своя у каждого бренда (реестр — brands.ts),
+ * дефолт для брендов без явной настройки — `DEFAULT_DISCOUNT_PERCENT`.
  * Проверено на боевых данных: без скидок месяц выходил с убытком, потому что
  * «закуп» составлял 75,8 % выручки.
  *
  * Скидка применяется при РАСЧЁТЕ, а не при сохранении цены: в базе лежит цена
  * ровно как в прайсе. Иначе смена процента требовала бы перезагрузки файла, а
  * заказчик просил их регулировать.
+ *
+ * `DEFAULT_VOSTOK_DISCOUNT_PERCENT` — дефолт и ЛЕГАСИ-ФОЛБЭК бренда «Восток»:
+ * скидки по брендам живут в карте `brandDiscounts`, но продавцы, настроившие
+ * «Восток» до её появления, хранят значение в старом поле
+ * `vostokDiscountPercent` — его читает discountsOf, когда в карте записи нет.
  */
 export const DEFAULT_VOSTOK_DISCOUNT_PERCENT = 4;
 export const DEFAULT_DISCOUNT_PERCENT = 10;
@@ -77,10 +84,12 @@ export interface IProfitRates {
   commissionPercent: number;
   /** Налог с продаж, %. */
   taxPercent: number;
-  /** Скидка от прайса по «Востоку», %. */
+  /** Легаси-скидка по «Востоку», % — фолбэк, когда в brandDiscounts нет записи. */
   vostokDiscountPercent: number;
-  /** Скидка от прайса по всему остальному, %. */
+  /** Скидка от прайса для брендов без своей настройки, %. */
   discountPercent: number;
+  /** Явные скидки по брендам: ключ — TBrandKey из brands.ts. */
+  brandDiscounts?: Readonly<Record<string, number>>;
 }
 
 export const DEFAULT_RATES: IProfitRates = {
@@ -90,48 +99,6 @@ export const DEFAULT_RATES: IProfitRates = {
   discountPercent: DEFAULT_DISCOUNT_PERCENT,
 };
 
-/** Группа скидки. Их две, и обе видны продавцу в отчёте. */
-export type TDiscountGroup = 'vostok' | 'other';
-
-/**
- * Что считается «Востоком».
- *
- * Все три — Чистопольский часовой завод, то есть один поставщик и одна
- * договорённость по скидке: категории прайса «Восток» (360 позиций),
- * «Командирские» (147) и «Партнер» (2). Список ЕДИНСТВЕННОЕ место, где это
- * решается: если скидка 4 % относится только к категории «Восток», убрать отсюда
- * две строки — и всё.
- *
- * Сверяется и с категорией, и с наименованием: «Амфибия» отдельной категорией не
- * идёт, она внутри «Востока», зато в названии видна.
- */
-export const VOSTOK_MARKERS: readonly string[] = [
-  'восток',
-  'командирские',
-  'амфибия',
-  'партнер',
-  'партнёр',
-];
-
-/**
- * Линейки, которые под востоковскую скидку НЕ идут. Проверяются ПЕРВЫМИ.
- *
- * Решение заказчика: «Кремлёвские», «Брайлевские» и «Мегаполис» считаются по
- * общей скидке 10 %, хотя завод тот же. Порядок проверки обязателен, потому что
- * в `stock.xlsx` есть категория «Восток Кремлёвские» — по слову «Восток» она
- * попала бы в 4 %, то есть ровно наоборот решению. Тот же приём «частное раньше
- * общего», что у «скидка восток» против «скидка» в parseRateInput.
- *
- * Оба написания «Кремлёвские»: в категории файла стоит «ё», а в наименовании
- * («Кремлёвские 010040») может оказаться «е».
- */
-export const NON_VOSTOK_MARKERS: readonly string[] = [
-  'кремлёвские',
-  'кремлевские',
-  'брайлевские',
-  'мегаполис',
-];
-
 /** Строка закупа, как она лежит в базе: цена ПРАЙСА плюс её происхождение. */
 export interface IPurchaseRow {
   price: number;
@@ -140,45 +107,96 @@ export interface IPurchaseRow {
 }
 
 /**
- * К какой скидке относится позиция.
+ * Скидки, приведённые к пригодным для счёта: дефолт плюс явные по брендам.
  *
- * Определяется по сохранённым названию и категории, а не по отдельному полю в
- * базе: правило брендов живёт в коде, и его правка не должна требовать
- * перезагрузки прайса.
+ * `brandPercents` — Partial: запись есть только у брендов, по которым скидка
+ * известна (задана продавцом или пришла из легаси-поля «Востока»). Отсутствие
+ * записи означает «по дефолту», и это решает brandDiscountOf.
  */
-export function discountGroup(row: IPurchaseRow): TDiscountGroup {
-  const haystack = `${row?.category ?? ''} ${row?.name ?? ''}`.toLowerCase();
-
-  // Исключения раньше общего правила: «Восток Кремлёвские» иначе получит 4 %.
-  if (NON_VOSTOK_MARKERS.some((marker) => haystack.includes(marker))) return 'other';
-
-  return VOSTOK_MARKERS.some((marker) => haystack.includes(marker)) ? 'vostok' : 'other';
+export interface IDiscountConfig {
+  defaultPercent: number;
+  brandPercents: Readonly<Partial<Record<TBrandKey, number>>>;
 }
 
-/** Закуп одной позиции: цена прайса минус скидка своей группы. */
-export function purchaseCost(row: IPurchaseRow, rates: IProfitRates = DEFAULT_RATES): number {
-  const percent =
-    discountGroup(row) === 'vostok'
-      ? normalizeRate(rates?.vostokDiscountPercent, DEFAULT_VOSTOK_DISCOUNT_PERCENT)
-      : normalizeRate(rates?.discountPercent, DEFAULT_DISCOUNT_PERCENT);
+/**
+ * Конфиг скидок из документа магазина. ЕДИНСТВЕННОЕ место, где решается
+ * цепочка фолбэков:
+ *
+ *   brandDiscounts[бренд] → (для «Востока») vostokDiscountPercent → discountPercent
+ *
+ * Легаси-поле `vostokDiscountPercent` запекается в карту, когда явной записи
+ * нет: продавцы настроили его до появления скидок по брендам, и «влить в новую
+ * систему» не должно означать «потерять настройку». Миграции данных поэтому не
+ * нужно вовсе.
+ *
+ * Мусорная запись карты (не число, вне границ) выкидывается — падать или
+ * ронять весь конфиг из-за одного руками правленного значения нельзя, ровно как
+ * в normalizeRate. Неизвестный ключ игнорируется по той же причине.
+ */
+export function discountsOf(store: {
+  discountPercent?: number;
+  vostokDiscountPercent?: number;
+  brandDiscounts?: Readonly<Record<string, number>>;
+}): IDiscountConfig {
+  const defaultPercent = normalizeRate(store?.discountPercent, DEFAULT_DISCOUNT_PERCENT);
 
+  const brandPercents: Partial<Record<TBrandKey, number>> = {};
+  for (const [key, raw] of Object.entries(store?.brandDiscounts ?? {})) {
+    if (!isBrandKey(key)) continue;
+
+    const value = Number(raw);
+    if (!Number.isFinite(value)) continue;
+    if (value < MIN_RATE_PERCENT || value > MAX_RATE_PERCENT) continue;
+
+    brandPercents[key] = value;
+  }
+
+  if (brandPercents.vostok === undefined) {
+    brandPercents.vostok = normalizeRate(
+      store?.vostokDiscountPercent,
+      DEFAULT_VOSTOK_DISCOUNT_PERCENT,
+    );
+  }
+
+  return { defaultPercent, brandPercents };
+}
+
+/**
+ * Действующая скидка бренда. `0` в карте — валидная скидка, а не «нет записи»:
+ * продавец мог договориться без скидки, и это отличается от «по дефолту».
+ */
+export function brandDiscountOf(config: IDiscountConfig, brand: TBrandKey | null): number {
+  if (!brand) return config.defaultPercent;
+  return config.brandPercents[brand] ?? config.defaultPercent;
+}
+
+/** Закуп одной позиции по готовому конфигу — общий шаг двух функций ниже. */
+function costAt(row: IPurchaseRow, config: IDiscountConfig): number {
+  const percent = brandDiscountOf(config, brandOf(row));
   return amount(row?.price) * (1 - percent / 100);
+}
+
+/** Закуп одной позиции: цена прайса минус скидка её бренда. */
+export function purchaseCost(row: IPurchaseRow, rates: IProfitRates = DEFAULT_RATES): number {
+  return costAt(row, discountsOf(rates ?? {}));
 }
 
 /**
  * Цены прайса → закуп по каждому артикулу.
  *
  * Отдельным шагом, а не внутри profitOf: скидка — это свойство строки прайса, а
- * не заказа, и считать её на каждое вхождение товара в заказ незачем.
+ * не заказа, и считать её на каждое вхождение товара в заказ незачем. Конфиг
+ * скидок собирается ОДИН раз на всю карту, а не на строку.
  */
 export function applyDiscounts(
   rows: Map<string, IPurchaseRow>,
   rates: IProfitRates = DEFAULT_RATES,
 ): Map<string, number> {
+  const config = discountsOf(rates ?? {});
   const costs = new Map<string, number>();
 
   for (const [sku, row] of rows) {
-    costs.set(sku, purchaseCost(row, rates));
+    costs.set(sku, costAt(row, config));
   }
 
   return costs;
@@ -279,6 +297,7 @@ export function ratesOf(store: {
   taxPercent?: number;
   vostokDiscountPercent?: number;
   discountPercent?: number;
+  brandDiscounts?: Readonly<Record<string, number>>;
 }): IProfitRates {
   return {
     commissionPercent: normalizeRate(store?.commissionPercent, DEFAULT_COMMISSION_PERCENT),
@@ -288,6 +307,9 @@ export function ratesOf(store: {
       DEFAULT_VOSTOK_DISCOUNT_PERCENT,
     ),
     discountPercent: normalizeRate(store?.discountPercent, DEFAULT_DISCOUNT_PERCENT),
+    // Насквозь, без пер-записной нормализации: она — дело discountsOf, второй
+    // раз то же правило здесь означало бы два места, где оно может разойтись.
+    brandDiscounts: store?.brandDiscounts,
   };
 }
 
@@ -423,15 +445,19 @@ export function profitOf(
 
 // --- ввод ставок -------------------------------------------------------------
 
-/** Настройка, которую можно изменить кнопкой или сообщением. */
-export type TRateField =
-  | 'commissionPercent'
-  | 'taxPercent'
-  | 'vostokDiscountPercent'
-  | 'discountPercent';
+/**
+ * Настройка, которую можно изменить кнопкой или сообщением.
+ *
+ * Скидок по брендам здесь НЕТ и быть не должно: их множество задаётся реестром
+ * в brands.ts, а не фиксированным объединением, и у них свой путь записи
+ * (`updateBrandDiscount`), свой кодек кнопок (`bdisc:`) и свой парсер
+ * («скидка casio: 5»). Прежний член `vostokDiscountPercent` уехал туда же —
+ * «Восток» стал обычным брендом.
+ */
+export type TRateField = 'commissionPercent' | 'taxPercent' | 'discountPercent';
 
 /**
- * Все четыре ставки — списком.
+ * Все три ставки — списком.
  *
  * Собран из `Record<TRateField, true>`, а НЕ написан массивом-литералом, и это
  * принципиально: `Record` обязывает компилятор потребовать каждый член
@@ -440,13 +466,12 @@ export type TRateField =
  * компилятор промолчал, и пользователь получал ошибку на верном вводе.
  *
  * Порядок задаёт порядок кнопок на экране настроек: сначала то, что вычитается
- * из продажи, потом скидки от прайса — так же, как идёт текст экрана.
+ * из продажи, потом скидка от прайса — так же, как идёт текст экрана.
  */
 const RATE_FIELD_SET: Record<TRateField, true> = {
   commissionPercent: true,
   taxPercent: true,
   discountPercent: true,
-  vostokDiscountPercent: true,
 };
 
 export const RATE_FIELDS = Object.keys(RATE_FIELD_SET) as TRateField[];
@@ -478,10 +503,9 @@ const RATE_LABELS: Readonly<Record<string, TRateField>> = {
   commission: 'commissionPercent',
   налог: 'taxPercent',
   tax: 'taxPercent',
-  // Двухсловные подписи разбираются тем же правилом. «скидка восток» обязана
-  // проверяться РАНЬШЕ «скидки» — иначе более общая подпись съест частную.
-  'скидка восток': 'vostokDiscountPercent',
-  'скидка на восток': 'vostokDiscountPercent',
+  // «скидка восток» здесь больше нет: подписи брендов живут в реестре brands.ts
+  // и разбираются parseBrandDiscountInput — РАНЬШЕ этого парсера, тем же
+  // приёмом «частное раньше общего», каким раньше упорядочивались эти ключи.
   скидка: 'discountPercent',
   discount: 'discountPercent',
 };
@@ -494,9 +518,8 @@ const RATE_LABELS: Readonly<Record<string, TRateField>> = {
  * стояли литералами («комиссия: 23» в двух файлах), они были ещё и с чужим
  * значением — экран показывал «Комиссия 25 %» и тут же предлагал «комиссия: 23».
  *
- * Берётся ПЕРВОЕ совпадение, поэтому русская подпись выигрывает у английской, а
- * «скидка восток» — у «скидка на восток»: порядок ключей в RATE_LABELS и есть
- * порядок предпочтения.
+ * Берётся ПЕРВОЕ совпадение, поэтому русская подпись выигрывает у английской:
+ * порядок ключей в RATE_LABELS и есть порядок предпочтения.
  */
 export function rateInputLabel(field: TRateField): string {
   return Object.keys(RATE_LABELS).find((label) => RATE_LABELS[label] === field) ?? field;
@@ -506,7 +529,7 @@ export function rateInputLabel(field: TRateField): string {
  * Короткая подпись для кнопки. Рядом с ней встанет значение («📉 Комиссия 23%»).
  *
  * Именно короткая: в ряду из двух кнопок Telegram обрезает подписи, и полное
- * «Скидка от прайса на «Восток»» превратилось бы в неразличимый огрызок — тем же
+ * «Комиссия Яндекс.Маркета» превратилось бы в неразличимый огрызок — тем же
  * способом уже ломались кнопки рассылки (см. schedule.handler.ts).
  */
 export function rateShortLabel(field: TRateField): string {
@@ -515,8 +538,6 @@ export function rateShortLabel(field: TRateField): string {
       return '📉 Комиссия';
     case 'taxPercent':
       return '🧾 Налог';
-    case 'vostokDiscountPercent':
-      return '⌚ Восток';
     default:
       return '📦 Скидка';
   }
@@ -529,8 +550,6 @@ export function rateTitle(field: TRateField): string {
       return 'Комиссия Яндекс.Маркета';
     case 'taxPercent':
       return 'Налог с продаж';
-    case 'vostokDiscountPercent':
-      return 'Скидка от прайса на «Восток»';
     default:
       return 'Скидка от прайса';
   }
@@ -548,9 +567,9 @@ export function rateTitle(field: TRateField): string {
  * Проценты принимаются с десятыми и с запятой: продавец пишет и «23.5», и
  * «23,5», а знак процента дописывает по привычке.
  *
- * Подпись бывает из двух-трёх слов («скидка на восток»), поэтому пробелы внутри
- * разрешены и нормализуются — «скидка   восток» и «Скидка На Восток» это одно и
- * то же.
+ * Многословные подписи разрешены и нормализуются — «скидка» и «Скидка» это одно
+ * и то же; брендовые («скидка восток: 4») сюда не доходят, их РАНЬШЕ разбирает
+ * parseBrandDiscountInput из brands.ts.
  */
 export function parseRateInput(text: string): IRateInput | null {
   const match = String(text ?? '')
@@ -592,7 +611,7 @@ export function parseRateValue(text: string): number | null {
  * приёмом, что у отчётов (`reportCallback`) и рассылки (`scheduleCallback`),
  * чтобы формат не разъехался между кнопкой и обработчиком.
  *
- * Самое длинное значение — `rate:vostokDiscountPercent`, 26 байт при лимите
+ * Самое длинное значение — `rate:commissionPercent`, 22 байта при лимите
  * Telegram в 64.
  */
 export const RATE_CB_PREFIX = 'rate:';
@@ -615,20 +634,28 @@ export function parseRateCallback(data: string): TRateField | 'cancel' | null {
   return tail === 'cancel' ? 'cancel' : (tail as TRateField);
 }
 
-/** Проверка ставки. Ошибка возвращается, чтобы обработчик переспросил. */
-export function validateRate(field: TRateField, value: number): IRateValidation {
+/**
+ * Проверка процента с подписью в тексте ошибки. Общая для ставок и скидок по
+ * брендам: границы одни, и два экземпляра правила разошлись бы.
+ */
+export function validatePercent(title: string, value: number): IRateValidation {
   if (!Number.isFinite(value)) {
-    return { ok: false, error: `${rateTitle(field)} — это число, например 23.` };
+    return { ok: false, error: `${title} — это число, например 23.` };
   }
 
   if (value < MIN_RATE_PERCENT || value > MAX_RATE_PERCENT) {
     return {
       ok: false,
       error:
-        `${rateTitle(field)} указывается в процентах — от ${MIN_RATE_PERCENT} ` +
+        `${title} указывается в процентах — от ${MIN_RATE_PERCENT} ` +
         `до ${MAX_RATE_PERCENT}. Пришло: ${value}.`,
     };
   }
 
   return { ok: true };
+}
+
+/** Проверка ставки. Ошибка возвращается, чтобы обработчик переспросил. */
+export function validateRate(field: TRateField, value: number): IRateValidation {
+  return validatePercent(rateTitle(field), value);
 }

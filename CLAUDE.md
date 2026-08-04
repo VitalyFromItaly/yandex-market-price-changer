@@ -171,7 +171,7 @@ actionLog → accessGate → featureGate → start → menu → slash → adminC
     must precede the download — promising «загружаю остатки» and reporting «остатки не записаны» a
     minute later reads as a malfunction, which is why `progressText` has three states, not two.
   - **Writing stocks requires `STOCK_WRITE_ENABLED=true`, declared per deployment.** Development runs
-    against the *live* store — the token in `.env` is real — so a local run with an uploaded price
+    against the _live_ store — the token in `.env` is real — so a local run with an uploaded price
     list would move a real seller's stock, and nothing can undo it. The variable is **required with
     no default**, and a default in either direction is what makes it so: "writes allowed by default"
     eventually rewrites a live seller's stock from somebody's laptop; "writes forbidden by default"
@@ -433,45 +433,82 @@ into one line and loses commission, tax and cost.
   works before the first live stock write. A repeat upload updates and **never deletes** rows absent
   from the file (a price list may cover one brand only); the report prints the last upload date so
   stale cost is visible.
-- **Column E is the supplier's price, not the cost.** Cost = that price minus a negotiated discount:
-  4 % for «Восток», 10 % for everything else (`DEFAULT_VOSTOK_DISCOUNT_PERCENT` /
-  `DEFAULT_DISCOUNT_PERCENT`). Verified on live data — without the discount the month showed a
-  **117 622 ₽ loss**, with it a 34 340 ₽ profit. `VOSTOK_MARKERS` is the single place deciding what
-  counts as «Восток» (price-list categories «Восток», «Командирские», «Партнер», plus «Амфибия» by
-  name — all one factory).
+- **Column E is the supplier's price, not the cost.** Cost = that price minus a negotiated
+  **per-brand** discount. Verified on live data — without the discount the month showed a
+  **117 622 ₽ loss**, with it a 34 340 ₽ profit. The brand registry lives in
+  `reports/brands.ts` — a **leaf module with zero imports** (the `telegram-html.ts` pattern; both
+  profit arithmetic and bot screens import it, so importing `profit.ts` from it would be a cycle).
+  Each brand is `{title, markers, exclude?, inputLabels}`; `brandOf(row)` matches
+  `${category} ${name}` against `BRAND_KEYS` **in declared order** (`vostok` first — its markers are
+  the widest), with per-brand `exclude` checked before `markers` («Восток Кремлёвские» must land on
+  the default discount — customer's decision). A row matching no brand → `null` → default discount.
+  A drift-guard test pins that every `BRAND_PREFIXES` entry from `sku-resolver.ts` resolves to a
+  brand — the two registries stay separate (different jobs: sku resolution vs discount) but may not
+  silently diverge.
+- **Per-seller discounts live in `YandexMarket.brandDiscounts`** — a plain-object map keyed by
+  `TBrandKey` (the `UserAccess.features` pattern: only explicit decisions stored, missing key =
+  default `discountPercent`). Written **only** via `updateBrandDiscount` — a `$set` dot-path with an
+  `isBrandKey` whitelist (the key decides _where_ in the document to write, same argument as
+  `setFeature`); mutating the nested object + `save()` loses the change without `markModified`.
+  **`vostokDiscountPercent` stays in the schema as the legacy fallback**: `discountsOf(store)` in
+  `profit.ts` is the single place resolving the chain `brandDiscounts[brand]` → (vostok only)
+  `vostokDiscountPercent` → `discountPercent`, so sellers who configured «Восток» before the map
+  existed keep their value with **no data migration** — and the untouched default still prints
+  «минус 10% (Восток 4%)» in the profit report, which only lists brands whose effective percent
+  differs from the default. `0` in the map is a valid discount, not "no entry"; junk entries are
+  dropped per-entry, never fail the report.
 - **The discount is applied when computing, not when storing.** `PurchasePrice.price` holds the price
-  exactly as printed in the file; `applyDiscounts` turns rows into costs at report time. That is why
-  `findBySkus` returns `{price, name, category}` rather than a number — the group is derived from the
-  stored name/category — and why changing a percentage takes effect immediately instead of waiting for
-  the next upload.
+  exactly as printed in the file; `applyDiscounts` turns rows into costs at report time (the config
+  is built **once** per map, not per row). That is why `findBySkus` returns `{price, name, category}`
+  rather than a number — the brand is derived from the stored name/category — and why changing a
+  percentage takes effect immediately instead of waiting for the next upload.
 - **Rates are edited by button, and still by message.** Both paths live in
-  `api-settings.handler.ts` and both write through `YandexMarketService.updateRate`.
-  - **By button:** the settings screen carries one inline button per rate, built by
-    `settingsKeyboardRows(store)` in `settings.text.ts` — the _same_ module as the screen text, and
-    for the same reason: the screen has three entry points (`MENU.SETTINGS`, `/settings`,
+  `api-settings.handler.ts`; rates write through `YandexMarketService.updateRate`, brand discounts
+  through `updateBrandDiscount`. `TRateField` is now **three** fields (commission, tax, default
+  discount) — «Восток» left the union and became an ordinary brand.
+  - **By button:** the settings screen carries one inline button per rate plus one
+    «🏷 Скидки по брендам» button (`BRAND_CB_MENU`, inline-only, deliberately **no `MENU` key**),
+    built by `settingsKeyboardRows(store)` in `settings.text.ts` — the _same_ module as the screen
+    text, and for the same reason: the screen has three entry points (`MENU.SETTINGS`, `/settings`,
     `check_settings`), and three copies of the keyboard would drift exactly as three copies of the
     text did. The value is printed **on** the button (`📉 Комиссия 23%`) rather than in a separate
     list, and `rateShortLabel` is deliberately short — Telegram truncates long captions in a
     two-button row. `RATE_CB_PATTERN`/`rateCallback`/`parseRateCallback` sit in `profit.ts` next to
-    the rates themselves; the action is registered in `registerCallbacks()`, so it is already ahead
-    of the general `callback_query` switch and **no composer change was needed**.
-  - **The pending question is a third field**, `UserAccess.pendingRate`, beside `pendingScheduleReport`
-    and `pendingReportDay` — not a reuse of them: on a shared field «23» could be read as a schedule
-    time. `handlePendingRate` runs **first** of the three pending checks, which is safe only because
-    it consumes **numeric input only** (`parseRateValue`); a date or `09:00` is not a number and
-    reaches its own handler. Non-numeric text closes the question and falls through, or an open rate
-    question would make the bot answer «нужно число» to everything.
-  - **By message:** `комиссия: 23`, `налог: 7`, `скидка: 10`, `скидка восток: 4`, parsed by
-    `parseRateInput`. Labels of up to three words are accepted, and the two-word `скидка восток` must
-    be matched before the one-word `скидка`, or the general label eats the specific one. Do **not**
+    the rates themselves; the actions are registered in `registerCallbacks()`, so they are already
+    ahead of the general `callback_query` switch and **no composer change was needed**.
+  - **The brand screen** («🏷 Скидки по брендам», `bdisc:` codec in `brands.ts`) lists only brands
+    **present in the seller's `PurchasePrice` rows** (`listNamesAndCategories` — a two-field `lean`
+    projection, deliberately _not_ `distinct('category')` because brands also match by name), folded
+    by `brandUsageOf` in `brand-discounts.text.ts` — the screen's single-source module (rendered
+    from the settings button, after every save and after cancel). Rows outside every brand show as
+    «Остальные» whose button reuses `rate:discountPercent` — one editor for the default, not two.
+    Brand keys are ASCII slugs (`^[a-z0-9-]+$`, test-pinned): they travel in callback_data (64-byte
+    limit), in `pendingRate` and in the Mongo `$set` path. A **legacy action**
+    `rate:vostokDiscountPercent` maps the old «⌚ Восток» button (alive forever in chat history) to
+    the vostok brand question.
+  - **The pending question reuses `UserAccess.pendingRate`** with the value `brand:<key>` — this is
+    _not_ the «23»-ambiguity the schedule fields guard against: both questions expect a bare percent
+    with the same validation, only the write target differs, and the target is encoded in the value.
+    `parseBrandPending` also accepts the legacy literal `vostokDiscountPercent` (→ `vostok`) so a
+    question left open across the deploy resolves instead of dangling; `setPendingRate`'s whitelist
+    is `isRateField(field) || parseBrandPending(field) !== null`. `handlePendingRate` still runs
+    **first** of the three pending checks and still consumes **numeric input only**
+    (`parseRateValue`); a date or `09:00` is not a number and reaches its own handler. Non-numeric
+    text closes the question and falls through, or an open rate question would make the bot answer
+    «нужно число» to everything.
+  - **By message:** `комиссия: 23`, `налог: 7`, `скидка: 10` parsed by `parseRateInput`;
+    `скидка восток: 4`, `скидка casio: 5` parsed by `parseBrandDiscountInput` (labels derived from
+    the registry's `inputLabels`), which `editSetting` calls **before** `parseRateInput` — «частное
+    раньше общего», now between two parsers instead of between two keys of one map. Do **not**
     extend `parseLabelledValue`/`TDraftField` for this: that union drives `DRAFT_FIELD_SET`,
     `ONBOARDING_STEPS` and every `switch (step)` in `onboarding.ts`, whose numeric validation demands
     5–15 digits and would reject «23».
-  - **Every label and example on screen is derived, never a literal.** `rateInputLabel` is read back
-    out of `RATE_LABELS`, so a hint is always a label the parser accepts, and the hints print the
-    seller's **current** value: the screen used to show «Комиссия 25 %» and offer `комиссия: 23` two
-    lines below. `RATE_FIELDS` is built from a `Record<TRateField, true>` for the `DRAFT_FIELD_SET`
-    reason — an array literal does not force the union to be complete.
+  - **Every label and example on screen is derived, never a literal.** `rateInputLabel` /
+    `brandInputLabel` are read back out of the same tables the parsers use, so a hint is always a
+    label the parser accepts, and the hints print the seller's **current** value: the screen used to
+    show «Комиссия 25 %» and offer `комиссия: 23` two lines below. `RATE_FIELD_SET` and `BRAND_SET`
+    are `Record<Union, …>` for the `DRAFT_FIELD_SET` reason — an array literal does not force the
+    union to be complete.
 - `ProfitService` (`reports/profit.service.ts`) joins the sources; `OrderReportsService` stays
   API-only. It fetches both order sets with one `Promise.all`, then makes **one** `findBySkus` call
   over their union and **one** returns call shared by both `profitOf` runs — the returns endpoint is
@@ -510,8 +547,9 @@ There are **no Mongoose refs** — relations are implicit:
   `Record<string, boolean>` with **no index**: nothing ever queries by a flag, only by the user.
 - `YandexMarket` is keyed by `telegramUserId` (typed `string`). Its `campaign_id`/`business_id`/`token`
   are `required`, so the document is created **once, complete** — partial writes throw. It also carries
-  the four profit rates: `commissionPercent` (23), `taxPercent` (7), `discountPercent` (10) and
-  `vostokDiscountPercent` (4) — see "Profit" below.
+  the profit rates: `commissionPercent` (23), `taxPercent` (7), `discountPercent` (10), the
+  per-brand map `brandDiscounts` and the legacy `vostokDiscountPercent` (4, fallback of the
+  `vostok` brand) — see "Profit" below.
 - `PurchasePrice` is keyed by `(telegramUserId, sku)` — unique compound index, ~4100 docs per seller.
   `sku` is the **catalog** `offerId` produced by `sku-resolver`, not the price-list name: order items
   carry `offerId`, and that is the only key on which cost joins to revenue. No `botId` — the store is
@@ -773,7 +811,7 @@ rejected   credentials wiped; 24h during which even entering credentials is refu
   otherwise hit `editSetting`, which demands a `token: …` label and answered a bare token with
   "Не понял, что именно нужно изменить" — the bot rejecting exactly what it had just asked for.
 - **`/start` with no store asks for the token inline**, it does not tell the user to press
-  «⚙️ Настройки API»: the bot already knows the store is missing. It sends two messages because
+  «⚙️ Настройки»: the bot already knows the store is missing. It sends two messages because
   Telegram allows one `reply_markup` per message — the first carries the shortened reply keyboard,
   the second the prompt with the «❓ Как получить?» inline button.
 - **Onboarding asks for one thing: the token.** `campaign_id`/`business_id`/`store_name` come from
@@ -801,7 +839,7 @@ tables would mean a change to access rules silently reshapes the feature set, an
 
 The five report keys are **literally the values of `REPORT`** — a second taxonomy for the same five
 things would drift, and the digest already keys its schedules by them. Plus `schedule` and
-`stock_upload`. `/start`, «🏠 Главное меню», «⚙️ Настройки API», «❓ Помощь», «📊 Мой профиль»,
+`stock_upload`. `/start`, «🏠 Главное меню», «⚙️ Настройки», «❓ Помощь», «📊 Мой профиль»,
 the whole wizard and every admin button are **not** gateable: closing them locks the seller out of
 their own settings, with no way to fix a token or find out whom to ask.
 
