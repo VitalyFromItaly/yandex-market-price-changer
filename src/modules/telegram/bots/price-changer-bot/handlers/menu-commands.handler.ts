@@ -116,10 +116,21 @@ export class MenuCommandsHandler {
 
   private async showApiSettings(ctx: Context) {
     const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    // Фичи нужны экрану: кнопка «📣 Продвижение» гейтится, и клавиатура обязана
+    // говорить то же, что гейт. У админов записи нет — undefined разрешает.
+    const account = await this.accessService.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
     // Текст И кнопки — из settings.text.ts, общие с `/settings` и с inline
     // «👀 Проверить настройки». Кнопки правят ставки расчёта прибыли.
-    const keyboard = await this.keyboard.createInlineKeyboardMatrix(settingsKeyboardRows(store));
-    await ctx.reply(settingsText(store), htmlOptions({ reply_markup: keyboard.reply_markup }));
+    const keyboard = await this.keyboard.createInlineKeyboardMatrix(
+      settingsKeyboardRows(store, account?.features),
+    );
+    await ctx.reply(
+      settingsText(store, account?.features),
+      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    );
   }
 
   private async showProfile(ctx: Context) {

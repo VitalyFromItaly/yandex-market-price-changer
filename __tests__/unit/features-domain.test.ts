@@ -186,6 +186,19 @@ describe('Какие возможности нужны апдейту', () => {
     }
   });
 
+  it('кнопки продвижения требуют фичу продвижения', () => {
+    // `rate:` и `bdisc:` не гейтятся (настройки должны оставаться доступными),
+    // а продвижение гейтится: это и есть его фича, других входов у неё нет.
+    for (const data of ['promo:menu', 'promo:pick:casio', 'promo:tier:casio', 'promo:off:vostok']) {
+      expect(requiredFeatures({ callbackData: data })).toEqual([FEATURE.PROMOTION]);
+    }
+  });
+
+  it('мусор с промо-префиксом не гейтится — он и не обрабатывается', () => {
+    expect(requiredFeatures({ callbackData: 'promo:xxx' })).toEqual([]);
+    expect(requiredFeatures({ callbackData: 'promo:pick:rolex' })).toEqual([]);
+  });
+
   it('документ требует загрузку прайса', () => {
     expect(requiredFeatures({ hasDocument: true })).toEqual([FEATURE.STOCK_UPLOAD]);
   });

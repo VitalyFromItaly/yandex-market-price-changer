@@ -40,12 +40,15 @@ describe('ApiSettingsHandler: подача заявки', () => {
     pendingRate?: string;
     /** Подмена вопроса про день отчёта: им проверяется порядок pending-проверок. */
     pendingDay?: () => Promise<boolean>;
+    /** Явные решения по фичам — как их хранит UserAccess.features. */
+    features?: Record<string, boolean>;
   }) {
     const state = {
       status: opts.status ?? 'new',
       draft: { ...(opts.draft ?? {}) },
       /** Незакрытый вопрос «какую ставку меняем» — как его хранит UserAccess. */
       pendingRate: opts.pendingRate,
+      features: opts.features,
     };
 
     const accessService = {
@@ -91,6 +94,7 @@ describe('ApiSettingsHandler: подача заявки', () => {
       updateByTelegramUser: vi.fn(async () => opts.store ?? null),
       updateRate: vi.fn(async () => opts.store ?? null),
       updateBrandDiscount: vi.fn(async () => opts.store ?? null),
+      updatePromoCommission: vi.fn(async () => opts.store ?? null),
       create: vi.fn(async (data: unknown) => data),
       deleteByTelegramUser: vi.fn(async () => true),
     };
@@ -639,6 +643,184 @@ describe('ApiSettingsHandler: подача заявки', () => {
     expect(allReplies()).toContain('Скидки по брендам');
     // В фейке лежит «Восток Амфибия …» — бренд обязан быть найден.
     expect(allReplies()).toContain('Восток');
+  });
+
+  /**
+   * Продвижение: тот же диалог «кнопка → вопрос → ответ», но пошаговый.
+   * Промежуточные ответы живут в строке pendingRate, запись в магазин — ОДНА,
+   * после последнего шага (updatePromoCommission).
+   */
+  it('кнопка «Продвижение» показывает бренды из закупочных цен', async () => {
+    const { handler, purchasePrices, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    const { allReplies } = await tap(handler, 'promo:menu');
+
+    expect(purchasePrices.listNamesAndCategories).toHaveBeenCalledWith(String(USER_ID));
+    expect(allReplies()).toContain('Продвижение');
+    expect(allReplies()).toContain('Восток');
+    expect(accessService.setPendingRate).not.toHaveBeenCalled();
+  });
+
+  it('выбор бренда открывает развилку «общий процент / от суммы»', async () => {
+    const { handler, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    const { allReplies, lastMarkup } = await tap(handler, 'promo:pick:vostok');
+
+    expect(allReplies()).toContain('Восток');
+    expect(lastMarkup()).toContain('promo:flat:vostok');
+    expect(lastMarkup()).toContain('promo:tier:vostok');
+    // Развилка — ещё не вопрос: pendingRate не открывается до выбора формы.
+    expect(accessService.setPendingRate).not.toHaveBeenCalled();
+  });
+
+  it('общий процент: кнопка открывает вопрос, ответ пишет плоскую настройку', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    await tap(handler, 'promo:flat:casio');
+
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      '999',
+      'promo:casio:flat',
+    );
+    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
+
+    const { allReplies } = await send(handler, '2');
+
+    expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledWith(String(USER_ID), 'casio', {
+      mode: 'flat',
+      percent: 2,
+    });
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
+    expect(allReplies()).toContain('2%');
+  });
+
+  it('ступени: три ответа подряд, запись в магазин РОВНО одна — в конце', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    await tap(handler, 'promo:tier:casio');
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      '999',
+      'promo:casio:limit',
+    );
+
+    // Порог принимается и с пробелами, и со знаком рубля.
+    const step1 = await send(handler, '10 000 ₽');
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      '999',
+      'promo:casio:below:10000',
+    );
+    expect(step1.allReplies()).toContain('Шаг 2 из 3');
+    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
+
+    const step2 = await send(handler, '2');
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      '999',
+      'promo:casio:above:10000:2',
+    );
+    expect(step2.allReplies()).toContain('Шаг 3 из 3');
+    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
+
+    await send(handler, '1');
+    expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledTimes(1);
+    expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledWith(String(USER_ID), 'casio', {
+      mode: 'tiered',
+      limit: 10000,
+      below: 2,
+      above: 1,
+    });
+  });
+
+  it('отмена посреди цепочки снимает вопрос и ничего не пишет', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'promo:casio:below:10000',
+    });
+    const { allReplies } = await tap(handler, 'promo:cancel');
+
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
+    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
+    // Возврат на экран продвижения: продавец правил его.
+    expect(allReplies()).toContain('Продвижение');
+  });
+
+  it('нечисловой ответ закрывает промо-вопрос и не делает бота глухим', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'promo:casio:limit',
+    });
+    await send(handler, 'привет');
+
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
+    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
+  });
+
+  it('порог ноль не сохраняется, вопрос остаётся открытым', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'promo:casio:limit',
+    });
+    const { allReplies } = await send(handler, '0');
+
+    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
+    expect(accessService.setPendingRate).not.toHaveBeenCalled();
+    expect(allReplies()).toContain('больше нуля');
+  });
+
+  it('ответ при выключенной фиче — отказ и закрытие вопроса', async () => {
+    // Пока вопрос оставался открытым, фичу могли закрыть из панели. Ответ
+    // приходит текстом — мимо гейта, который видит только кнопки.
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'promo:casio:flat',
+      features: { promotion: false },
+    });
+    const { allReplies } = await send(handler, '2');
+
+    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
+    expect(allReplies()).toContain('недоступн');
+  });
+
+  it('«Отключить» снимает настройку бренда целиком', async () => {
+    const { handler, yandexMarketService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    const { allReplies } = await tap(handler, 'promo:off:casio');
+
+    expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledWith(
+      String(USER_ID),
+      'casio',
+      null,
+    );
+    expect(allReplies()).toContain('отключено');
+  });
+
+  it('промо-кнопка без магазина не открывает вопрос, а просит токен', async () => {
+    const { handler, accessService } = await build({
+      status: 'approved',
+      store: null,
+    });
+    const { allReplies } = await tap(handler, 'promo:flat:casio');
+
+    expect(accessService.setPendingRate).not.toHaveBeenCalled();
+    expect(allReplies()).toContain('подключите магазин');
   });
 
   it('ставка НЕ путается с токеном и не уезжает в визард', async () => {

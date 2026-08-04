@@ -1,5 +1,6 @@
 import type { TReportKey } from '../../../yandex/reports/report-status-map';
 
+import { parsePromoCallback } from '../../../yandex/reports/promo';
 import { REPORT } from '../../../yandex/reports/report-status-map';
 import { MENU, menuLayout } from '../price-changer-bot/menu.constants';
 import {
@@ -43,6 +44,8 @@ export const FEATURE = {
   WAREHOUSES: 'warehouses',
   /** «📦 FBY» — сводка по складу Маркета: остатки, брак, заявки, доставка */
   FBY: 'fby',
+  /** «📣 Продвижение» — комиссия за буст по брендам, вычитается в «Прибыли» */
+  PROMOTION: 'promotion',
 } as const;
 
 export type TFeatureKey = (typeof FEATURE)[keyof typeof FEATURE];
@@ -66,6 +69,7 @@ const FEATURE_KEY_SET: Record<TFeatureKey, true> = {
   [FEATURE.STOCK_UPLOAD]: true,
   [FEATURE.WAREHOUSES]: true,
   [FEATURE.FBY]: true,
+  [FEATURE.PROMOTION]: true,
 };
 
 export const FEATURE_KEYS = Object.keys(FEATURE_KEY_SET) as TFeatureKey[];
@@ -141,6 +145,13 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     // Тоже default-off и по той же причине — точечная выкатка. Экран небыстрый
     // (остатки из асинхронного отчёта Маркета), поэтому обкатываем на желающих.
     defaultEnabled: false,
+  },
+  [FEATURE.PROMOTION]: {
+    // Кнопка inline-only (живёт на экране настроек), поэтому подпись не из
+    // MENU — ключа в MENU у неё нет и быть не должно (правило menu-labels).
+    label: '📣 Продвижение',
+    description: 'Комиссия за продвижение по брендам — вычитается в отчёте «Прибыль».',
+    defaultEnabled: true,
   },
 };
 
@@ -227,6 +238,10 @@ export function requiredFeatures(input: {
         ? [FEATURE.SCHEDULE, featureOfReport(schedule.reportKey)]
         : [FEATURE.SCHEDULE];
     }
+
+    // `rate:` и `bdisc:` не гейтятся (настройки должны оставаться доступными),
+    // а продвижение — гейтится: это и есть его фича, других входов у неё нет.
+    if (parsePromoCallback(input.callbackData) !== null) return [FEATURE.PROMOTION];
 
     return [];
   }

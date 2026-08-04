@@ -6,6 +6,7 @@ import { b, code, esc } from '../../telegram/formatting/telegram-format';
 import { BRAND_KEYS, brandTitle } from './brands';
 import { formatRubles } from './money';
 import { brandDiscountOf, discountsOf } from './profit';
+import { promoConfigsOf, promoValueLabel } from './promo';
 import { moscowDateParam } from './moscow-day';
 import { periodTitle } from './report-period';
 import { reportDefinition, REPORT } from './report-status-map';
@@ -76,6 +77,9 @@ function detailedBlock(totals: IProfitTotals, kind: 'placed' | 'redeemed'): stri
     `➖ Комиссия ${percent(totals.rates.commissionPercent)}%: ` +
       `${b(formatRubles(totals.commission))}`,
     `➖ Налог ${percent(totals.rates.taxPercent)}%: ${b(formatRubles(totals.tax))}`,
+    // Продвижение — только когда начислено: ноль в столбце вычитаний — шум, а
+    // не настроившие буст продавцы не должны гадать, что это за строка.
+    ...(totals.promo ? [`➖ Продвижение: ${b(formatRubles(totals.promo))}`] : []),
     `➖ Закуп: ${b(formatRubles(totals.purchase))}`,
     placed
       ? `${totals.net < 0 ? '🔻' : '📈'} Ожидается чистая: ${b(formatRubles(totals.net))}`
@@ -176,6 +180,8 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
 
   lines.push('');
 
+  const rates = placed?.rates ?? totals.rates;
+
   if (report.pricesUpdatedAt) {
     // Скидки печатаются рядом с датой прайса: закуп — не то, что стоит в файле, и
     // продавец должен видеть, из чего он получен, иначе сумма выглядит взятой
@@ -185,7 +191,6 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
     // все шесть с одинаковым процентом значило бы утопить полезное в шуме.
     // У нетронутого продавца это ровно «(Восток 4%)» — легаси-фолбэк
     // vostokDiscountPercent запечён в конфиг (см. discountsOf).
-    const rates = placed?.rates ?? totals.rates;
     const config = discountsOf(rates);
     const overrides = BRAND_KEYS.filter(
       (key) => brandDiscountOf(config, key) !== config.defaultPercent,
@@ -198,6 +203,17 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
     );
   } else {
     lines.push('💵 Закупочных цен пока нет — пришлите прайс, и прибыль посчитается.');
+  }
+
+  // Ставки продвижения — тем же принципом, что скидки выше: сумма «Продвижение»
+  // должна быть проверяема. Перечисляются только настроенные бренды — для
+  // остальных продвижения нет, и «CASIO 0%» здесь значил бы не то.
+  const promoConfigs = promoConfigsOf(rates.promoCommissions);
+  const promoParts = BRAND_KEYS.filter((key) => promoConfigs[key]).map(
+    (key) => `${brandTitle(key)} ${promoValueLabel(promoConfigs[key])}`,
+  );
+  if (promoParts.length) {
+    lines.push(`📣 Продвижение: ${esc(promoParts.join(', '))}.`);
   }
 
   return lines.join('\n');

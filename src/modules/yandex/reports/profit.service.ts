@@ -79,10 +79,12 @@ export class ProfitService {
     const costs = applyDiscounts(rows, rates);
 
     // Возвраты запрашиваются ОДИН раз на оба расчёта: список общий, а метод
-    // возвратов — самый дорогой запрос отчёта.
+    // возвратов — самый дорогой запрос отчёта. `rows` — те же строки закупа:
+    // по названию и категории profitOf определяет бренд позиции для комиссии
+    // за продвижение.
     const returned = await this.returnedOrderIds(store);
-    const totals = profitOf(result.orders, costs, rates, { returned });
-    const placed = profitOf(placedOrders.orders, costs, rates, { returned });
+    const totals = profitOf(result.orders, costs, rates, { returned, rows });
+    const placed = profitOf(placedOrders.orders, costs, rates, { returned, rows });
 
     this.logger.log(
       `Прибыль для ${store.telegramUserId}: выкуплено ${totals.orders}, ` +

@@ -1,3 +1,5 @@
+import type { TPromoConfig } from '../../modules/yandex/reports/promo';
+
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
@@ -78,6 +80,17 @@ export class YandexMarket {
    */
   @Prop({ type: Object })
   brandDiscounts?: Record<string, number>;
+
+  /**
+   * Комиссия за продвижение по брендам — ключи `TBrandKey`, значения
+   * `TPromoConfig` из reports/promo.ts (плоский процент или две ступени от
+   * цены товара). Отсутствие ключа = продвижение не настроено = 0 %: буст
+   * подключают не все, и молчаливый дефолт завышал бы расход.
+   * Писать ТОЛЬКО через `$set`/`$unset` по dot-path (`updatePromoCommission`) —
+   * довод `brandDiscounts`.
+   */
+  @Prop({ type: Object })
+  promoCommissions?: Record<string, TPromoConfig>;
 
   @Prop({ default: Date.now })
   createdAt: Date;

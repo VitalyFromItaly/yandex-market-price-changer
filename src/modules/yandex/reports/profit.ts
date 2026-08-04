@@ -42,6 +42,7 @@
 
 import { brandOf, isBrandKey, type TBrandKey } from './brands';
 import { orderTotals, subsidiesTotal, type IOrderMoney } from './money';
+import { promoConfigsOf, promoPercentAt } from './promo';
 
 /**
  * Ставки по умолчанию.
@@ -90,6 +91,12 @@ export interface IProfitRates {
   discountPercent: number;
   /** Явные скидки по брендам: ключ — TBrandKey из brands.ts. */
   brandDiscounts?: Readonly<Record<string, number>>;
+  /**
+   * Комиссия за продвижение по брендам: ключ — TBrandKey, значение —
+   * TPromoConfig из promo.ts. Насквозь, как brandDiscounts: нормализация —
+   * дело promoConfigsOf, один раз в profitOf.
+   */
+  promoCommissions?: Readonly<Record<string, unknown>>;
 }
 
 export const DEFAULT_RATES: IProfitRates = {
@@ -202,11 +209,16 @@ export function applyDiscounts(
   return costs;
 }
 
-/** Позиция заказа в объёме, нужном для закупа. */
+/** Позиция заказа в объёме, нужном для закупа и продвижения. */
 export interface IProfitOrderItem {
   /** Артикул каталога. Тот же, по которому лежит закупочная цена. */
   offerId?: string;
   count?: number;
+  /**
+   * Цена продажи за ЕДИНИЦУ, без субсидий Маркета. По ней считается комиссия
+   * за продвижение: и порог ступени, и сам процент — от ценника товара.
+   */
+  price?: number;
 }
 
 /** Заказ в объёме, нужном для прибыли. */
@@ -228,6 +240,12 @@ export type TReturnedOrders = ReadonlySet<number | string>;
 export interface IProfitOptions {
   /** Идентификаторы заказов, по которым есть возврат. */
   returned?: TReturnedOrders;
+  /**
+   * Строки закупа по артикулам — для определения БРЕНДА позиции при расчёте
+   * продвижения (brandOf смотрит на название и категорию). Не передали — промо
+   * считается нулевым: карта costs для этого не годится, в ней уже числа.
+   */
+  rows?: ReadonlyMap<string, IPurchaseRow>;
 }
 
 /** Есть ли по заказу возврат. Сравнение и числом, и строкой: id приходит по-разному. */
@@ -249,6 +267,11 @@ export interface IProfitTotals {
   subsidies: number;
   commission: number;
   tax: number;
+  /**
+   * Комиссия за продвижение — по позициям выкупленных заказов, ставка бренда
+   * от цены товара (promo.ts). Ноль, когда продвижение не настроено.
+   */
+  promo: number;
   purchase: number;
   /** Чистая. Может быть отрицательной — это результат, а не сбой. */
   net: number;
@@ -298,6 +321,7 @@ export function ratesOf(store: {
   vostokDiscountPercent?: number;
   discountPercent?: number;
   brandDiscounts?: Readonly<Record<string, number>>;
+  promoCommissions?: Readonly<Record<string, unknown>>;
 }): IProfitRates {
   return {
     commissionPercent: normalizeRate(store?.commissionPercent, DEFAULT_COMMISSION_PERCENT),
@@ -310,6 +334,8 @@ export function ratesOf(store: {
     // Насквозь, без пер-записной нормализации: она — дело discountsOf, второй
     // раз то же правило здесь означало бы два места, где оно может разойтись.
     brandDiscounts: store?.brandDiscounts,
+    // Тот же довод: нормализация — дело promoConfigsOf.
+    promoCommissions: store?.promoCommissions,
   };
 }
 
@@ -375,8 +401,15 @@ export function profitOf(
   const normalized = ratesOf(rates ?? {});
   const { commissionPercent, taxPercent } = normalized;
 
+  // Продвижение начисляется по позициям, ставка бренда — от цены товара.
+  // Конфиг приводится ОДИН раз на весь набор, как в applyDiscounts; без строк
+  // закупа бренд позиции не определить, и промо честно остаётся нулём.
+  const promoConfigs = promoConfigsOf(normalized.promoCommissions);
+  const promoRows = Object.keys(promoConfigs).length > 0 ? options?.rows : undefined;
+
   let revenue = 0;
   let subsidies = 0;
+  let promo = 0;
   let purchase = 0;
   let counted = 0;
   let excludedOrders = 0;
@@ -417,6 +450,24 @@ export function profitOf(
     subsidies += orderSubsidies;
     purchase += resolved;
     counted += 1;
+
+    // Только по УЧТЁННЫМ заказам — возвраты и исключённые ушли по continue
+    // выше, и продвижение по ним начислять не за что. Позиция без цены даёт
+    // ноль: комиссия считается от ценника, которого нет.
+    if (promoRows) {
+      for (const item of order?.items ?? []) {
+        const row = item?.offerId ? promoRows.get(item.offerId) : undefined;
+        const brand = row ? brandOf(row) : null;
+        const config = brand ? promoConfigs[brand] : undefined;
+        if (!config) continue;
+
+        const price = amount(item?.price);
+        if (!price) continue;
+
+        const count = amount(item?.count) || 1;
+        promo += (price * count * promoPercentAt(config, price)) / 100;
+      }
+    }
   }
 
   const commission = (revenue * commissionPercent) / 100;
@@ -427,8 +478,9 @@ export function profitOf(
     subsidies,
     commission,
     tax,
+    promo,
     purchase,
-    net: revenue - commission - tax - purchase,
+    net: revenue - commission - tax - promo - purchase,
     orders: counted,
     excludedOrders,
     excludedRevenue,

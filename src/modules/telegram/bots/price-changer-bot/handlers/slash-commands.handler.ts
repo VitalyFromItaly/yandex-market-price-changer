@@ -55,10 +55,21 @@ export class SlashCommandsHandler {
     // «Неизвестная команда: settings_auto_update».
     bot.command('settings', async (ctx) => {
       const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+      // Фичи — для кнопки «📣 Продвижение»: она гейтится, и клавиатура обязана
+      // говорить то же, что гейт.
+      const account = await this.accessService.findByUserAndBot(
+        ctx.from.id.toString(),
+        ctx.botInfo.id.toString(),
+      );
       // Клавиатура — тоже из settings.text.ts: кнопки правки ставок обязаны быть
       // на экране, из какого бы входа он ни открылся.
-      const keyboard = await this.keyboard.createInlineKeyboardMatrix(settingsKeyboardRows(store));
-      await ctx.reply(settingsText(store), htmlOptions({ reply_markup: keyboard.reply_markup }));
+      const keyboard = await this.keyboard.createInlineKeyboardMatrix(
+        settingsKeyboardRows(store, account?.features),
+      );
+      await ctx.reply(
+        settingsText(store, account?.features),
+        htmlOptions({ reply_markup: keyboard.reply_markup }),
+      );
     });
 
     // /price и /upload сняты (TASK-009): изменение цен по API отключено,

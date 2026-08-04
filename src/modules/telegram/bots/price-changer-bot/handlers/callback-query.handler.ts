@@ -118,13 +118,19 @@ export class CallbackQueryHandler {
             // продавцу не показываем», которое соблюдалось везде, кроме этой
             // ветки. Экран противоречил соседнему экрану того же бота.
             const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+            // Фичи — для кнопки «📣 Продвижение»: она гейтится, и клавиатура
+            // обязана говорить то же, что гейт.
+            const account = await this.accessService.findByUserAndBot(
+              ctx.from.id.toString(),
+              ctx.botInfo.id.toString(),
+            );
             // Клавиатура — оттуда же, где текст: без неё этот вход в экран
             // остался бы единственным без кнопок правки ставок.
             const keyboard = await this.keyboard.createInlineKeyboardMatrix(
-              settingsKeyboardRows(store),
+              settingsKeyboardRows(store, account?.features),
             );
             await ctx.editMessageText(
-              settingsText(store),
+              settingsText(store, account?.features),
               htmlOptions({ reply_markup: keyboard.reply_markup }),
             );
           } catch {

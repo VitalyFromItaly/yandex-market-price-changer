@@ -8,6 +8,7 @@ import {
 } from '../../src/modules/telegram/bots/price-changer-bot/settings.text';
 import { DEFAULT_RATES, RATE_FIELDS, rateCallback } from '../../src/modules/yandex/reports/profit';
 import { BRAND_CB_MENU } from '../../src/modules/yandex/reports/brands';
+import { PROMO_CB_MENU } from '../../src/modules/yandex/reports/promo';
 import { profileText } from '../../src/modules/telegram/bots/price-changer-bot/profile.text';
 import { helpText } from '../../src/modules/telegram/bots/price-changer-bot/help.text';
 
@@ -63,6 +64,17 @@ describe('Экраны собираются из одного источника
     const apiSettings = read('handlers/api-settings.handler.ts');
     expect(apiSettings).toContain('brandDiscountsText(');
     expect(apiSettings).toContain('brandDiscountsKeyboardRows(');
+  });
+
+  it('экран продвижения рендерится только из promotion.text', () => {
+    // Тот же инвариант: показов несколько (кнопка настроек, после сохранения,
+    // после отмены, после отключения) — все через showPromotion/
+    // showPromotionMode, которые обязаны звать общий модуль.
+    const apiSettings = read('handlers/api-settings.handler.ts');
+    expect(apiSettings).toContain('promotionText(');
+    expect(apiSettings).toContain('promotionKeyboardRows(');
+    expect(apiSettings).toContain('promotionModeText(');
+    expect(apiSettings).toContain('promotionModeKeyboardRows(');
   });
 
   it('главное меню подписано одинаково во всех входах', () => {
@@ -294,6 +306,24 @@ describe('Кнопки правки ставок', () => {
     }
     // Выход из экрана остаётся: тупик без единой кнопки хуже.
     expect(buttons).toHaveLength(1);
+  });
+
+  it('кнопка «Продвижение» есть у подключённого, гейтится фичей и скрыта без магазина', () => {
+    // Единственная гейтящаяся кнопка экрана: ставки и скидки флагом не
+    // закрываются. Клавиатура обязана говорить то же, что гейт, — прятать
+    // кнопку, тап по которой ответит отказом.
+    const configured = settingsKeyboardRows(STORE).flat();
+    expect(configured.some((b) => b.callback_data === PROMO_CB_MENU)).toBe(true);
+
+    // Явно выключенная фича прячет кнопку; текст перестаёт её обещать.
+    const disabled = settingsKeyboardRows(STORE, { promotion: false }).flat();
+    expect(disabled.some((b) => b.callback_data === PROMO_CB_MENU)).toBe(false);
+    expect(settingsText(STORE, { promotion: false })).not.toContain('Продвижение');
+    expect(settingsText(STORE)).toContain('Продвижение');
+
+    // Без магазина настраивать нечего — и кнопки быть не должно.
+    const empty = settingsKeyboardRows(null).flat();
+    expect(empty.some((b) => b.callback_data === PROMO_CB_MENU)).toBe(false);
   });
 
   it('кнопки «Сменить магазин» на экране настроек НЕТ — она переехала в главное меню', () => {

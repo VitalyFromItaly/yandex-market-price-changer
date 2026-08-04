@@ -44,10 +44,30 @@ import {
   type IRateInput,
   type TRateField,
 } from '../../../../yandex/reports/profit';
+import {
+  PROMO_CB_CANCEL,
+  PROMO_CB_PATTERN,
+  parsePromoCallback,
+  parsePromoLimit,
+  parsePromoPending,
+  promoConfigsOf,
+  promoLimitLabel,
+  promoPendingAbove,
+  promoPendingBelow,
+  promoPendingFlat,
+  promoPendingLimit,
+  promoPercentTitle,
+  promoTitle,
+  promoValueLabel,
+  validatePromoLimit,
+  type TPromoConfig,
+  type TPromoPending,
+} from '../../../../yandex/reports/promo';
 import { YandexAuthError } from '../../../../yandex/yandex-api.errors';
 import { YandexClientFactory } from '../../../../yandex/yandex-client.factory';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { b, esc, htmlOptions } from '../../../formatting/telegram-format';
+import { FEATURE, isFeatureEnabled } from '../../shared/features.domain';
 import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
 import {
   brandDiscountsKeyboardRows,
@@ -65,6 +85,12 @@ import {
   type TOnboardingDraft,
 } from '../onboarding';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
+import {
+  promotionKeyboardRows,
+  promotionModeKeyboardRows,
+  promotionModeText,
+  promotionText,
+} from '../promotion.text';
 import { settingsKeyboardRows, settingsText } from '../settings.text';
 import {
   PICK_BUSINESS_PREFIX,
@@ -306,6 +332,50 @@ export class ApiSettingsHandler {
       }
     });
 
+    // Продвижение: экран списка, развилка по бренду, три вопроса ступеней.
+    // Здесь же, где ставки и скидки, — ответы разбирает тот же обработчик
+    // текста. Колбэки `promo:` гейтятся фичей PROMOTION (requiredFeatures),
+    // поэтому у выключенного продавца сюда не доходит.
+    bot.action(PROMO_CB_PATTERN, async (ctx) => {
+      await ctx.answerCbQuery();
+      try {
+        const data = (ctx.callbackQuery as { data?: string } | undefined)?.data ?? '';
+        const target = parsePromoCallback(data);
+        if (!target) return;
+
+        switch (target.kind) {
+          case 'menu':
+            await this.showPromotion(ctx);
+            return;
+          case 'cancel':
+            await this.accessService.setPendingRate(
+              ctx.from.id.toString(),
+              ctx.botInfo.id.toString(),
+              null,
+            );
+            // Возврат на экран продвижения, а не в настройки: отменивший вопрос
+            // остаётся там, откуда его задал, — как у скидок по брендам.
+            await this.showPromotion(ctx);
+            return;
+          case 'pick':
+            await this.showPromotionMode(ctx, target.brand);
+            return;
+          case 'flat':
+            await this.askPromotionFlat(ctx, target.brand);
+            return;
+          case 'tier':
+            await this.askPromotionLimit(ctx, target.brand);
+            return;
+          case 'off':
+            await this.disablePromotion(ctx, target.brand);
+            return;
+        }
+      } catch (error) {
+        this.logger.error('Не удалось открыть настройку продвижения', error as Error);
+        await ctx.reply('❌ Не удалось открыть настройку. Попробуйте ещё раз.');
+      }
+    });
+
     // ЛЕГАСИ: кнопка «⌚ Восток» со старого экрана настроек. Такой ставки
     // больше нет (Восток стал брендом), но inline-кнопка живёт в истории чата
     // вечно — без этого обработчика она падала бы в default-ветку общего
@@ -331,9 +401,20 @@ export class ApiSettingsHandler {
    */
   private async showSettings(ctx: Context): Promise<void> {
     const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
-    const keyboard = await this.keyboard.createInlineKeyboardMatrix(settingsKeyboardRows(store));
+    // Фичи — для кнопки «📣 Продвижение»: она гейтится, и клавиатура обязана
+    // говорить то же, что гейт.
+    const account = await this.accessService.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
+    const keyboard = await this.keyboard.createInlineKeyboardMatrix(
+      settingsKeyboardRows(store, account?.features),
+    );
 
-    await ctx.reply(settingsText(store), htmlOptions({ reply_markup: keyboard.reply_markup }));
+    await ctx.reply(
+      settingsText(store, account?.features),
+      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    );
   }
 
   /**
@@ -438,6 +519,166 @@ export class ApiSettingsHandler {
   }
 
   /**
+   * Экран «Продвижение»: бренды из закупочных цен продавца, действующая
+   * настройка на каждой кнопке. Текст и клавиатура — из promotion.text.ts,
+   * единственного источника для всех показов этого экрана.
+   */
+  private async showPromotion(ctx: Context): Promise<void> {
+    const telegramUserId = ctx.from.id.toString();
+
+    const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+    if (!store) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return;
+    }
+
+    const rows = await this.purchasePrices.listNamesAndCategories(telegramUserId);
+    const { usage } = brandUsageOf(rows);
+
+    const keyboard = await this.keyboard.createInlineKeyboardMatrix(
+      promotionKeyboardRows(store, usage),
+    );
+
+    await ctx.reply(
+      promotionText(store, usage),
+      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    );
+  }
+
+  /** Развилка по бренду: общий процент, ступени от цены или отключить. */
+  private async showPromotionMode(ctx: Context, brand: TBrandKey): Promise<void> {
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
+    if (!store) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return;
+    }
+
+    const keyboard = await this.keyboard.createInlineKeyboardMatrix(
+      promotionModeKeyboardRows(store, brand),
+    );
+
+    await ctx.reply(
+      promotionModeText(store, brand),
+      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    );
+  }
+
+  /** Спросить общий процент продвижения бренда — зеркало askBrandDiscount. */
+  private async askPromotionFlat(ctx: Context, brand: TBrandKey): Promise<void> {
+    const telegramUserId = ctx.from.id.toString();
+
+    const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+    if (!store) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return;
+    }
+
+    await this.accessService.setPendingRate(
+      telegramUserId,
+      ctx.botInfo.id.toString(),
+      promoPendingFlat(brand),
+    );
+
+    const current = promoConfigsOf(store.promoCommissions)[brand];
+    const keyboard = await this.keyboard.createInlineButtons([
+      { text: '⬅️ Отмена', callback_data: PROMO_CB_CANCEL },
+    ]);
+
+    await ctx.reply(
+      [
+        `${esc(promoTitle(brand))} — сейчас ${b(promoValueLabel(current))}.`,
+        '',
+        'Пришлите процент от цены продажи — например <code>2</code>.',
+      ].join('\n'),
+      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    );
+  }
+
+  /**
+   * Первый из трёх вопросов ступенчатой настройки — порог. Промежуточные
+   * ответы живут в строке pendingRate (`promo:<ключ>:below:<порог>` и дальше),
+   * в документ магазина уходит один $set после последнего шага: брошенная на
+   * полпути цепочка не должна оставлять полузаполненную настройку.
+   */
+  private async askPromotionLimit(ctx: Context, brand: TBrandKey): Promise<void> {
+    const telegramUserId = ctx.from.id.toString();
+
+    const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+    if (!store) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return;
+    }
+
+    await this.accessService.setPendingRate(
+      telegramUserId,
+      ctx.botInfo.id.toString(),
+      promoPendingLimit(brand),
+    );
+
+    const keyboard = await this.keyboard.createInlineButtons([
+      { text: '⬅️ Отмена', callback_data: PROMO_CB_CANCEL },
+    ]);
+
+    await ctx.reply(
+      [
+        `${esc(promoTitle(brand))} — ставка от цены товара.`,
+        '',
+        `${b('Шаг 1 из 3.')} До какой цены действует первая ставка?`,
+        'Пришлите границу в рублях — например <code>10000</code>.',
+      ].join('\n'),
+      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    );
+  }
+
+  /** Вопросы 2 и 3 цепочки — проценты до и свыше порога. */
+  private async askPromotionPercent(
+    ctx: Context,
+    brand: TBrandKey,
+    step: 'below' | 'above',
+    limit: number,
+  ): Promise<void> {
+    const keyboard = await this.keyboard.createInlineButtons([
+      { text: '⬅️ Отмена', callback_data: PROMO_CB_CANCEL },
+    ]);
+
+    await ctx.reply(
+      step === 'below'
+        ? [
+            `${b('Шаг 2 из 3.')} Процент для товаров ценой до ${esc(promoLimitLabel(limit))} ` +
+              'включительно.',
+            'Например <code>2</code>.',
+          ].join('\n')
+        : [
+            `${b('Шаг 3 из 3.')} Процент для товаров дороже ${esc(promoLimitLabel(limit))}.`,
+            'Например <code>1</code>.',
+          ].join('\n'),
+      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    );
+  }
+
+  /** Кнопка «🚫 Отключить»: настройка снимается целиком ($unset). */
+  private async disablePromotion(ctx: Context, brand: TBrandKey): Promise<void> {
+    const telegramUserId = ctx.from.id.toString();
+
+    const updated = await this.yandexMarketService.updatePromoCommission(
+      telegramUserId,
+      brand,
+      null,
+    );
+
+    if (!updated) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return;
+    }
+
+    await ctx.reply(
+      `✅ ${esc(promoTitle(brand))} отключено — комиссия не начисляется.`,
+      htmlOptions(),
+    );
+    await this.showPromotion(ctx);
+  }
+
+  /**
    * Ответ на вопрос «пришлите новое значение ставки».
    *
    * Забирает ТОЛЬКО числовой ввод. Это и делает безопасным вызов раньше вопросов
@@ -460,6 +701,10 @@ export class ApiSettingsHandler {
     // Ветка РАНЬШЕ isRateField: тот такие значения не пропустит.
     const brand = parseBrandPending(field);
     if (brand) return await this.handlePendingBrandDiscount(ctx, brand, text);
+
+    // Пошаговый вопрос о продвижении — там же, со значением `promo:<ключ>:<шаг>`.
+    const promo = parsePromoPending(field);
+    if (promo) return await this.handlePendingPromo(ctx, account?.features, promo, text);
 
     if (!isRateField(field)) return false;
 
@@ -530,6 +775,110 @@ export class ApiSettingsHandler {
 
     await ctx.reply(`✅ ${esc(brandDiscountTitle(brand))}: ${b(`${value}%`)}`, htmlOptions());
     await this.showBrandDiscounts(ctx);
+    return true;
+  }
+
+  /**
+   * Ответ на очередной шаг вопроса о продвижении. Правила те же, что у ставки:
+   * только числовой ввод, нечисло закрывает вопрос и идёт дальше, ошибка
+   * валидации оставляет вопрос открытым. Промежуточные ответы накапливаются в
+   * строке pendingRate; запись в Mongo — одна, после последнего шага.
+   */
+  private async handlePendingPromo(
+    ctx: Context,
+    features: Record<string, boolean> | undefined,
+    parsed: TPromoPending,
+    text: string,
+  ): Promise<boolean> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+
+    // Пока вопрос оставался открытым, фичу могли закрыть. Ответ приходит
+    // обычным текстом — мимо гейта, который видит только кнопки и документы.
+    if (!isFeatureEnabled(features, FEATURE.PROMOTION)) {
+      await this.accessService.setPendingRate(telegramUserId, botId, null);
+      await ctx.reply('🔒 Настройка продвижения сейчас недоступна.', htmlOptions());
+      return true;
+    }
+
+    // Порог — рубли, свой парсер («10 000 ₽» — валидный ответ). Дата и время
+    // в него не проходят, так что соседние вопросы не глохнут.
+    if (parsed.step === 'limit') {
+      const value = parsePromoLimit(text);
+      if (value === null) {
+        await this.accessService.setPendingRate(telegramUserId, botId, null);
+        return false;
+      }
+
+      const validation = validatePromoLimit(value);
+      if (!validation.ok) {
+        await ctx.reply(`❌ ${esc(validation.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
+        return true;
+      }
+
+      await this.accessService.setPendingRate(
+        telegramUserId,
+        botId,
+        promoPendingBelow(parsed.brand, value),
+      );
+      await this.askPromotionPercent(ctx, parsed.brand, 'below', value);
+      return true;
+    }
+
+    // Остальные шаги ждут процент — по тем же правилам, что ставки.
+    const value = parseRateValue(text);
+    if (value === null) {
+      await this.accessService.setPendingRate(telegramUserId, botId, null);
+      return false;
+    }
+
+    const validation = validatePercent(promoPercentTitle(parsed.brand, parsed.step), value);
+    if (!validation.ok) {
+      await ctx.reply(`❌ ${esc(validation.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
+      return true;
+    }
+
+    if (parsed.step === 'flat') {
+      return await this.savePromo(ctx, parsed.brand, { mode: 'flat', percent: value });
+    }
+
+    if (parsed.step === 'below') {
+      await this.accessService.setPendingRate(
+        telegramUserId,
+        botId,
+        promoPendingAbove(parsed.brand, parsed.limit, value),
+      );
+      await this.askPromotionPercent(ctx, parsed.brand, 'above', parsed.limit);
+      return true;
+    }
+
+    return await this.savePromo(ctx, parsed.brand, {
+      mode: 'tiered',
+      limit: parsed.limit,
+      below: parsed.below,
+      above: value,
+    });
+  }
+
+  /** Единственная запись настройки продвижения — после последнего шага. */
+  private async savePromo(ctx: Context, brand: TBrandKey, config: TPromoConfig): Promise<boolean> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+
+    const updated = await this.yandexMarketService.updatePromoCommission(
+      telegramUserId,
+      brand,
+      config,
+    );
+    await this.accessService.setPendingRate(telegramUserId, botId, null);
+
+    if (!updated) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return true;
+    }
+
+    await ctx.reply(`✅ ${esc(promoTitle(brand))}: ${b(promoValueLabel(config))}`, htmlOptions());
+    await this.showPromotion(ctx);
     return true;
   }
 

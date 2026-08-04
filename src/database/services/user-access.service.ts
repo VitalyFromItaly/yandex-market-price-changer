@@ -8,6 +8,7 @@ import { Model } from 'mongoose';
 import { isFeatureKey } from '../../modules/telegram/bots/shared/features.domain';
 import { parseBrandPending } from '../../modules/yandex/reports/brands';
 import { isRateField } from '../../modules/yandex/reports/profit';
+import { parsePromoPending } from '../../modules/yandex/reports/promo';
 import { IAdminCard, UserAccess, UserAccessDocument } from '../schemas/user-access.schema';
 
 /** Кто обратился к боту — всё, что нужно, чтобы завести запись доступа. */
@@ -213,16 +214,23 @@ export class UserAccessService {
    * Незакрытый вопрос «какую ставку прибыли меняем».
    *
    * Значение проверяется по белому списку: либо ставка (`RATE_FIELDS`), либо
-   * скидка бренда (`brand:<ключ>` из brands.ts). В `pendingRate` оно потом
-   * читается обратно и уходит в `updateRate`/`updateBrandDiscount`, то есть
-   * решает, КАКУЮ настройку магазина перезаписать.
+   * скидка бренда (`brand:<ключ>` из brands.ts), либо шаг пошагового вопроса о
+   * продвижении (`promo:<ключ>:…` из promo.ts). В `pendingRate` оно потом
+   * читается обратно и уходит в `updateRate`/`updateBrandDiscount`/
+   * `updatePromoCommission`, то есть решает, КАКУЮ настройку магазина
+   * перезаписать.
    */
   async setPendingRate(
     telegramUserId: string,
     botId: string,
     field: TRateField | string | null,
   ): Promise<UserAccessDocument | null> {
-    if (field !== null && !isRateField(field) && parseBrandPending(field) === null) {
+    if (
+      field !== null &&
+      !isRateField(field) &&
+      parseBrandPending(field) === null &&
+      parsePromoPending(field) === null
+    ) {
       throw new Error(`Недопустимая ставка: ${field}`);
     }
 

@@ -149,6 +149,27 @@ describe('UserAccessService: атомарность переходов', () => {
     await expect(service.setFeature('1', '2', 'draft.token' as never, true)).rejects.toThrow();
   });
 
+  it('setPendingRate принимает ставки, брендовые и промо-вопросы — и только их', async () => {
+    // Значение читается обратно и решает, КАКУЮ настройку магазина
+    // перезаписать, — белый список несущий, как у setFeature.
+    await service.setPendingRate('1', '2', 'commissionPercent');
+    expect(call()[update].$set).toMatchObject({ pendingRate: 'commissionPercent' });
+
+    await service.setPendingRate('1', '2', 'brand:casio');
+    await service.setPendingRate('1', '2', 'promo:casio:flat');
+    await service.setPendingRate('1', '2', 'promo:casio:limit');
+    await service.setPendingRate('1', '2', 'promo:casio:above:10000:2');
+
+    await expect(service.setPendingRate('1', '2', 'promo:rolex:limit')).rejects.toThrow();
+    await expect(service.setPendingRate('1', '2', 'promo:casio:below:abc')).rejects.toThrow();
+    await expect(service.setPendingRate('1', '2', 'status')).rejects.toThrow();
+
+    // null снимает вопрос, а не пишет его.
+    await service.setPendingRate('1', '2', null);
+    const last = findOneAndUpdate.mock.calls[findOneAndUpdate.mock.calls.length - 1];
+    expect(last[update].$unset).toHaveProperty('pendingRate');
+  });
+
   it('setApproved открывает доступ с ЛЮБОГО статуса', async () => {
     // Тумблер в панели — не «решение по заявке»: фильтр по исходному статусу
     // означал бы, что он молча не срабатывает на том, кто заявку ещё не подавал.

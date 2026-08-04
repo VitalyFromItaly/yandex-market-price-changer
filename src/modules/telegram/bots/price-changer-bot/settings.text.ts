@@ -9,8 +9,10 @@ import {
   rateShortLabel,
   ratesOf,
 } from '../../../yandex/reports/profit';
+import { PROMO_CB_MENU } from '../../../yandex/reports/promo';
 import { isStockWritable, placementOfCampaign } from '../../../yandex/stocks/placement';
 import { b, code, esc } from '../../formatting/telegram-format';
+import { FEATURE, isFeatureEnabled, type TFeatureMap } from '../shared/features.domain';
 
 import { MENU } from './menu.constants';
 import { storeTitle } from './store-title';
@@ -42,7 +44,7 @@ function hint(field: TRateField, value: number): string {
   return code(`${rateInputLabel(field)}: ${value}`);
 }
 
-export function settingsText(store: YandexMarketDocument | null): string {
+export function settingsText(store: YandexMarketDocument | null, features?: TFeatureMap): string {
   const configured = isConfigured(store);
 
   const lines = [`⚙️ ${b('Настройки')}`, ''];
@@ -109,6 +111,13 @@ export function settingsText(store: YandexMarketDocument | null): string {
       // прайса продавца, и это отдельный экран — кнопка ниже.
       'У брендов скидка своя — кнопка «🏷 Скидки по брендам» ниже.',
     );
+
+    // Указатель без деталей — тем же приёмом: настройка продвижения живёт на
+    // своём экране. Условие то же, что у кнопки ниже: обещать кнопку, которую
+    // клавиатура спрятала, значит вести в тупик текстом.
+    if (isFeatureEnabled(features, FEATURE.PROMOTION)) {
+      lines.push('Комиссия за продвижение — кнопка «📣 Продвижение» ниже.');
+    }
   } else {
     lines.push('🏪 Магазин: ❌ не подключён', '');
     // Campaign ID и Business ID здесь НЕ упоминаются. Продавец их не вводит и
@@ -138,6 +147,7 @@ export function settingsText(store: YandexMarketDocument | null): string {
  */
 export function settingsKeyboardRows(
   store: YandexMarketDocument | null,
+  features?: TFeatureMap,
 ): { text: string; callback_data: string }[][] {
   const rows: { text: string; callback_data: string }[][] = [];
 
@@ -159,6 +169,16 @@ export function settingsKeyboardRows(
     // экран брендов можно только отсюда, значений на ней нет, список брендов
     // зависит от прайса и рисуется уже на самом экране.
     rows.push([{ text: '🏷 Скидки по брендам', callback_data: BRAND_CB_MENU }]);
+
+    // Продвижение — единственная гейтящаяся кнопка этого экрана: ставки и
+    // скидки закрывать флагом нельзя (настройки должны оставаться доступными).
+    // `features` не передали — показываем: отсутствие записи доступа (админ)
+    // разрешает фичу её умолчанием, и isFeatureEnabled отвечает так же.
+    // Клавиатура прячет, гейт отбивает: старая inline-кнопка живёт в истории
+    // чата вечно — два слоя, как у featureMenuLayout.
+    if (isFeatureEnabled(features, FEATURE.PROMOTION)) {
+      rows.push([{ text: '📣 Продвижение', callback_data: PROMO_CB_MENU }]);
+    }
   }
 
   rows.push([{ text: MENU.MAIN, callback_data: 'main_menu' }]);

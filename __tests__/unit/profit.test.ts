@@ -819,3 +819,162 @@ describe('Формат отрицательных сумм', () => {
     expect(text).not.toContain(' '); // обычных пробелов нет — Telegram их переносит
   });
 });
+
+/**
+ * Комиссия за продвижение (промо) в прибыли.
+ *
+ * Начисляется ПО ПОЗИЦИЯМ выкупленных заказов — ставка бренда от цены товара
+ * (promo.ts), в отличие от комиссии и налога, которые берутся от агрегата.
+ * Ошибка здесь того же класса, что у остальной формулы: правдоподобное неверное
+ * число, поэтому проверяется каждое правило отдельно.
+ */
+describe('Продвижение в прибыли', () => {
+  // Строки закупа: по названию и категории определяется бренд позиции.
+  const ROWS = new Map([
+    ['C1', { price: 1000, name: 'CASIO A168', category: 'CASIO' }],
+    ['V1', { price: 500, name: 'Восток Амфибия 420831', category: 'Восток' }],
+  ]);
+  const PROMO_COSTS = new Map([
+    ['C1', 900],
+    ['V1', 480],
+  ]);
+
+  const flatRates = {
+    ...DEFAULT_RATES,
+    promoCommissions: { casio: { mode: 'flat', percent: 2 } },
+  };
+
+  const tieredRates = {
+    ...DEFAULT_RATES,
+    promoCommissions: { casio: { mode: 'tiered', limit: 10000, below: 2, above: 1 } },
+  };
+
+  it('плоская ставка: процент от цены позиции, умноженный на количество', () => {
+    const order = {
+      id: 1,
+      itemsTotal: 8000,
+      items: [{ offerId: 'C1', count: 2, price: 4000 }],
+    };
+    const totals = profitOf([order], PROMO_COSTS, flatRates, { rows: ROWS });
+
+    // 4000 × 2 шт × 2 % = 160.
+    expect(totals.promo).toBe(160);
+    expect(totals.net).toBe(
+      totals.revenue - totals.commission - totals.tax - 160 - totals.purchase,
+    );
+  });
+
+  it('ступени: до порога — нижняя ставка, свыше — верхняя', () => {
+    const orders = [
+      { id: 1, itemsTotal: 4000, items: [{ offerId: 'C1', count: 1, price: 4000 }] },
+      { id: 2, itemsTotal: 12000, items: [{ offerId: 'C1', count: 1, price: 12000 }] },
+    ];
+    const totals = profitOf(orders, PROMO_COSTS, tieredRates, { rows: ROWS });
+
+    // 4000 × 2 % + 12000 × 1 % = 80 + 120 = 200.
+    expect(totals.promo).toBe(200);
+  });
+
+  it('граница ВКЛЮЧИТЕЛЬНО: цена, равная порогу, идёт по нижней ставке', () => {
+    const order = { id: 1, itemsTotal: 10000, items: [{ offerId: 'C1', count: 1, price: 10000 }] };
+    const totals = profitOf([order], PROMO_COSTS, tieredRates, { rows: ROWS });
+
+    expect(totals.promo).toBe(200); // 10 000 × 2 %, а не × 1 %
+  });
+
+  it('порог сравнивается с ценой ЗА ЕДИНИЦУ, а не со строкой заказа', () => {
+    // Две штуки по 6 000 ₽ — это 12 000 ₽ строки, но каждая единица дешевле
+    // порога и идёт по нижней ставке.
+    const order = { id: 1, itemsTotal: 12000, items: [{ offerId: 'C1', count: 2, price: 6000 }] };
+    const totals = profitOf([order], PROMO_COSTS, tieredRates, { rows: ROWS });
+
+    expect(totals.promo).toBe(240); // 6000 × 2 × 2 %
+  });
+
+  it('бренд без настройки — 0 %: продвижение opt-in', () => {
+    const order = { id: 1, itemsTotal: 500, items: [{ offerId: 'V1', count: 1, price: 500 }] };
+    const totals = profitOf([order], PROMO_COSTS, flatRates, { rows: ROWS });
+
+    expect(totals.promo).toBe(0);
+  });
+
+  it('позиция без цены даёт ноль промо, а не ломает расчёт', () => {
+    const order = { id: 1, itemsTotal: 4000, items: [{ offerId: 'C1', count: 1 }] };
+    const totals = profitOf([order], PROMO_COSTS, flatRates, { rows: ROWS });
+
+    expect(totals.promo).toBe(0);
+    expect(totals.orders).toBe(1);
+  });
+
+  it('возврат и заказ без закупа промо не набирают', () => {
+    const returnedOrder = {
+      id: 7,
+      itemsTotal: 4000,
+      items: [{ offerId: 'C1', count: 1, price: 4000 }],
+    };
+    const unknownOrder = {
+      id: 8,
+      itemsTotal: 4000,
+      items: [{ offerId: 'НЕТ-В-ПРАЙСЕ', count: 1, price: 4000 }],
+    };
+    const totals = profitOf([returnedOrder, unknownOrder], PROMO_COSTS, flatRates, {
+      rows: ROWS,
+      returned: new Set([7]),
+    });
+
+    expect(totals.promo).toBe(0);
+  });
+
+  it('без настроек продвижения промо ноль и чистая как раньше (регресс)', () => {
+    const withRows = profitOf([ORDER], COSTS, DEFAULT_RATES, { rows: ROWS });
+    const without = profitOf([ORDER], COSTS, DEFAULT_RATES);
+
+    expect(withRows.promo).toBe(0);
+    expect(withRows.net).toBe(without.net);
+    expect(without.promo).toBe(0);
+  });
+
+  it('без строк закупа промо честно ноль: бренд позиции не определить', () => {
+    const order = { id: 1, itemsTotal: 4000, items: [{ offerId: 'C1', count: 1, price: 4000 }] };
+    const totals = profitOf([order], PROMO_COSTS, flatRates);
+
+    expect(totals.promo).toBe(0);
+  });
+
+  it('мусорная настройка выкидывается по-записно, не роняя отчёт', () => {
+    const order = { id: 1, itemsTotal: 4000, items: [{ offerId: 'C1', count: 1, price: 4000 }] };
+    const totals = profitOf(
+      [order],
+      PROMO_COSTS,
+      { ...DEFAULT_RATES, promoCommissions: { casio: { mode: 'tiered', limit: -1 } } },
+      { rows: ROWS },
+    );
+
+    expect(totals.promo).toBe(0);
+    expect(totals.orders).toBe(1);
+  });
+
+  it('в тексте отчёта промо видно строкой и ставками, а без настройки — нет', () => {
+    const order = { id: 1, itemsTotal: 4000, items: [{ offerId: 'C1', count: 1, price: 4000 }] };
+    const totals = profitOf([order], PROMO_COSTS, flatRates, { rows: ROWS });
+
+    const withPromo = formatProfitReport({
+      period: DEFAULT_PERIOD,
+      pricesUpdatedAt: new Date('2026-07-29T09:00:00Z'),
+      totals,
+    });
+
+    expect(withPromo).toContain('➖ Продвижение');
+    expect(withPromo).toContain(formatRubles(80)); // 4000 × 2 %
+    // Ставки проверяемы: настроенный бренд перечислен в хвосте.
+    expect(withPromo).toContain('📣 Продвижение: CASIO 2%');
+
+    const withoutPromo = formatProfitReport({
+      period: DEFAULT_PERIOD,
+      pricesUpdatedAt: new Date('2026-07-29T09:00:00Z'),
+      totals: profitOf([order], PROMO_COSTS, DEFAULT_RATES, { rows: ROWS }),
+    });
+
+    expect(withoutPromo).not.toContain('Продвижение');
+  });
+});

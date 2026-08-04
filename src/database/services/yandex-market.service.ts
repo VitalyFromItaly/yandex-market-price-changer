@@ -1,4 +1,5 @@
 import type { TRateField } from '../../modules/yandex/reports/profit';
+import type { TPromoConfig } from '../../modules/yandex/reports/promo';
 
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -199,6 +200,44 @@ export class YandexMarketService {
         },
         { new: true },
       )
+      .exec();
+  }
+
+  /**
+   * Записать настройку продвижения одного бренда — в карту `promoCommissions`.
+   *
+   * Те же правила, что у `updateBrandDiscount`: dot-path вместо `$set` целой
+   * карты (параллельная правка другого бренда не должна стирать эту) и несущий
+   * белый список — ключ решает, КУДА писать в документе.
+   *
+   * `config === null` — «отключить»: запись снимается `$unset`, а не нулём,
+   * потому что «продвижения нет» и «продвижение 0 %» — разные утверждения, и
+   * экран должен показывать «—», а не «0%».
+   */
+  async updatePromoCommission(
+    telegramUserId: string,
+    brand: TBrandKey,
+    config: TPromoConfig | null,
+  ): Promise<YandexMarketDocument | null> {
+    if (!isBrandKey(brand)) {
+      throw new Error(`Недопустимый бренд: ${brand}`);
+    }
+
+    const update =
+      config === null
+        ? {
+            $unset: { [`promoCommissions.${brand}`]: '' },
+            $set: { updatedAt: new Date() },
+          }
+        : {
+            $set: {
+              [`promoCommissions.${brand}`]: config,
+              updatedAt: new Date(),
+            },
+          };
+
+    return await this.yandexMarketModel
+      .findOneAndUpdate({ telegramUserId }, update, { new: true })
       .exec();
   }
 
