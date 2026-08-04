@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { YandexClientFactory } from '../yandex-client.factory';
 import type { YandexMarketDocument } from '../../../database/schemas/yandex-market.schema';
-import type { IOrdersQuery, YandexApiClient } from '../yandex-api.client';
+import type { IOrdersQuery, IReturnRecord, YandexApiClient } from '../yandex-api.client';
 import {
   PLACED_DEFINITION,
   REPORT,
@@ -37,7 +37,12 @@ import {
   type IPeriodBounds,
   type IReportPeriod,
 } from './report-period';
-import { buildOrdersWorkbook, workbookFileName } from './report-workbook';
+import {
+  buildOrdersWorkbook,
+  buildReturningWorkbook,
+  returningFileName,
+  workbookFileName,
+} from './report-workbook';
 import { formatReport } from './report-message';
 
 /**
@@ -55,6 +60,11 @@ export interface IReportOrderItem {
   offerId?: string;
   offerName?: string;
   count?: number;
+  /**
+   * Цена продажи за ЕДИНИЦУ, без вознаграждения за скидки Маркета (subsidies).
+   * Нужна прибыли: комиссия за продвижение считается от ценника товара.
+   */
+  price?: number;
 }
 
 /** Заказ в объёме, нужном отчётам. */
@@ -107,6 +117,12 @@ export interface IReturnsSummary {
   inFlight: number;
   /** Уже выданы магазину — путь закончен. */
   settled: number;
+  /**
+   * Ровно те записи, что вошли в `count`: после фильтра периода и
+   * дедупликации по orderId. Нужны выгрузке .xlsx — файл обязан сходиться с
+   * числами в сообщении по построению, а не по совпадению фильтров.
+   */
+  records: IReturnRecord[];
 }
 
 export interface IReportResult {
@@ -327,6 +343,7 @@ export class OrderReportsService {
     let count = 0;
     let inFlight = 0;
     let settled = 0;
+    const records: IReturnRecord[] = [];
 
     const stages = unbounded ? RETURN_ACTIVE_STATUSES : RETURN_SHIPMENT_STATUSES;
 
@@ -344,6 +361,7 @@ export class OrderReportsService {
         const value = amountValue(record.amount);
         totals = addTotals(totals, { items: value, withDelivery: value });
         count += 1;
+        records.push(record);
 
         const stage = returnStage(record.shipmentStatus);
         if (stage === 'inFlight') inFlight += 1;
@@ -351,7 +369,7 @@ export class OrderReportsService {
       }
     }
 
-    return { count, totals, inFlight, settled };
+    return { count, totals, inFlight, settled, records };
   }
 
   /**
@@ -383,6 +401,38 @@ export class OrderReportsService {
       empty: false,
       buffer: workbook.buffer,
       filename: workbookFileName(moscowDateParam(now), moscowClock(now)),
+      caption: formatReport(result, now) + truncated,
+    };
+  }
+
+  /**
+   * Выгрузка «едет обратно» файлом: артикулы возвращаемых позиций в тексте
+   * сообщения не помещаются. Подпись — тот же текст отчёта, что уходил без
+   * файла; пустой результат, как и в exportInTransit, — текст без файла.
+   */
+  public async exportReturning(
+    store: YandexMarketDocument,
+    period: IReportPeriod = DEFAULT_PERIOD,
+    now: Date = new Date(),
+  ): Promise<IReportExport> {
+    const result = await this.build(store, REPORT.RETURNING, now, period);
+
+    if (!result.count) {
+      return { empty: true, message: formatReport(result, now) };
+    }
+
+    const workbook = buildReturningWorkbook(result.orders, result.returns?.records ?? []);
+
+    // «Строк», а не «заказов»: в этой книге строка — позиция, и один заказ
+    // занимает их несколько.
+    const truncated = workbook.truncated
+      ? `\n\n⚠️ В файл попали первые ${workbook.rows} строк: остальные не поместились.`
+      : '';
+
+    return {
+      empty: false,
+      buffer: workbook.buffer,
+      filename: returningFileName(moscowDateParam(now), moscowClock(now)),
       caption: formatReport(result, now) + truncated,
     };
   }

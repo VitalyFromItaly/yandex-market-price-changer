@@ -50,6 +50,12 @@ async function build(
         })),
     ),
     exportInTransit: vi.fn(async () => ({ empty: true, message: 'нет данных' })),
+    exportReturning: vi.fn(async () => ({
+      empty: false,
+      buffer: Buffer.from('xlsx'),
+      filename: 'edet-obratno-03-08-2026-1000.xlsx',
+      caption: 'Едет обратно',
+    })),
   };
   const yandexMarketService = {
     findByTelegramUser: vi.fn(async () => ('store' in opts ? opts.store : STORE)),
@@ -295,6 +301,48 @@ describe('ReportsHandler', () => {
 
     expect(ctx.replyWithDocument).not.toHaveBeenCalled();
     expect(ctx.texts().at(-1)).toContain('нет данных');
+  });
+});
+
+describe('«Едет обратно» файлом', () => {
+  it('уходит документом через exportReturning с выбранным периодом', async () => {
+    const { handler, reports } = await build();
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.RETURNING, { key: 'month' } as never);
+
+    expect(reports.exportReturning).toHaveBeenCalledWith(expect.anything(), { key: 'month' });
+    // Отчёт строится ВНУТРИ выгрузки — прямой build() означал бы второй обход
+    // страниц Partner API на одно нажатие.
+    expect(reports.build).not.toHaveBeenCalled();
+    expect(ctx.replyWithDocument).toHaveBeenCalledTimes(1);
+    const [doc, options] = ctx.replyWithDocument.mock.calls[0] as never[];
+    expect((doc as { filename: string }).filename).toContain('edet-obratno');
+    expect((options as { caption: string }).caption).toContain('Едет обратно');
+  });
+
+  it('пустая выгрузка отвечает текстом, а не пустым файлом', async () => {
+    const { handler, reports } = await build();
+    reports.exportReturning.mockResolvedValueOnce({
+      empty: true,
+      message: 'Возвратов и невыкупов нет',
+    } as never);
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.RETURNING, DEFAULT_PERIOD);
+
+    expect(ctx.replyWithDocument).not.toHaveBeenCalled();
+    expect(ctx.texts().at(-1)).toContain('Возвратов и невыкупов нет');
+  });
+
+  it('кнопка сначала спрашивает период — выгрузка периодная', async () => {
+    const { handler, reports } = await build();
+    const ctx = fakeCtx();
+
+    await handler.handle(ctx as never, REPORT.RETURNING);
+
+    expect(reports.exportReturning).not.toHaveBeenCalled();
+    expect(ctx.texts().at(-1)).toContain('за какой период');
   });
 });
 

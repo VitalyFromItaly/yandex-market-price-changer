@@ -162,7 +162,12 @@ describe('Отчёт «едет обратно» (TASK-025)', () => {
     const { reports } = await service({
       orders: [{ id: 42, status: 'DELIVERY', substatus: 'FULL_NOT_RANSOM', itemsTotal: 500 }],
       returns: [
-        { returnId: 7, orderId: 42, creationDate: RETURN_DATE, amount: { value: 500, currencyId: 'RUR' } },
+        {
+          returnId: 7,
+          orderId: 42,
+          creationDate: RETURN_DATE,
+          amount: { value: 500, currencyId: 'RUR' },
+        },
       ],
     });
 
@@ -176,7 +181,12 @@ describe('Отчёт «едет обратно» (TASK-025)', () => {
     const { reports } = await service({
       orders: [{ id: 42, status: 'DELIVERY', substatus: 'FULL_NOT_RANSOM', itemsTotal: 500 }],
       returns: [
-        { returnId: 7, orderId: 99, creationDate: RETURN_DATE, amount: { value: 300, currencyId: 'RUR' } },
+        {
+          returnId: 7,
+          orderId: 99,
+          creationDate: RETURN_DATE,
+          amount: { value: 300, currencyId: 'RUR' },
+        },
       ],
     });
 
@@ -460,8 +470,12 @@ describe('Возвраты: период и разбивка', () => {
   it('«сегодня» и «с 1 числа» дают РАЗНОЕ — это и был баг', async () => {
     const returns = [ret(1, '2026-08-03T09:00:00+03:00'), ret(2, '2026-08-01T09:00:00+03:00')];
 
-    const month = await (await service({ returns })).reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
-    const today = await (await service({ returns })).reports.build(STORE, REPORT.RETURNING, AUG, TODAY);
+    const month = await (
+      await service({ returns })
+    ).reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
+    const today = await (
+      await service({ returns })
+    ).reports.build(STORE, REPORT.RETURNING, AUG, TODAY);
 
     expect(month.count).toBe(2);
     expect(today.count).toBe(1);
@@ -503,7 +517,9 @@ describe('Возвраты: период и разбивка', () => {
   it('возврат без даты считается ВНЕ периода, а не «сегодняшним»', async () => {
     // Молча зачесть битую дату в текущий месяц хуже, чем не показать: число
     // перестанет сходиться с кабинетом, а понять почему будет не по чему.
-    const { reports } = await service({ returns: [{ returnId: 1, orderId: 5, amount: { value: 100 } }] });
+    const { reports } = await service({
+      returns: [{ returnId: 1, orderId: 5, amount: { value: 100 } }],
+    });
     const result = await reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
 
     expect(result.count).toBe(0);
@@ -553,5 +569,62 @@ describe('Возвраты: период и разбивка', () => {
 
     expect(text).toContain('Возвратов и невыкупов нет');
     expect(text).toContain('01-08-2026');
+  });
+
+  it('records зеркалят посчитанное: фильтр периода и дедуп по orderId', async () => {
+    // Файл .xlsx строится из records и обязан сходиться с числами в сообщении
+    // ПО ПОСТРОЕНИЮ: запись попадает в records там же, где count += 1.
+    const { reports } = await service({
+      orders: [{ id: 1001, status: 'DELIVERY', substatus: 'FULL_NOT_RANSOM' }],
+      returns: [
+        // Возврат заказа, уже посчитанного половиной невыкупов, — пропускается.
+        ret(1, '2026-08-02T12:00:00+03:00'),
+        ret(2, '2026-08-02T12:00:00+03:00'),
+        // Вне периода — тоже мимо records.
+        ret(3, '2026-07-15T12:00:00+03:00'),
+      ],
+    });
+    const result = await reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
+
+    expect(result.returns?.records.map((r) => r.returnId)).toEqual([2]);
+    expect(result.returns?.records).toHaveLength(result.returns?.count ?? -1);
+  });
+});
+
+describe('Выгрузка «едет обратно» файлом', () => {
+  const AUG = new Date('2026-08-03T10:00:00+03:00');
+  const MONTH = { key: PERIOD.MONTH } as const;
+
+  it('пустой результат отдаёт СООБЩЕНИЕ, а не пустой файл', async () => {
+    const { reports } = await service();
+    const result = await reports.exportReturning(STORE, MONTH, AUG);
+
+    expect(result.empty).toBe(true);
+    if (result.empty) expect(result.message).toContain('Возвратов и невыкупов нет');
+  });
+
+  it('непустой результат отдаёт буфер с именем файла и подписью', async () => {
+    const { reports } = await service({
+      returns: [
+        {
+          returnId: 1,
+          orderId: 555,
+          creationDate: '2026-08-02T12:00:00+03:00',
+          shipmentStatus: 'IN_TRANSIT',
+          amount: { value: 100 },
+          // Заглушка минует маппер клиента, поэтому позиция сразу в нашей форме.
+          items: [{ offerId: 'ABC-1', count: 1 }],
+        },
+      ],
+    });
+    const result = await reports.exportReturning(STORE, MONTH, AUG);
+
+    expect(result.empty).toBe(false);
+    if (!result.empty) {
+      expect(Buffer.isBuffer(result.buffer)).toBe(true);
+      expect(result.filename).toBe('edet-obratno-03-08-2026-1000.xlsx');
+      expect(result.caption).toContain('Едет обратно');
+      expect(result.caption).not.toContain('не поместились');
+    }
   });
 });

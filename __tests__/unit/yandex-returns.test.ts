@@ -56,14 +56,16 @@ describe('Метод возвратов', () => {
     // refundAmount приходит числом без валюты и однажды исчезнет.
     stubAxios([
       {
-        result: { returns: [
-          {
-            returnId: 1,
-            orderId: 555,
-            amount: { value: 2500, currencyId: 'RUR' },
-            refundAmount: 999,
-          },
-        ] },
+        result: {
+          returns: [
+            {
+              returnId: 1,
+              orderId: 555,
+              amount: { value: 2500, currencyId: 'RUR' },
+              refundAmount: 999,
+            },
+          ],
+        },
       },
     ]);
 
@@ -76,13 +78,15 @@ describe('Метод возвратов', () => {
   it('компенсация читается из partnerCompensationAmount', async () => {
     stubAxios([
       {
-        result: { returns: [
-          {
-            returnId: 2,
-            partnerCompensationAmount: { value: 300, currencyId: 'RUR' },
-            partnerCompensation: 111,
-          },
-        ] },
+        result: {
+          returns: [
+            {
+              returnId: 2,
+              partnerCompensationAmount: { value: 300, currencyId: 'RUR' },
+              partnerCompensation: 111,
+            },
+          ],
+        },
       },
     ]);
 
@@ -149,9 +153,7 @@ describe('Метод возвратов', () => {
  */
 describe('Возвраты завёрнуты в result', () => {
   it('читает боевую форму ответа — result.returns', async () => {
-    stubAxios([
-      { status: 'OK', result: { returns: [{ returnId: 1, orderId: 42 }], paging: {} } },
-    ]);
+    stubAxios([{ status: 'OK', result: { returns: [{ returnId: 1, orderId: 42 }], paging: {} } }]);
 
     const page = await client().getReturns();
 
@@ -184,5 +186,41 @@ describe('Возвраты завёрнуты в result', () => {
     const page = await client().getReturns();
 
     expect(page.items[0].creationDate).toBe('2026-08-01T17:29:02.452+03:00');
+  });
+});
+
+/**
+ * Позиции возврата нужны выгрузке «Едет обратно» .xlsx-файлом. В ответе Яндекса
+ * артикул называется shopSku; у нас он переименован в offerId, чтобы позиции
+ * возврата и позиции заказа имели одну форму ниже по течению.
+ */
+describe('Позиции возврата', () => {
+  it('items маппятся, shopSku становится offerId', async () => {
+    stubAxios([
+      {
+        result: {
+          returns: [
+            {
+              returnId: 1,
+              items: [{ shopSku: 'ABC-123', marketSku: 42, count: 2 }],
+            },
+          ],
+        },
+      },
+    ]);
+
+    const page = await client().getReturns();
+
+    expect(page.items[0].items).toEqual([{ offerId: 'ABC-123', marketSku: 42, count: 2 }]);
+    // Переименование закреплено: поля с именем из ответа Яндекса на записи нет.
+    expect(page.items[0].items[0]).not.toHaveProperty('shopSku');
+  });
+
+  it('возврат без items не падает — поле остаётся пустым', async () => {
+    stubAxios([{ result: { returns: [{ returnId: 2 }] } }]);
+
+    const page = await client().getReturns();
+
+    expect(page.items[0].items).toBeUndefined();
   });
 });

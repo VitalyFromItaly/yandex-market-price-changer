@@ -1,4 +1,4 @@
-import type { YandexMarketDocument } from '../../../../../database/schemas/yandex-market.schema';
+import type { IReportExport } from '../../../../../modules/yandex/reports/order-reports.service';
 
 import { Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
@@ -216,7 +216,14 @@ export class ReportsHandler {
       await ctx.reply('⏳ Собираю отчёт…');
 
       if (key === REPORT.IN_TRANSIT) {
-        await this.sendExport(ctx, store);
+        await this.sendExport(ctx, await this.reports.exportInTransit(store));
+        return;
+      }
+
+      // «Едет обратно» уходит файлом: артикулы возвращаемых позиций в тексте
+      // не помещаются. Подпись к файлу — тот же текст отчёта.
+      if (key === REPORT.RETURNING) {
+        await this.sendExport(ctx, await this.reports.exportReturning(store, period));
         return;
       }
 
@@ -254,9 +261,8 @@ export class ReportsHandler {
     return isReportEnabled(account?.features, key);
   }
 
-  private async sendExport(ctx: Context, store: YandexMarketDocument): Promise<void> {
-    const result = await this.reports.exportInTransit(store);
-
+  /** Отправка готовой выгрузки: пустая — текстом, непустая — документом. */
+  private async sendExport(ctx: Context, result: IReportExport): Promise<void> {
     if (result.empty) {
       await ctx.reply(result.message, htmlOptions());
       return;

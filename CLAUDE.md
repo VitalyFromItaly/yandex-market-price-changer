@@ -199,13 +199,15 @@ actionLog → accessGate → featureGate → start → menu → slash → adminC
   - **A forbidden write degrades to a check rather than a refusal.** The file is still parsed and the
     purchase prices still land in **our** Mongo, so «Прибыль» works for an FBY seller. Downgrading is
     the safe direction; the opposite one is what the `dryRun` options object exists to prevent.
-  - **There are three reasons not to write, so the result carries a `writeSkipReason` discriminant
-    (`'placement' | 'write-disabled'`), not three booleans.** The outcome is identical — nothing
-    reached Yandex — but the seller's next move differs: switch stores, resend without «проверка», or
-    nothing at all (writes being off is a deployment decision, so `skipAdvice` returns null there).
-    Three flags with one outcome would leave the report unable to say which happened. `dryRun` stays
-    a **separate** field on purpose: it is a request, not a refusal. Within `'placement'`,
-    `placementType` distinguishes "FBY" from "could not determine".
+  - **There are four reasons not to write, so the result carries a `writeSkipReason` discriminant
+    (`'placement' | 'write-disabled' | 'feature-disabled'`), not a set of booleans.** The outcome is
+    identical — nothing reached Yandex — but the seller's next move differs: switch stores, resend
+    without «проверка», nothing at all (writes being off is a deployment decision, so `skipAdvice`
+    returns null there), or ask the admin (`feature-disabled` — the per-seller «остатки из прайса»
+    flag). Flags with one outcome would leave the report unable to say which happened. `dryRun`
+    stays a **separate** field on purpose: it is a request, not a refusal. Within `'placement'`,
+    `placementType` distinguishes "FBY" from "could not determine". Skip order: env → feature →
+    placement — an earlier refusal means Market is not even asked for the model.
   - **`getWarehouseId` picks the seller's own warehouse, it does not take the first one.** The
     `offers/stocks` response lists warehouses holding the campaign's goods, and one of them can
     belong to Market: the fulfilment warehouse on FBY, or — and this the placement rule does _not_
@@ -316,6 +318,20 @@ each failure was silent.
   For **orders**, `ALL` still means whatever Partner API keeps (~30 days), so the report prints that
   caveat — «Всего» without it reads as a promise it does not keep. `ALL` stays out of
   `SCHEDULE_PERIODS`: a daily digest "for all time" would send the same number every day.
+- **The report goes out as an `.xlsx` attachment** (`exportReturning` → `buildReturningWorkbook`,
+  same `IReportExport` contract as «Едет до клиента»), report text as the caption, empty result as
+  text with no file. **One row per item, not per order** — артикулы are the point of the export, and
+  squashed into one cell they neither filter nor pivot. The two halves are asymmetric: order items
+  carry `offerId`/`offerName`/`count`; the returns endpoint's `items[]` has only `shopSku` + `count`
+  and **no product name** — the mapper renames `shopSku` → `offerId` (one shape downstream, pinned by
+  test) and the «Товар» column stays empty rather than joined from Mongo, because
+  `OrderReportsService` stays API-only. `IReturnsSummary.records` is filled at the same line as
+  `count += 1`, so the file matches the message's numbers **by construction**, not by parallel
+  filters. No money columns: a return item has no price of its own, and an order-level sum repeated
+  per item row double-counts in the pivot tables sellers build — money is already in the caption.
+  Both send paths branch on `REPORT.RETURNING` (handler and `reports.processor.ts`); the digest reads
+  the saved period **before** the export branch now, since this export, unlike IN_TRANSIT, is
+  period-aware.
 
 ### Profit
 
@@ -858,25 +874,48 @@ rejected   credentials wiped; 24h during which even entering credentials is refu
 
 ### Per-feature access: approval says _whether_, flags say _what_
 
-`UserAccess.status` is boolean — all or nothing. On top of it sits a registry of seven features
+`UserAccess.status` is boolean — all or nothing. On top of it sits a registry of eleven features
 (`src/modules/telegram/bots/shared/features.domain.ts`), each switchable **per user** from the admin
 panel. This is not a second access system: `canPass(status, kind)` still answers "may this person
 use the bot", `requiredFeatures(update)` answers "which function is being invoked". Merging the two
 tables would mean a change to access rules silently reshapes the feature set, and the reverse.
 
 The five report keys are **literally the values of `REPORT`** — a second taxonomy for the same five
-things would drift, and the digest already keys its schedules by them. Plus `schedule` and
-`stock_upload`. `/start`, «🏠 Главное меню», «⚙️ Настройки», «❓ Помощь», «📊 Мой профиль»,
+things would drift, and the digest already keys its schedules by them. Plus `schedule`, the two
+price-list halves `purchase_prices` / `stock_update`, `promotion` (the promo-commission editor on
+the settings screen), and the two FBY-only screens `warehouses` / `fby`. `/start`, «🏠 Главное
+меню», «⚙️ Настройки», «❓ Помощь», «📊 Мой профиль»,
 the whole wizard and every admin button are **not** gateable: closing them locks the seller out of
 their own settings, with no way to fix a token or find out whom to ask.
+
+- **`stock_upload` was split in two** — saving purchase prices (our Mongo, feeds «Прибыль») and
+  writing stocks (Partner API) are independent actions an admin must be able to close separately.
+  Stale explicit `stock_upload` entries in `UserAccess.features` are inert; the new keys default on.
+  Because the outcome can be partial ("parse the file but don't write stocks"), **documents are no
+  longer gated by `featureGate`** (`requiredFeatures({hasDocument}) → []`) — the binary gate can only
+  refuse an update whole. `stock-upload.handler` decides before downloading: both off → refusal, one
+  off → that half is skipped via `savePurchasePrices` / `stockWriteAllowed` in
+  `StockSyncService.sync` options, and the report explains through
+  `writeSkipReason: 'feature-disabled'` (skip order: env → feature → placement) and
+  `purchasePricesSkipped`. The handler bypasses both checks for admins, like the gate does.
+- **`warehouses` and `fby` have TWO conditions**: the feature (default-off, staged rollout) **and**
+  the active store being FBY — the screens are about Market's warehouse and are empty on
+  FBS/DBS/Express. `featureMenuLayout(features, placementType)` drops the buttons when either
+  condition fails (unknown placement counts as not-FBY; the `stores` cache backfills in the
+  background and the button catches up on the next render). The screen handlers re-check the model
+  themselves (cache first, live `placementFor` fallback — the stock-upload pattern) and refuse with
+  `fbyOnlyScreenText` — a label can always be typed by hand. Admins skip the feature filter of the
+  keyboard (the gate already passes them, and they have no `UserAccess` row to flip) but **not** the
+  placement condition.
 
 - **Storage is a `features` map on `UserAccess`**, not a separate collection like `ReportSchedule`.
   It is read on every update that reaches a report, and the access record is already in the gate's
   hands — a second collection would mean a second Mongo query where one suffices.
 - **Only explicit admin decisions are stored.** A missing key is _not_ "off": it resolves to
   `FEATURE_META[key].defaultEnabled`. That is why flags needed no one-off migration and existing
-  sellers lost nothing, and why a future experimental feature can ship with `defaultEnabled: false`
-  and be opened one seller at a time. All seven are `true` today.
+  sellers lost nothing, and why a not-yet-proven feature can ship with `defaultEnabled: false` and
+  be opened one seller at a time — `warehouses` and `fby` do exactly that; the other nine are
+  `true`.
 - **`FEATURE_KEYS` is built from a `Record<TFeatureKey, true>`**, for the `DRAFT_FIELD_SET` reason —
   an array literal does not force the union to be complete, and TASK-052 already paid for that.
   The key lands in a `$set` path (`features.<key>`) and arrives over HTTP, so `setFeature` whitelists

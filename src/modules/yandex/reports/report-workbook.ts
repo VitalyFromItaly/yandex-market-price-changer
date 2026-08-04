@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { orderTotals } from './money';
+import type { IReturnRecord } from '../yandex-api.client';
 import type { IReportOrder } from './order-reports.service';
 
 /**
@@ -108,6 +109,126 @@ export function buildOrdersWorkbook(orders: readonly IReportOrder[]): IWorkbookR
  */
 export function workbookFileName(dateParam: string, timeParam: string): string {
   return `edet-do-klienta-${dateParam}-${timeParam.replace(':', '')}.xlsx`;
+}
+
+const RETURNING_HEADERS = [
+  'Номер заказа',
+  'Тип',
+  'Дата',
+  'Статус',
+  'Артикул',
+  'Товар',
+  'Кол-во',
+] as const;
+
+/**
+ * Книга «Едет обратно»: СТРОКА НА ПОЗИЦИЮ, не на заказ — артикулы и есть смысл
+ * этой выгрузки, а склеенные в одну ячейку они не фильтруются и не сводятся.
+ *
+ * Денежных колонок нет нарочно: у позиции возврата своей суммы не бывает, а
+ * сумма заказа, повторённая на каждой его строке, задваивается в сводных
+ * таблицах. Деньги уже есть в подписи к файлу.
+ *
+ * В строках возвратов «Товар» пуст: метод возвратов отдаёт только артикул, а
+ * тянуть названия из нашей базы значило бы пришить Mongo к API-only сервису.
+ */
+export function buildReturningWorkbook(
+  orders: readonly IReportOrder[],
+  returns: readonly IReturnRecord[],
+): IWorkbookResult {
+  const all: (string | number)[][] = [];
+
+  for (const order of orders) {
+    const base = [
+      order?.id ?? '',
+      'Невыкуп',
+      formatCreationDate(order?.creationDate),
+      order?.substatus ?? order?.status ?? '',
+    ];
+    appendItemRows(all, base, order?.items);
+  }
+
+  for (const record of returns) {
+    const base = [
+      record?.orderId ?? '',
+      'Возврат',
+      formatCreationDate(record?.creationDate),
+      record?.shipmentStatus ?? '',
+    ];
+    appendItemRows(all, base, record?.items);
+  }
+
+  const exported = all.slice(0, MAX_EXPORT_ROWS);
+  const truncated = all.length - exported.length;
+
+  let totalCount = 0;
+  for (const row of exported) {
+    const count = Number(row[6]);
+    if (Number.isFinite(count)) totalCount += count;
+  }
+
+  const rows: (string | number)[][] = [[...RETURNING_HEADERS], ...exported];
+  rows.push([]);
+  rows.push([
+    'ИТОГО',
+    '',
+    '',
+    '',
+    '',
+    `Невыкупов: ${orders.length} • Возвратов: ${returns.length}`,
+    totalCount,
+  ]);
+
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet['!cols'] = [
+    { wch: 14 },
+    { wch: 10 },
+    { wch: 12 },
+    { wch: 24 },
+    { wch: 20 },
+    { wch: 40 },
+    { wch: 8 },
+  ];
+
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, 'Едет обратно');
+
+  return {
+    buffer: XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }) as Buffer,
+    rows: exported.length,
+    truncated,
+  };
+}
+
+/**
+ * Строки позиций одной сущности. Заказ или возврат БЕЗ позиций не исчезает —
+ * он посчитан в сообщении, значит обязан быть и в файле: одна строка с пустыми
+ * артикулом и количеством.
+ */
+function appendItemRows(
+  rows: (string | number)[][],
+  base: (string | number)[],
+  items: { offerId?: string; offerName?: string; count?: number }[] | undefined,
+): void {
+  if (!Array.isArray(items) || !items.length) {
+    rows.push([...base, '', '', '']);
+    return;
+  }
+
+  for (const item of items) {
+    const count = Number(item?.count);
+    rows.push([
+      ...base,
+      item?.offerId ?? '',
+      item?.offerName ?? '',
+      Number.isFinite(count) ? count : '',
+    ]);
+  }
+}
+
+/** Имя файла «едет обратно» — дата и время по той же причине, что выше. */
+export function returningFileName(dateParam: string, timeParam: string): string {
+  return `edet-obratno-${dateParam}-${timeParam.replace(':', '')}.xlsx`;
 }
 
 function round(value: number): number {

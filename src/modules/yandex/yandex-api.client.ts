@@ -65,6 +65,20 @@ interface IReturnsPayload {
 
 type IReturnsResponse = IReturnsPayload & { result?: IReturnsPayload };
 
+/**
+ * Позиция возврата.
+ *
+ * В ответе Яндекса артикул называется `shopSku` — здесь он переименован в
+ * `offerId`, чтобы позиции возврата и позиции заказа (`IReportOrderItem`)
+ * имели одну форму ниже по течению. Названия товара метод возвратов не отдаёт.
+ */
+export interface IReturnItem {
+  /** Артикул продавца (`shopSku` в ответе). */
+  offerId?: string;
+  marketSku?: number;
+  count?: number;
+}
+
 export interface IReturnRecord {
   returnId?: number;
   orderId?: number;
@@ -80,6 +94,8 @@ export interface IReturnRecord {
   amount?: { value?: number; currencyId?: string };
   /** Компенсация партнёру. */
   partnerCompensationAmount?: { value?: number; currencyId?: string };
+  /** Возвращаемые позиции — их артикулы нужны выгрузке .xlsx. */
+  items?: IReturnItem[];
   raw: unknown;
 }
 
@@ -771,7 +787,7 @@ export class YandexApiClient {
  * поля, а перечислять их все здесь смысла нет.
  */
 function toReturnRecord(raw: unknown): IReturnRecord {
-  const item = (raw ?? {}) as IReturnRecord;
+  const item = (raw ?? {}) as IReturnRecord & { items?: TRawReturnItem[] };
   return {
     returnId: item.returnId,
     orderId: item.orderId,
@@ -779,8 +795,17 @@ function toReturnRecord(raw: unknown): IReturnRecord {
     creationDate: item.creationDate,
     amount: item.amount,
     partnerCompensationAmount: item.partnerCompensationAmount,
+    items: Array.isArray(item.items) ? item.items.map(toReturnItem) : undefined,
     raw,
   };
+}
+
+/** Сырая позиция возврата: артикул продавца в ответе называется `shopSku`. */
+type TRawReturnItem = { shopSku?: string; marketSku?: number; count?: number };
+
+function toReturnItem(raw: TRawReturnItem): IReturnItem {
+  const r = raw ?? {};
+  return { offerId: r.shopSku, marketSku: r.marketSku, count: r.count };
 }
 
 /** Сырая заявка FBY из ответа Partner API. */

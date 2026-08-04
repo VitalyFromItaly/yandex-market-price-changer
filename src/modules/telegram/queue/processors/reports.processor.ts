@@ -115,8 +115,20 @@ export class ReportsProcessor {
 
       const key = reportKey as TReportKey;
 
-      if (key === REPORT.IN_TRANSIT) {
-        const exported = await this.reports.exportInTransit(store);
+      // Период — тот, что продавец выбрал в настройках рассылки. Неизвестное
+      // значение (документ старше поля, правка руками) схлопывается в
+      // «сегодня»: рассылка не должна падать из-за строки в базе. Читается ДО
+      // ветки выгрузок: «едет до клиента» период игнорирует, но «едет обратно»
+      // он нужен уже там.
+      const saved = await this.schedules.findOne({ telegramUserId, botId, reportKey });
+      const period: IReportPeriod = { key: schedulePeriod(saved?.period) };
+
+      // Две выгрузки уходят файлом, ровно как по кнопке: пустая — текстом.
+      if (key === REPORT.IN_TRANSIT || key === REPORT.RETURNING) {
+        const exported =
+          key === REPORT.IN_TRANSIT
+            ? await this.reports.exportInTransit(store)
+            : await this.reports.exportReturning(store, period);
         if (exported.empty) {
           await bot.telegraf.telegram.sendMessage(
             account.telegramChatId,
@@ -132,12 +144,6 @@ export class ReportsProcessor {
         );
         return;
       }
-
-      // Период — тот, что продавец выбрал в настройках рассылки. Неизвестное
-      // значение (документ старше поля, правка руками) схлопывается в
-      // «сегодня»: рассылка не должна падать из-за строки в базе.
-      const saved = await this.schedules.findOne({ telegramUserId, botId, reportKey });
-      const period: IReportPeriod = { key: schedulePeriod(saved?.period) };
 
       // Прибыль — своим сервисом и своим текстом, ровно как по кнопке.
       const text =
