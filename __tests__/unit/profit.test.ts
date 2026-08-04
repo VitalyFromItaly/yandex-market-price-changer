@@ -641,6 +641,85 @@ describe('Текст отчёта о прибыли', () => {
   });
 });
 
+describe('Строка «По калькулятору Маркета»', () => {
+  const report = {
+    period: DEFAULT_PERIOD,
+    pricesUpdatedAt: new Date('2026-07-29T09:00:00Z'),
+    totals: profitOf([ORDER], COSTS),
+  };
+
+  const estimate = {
+    scope: 'redeemed' as const,
+    servicesTotal: 240,
+    byService: { FEE: 240 },
+    coveredOrders: 1,
+    totalOrders: 1,
+    coveredRevenue: 1000,
+  };
+
+  it('печатается под комиссией, информационно — без «➖»', () => {
+    const text = formatProfitReport({ ...report, tariffEstimate: estimate });
+
+    expect(text).toContain('🧮 По калькулятору Маркета');
+    expect(text).toContain(formatRubles(240));
+    expect(text).toContain('≈24%');
+    expect(text).not.toContain('➖ По калькулятору');
+    // Строка стоит сразу под комиссией — там, с чем её сверяют.
+    const lines = text.split('\n');
+    const commissionAt = lines.findIndex((l) => l.includes('Комиссия'));
+    expect(lines[commissionAt + 1]).toContain('калькулятору');
+  });
+
+  it('частичное покрытие названо счётчиком заказов', () => {
+    const text = formatProfitReport({
+      ...report,
+      tariffEstimate: { ...estimate, coveredOrders: 3, totalOrders: 5 },
+    });
+
+    expect(text).toContain('по 3 из 5 заказов');
+  });
+
+  it('без оценки строки нет — отчёт живёт как раньше', () => {
+    expect(formatProfitReport(report)).not.toContain('калькулятору');
+  });
+
+  it('ни одного покрытого заказа — строки нет: «0 ₽» читался бы как бесплатно', () => {
+    const text = formatProfitReport({
+      ...report,
+      tariffEstimate: { ...estimate, coveredOrders: 0, servicesTotal: 0, coveredRevenue: 0 },
+    });
+
+    expect(text).not.toContain('калькулятору');
+  });
+
+  it('оценка чужого набора не печатается — scope сверяется явно', () => {
+    // Сервис считает scope тем же предикатом, что placedIsMain, но если
+    // наборы разойдутся, строка с чужими цифрами хуже её отсутствия.
+    const text = formatProfitReport({
+      ...report,
+      tariffEstimate: { ...estimate, scope: 'placed' as const },
+    });
+
+    expect(text).not.toContain('калькулятору');
+  });
+
+  it('при основном блоке «оформлено» строка в нём, а не в сводке выкупленных', () => {
+    const placed = profitOf([ORDER], COSTS);
+    const text = formatProfitReport({
+      ...report,
+      placed,
+      cancelledOrders: 0,
+      tariffEstimate: { ...estimate, scope: 'placed' as const },
+    });
+
+    const lines = text.split('\n');
+    const calcAt = lines.findIndex((l) => l.includes('калькулятору'));
+    const redeemedAt = lines.findIndex((l) => l.includes('Выкуплено'));
+    expect(calcAt).toBeGreaterThan(-1);
+    expect(redeemedAt).toBeGreaterThan(calcAt);
+  });
+});
+
 /**
  * Субсидии Маркета в выручке (TASK-056).
  *

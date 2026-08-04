@@ -1,8 +1,4 @@
-import type {
-  IOfferLogistics,
-  ITariffCalculation,
-  ITariffOfferParams,
-} from '../yandex-api.client';
+import type { IOfferLogistics, ITariffCalculation, ITariffOfferParams } from '../yandex-api.client';
 import type { IOrderMoney, IOrderSubsidy } from './money';
 
 import { orderTotals, subsidiesTotal } from './money';
@@ -53,7 +49,7 @@ export interface ITariffEstimate {
   /** По какому набору посчитано — тому же, чей блок печатает комиссию. */
   scope: 'placed' | 'redeemed';
   /** Сумма всех услуг калькулятора по ПОЛНОСТЬЮ покрытым заказам. */
-  total: number;
+  servicesTotal: number;
   /** Та же сумма в разрезе услуг (FEE, DELIVERY_TO_CUSTOMER, …). */
   byService: Record<string, number>;
   /** Заказов, посчитанных целиком. Частично покрытый не считается вовсе. */
@@ -75,7 +71,7 @@ export interface ITariffRow {
 
 /** Стоимость услуг за ЕДИНИЦУ товара по ключу строки. */
 export interface ITariffUnitCost {
-  total: number;
+  servicesTotal: number;
   byService: Record<string, number>;
 }
 
@@ -132,10 +128,7 @@ export function buildTariffRows(
 
       const d = found.weightDimensions ?? {};
       const real =
-        Number(d.length) > 0 &&
-        Number(d.width) > 0 &&
-        Number(d.height) > 0 &&
-        Number(d.weight) > 0;
+        Number(d.length) > 0 && Number(d.width) > 0 && Number(d.height) > 0 && Number(d.weight) > 0;
 
       rows.set(key, {
         key,
@@ -173,13 +166,13 @@ export function unitCostsOf(
     if (!calc) return;
 
     const byService: Record<string, number> = {};
-    let total = 0;
+    let servicesTotal = 0;
     for (const tariff of calc.tariffs) {
       const value = Number(tariff.amount) || 0;
-      total += value;
+      servicesTotal += value;
       byService[tariff.type] = (byService[tariff.type] ?? 0) + value;
     }
-    out.set(row.key, { total, byService });
+    out.set(row.key, { servicesTotal, byService });
   });
 
   return out;
@@ -197,7 +190,7 @@ export function estimateOf(
   unitCosts: ReadonlyMap<string, ITariffUnitCost>,
   scope: ITariffEstimate['scope'],
 ): ITariffEstimate {
-  let total = 0;
+  let servicesTotal = 0;
   let coveredOrders = 0;
   let coveredRevenue = 0;
   const byService: Record<string, number> = {};
@@ -216,7 +209,7 @@ export function estimateOf(
         break;
       }
       const count = Number(item.count) || 1;
-      orderTotal += cost.total * count;
+      orderTotal += cost.servicesTotal * count;
       for (const [type, value] of Object.entries(cost.byService)) {
         orderByService[type] = (orderByService[type] ?? 0) + value * count;
       }
@@ -225,12 +218,19 @@ export function estimateOf(
     if (!covered) continue;
 
     coveredOrders += 1;
-    total += orderTotal;
+    servicesTotal += orderTotal;
     coveredRevenue += orderTotals(order).items + subsidiesTotal(order);
     for (const [type, value] of Object.entries(orderByService)) {
       byService[type] = (byService[type] ?? 0) + value;
     }
   }
 
-  return { scope, total, byService, coveredOrders, totalOrders: orders.length, coveredRevenue };
+  return {
+    scope,
+    servicesTotal,
+    byService,
+    coveredOrders,
+    totalOrders: orders.length,
+    coveredRevenue,
+  };
 }

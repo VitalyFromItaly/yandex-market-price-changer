@@ -388,7 +388,38 @@ describe('Прибыль', () => {
 
     await handler.run(ctx as never, REPORT.PROFIT, { key: 'month' } as never);
 
-    expect(profit.build).toHaveBeenCalledWith(expect.anything(), { key: 'month' });
+    expect(profit.build).toHaveBeenCalledWith(
+      expect.anything(),
+      { key: 'month' },
+      expect.any(Date),
+      // Записи доступа нет (администратор) — калькулятор открыт, как и всё
+      // остальное: гейт админов пропускает целиком.
+      { tariffEstimate: true },
+    );
+  });
+
+  it('без флага tariff_calc калькулятор не считается — умолчание «выключено»', async () => {
+    // Пустая карта флагов — обычный продавец, которому ничего не включали:
+    // отчёт «Прибыль» открыт (default-on), а строка калькулятора — нет.
+    const { handler, profit } = await build({ features: {} });
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.PROFIT, DEFAULT_PERIOD);
+
+    expect(profit.build).toHaveBeenCalledWith(expect.anything(), DEFAULT_PERIOD, expect.any(Date), {
+      tariffEstimate: false,
+    });
+  });
+
+  it('включённый tariff_calc доезжает до сервиса опцией', async () => {
+    const { handler, profit } = await build({ features: { tariff_calc: true } });
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.PROFIT, DEFAULT_PERIOD);
+
+    expect(profit.build).toHaveBeenCalledWith(expect.anything(), DEFAULT_PERIOD, expect.any(Date), {
+      tariffEstimate: true,
+    });
   });
 
   it('без настроек API прибыль не считается', async () => {

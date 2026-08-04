@@ -55,8 +55,9 @@ describe('Реестр возможностей', () => {
     // Флаги появились позже самих функций: существующие продавцы не должны
     // были ничего потерять, и разовой миграции для этого не потребовалось —
     // все прежние фичи остаются default-on. Новые, ещё не обкатанные («Склады»,
-    // «FBY»), вводятся с default-off и включаются точечно из панели.
-    const DEFAULT_OFF: string[] = [FEATURE.WAREHOUSES, FEATURE.FBY];
+    // «FBY», строка калькулятора тарифов), вводятся с default-off и включаются
+    // точечно из панели.
+    const DEFAULT_OFF: string[] = [FEATURE.WAREHOUSES, FEATURE.FBY, FEATURE.TARIFF_CALC];
     for (const key of FEATURE_KEYS) {
       expect(FEATURE_META[key].defaultEnabled, key).toBe(!DEFAULT_OFF.includes(key));
     }

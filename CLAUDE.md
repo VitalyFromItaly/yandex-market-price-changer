@@ -153,6 +153,22 @@ actionLog → accessGate → featureGate → start → menu → slash → adminC
   prices (see "Profit"). The options object is not cosmetic: while `dryRun` was a positional boolean,
   a forgotten third argument meant a **live** stock write where only a check was asked for, so `sync`
   now throws without `telegramUserId`.
+  - **The handler only validates and enqueues; `sync` runs in `stock-sync.processor.ts`** (job
+    `SYNC_STOCKS` on the `file-processing` queue, `attempts: 1` — an auto-retry of a stock write
+    burns the hourly Partner API quota, the `reports` queue argument). This is not an optimization:
+    under polling telegraf does not fetch the next `getUpdates` batch until every update of the
+    current one is handled (`await Promise.all(updates.map(handleUpdate))`), so a minutes-long sync
+    inside the handler froze the bot for **everyone**. The payload carries `file_id` + flags and
+    deliberately **no token and no buffer**: the processor re-reads credentials from Mongo (fresh,
+    and nothing secret sits in Redis failed jobs) and downloads the file itself via `getFileLink`.
+    Jobs live in Redis, so a redeploy no longer loses an upload: waiting jobs survive whole, an
+    active one whose worker died is re-queued by Bull's stalled-jobs mechanism (one automatic
+    re-run; a second stall fails the job into the panel's «Очереди», retryable by button). A second
+    file queues **behind** the first — concurrency is 1, so there is no write race and the old
+    in-memory `inFlight` latch is gone; the reply names the queue position when anything is ahead.
+    The error text is shared (`uploadErrorText` in `stock-report.ts`) so the enqueue path and the
+    processor cannot drift. This is **not** a revival of the dead 4-hop chain below: one job, one
+    processor.
 - **On FBY, stocks are read-only — the rule lives in `stocks/placement.ts`.** FBS/DBS/Express keep the
   goods in the _seller's_ warehouse, so the seller reports the counts. FBY goods sit in **Market's**
   warehouse, where the count is moved by intake and sales; a number from a price list is a fiction
@@ -245,11 +261,13 @@ technical — and even it leads with the store name.
 **To add a bot:** extend `EBotType` in `domain.telegram.ts`, add a composer + keyboard, add a branch
 in `BotRegistry`, and register any new service as a normal Nest provider.
 
-### The upload pipeline is a 4-hop Bull chain
+### The old upload pipeline is a 4-hop Bull chain — dead
 
 Queue names and job types are constants in `src/modules/telegram/index.ts` (a constants file, not a
 barrel). Queues are registered with per-queue retry/backoff in `telegram.module.ts`; processors live
-in `src/modules/telegram/queue/processors/`.
+in `src/modules/telegram/queue/processors/`. Two are alive: `reports.processor.ts` (the daily
+digest) and `stock-sync.processor.ts` (the price-list upload, `SYNC_STOCKS` — see the `stockUpload`
+bullet above). The chain below is the **dead** price-changing flow; nothing enqueues its job types.
 
 ```
 file-upload.handler.ts        getFileLink → FileUploadService.saveFile (static/temp/) → enqueue PROCESS_FILE
@@ -261,12 +279,16 @@ UPDATE_YANDEX_OFFERS         updateOrCreateOffers() → update (50/batch) + crea
 notifications.processor.ts   SEND_PROGRESS / SEND_COMPLETION / SEND_ERROR
 ```
 
-Processors have no `Telegraf` instance, so the **bot token is carried in every job payload**
-(`botToken`) and messages go out through `TelegramApiService.sendMessage(botToken, chatId, text)` —
-a raw `fetch` that builds its URL from `AppConfigService.telegramApiUrl`, the same mirror telegraf
-uses. It is an ordinary `@Injectable()` (it was `static` until it needed the config; DI is available
-because processors are Nest providers). It is the **only** hand-built Bot API URL in `src` — keep it
-that way, or one path ends up bypassing the mirror while everything else works.
+In that dead chain processors had no `Telegraf` instance, so the **bot token was carried in every
+job payload** (`botToken`) and messages went out through
+`TelegramApiService.sendMessage(botToken, chatId, text)` — a raw `fetch` that builds its URL from
+`AppConfigService.telegramApiUrl`, the same mirror telegraf uses. It is an ordinary `@Injectable()`
+(it was `static` until it needed the config; DI is available because processors are Nest providers).
+It is the **only** hand-built Bot API URL in `src` — keep it that way, or one path ends up bypassing
+the mirror while everything else works. The **live** processors do it differently: the payload
+carries the numeric `botId`, the bot comes from `BotRegistry.findByTelegramId`, messages go through
+`bot.telegraf.telegram` (and thus through the outgoing action-log funnel), and no token ever sits
+in Redis.
 
 ### Yandex Market access
 
@@ -531,6 +553,42 @@ into one line and loses commission, tax and cost.
   the report's most expensive request. Both the button (`ReportsHandler.run`) and the daily digest
   (`reports.processor.ts`) must branch on `REPORT.PROFIT` — a divergence between them is the known
   complaint pattern.
+- **«🧮 По калькулятору Маркета» is a comparison line, not arithmetic** (`POST v2/tariffs/calculate`
+  + offer dims/category from `getOfferMappings`; pure math in `reports/tariff-estimate.ts`, I/O in
+  `ProfitService.tariffEstimateOf`). The flat `commissionPercent` stays the seller-controlled source
+  of truth — the calculator is «примерный» by its own docs, so its sum prints under the commission
+  line for сверка and never enters `profitOf`. Verified live (July-2026): calculator total is 23.9%
+  of revenue when priced as `item.price + per-unit subsidies` vs 20.0% without — the subsidy variant
+  is the one baked into `tariffPriceOf`, because real commission is charged on the subsidized price
+  (the seller's own worked example, 2689 × 23%).
+  - **Behind `FEATURE.TARIFF_CALC`, `defaultEnabled: false`** — the registry's designed-for case:
+    experimental, opened per seller from the panel, costs 2–8 extra Partner API requests per report.
+    The flag maps to **no update**, so `featureGate` never sees it — both callers read it themselves
+    and pass `{tariffEstimate}` into `ProfitService.build`; the service deliberately does not read
+    `UserAccess` (Mongo доступа is the telegram layer's business). In `ReportsHandler` an absent
+    access record means admin → flag open, the `allFeaturesEnabled` argument.
+  - **One estimate per report, for the main block only** — the same `placed.orders ? placed :
+    redeemed` predicate as `placedIsMain`, computed after `profitOf`. `formatProfitReport` re-checks
+    `estimate.scope` against the block it prints into: if the two predicates ever drift, a line with
+    the wrong set's numbers is worse than no line.
+  - **An order not fully priced is excluded whole** (the `orderPurchase` argument), and the ≈% uses
+    `coveredRevenue` as denominator — partial coverage says «по 3 из 5 заказов» instead of silently
+    understating the percent. Missing dims fall back to 11×11×11 см / 0.3 кг (watch store, customer's
+    decision; live delta vs real dims ≤9 ₽/item) — so the only uncoverable case is a sku with no
+    `marketCategoryId`.
+  - **`frequency` is never sent**: omitted, Yandex uses the seller's actual payout schedule; a wrong
+    value is `400 INVALID_PAYMENT_SETTINGS` («payout frequency WEEKLY and delay weeks null are not
+    supported», live). Calculator failure degrades like the returns call: line omitted,
+    `ErrorReporter` with `context: 'profit:tariffs'`.
+  - **Live spec drift**: `offerIds` filter of offer-mappings takes **≤100** per request
+    (`OFFER_IDS_BATCH`) — the spec says 200, the live API answers
+    `400 offerIds size must be between 1 and 100`. The filter is mutually exclusive with paging, so
+    `getOfferMappings` sends **no** `limit`/`page_token` (pinned by test). `campaignId` goes in the
+    **body as a number**; `sellingProgram` is XOR with it and never sent. No caching yet: a report is
+    ~2–8 requests against quotas of 600/min (mappings) and 100/min (calculator).
+  - `npx ts-node scripts/diagnose-tariffs.ts --user=<id> [--from=DD-MM-YYYY --to=…]` — the read-only
+    сверка that answered the gate questions above (leaf-category acceptance, price variant, batch
+    behaviour on 400 via bisect, frequency, coverage).
 - **Two read-only scripts exist for exactly the questions this report raises** (both boot
   `AppConfigModule + YandexModule` only — `AppModule` would start `BotRegistry`, whose bootstrap
   re-points the webhook away from the running bot; `AppConfigModule` must be imported explicitly,

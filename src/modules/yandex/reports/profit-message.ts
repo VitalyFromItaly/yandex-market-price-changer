@@ -59,12 +59,12 @@ function isEmpty(totals: IProfitTotals): boolean {
  */
 function tariffEstimateLine(estimate: ITariffEstimate): string {
   const share = estimate.coveredRevenue
-    ? ` (≈${percent((estimate.total / estimate.coveredRevenue) * 100)}%` +
+    ? ` (≈${percent((estimate.servicesTotal / estimate.coveredRevenue) * 100)}%` +
       (estimate.coveredOrders === estimate.totalOrders
         ? ')'
         : ` по ${estimate.coveredOrders} из ${estimate.totalOrders} заказов)`)
     : '';
-  return `🧮 По калькулятору Маркета: ${b(formatRubles(estimate.total))}${share}`;
+  return `🧮 По калькулятору Маркета: ${b(formatRubles(estimate.servicesTotal))}${share}`;
 }
 
 /**
