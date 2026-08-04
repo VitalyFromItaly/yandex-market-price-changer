@@ -124,3 +124,86 @@ describe('BotRegistry: журнал исходящих', () => {
     ).resolves.toBe('ok');
   });
 });
+
+/**
+ * Ответы хендлеров (ctx.reply) — и главный баг, который здесь закрывается.
+ *
+ * telegraf 4.16 на КАЖДЫЙ апдейт создаёт НОВЫЙ экземпляр Telegram и отдаёт его
+ * контексту, поэтому ctx.telegram — это не синглтон, и перехват logOutgoing его
+ * не видел. В журнал попадали только фоновые отправки (алерты, дайджест), а
+ * ответы бота пользователю — нет. Ловит их contextType (loggingContextType),
+ * оборачивающий callApi СВОЕГО per-update экземпляра.
+ */
+describe('BotRegistry: журнал исходящих у per-update контекста', () => {
+  type TTelegramStub = { callApi: ReturnType<typeof vi.fn> };
+  type TCtx = { telegram: { callApi: (m: string, p: unknown) => Promise<unknown> } };
+  type TCtxCtor = new (update: unknown, tg: TTelegramStub, botInfo: unknown) => TCtx;
+
+  function build() {
+    const record = vi.fn().mockResolvedValue(undefined);
+    const report = vi.fn().mockResolvedValue(undefined);
+    const registry = new BotRegistry(
+      null as never,
+      null as never,
+      null as never,
+      { record } as never,
+      { report } as never,
+    );
+    const CtxType = (
+      registry as never as { loggingContextType(d: unknown): TCtxCtor }
+    ).loggingContextType({ id: 'doc1' });
+    return { registry, record, report, CtxType };
+  }
+
+  it('ответ через ctx.telegram свежего экземпляра пишется в журнал', async () => {
+    const { record, CtxType } = build();
+    const perUpdate: TTelegramStub = { callApi: vi.fn().mockResolvedValue({ message_id: 7 }) };
+    const ctx = new CtxType({}, perUpdate, { id: 55 });
+
+    await ctx.telegram.callApi('sendMessage', { chat_id: 777, text: 'Отчёт готов' });
+
+    expect(record).toHaveBeenCalledTimes(1);
+    const entry = record.mock.calls[0][0];
+    expect(entry.direction).toBe('out');
+    expect(entry.telegramUserId).toBe('777');
+    expect(entry.kind).toBe('sendMessage');
+    expect(entry.action).toBe('Отчёт готов');
+    // botId берётся из botInfo контекста — того же числового id бота.
+    expect(entry.botId).toBe('55');
+  });
+
+  it('синглтон и per-update — разные экземпляры, запись ровно одна с каждого', async () => {
+    const { registry, record, CtxType } = build();
+
+    // Синглтон (фоновые отправки: алерты, дайджест).
+    const singleton: TTelegramStub = { callApi: vi.fn().mockResolvedValue({}) };
+    const telegraf = { telegram: singleton, botInfo: { id: 42 } };
+    (registry as never as { logOutgoing(t: unknown, d: unknown): void }).logOutgoing(telegraf, {
+      id: 'doc1',
+    });
+
+    // Per-update (ответ хендлера).
+    const perUpdate: TTelegramStub = { callApi: vi.fn().mockResolvedValue({}) };
+    const ctx = new CtxType({}, perUpdate, { id: 42 });
+
+    await ctx.telegram.callApi('sendMessage', { chat_id: 1, text: 'ответ' });
+    await telegraf.telegram.callApi('sendMessage', { chat_id: 2, text: 'алерт' });
+
+    // По одной записи с каждого пути, а не четыре: пути не пересекаются.
+    expect(record).toHaveBeenCalledTimes(2);
+    expect(perUpdate.callApi).not.toBe(singleton.callApi);
+  });
+
+  it('длинный отчёт (>500 символов) хранится целиком — потолок 4096', async () => {
+    const { record, CtxType } = build();
+    const perUpdate: TTelegramStub = { callApi: vi.fn().mockResolvedValue({}) };
+    const ctx = new CtxType({}, perUpdate, { id: 42 });
+
+    const longReport = 'А'.repeat(1500);
+    await ctx.telegram.callApi('sendMessage', { chat_id: 1, text: longReport });
+
+    const entry = record.mock.calls[0][0];
+    expect(entry.action).toBe(longReport);
+    expect(entry.action.length).toBe(1500);
+  });
+});

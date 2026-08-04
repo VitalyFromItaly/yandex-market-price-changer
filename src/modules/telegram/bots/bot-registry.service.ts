@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Telegraf } from 'telegraf';
+import { Context, Telegraf, Telegram } from 'telegraf';
 
 import { AppConfigService } from '../../../config/app-config.service';
 import { Bot, BotDocument } from '../../../database/schemas/bot.schema';
@@ -109,6 +109,10 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
     // и ссылки на файлы из getFileLink строятся telegraf'ом от него.
     const telegraf: TTelegrafBot = new Telegraf(doc.token, {
       telegram: { apiRoot: this.config.telegramApiUrl },
+      // Перехват исходящих ответов хендлеров (ctx.reply): telegraf на каждый
+      // апдейт создаёт НОВЫЙ экземпляр Telegram и отдаёт его контексту, поэтому
+      // патч синглтона (logOutgoing ниже) их не видит — только этот подкласс.
+      contextType: this.loggingContextType(doc),
     });
 
     this.logOutgoing(telegraf, doc);
@@ -164,23 +168,26 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
   }
 
   /**
-   * Журналирование ИСХОДЯЩИХ сообщений: что бот ответил пользователю.
+   * Журналирование ИСХОДЯЩИХ вызовов Bot API на КОНКРЕТНОМ экземпляре Telegram.
    *
-   * Перехват стоит на `telegram.callApi` — это единственная воронка, через
-   * которую telegraf проводит все вызовы Bot API: и `ctx.reply`, и
-   * `editMessageText`, и отправка файла отчёта. Оборачивать сами методы
-   * контекста бессмысленно — их десяток, и забытый означал бы молчаливую дыру
-   * в журнале ровно того вида, который журнал и должен был закрыть.
+   * Перехват стоит на `telegram.callApi` — единственная воронка, через которую
+   * telegraf проводит все вызовы Bot API: и `ctx.reply`, и `editMessageText`, и
+   * отправка файла отчёта, и webhookReply (тот разрешается ВНУТРИ callApi).
+   * Оборачивать сами методы контекста бессмысленно — их десяток, и забытый
+   * означал бы молчаливую дыру в журнале ровно того вида, который журнал и
+   * должен был закрыть.
    *
    * Через ту же воронку идёт служебное — getMe, setWebhook, setMyCommands и, в
    * режиме polling, непрерывный getUpdates. Поэтому пишется только то, что
    * перечислено в OUTGOING_METHODS.
    *
+   * botId берётся ЛЕНИВОЙ функцией: у per-update экземпляра (см. loggingContextType)
+   * он известен только в момент вызова, а не в момент установки перехвата.
+   *
    * Запись не ожидается и ошибку наружу не выпускает: журнал не имеет права
    * помешать боту ответить.
    */
-  private logOutgoing(telegraf: TTelegrafBot, doc: BotDocument): void {
-    const telegram = telegraf.telegram;
+  private installOutgoingLog(telegram: Telegram, botIdOf: () => string): void {
     const original = telegram.callApi.bind(telegram);
 
     // Приведение типов неизбежно: callApi объявлен дженериком по имени метода
@@ -207,7 +214,7 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
             context: `send:${method}`,
             telegramUserId: failed.chatId?.toString(),
             chatId: failed.chatId?.toString(),
-            botId: telegraf.botInfo?.id?.toString() ?? doc.id,
+            botId: botIdOf(),
             action: describeOutgoing(failed).action,
           });
         }
@@ -226,7 +233,7 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
           // именно на неё — гейт доступа отсекает группы.
           telegramUserId: chatId ?? 'unknown',
           direction: 'out',
-          botId: telegraf.botInfo?.id?.toString() ?? doc.id,
+          botId: botIdOf(),
           chatId,
           kind,
           action,
@@ -235,6 +242,47 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
 
       return result;
     }) as unknown as typeof telegram.callApi;
+  }
+
+  /**
+   * Перехват на СИНГЛТОНЕ telegraf.telegram — покрывает ФОНОВЫЕ отправки, идущие
+   * мимо контекста: админ-алерты (error-alert.bridge), уведомления о доступе
+   * (access-notifier) и ежедневный дайджест (reports.processor) — все зовут
+   * bot.telegraf.telegram.sendMessage напрямую.
+   *
+   * Ответы хендлеров (ctx.reply) сюда НЕ попадают: telegraf на каждый апдейт
+   * создаёт НОВЫЙ экземпляр Telegram и отдаёт его контексту, так что ctx.telegram —
+   * это не синглтон. Их ловит loggingContextType. Раньше обёртки не было, и в
+   * журнал попадали только фоновые отправки — отсюда «ответа бота нет».
+   */
+  private logOutgoing(telegraf: TTelegrafBot, doc: BotDocument): void {
+    this.installOutgoingLog(telegraf.telegram, () => telegraf.botInfo?.id?.toString() ?? doc.id);
+  }
+
+  /**
+   * contextType для Telegraf: подкласс Context, оборачивающий callApi СВОЕГО
+   * per-update экземпляра Telegram сразу при создании контекста. Только так
+   * журналируются ctx.reply и прочие ответы из хендлеров — той же единой
+   * воронкой callApi, без обёртки десятка методов контекста.
+   *
+   * botId берётся из botInfo контекста (тот же числовой id бота, что и
+   * telegraf.botInfo.id), с откатом на _id документа.
+   */
+  private loggingContextType(
+    doc: BotDocument,
+  ): new (...args: ConstructorParameters<typeof Context>) => Context {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- нужен в теле класса
+    const self = this;
+    return class LoggingContext extends Context {
+      constructor(
+        update: ConstructorParameters<typeof Context>[0],
+        telegram: Telegram,
+        botInfo: ConstructorParameters<typeof Context>[2],
+      ) {
+        super(update, telegram, botInfo);
+        self.installOutgoingLog(telegram, () => botInfo?.id?.toString() ?? doc.id);
+      }
+    };
   }
 
   /**

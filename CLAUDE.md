@@ -572,10 +572,28 @@ enough either: it is exactly when the database is unreachable that a log line ma
   `LoggerInterceptor` (`Incoming Request: POST /api/telegram/webhooks/...`) — HTTP-level, no who, no
   what. Under `TELEGRAM_UPDATE_MODE=polling` even that disappears: updates no longer arrive over HTTP.
   **Both directions are journalled**, distinguished by `direction` (`in` | `out`, default `in` so
-  pre-existing rows stay meaningful). Outgoing messages are caught by wrapping `telegram.callApi` in
-  `BotRegistry.logOutgoing` — the single funnel every Bot API call passes through, `ctx.reply`
-  included. Wrapping the context methods instead would mean a dozen wrappers and a silent hole in the
-  journal the first time one is forgotten.
+  pre-existing rows stay meaningful). Outgoing messages are caught by wrapping `telegram.callApi` —
+  the single funnel every Bot API call passes through — via `BotRegistry.installOutgoingLog`.
+  Wrapping the context methods instead would mean a dozen wrappers and a silent hole in the journal
+  the first time one is forgotten.
+  - **The wrap is installed in _two_ places, and both are load-bearing** — telegraf 4.16 does **not**
+    route `ctx.reply` through `telegraf.telegram`. On **every** update it builds a **fresh `Telegram`
+    instance** (`telegraf.js`: `new Telegram(token, options, webhookResponse)`) and hands it to the
+    context, so `ctx.telegram` is _not_ the singleton. `logOutgoing` wraps the **singleton**
+    `telegraf.telegram` — that catches only background sends that call it directly (admin alerts,
+    access notices, the scheduled digest). Handler replies are caught by a **`contextType` subclass**
+    (`loggingContextType`) that wraps `callApi` of its own per-update `Telegram`. This was a real
+    outage found in the DB: 160 incoming rows to **1** outgoing, and that one an admin alert — every
+    `ctx.reply` from a button press was missing because only the singleton was wrapped. An earlier
+    revision of this file claimed `ctx.reply` rode the singleton funnel; against telegraf 4.16.3 that
+    is false. `webhookReply` is _not_ a factor — it is resolved **inside** `callApi`
+    (`core/network/client.js`), so wrapping `callApi` catches it too. The two wraps never
+    double-count: a reply goes through the per-update instance only, a background send through the
+    singleton only.
+  - **Outgoing text is stored up to `MAX_OUTGOING_LENGTH` (4096)** — one Telegram message — so a
+    multi-line profit report is kept whole, not clipped to a header. Incoming stays at 200
+    (`MAX_ACTION_LENGTH`): a command or callback is short. Retention is the shared 90-day TTL on
+    `actionlogs`; outgoing rows inherit it with no separate setting.
 
 - Only `OUTGOING_METHODS` are recorded. The same funnel carries `getMe`, `setWebhook`,
   `setMyCommands` and — under polling — a **continuous** `getUpdates`; without the allow-list the
