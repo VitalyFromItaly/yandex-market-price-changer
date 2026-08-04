@@ -131,6 +131,9 @@ import { QUEUE_NAMES } from './index';
   ],
   // PriceChangerKeyboard наружу — веб-панель, открывая доступ, шлёт продавцу
   // то же сообщение с тем же меню, что и кнопка «Одобрить» в Telegram.
-  exports: [TelegramService, FileProcessingService, BotRegistry, PriceChangerKeyboard],
+  // BullModule наружу — QueuesModule читает ТЕ ЖЕ инстансы очередей, что
+  // крутят процессоры здесь; свой registerQueue означал бы вторые соединения
+  // с Redis и второе место, где могут разъехаться опции очередей.
+  exports: [TelegramService, FileProcessingService, BotRegistry, PriceChangerKeyboard, BullModule],
 })
 export class TelegramModule {}

@@ -82,7 +82,7 @@ export function clearToken(): void {
 }
 
 /** Собирает query, выбрасывая пустые значения: `?kind=` фильтрует по пустой строке. */
-function queryString(query: ILogsQuery): string {
+function queryString(query: ILogsQuery | IQueueJobsQuery): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined && value !== null && value !== '') {
@@ -244,5 +244,103 @@ export async function deleteUser(token: string, user: IUserRow): Promise<void> {
   await request<{ ok: boolean }>(
     `/api/access/users/${encodeURIComponent(user.telegramUserId)}${query}`,
     { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+  );
+}
+
+// --- очереди -----------------------------------------------------------------
+
+export interface IQueueCounts {
+  waiting: number;
+  active: number;
+  completed: number;
+  failed: number;
+  delayed: number;
+}
+
+export interface IQueueSummary {
+  name: string;
+  counts: IQueueCounts;
+}
+
+/** Одна запланированная рассылка — repeatable-задача очереди reports. */
+export interface IDigestRow {
+  botId: string;
+  telegramUserId: string;
+  reportKey: string;
+  reportTitle: string;
+  /** «ЧЧ:ММ» по Москве; null, если cron нестандартный. */
+  time: string | null;
+  cron: string;
+  tz: string;
+  /** Следующий запуск, мс epoch. */
+  next: number;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  storeName?: string;
+}
+
+/** Задача очереди. `data` — белый список полей, секреты отрезаны на сервере. */
+export interface IQueueJobRow {
+  id: string;
+  /** Очередь и состояние — в самой строке: выдача бывает сводной по всем. */
+  queue: string;
+  state: string;
+  name: string;
+  timestamp: number;
+  processedOn: number | null;
+  finishedOn: number | null;
+  attemptsMade: number;
+  failedReason?: string;
+  delay?: number;
+  data: Record<string, string | number>;
+}
+
+export interface IQueueJobsResponse {
+  total: number;
+  limit: number;
+  skip: number;
+  items: IQueueJobRow[];
+}
+
+export interface IQueueJobsQuery {
+  state?: string;
+  limit?: number;
+  skip?: number;
+}
+
+export async function fetchQueues(token: string): Promise<IQueueSummary[]> {
+  const { items } = await request<{ items: IQueueSummary[] }>('/api/queues', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return items;
+}
+
+export async function fetchDigests(token: string): Promise<IDigestRow[]> {
+  const { items } = await request<{ items: IDigestRow[] }>('/api/queues/digests', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return items;
+}
+
+export async function fetchQueueJobs(
+  token: string,
+  name: string,
+  query: IQueueJobsQuery,
+): Promise<IQueueJobsResponse> {
+  return await request<IQueueJobsResponse>(
+    `/api/queues/${encodeURIComponent(name)}/jobs${queryString(query)}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+}
+
+/**
+ * Повторить упавшую задачу. Ответ — `{ ok: true }`, после него список нужно
+ * перезагрузить с сервера: угаданное состояние строки может врать.
+ */
+export async function retryQueueJob(token: string, name: string, id: string): Promise<void> {
+  await request<{ ok: boolean }>(
+    `/api/queues/${encodeURIComponent(name)}/jobs/${encodeURIComponent(id)}/retry`,
+    { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
   );
 }

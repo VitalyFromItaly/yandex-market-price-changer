@@ -11,6 +11,7 @@ import { AccessModule } from './modules/access/access.module';
 import { AdminAuthModule } from './modules/admin/admin-auth.module';
 import { ErrorsModule } from './modules/errors/errors.module';
 import { LogsModule } from './modules/logs/logs.module';
+import { QueuesModule } from './modules/queues/queues.module';
 import { TelegramModule } from './modules/telegram/telegram.module';
 import { YandexModule } from './modules/yandex/yandex.module';
 
@@ -38,6 +39,7 @@ import { YandexModule } from './modules/yandex/yandex.module';
     AdminAuthModule,
     LogsModule,
     AccessModule,
+    QueuesModule,
     YandexModule,
     TelegramModule,
   ],
