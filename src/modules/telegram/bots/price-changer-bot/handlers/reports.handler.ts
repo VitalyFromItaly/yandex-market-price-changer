@@ -26,7 +26,7 @@ import { HISTORY_WINDOW_DAYS } from '../../../../../modules/yandex/yandex-api.pa
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
-import { isReportEnabled } from '../../shared/features.domain';
+import { FEATURE, isFeatureEnabled, isReportEnabled } from '../../shared/features.domain';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { REPORT_CB_PATTERN, parseReportCallback, reportCallback } from '../report-buttons';
@@ -197,8 +197,13 @@ export class ReportsHandler {
     try {
       // Перепроверка фичи. Гейт ловит нажатие кнопки, но не ответ ДАТОЙ на
       // «за какой день?»: тот приходит обычным текстом и ни во что не
-      // маппится. Здесь единственная воронка обоих путей.
-      if (!(await this.featureAllowed(ctx, key))) {
+      // маппится. Здесь единственная воронка обоих путей. Запись доступа
+      // читается один раз — ниже из неё же берётся флаг калькулятора.
+      const account = await this.access.findByUserAndBot(
+        ctx.from.id.toString(),
+        ctx.botInfo.id.toString(),
+      );
+      if (!isReportEnabled(account?.features, key)) {
         await ctx.reply('🔒 Этот отчёт сейчас недоступен.', htmlOptions());
         return;
       }
@@ -228,9 +233,15 @@ export class ReportsHandler {
       }
 
       // Прибыль собирается своим сервисом: к заказам добавляется закуп из базы,
-      // а вычитания и текст у неё собственные.
+      // а вычитания и текст у неё собственные. Строка калькулятора — под
+      // флагом tariff_calc; отсутствие записи доступа — администратор (гейт
+      // пропускает его до ensure), и флаги для него открыты все, как в
+      // allFeaturesEnabled.
       if (key === REPORT.PROFIT) {
-        const profit = await this.profit.build(store, period);
+        const tariffEstimate = account
+          ? isFeatureEnabled(account.features, FEATURE.TARIFF_CALC)
+          : true;
+        const profit = await this.profit.build(store, period, new Date(), { tariffEstimate });
         await ctx.reply(formatProfitReport(profit), htmlOptions());
         return;
       }
@@ -246,20 +257,9 @@ export class ReportsHandler {
     }
   }
 
-  /**
-   * Открыт ли отчёт этому пользователю.
-   *
-   * Отсутствие записи доступа считается «открыто»: её нет у администраторов —
-   * гейт пропускает их до `ensure()`, — и отказывать им здесь значило бы
-   * запереть отчёты ровно у тех, кто раздаёт доступ.
-   */
-  private async featureAllowed(ctx: Context, key: TReportKey): Promise<boolean> {
-    const account = await this.access.findByUserAndBot(
-      ctx.from.id.toString(),
-      ctx.botInfo.id.toString(),
-    );
-    return isReportEnabled(account?.features, key);
-  }
+  // Отсутствие записи доступа считается «открыто» (см. проверку в run):
+  // её нет у администраторов — гейт пропускает их до `ensure()`, — и
+  // отказывать им значило бы запереть отчёты ровно у тех, кто раздаёт доступ.
 
   /** Отправка готовой выгрузки: пустая — текстом, непустая — документом. */
   private async sendExport(ctx: Context, result: IReportExport): Promise<void> {

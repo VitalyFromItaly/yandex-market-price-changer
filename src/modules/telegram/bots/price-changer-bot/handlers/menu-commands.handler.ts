@@ -4,6 +4,7 @@ import { Context } from 'telegraf';
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { placementOfCampaign } from '../../../../yandex/stocks/placement';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { helpText } from '../help.text';
@@ -108,6 +109,7 @@ export class MenuCommandsHandler {
       this.config.isAdmin(ctx.from.id),
       account?.features,
       (store?.stores?.length ?? 0) > 1,
+      placementOfCampaign(store?.stores, store?.campaign_id),
     );
     // await обязателен: без него ошибка отправки теряется мимо bot.catch, и
     // кнопка «Главное меню» молча не срабатывает.

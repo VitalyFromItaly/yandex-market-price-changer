@@ -38,6 +38,11 @@ export const API_VERSIONS = {
    * v2 → 200, v1 → 404 Resource not found.
    */
   supplyRequests: 'v2',
+  /**
+   * Калькулятор стоимости услуг Маркета (POST tariffs/calculate).
+   * Расчёт «примерный» по документации; лимит 100 запросов в минуту.
+   */
+  tariffs: 'v2',
 } as const;
 
 export function campaignsPath(): string {
@@ -111,6 +116,14 @@ export function supplyRequestsPath(campaignId: string): string {
 }
 
 /**
+ * Калькулятор стоимости услуг (POST). В пути ни кампании, ни бизнеса:
+ * campaignId уходит в ТЕЛЕ запроса, причём числом (int64 по спеке).
+ */
+export function tariffsCalculatePath(): string {
+  return `/${API_VERSIONS.tariffs}/tariffs/calculate`;
+}
+
+/**
  * Лимиты страницы у методов разные, и превышение — это 400, а не «молча
  * обрежем». Значения из документации, см. reference.partner_api в tasks.json.
  */
@@ -141,3 +154,20 @@ export const WAREHOUSE_PROBE_LIMIT = 10;
 
 /** Окно истории getOrders. Диапазон шире — запрос отклоняется Яндексом. */
 export const HISTORY_WINDOW_DAYS = 30;
+
+/**
+ * Максимум товаров в одном запросе калькулятора тарифов. Это не лимит
+ * страницы (пагинации у метода нет), а предел массива offers — превышение
+ * отвечает 400.
+ */
+export const TARIFFS_MAX_OFFERS = 200;
+
+/**
+ * Максимум артикулов в фильтре `offerIds` метода offer-mappings.
+ *
+ * НЕ равен лимиту страницы (200): спека обещает те же 200, но боевой отвечает
+ * `400: offerIds size must be between 1 and 100 (rejected size: 200)` —
+ * проверено 04-08-2026 на бизнесе 164225008. Ещё один случай расхождения
+ * спеки с боевым, как enum статусов заявок FBY.
+ */
+export const OFFER_IDS_BATCH = 100;

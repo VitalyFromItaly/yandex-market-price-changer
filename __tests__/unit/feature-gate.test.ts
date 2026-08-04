@@ -143,19 +143,16 @@ describe('FeatureGateHandler', () => {
     expect(next).toHaveBeenCalled();
   });
 
-  it('закрытая загрузка прайса отбивает документ', async () => {
-    // Единственный путь записи в Partner API: отбить его нужно до хендлера,
-    // иначе остатки уедут в Яндекс.
-    features = { [FEATURE.STOCK_UPLOAD]: false };
+  it('документ гейт пропускает даже при выключенных фичах прайса', async () => {
+    // Прайс делает два независимых дела (закуп и остатки), и исход бывает
+    // частичным — «разобрать файл, но не писать остатки». Гейт умеет отбить
+    // апдейт только целиком, поэтому решение принимает stock-upload.handler,
+    // а гейт по документам молчит.
+    features = { [FEATURE.PURCHASE_PRICES]: false, [FEATURE.STOCK_UPDATE]: false };
     const { next, ctx } = await run({ hasDocument: true });
 
-    expect(next).not.toHaveBeenCalled();
-    expect(ctx.reply).toHaveBeenCalled();
-  });
-
-  it('открытая загрузка прайса документ пропускает', async () => {
-    const { next } = await run({ hasDocument: true });
     expect(next).toHaveBeenCalled();
+    expect(ctx.reply).not.toHaveBeenCalled();
   });
 
   it('включение рассылки закрытого отчёта не проходит, хотя рассылка открыта', async () => {

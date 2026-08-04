@@ -4,7 +4,7 @@ import { Injectable } from '@nestjs/common';
 import { Markup } from 'telegraf';
 
 import { TelegramKeyboard } from '../../ui/keyboard.ui.telegram';
-import { featureMenuLayout } from '../shared/features.domain';
+import { allFeaturesEnabled, featureMenuLayout } from '../shared/features.domain';
 
 import { unconfiguredMenuLayout, withAdminRow, withSwitchStore } from './menu.constants';
 
@@ -23,14 +23,25 @@ export class PriceChangerKeyboard extends TelegramKeyboard {
    * собирается по умолчанию из реестра. Полагаться на одну лишь раскладку
    * нельзя — подпись кнопки можно прислать текстом, а старая inline-кнопка
    * живёт в истории чата вечно; за это отвечает FeatureGateHandler.
+   *
+   * `placementType` — модель активного магазина: FBY-only кнопки («🏬 Склады»,
+   * «📦 FBY») попадают в раскладку только на FBY-магазине.
+   *
+   * Администратору фичевый фильтр НЕ применяется: `featureGate` его и так
+   * пропускает, а записи `UserAccess` (и значит явных флагов) у него нет —
+   * прятать кнопку, которую бот ему разрешает, значит рассинхронизировать
+   * раскладку с гейтом. Фильтр по модели магазина действует и для него:
+   * FBY-экраны без FBY-магазина пусты у кого угодно.
    */
   public async createMenuKeyboard(
     isAdmin = false,
     features?: TFeatureMap,
     showSwitchStore = false,
+    placementType?: string,
   ): Promise<Markup.Markup<any>> {
     // Подписи берутся из menu.constants — единственного источника (TASK-014).
-    const base = featureMenuLayout(features);
+    const effectiveFeatures = isAdmin ? allFeaturesEnabled() : features;
+    const base = featureMenuLayout(effectiveFeatures, placementType);
     // Кнопка смены магазина — в ряд к «Прибыли», наверх (см. withSwitchStore), и
     // только когда токен открывает больше одного магазина (флаг считает хендлер
     // из кэша `stores`, без похода в API).
@@ -55,9 +66,10 @@ export class PriceChangerKeyboard extends TelegramKeyboard {
     isAdmin = false,
     features?: TFeatureMap,
     showSwitchStore = false,
+    placementType?: string,
   ): Promise<Markup.Markup<any>> {
     return configured
-      ? await this.createMenuKeyboard(isAdmin, features, showSwitchStore)
+      ? await this.createMenuKeyboard(isAdmin, features, showSwitchStore, placementType)
       : await this.createUnconfiguredKeyboard(isAdmin);
   }
 

@@ -46,6 +46,12 @@ export interface IStockSyncResult {
   catalogSize: number;
   /** Сколько закупочных цен сохранено в нашу базу. */
   purchasePricesSaved: number;
+  /**
+   * true — закуп НЕ сохранялся, потому что фичу выключил администратор.
+   * Отдельно от `purchasePricesSaved: 0`: ноль бывает и у файла без цен, а
+   * отчёт обязан сказать, что именно произошло.
+   */
+  purchasePricesSkipped?: boolean;
   /** Модель размещения подключённой кампании — как её вернул Маркет. */
   placementType?: string;
   /**
@@ -69,19 +75,26 @@ export interface IStockSyncResult {
  *   либо её не удалось определить; какой из двух случаев, различает
  *   `placementType`;
  * - `write-disabled` — запись выключена настройкой среды
- *   (`STOCK_WRITE_ENABLED=false`), то есть решение развёртывания, а не магазина.
+ *   (`STOCK_WRITE_ENABLED=false`), то есть решение развёртывания, а не магазина;
+ * - `feature-disabled` — администратор выключил продавцу фичу «остатки из
+ *   прайса»; действие продавца — написать администратору, а не менять магазин.
  */
-export type TWriteSkipReason = 'placement' | 'write-disabled';
+export type TWriteSkipReason = 'placement' | 'write-disabled' | 'feature-disabled';
 
 /**
  * Единственное место, где решается, писать ли остатки.
  *
- * Отдельной функцией, а не выражением на месте: порядок поводов значим
- * (настройка среды важнее модели — при выключенной записи модель даже не
- * спрашивается), а `no-nested-ternary` в этом проекте запрещён не зря.
+ * Отдельной функцией, а не выражением на месте: порядок поводов значим (среда
+ * шире решения по продавцу, оба шире модели — при выключенной записи модель
+ * даже не спрашивается), а `no-nested-ternary` в этом проекте запрещён не зря.
  */
-function skipReasonOf(writeEnabled: boolean, placementType?: string): TWriteSkipReason | undefined {
+function skipReasonOf(
+  writeEnabled: boolean,
+  stockWriteAllowed: boolean,
+  placementType?: string,
+): TWriteSkipReason | undefined {
   if (!writeEnabled) return 'write-disabled';
+  if (!stockWriteAllowed) return 'feature-disabled';
   if (!isStockWritable(placementType)) return 'placement';
   return undefined;
 }
@@ -91,6 +104,18 @@ export interface ISyncOptions {
   telegramUserId: string;
   /** Сверить с каталогом и составить отчёт, НИЧЕГО не записывая в Partner API. */
   dryRun?: boolean;
+  /**
+   * Сохранять ли закупочные цены в нашу Mongo. По умолчанию да — умолчания
+   * повторяют прежнее поведение, чтобы скрипт `load-purchase-prices` и старые
+   * вызовы не изменились. `false` — админ закрыл продавцу фичу «закуп из
+   * прайса».
+   */
+  savePurchasePrices?: boolean;
+  /**
+   * Разрешена ли продавцу запись остатков (фича «остатки из прайса»).
+   * `false` понижает запись до сверки с `writeSkipReason: 'feature-disabled'`.
+   */
+  stockWriteAllowed?: boolean;
 }
 
 /**
@@ -132,6 +157,8 @@ export class StockSyncService {
     }
 
     const dryRun = options.dryRun ?? false;
+    const savePrices = options.savePurchasePrices ?? true;
+    const stockWriteAllowed = options.stockWriteAllowed ?? true;
     const client = this.clients.forTenant(credentials);
 
     /**
@@ -156,11 +183,12 @@ export class StockSyncService {
      * `GET v2/campaigns` против двадцати шести страниц каталога, которые будут
      * прочитаны следом, — незаметен.
      */
-    const placementType = !writeEnabled
-      ? undefined
-      : await this.resolvePlacement(client, credentials.campaignId);
+    const placementType =
+      !writeEnabled || !stockWriteAllowed
+        ? undefined
+        : await this.resolvePlacement(client, credentials.campaignId);
 
-    const writeSkipReason = skipReasonOf(writeEnabled, placementType);
+    const writeSkipReason = skipReasonOf(writeEnabled, stockWriteAllowed, placementType);
 
     const { rows, invalid } = parsePriceList(file);
 
@@ -261,8 +289,15 @@ export class StockSyncService {
      * менять ничего в магазине, и это обещание он держит. Зато прибыль начинает
      * считаться сразу после сверки — до первой боевой записи остатков, которую
      * на живом магазине разумно отложить.
+     *
+     * Исключение одно — фича «закуп из прайса» выключена администратором; тогда
+     * `purchasePricesSkipped` объясняет в отчёте, почему сохранённых цен ноль.
      */
-    result.purchasePricesSaved = await this.savePurchasePrices(options.telegramUserId, purchases);
+    if (savePrices) {
+      result.purchasePricesSaved = await this.savePurchasePrices(options.telegramUserId, purchases);
+    } else {
+      result.purchasePricesSkipped = true;
+    }
 
     if (dryRun) {
       this.logger.log(`Сухой прогон: ${updates.length} из ${rows.length} нашлись, записи НЕ было`);
@@ -282,17 +317,28 @@ export class StockSyncService {
      * объясняется там текстом.
      */
     if (writeSkipReason) {
-      this.logger.warn(
-        writeSkipReason === 'write-disabled'
-          ? 'Запись остатков пропущена: STOCK_WRITE_ENABLED=false'
-          : `Запись остатков пропущена: модель «${placementType ?? 'неизвестна'}» ` +
-              `не даёт продавцу управлять остатками (кампания ${credentials.campaignId})`,
-      );
+      this.logger.warn(this.skipLogLine(writeSkipReason, placementType, credentials.campaignId));
       return result;
     }
 
     result.updated = await this.writeInBatches(client, updates, result);
     return result;
+  }
+
+  /** Строка лога о пропущенной записи — по одному предложению на каждый повод. */
+  private skipLogLine(
+    reason: TWriteSkipReason,
+    placementType: string | undefined,
+    campaignId: string,
+  ): string {
+    if (reason === 'write-disabled') return 'Запись остатков пропущена: STOCK_WRITE_ENABLED=false';
+    if (reason === 'feature-disabled') {
+      return 'Запись остатков пропущена: фича «остатки из прайса» выключена администратором';
+    }
+    return (
+      `Запись остатков пропущена: модель «${placementType ?? 'неизвестна'}» ` +
+      `не даёт продавцу управлять остатками (кампания ${campaignId})`
+    );
   }
 
   /**

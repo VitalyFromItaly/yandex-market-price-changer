@@ -4,6 +4,8 @@ import {
   FBY_STOCKS_READONLY,
   PLACEMENT,
   PLACEMENT_UNKNOWN,
+  fbyOnlyScreenText,
+  isFby,
   isStockWritable,
   placementOfCampaign,
 } from '../../src/modules/yandex/stocks/placement';
@@ -41,6 +43,36 @@ describe('Модель размещения и право писать оста�
     expect(isStockWritable('fbs')).toBe(true);
     expect(isStockWritable(' FbS ')).toBe(true);
     expect(isStockWritable('fby')).toBe(false);
+  });
+});
+
+describe('isFby', () => {
+  it('узнаёт FBY в любом регистре — Маркет отдаёт строку, а не член союза', () => {
+    expect(isFby(PLACEMENT.FBY)).toBe(true);
+    expect(isFby('fby')).toBe(true);
+    expect(isFby(' FbY ')).toBe(true);
+  });
+
+  it('всё остальное — не FBY, включая неизвестную модель', () => {
+    // Экраны склада Маркета без магазина Маркета бессмысленны: прятать их при
+    // неопределённости безопаснее, чем показывать.
+    expect(isFby(PLACEMENT.FBS)).toBe(false);
+    expect(isFby(undefined)).toBe(false);
+    expect(isFby(null)).toBe(false);
+    expect(isFby('')).toBe(false);
+  });
+});
+
+describe('Текст отказа FBY-экранов на не-FBY магазине', () => {
+  it('называет модель продавца и ведёт к смене магазина', () => {
+    const text = fbyOnlyScreenText('FBS');
+    expect(text).toContain('FBS');
+    expect(text).toContain('Сменить магазин');
+  });
+
+  it('неизвестную модель не выдаёт за FBS — говорит, что определить не удалось', () => {
+    const text = fbyOnlyScreenText(undefined);
+    expect(text).toContain('определить не удалось');
   });
 });
 

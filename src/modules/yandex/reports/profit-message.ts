@@ -1,5 +1,6 @@
 import type { IProfitReport } from './profit.service';
 import type { IProfitTotals } from './profit';
+import type { ITariffEstimate } from './tariff-estimate';
 
 import { b, code, esc } from '../../telegram/formatting/telegram-format';
 
@@ -48,13 +49,36 @@ function isEmpty(totals: IProfitTotals): boolean {
 }
 
 /**
+ * Строка «по калькулятору Маркета» — сверка комиссии с тарифами услуг.
+ *
+ * БЕЗ «➖»: столбец с минусами — это арифметика чистой, а эта строка
+ * информационная и в вычитания не входит. «≈» проговаривает, что расчёт
+ * примерный — так его называет документация самого метода. Процент — от
+ * выручки ПОКРЫТЫХ заказов, поэтому при частичном покрытии в скобках счётчик:
+ * без него «≈24% по трети заказов» выглядел бы как процент от всего набора.
+ */
+function tariffEstimateLine(estimate: ITariffEstimate): string {
+  const share = estimate.coveredRevenue
+    ? ` (≈${percent((estimate.total / estimate.coveredRevenue) * 100)}%` +
+      (estimate.coveredOrders === estimate.totalOrders
+        ? ')'
+        : ` по ${estimate.coveredOrders} из ${estimate.totalOrders} заказов)`)
+    : '';
+  return `🧮 По калькулятору Маркета: ${b(formatRubles(estimate.total))}${share}`;
+}
+
+/**
  * Полная разбивка одного набора: продажи, три вычитания и чистая.
  *
  * Общая для обоих наборов, потому что вычитания у них одни и те же. Отличаются
  * только подписи первой и последней строки: у оформленных прибыль ОЖИДАЕМАЯ,
  * и назвать её просто «чистой» значило бы выдать прогноз за полученные деньги.
  */
-function detailedBlock(totals: IProfitTotals, kind: 'placed' | 'redeemed'): string[] {
+function detailedBlock(
+  totals: IProfitTotals,
+  kind: 'placed' | 'redeemed',
+  estimate?: ITariffEstimate,
+): string[] {
   const placed = kind === 'placed';
 
   const lines = [
@@ -76,6 +100,9 @@ function detailedBlock(totals: IProfitTotals, kind: 'placed' | 'redeemed'): stri
     ...lines,
     `➖ Комиссия ${percent(totals.rates.commissionPercent)}%: ` +
       `${b(formatRubles(totals.commission))}`,
+    // Сразу под комиссией — то, с чем её сверяют. Пустая оценка (ни одного
+    // покрытого заказа) не печатается: «0 ₽» читался бы как «услуги бесплатны».
+    ...(estimate?.coveredOrders ? [tariffEstimateLine(estimate)] : []),
     `➖ Налог ${percent(totals.rates.taxPercent)}%: ${b(formatRubles(totals.tax))}`,
     // Продвижение — только когда начислено: ноль в столбце вычитаний — шум, а
     // не настроившие буст продавцы не должны гадать, что это за строка.
@@ -109,8 +136,17 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
   // комиссию, налог и закуп — то, ради чего отчёт и открывают.
   const placedIsMain = !!placed?.orders;
 
+  // Оценка калькулятора достаётся только основному блоку, и совпадение
+  // scope проверяется явно: сервис считает её тем же предикатом, но если
+  // наборы разойдутся (правка одного места без другого), строка с чужим
+  // набором хуже, чем её отсутствие.
+  const estimate = report.tariffEstimate;
+
   if (placedIsMain) {
-    lines.push(...detailedBlock(placed, 'placed'), 'Заказы ещё едут — часть могут не выкупить.');
+    lines.push(
+      ...detailedBlock(placed, 'placed', estimate?.scope === 'placed' ? estimate : undefined),
+      'Заказы ещё едут — часть могут не выкупить.',
+    );
   }
 
   // Отменённые в кабинете лежат в общем списке. Промолчав о них, мы получим
@@ -134,7 +170,9 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
         'Это другие заказы: оформленные за период попадут сюда после выкупа.',
       );
     } else {
-      lines.push(...detailedBlock(totals, 'redeemed'));
+      lines.push(
+        ...detailedBlock(totals, 'redeemed', estimate?.scope === 'redeemed' ? estimate : undefined),
+      );
     }
   }
 

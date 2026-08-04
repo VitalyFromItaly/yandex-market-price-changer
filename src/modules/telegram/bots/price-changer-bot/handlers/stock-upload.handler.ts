@@ -3,6 +3,8 @@ import type { TTelegrafBot } from '../../../domain.telegram';
 import { Injectable, Logger } from '@nestjs/common';
 import { message } from 'telegraf/filters';
 
+import { AppConfigService } from '../../../../../config/app-config.service';
+import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import {
@@ -15,6 +17,7 @@ import { formatStockReport } from '../../../../yandex/stocks/stock-report';
 import { StockSyncService } from '../../../../yandex/stocks/stock-sync.service';
 import { YandexApiError } from '../../../../yandex/yandex-api.errors';
 import { htmlOptions } from '../../../formatting/telegram-format';
+import { FEATURE, isFeatureEnabled } from '../../shared/features.domain';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
 
 /**
@@ -37,6 +40,32 @@ export const UPLOAD_LIMITS = {
   dryRunKeyword: 'проверка',
 } as const;
 
+/**
+ * Отказ, когда админ закрыл продавцу ОБЕ половины загрузки. Файл в этом случае
+ * даже не скачивается. Стиль — как у блока FeatureGateHandler: гейт документ
+ * больше не закрывает (исход бывает частичным, см. requiredFeatures), поэтому
+ * полный отказ произносит хендлер.
+ */
+export const UPLOAD_DISABLED_TEXT = [
+  '🔒 Загрузка прайса сейчас недоступна.',
+  '',
+  'Её открывает администратор бота. Напишите ему, если она вам нужна.',
+].join('\n');
+
+/** Половина «остатки» выключена админом — файл разберём ради закупочных цен. */
+export const STOCK_UPDATE_DISABLED_TEXT = [
+  '📦 Запись остатков для вас отключена администратором — в Яндекс ничего не уйдёт.',
+  '',
+  'Файл всё равно разберу: закупочные цены сохранятся, и «💰 Прибыль» посчитается.',
+].join('\n');
+
+/** Половина «закупочные цены» выключена админом — пишем только остатки. */
+export const PURCHASE_PRICES_DISABLED_TEXT = [
+  '💾 Сохранение закупочных цен для вас отключено администратором.',
+  '',
+  'Остатки из файла обновлю как обычно, но «💰 Прибыль» этот прайс не пополнит.',
+].join('\n');
+
 @Injectable()
 export class StockUploadHandler {
   private readonly logger = new Logger(StockUploadHandler.name);
@@ -49,6 +78,8 @@ export class StockUploadHandler {
     private readonly yandexMarketService: YandexMarketService,
     private readonly errors: ErrorReporter,
     private readonly storePrompt: StorePromptService,
+    private readonly accessService: UserAccessService,
+    private readonly config: AppConfigService,
   ) {}
 
   public register(bot: TTelegrafBot): void {
@@ -95,6 +126,31 @@ export class StockUploadHandler {
       return;
     }
 
+    /**
+     * Прайс делает два независимых дела, каждое под своей фичей: закупочные
+     * цены (наша Mongo, кормят «Прибыль») и остатки (Partner API). Гейт
+     * документ не закрывает — он умеет отбить апдейт только целиком, а исход
+     * бывает частичным. Решение принимается здесь, ДО скачивания. Админ минует
+     * обе проверки — ровно как в FeatureGateHandler, иначе два слоя одной
+     * проверки разойдутся.
+     */
+    const isAdmin = this.config.isAdmin(ctx.from.id);
+    const features = isAdmin
+      ? undefined
+      : (
+          await this.accessService.findByUserAndBot(
+            ctx.from.id.toString(),
+            ctx.botInfo.id.toString(),
+          )
+        )?.features;
+    const savePrices = isAdmin || isFeatureEnabled(features, FEATURE.PURCHASE_PRICES);
+    const stockFeatureOn = isAdmin || isFeatureEnabled(features, FEATURE.STOCK_UPDATE);
+
+    if (!savePrices && !stockFeatureOn) {
+      await ctx.reply(UPLOAD_DISABLED_TEXT, htmlOptions());
+      return;
+    }
+
     // Креды проверяем ДО скачивания: без них загрузка бессмысленна.
     const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
     if (!store?.campaign_id || !store?.business_id || !store?.token) {
@@ -125,22 +181,44 @@ export class StockUploadHandler {
      * кэш не знает, спрашиваем через `StockSyncService`: правило и способ его
      * выяснить остаются в одном месте.
      */
-    const placementType =
-      placementOfCampaign(store.stores, store.campaign_id) ??
-      (await this.stocks.placementFor(credentials));
+    // Модель не спрашиваем вовсе, когда запись остатков выключена фичей, —
+    // тот же принцип, что у STOCK_WRITE_ENABLED: раз писать не будем, незачем
+    // ходить в Маркет за моделью.
+    const placementType = stockFeatureOn
+      ? (placementOfCampaign(store.stores, store.campaign_id) ??
+        (await this.stocks.placementFor(credentials)))
+      : undefined;
 
-    const stocksReadOnly = !isStockWritable(placementType);
-    if (stocksReadOnly) {
-      await ctx.reply(placementType ? FBY_STOCKS_READONLY : PLACEMENT_UNKNOWN, htmlOptions());
-    }
+    const stocksReadOnly = !stockFeatureOn || !isStockWritable(placementType);
 
     const dryRun = String(ctx.message.caption ?? '')
       .toLowerCase()
       .includes(UPLOAD_LIMITS.dryRunKeyword);
 
+    // Редкий угол: остатки писать нельзя (модель или фича), а цены выключены —
+    // файлу просто нечего сделать, и молча разобрать его значило бы соврать.
+    // «Проверку» при этом пропускаем: сверка с каталогом ничего не пишет и
+    // остаётся полезной.
+    if (stocksReadOnly && !savePrices && !dryRun) {
+      await ctx.reply(UPLOAD_DISABLED_TEXT, htmlOptions());
+      return;
+    }
+
+    // Предупреждаем ДО скачивания — обещать «загружаю остатки», а через минуту
+    // прислать «остатки не записаны», значит выглядеть сломанным. Тексты про
+    // «цены сохранятся» показываются только когда это правда (savePrices):
+    // остаётся один случай без них — «проверка», и ей хватает своей фразы.
+    if (!stockFeatureOn) {
+      await ctx.reply(STOCK_UPDATE_DISABLED_TEXT, htmlOptions());
+    } else if (stocksReadOnly && savePrices) {
+      await ctx.reply(placementType ? FBY_STOCKS_READONLY : PLACEMENT_UNKNOWN, htmlOptions());
+    } else if (!stocksReadOnly && !savePrices) {
+      await ctx.reply(PURCHASE_PRICES_DISABLED_TEXT, htmlOptions());
+    }
+
     // Обещаем ровно то, что сделаем. «Загружаю остатки» там, где их не будет, —
     // обещание, которое отчёт следом опровергнет.
-    await ctx.reply(this.progressText(dryRun, stocksReadOnly));
+    await ctx.reply(this.progressText(dryRun, stocksReadOnly, savePrices));
 
     // Файл держим В ПАМЯТИ, на диск не пишем.
     //
@@ -159,6 +237,8 @@ export class StockUploadHandler {
     const result = await this.stocks.sync(credentials, buffer, {
       dryRun,
       telegramUserId: ctx.from.id.toString(),
+      savePurchasePrices: savePrices,
+      stockWriteAllowed: stockFeatureOn,
     });
 
     this.logger.log(
@@ -172,13 +252,16 @@ export class StockUploadHandler {
   /**
    * Что бот обещает сделать с файлом.
    *
-   * Три состояния, а не два: «проверка» — просьба продавца, «только цены» — наш
-   * отказ писать остатки. Слить их в одну фразу значит перестать различать
-   * «я так попросил» и «мне отказали».
+   * Состояния не слиты в одну фразу: «проверка» — просьба продавца, «только
+   * цены» — наш отказ писать остатки, «без цен» — решение админа. Перестать их
+   * различать значит перестать различать «я так попросил» и «мне отказали».
    */
-  private progressText(dryRun: boolean, stocksReadOnly: boolean): string {
-    if (stocksReadOnly) return '🔍 Разбираю файл — сохраню закупочные цены, остатки не трогаю…';
-    if (dryRun) return '🔍 Проверяю файл, в Яндекс ничего записывать не буду…';
+  private progressText(dryRun: boolean, stocksReadOnly: boolean, savePrices: boolean): string {
+    if (stocksReadOnly && savePrices) {
+      return '🔍 Разбираю файл — сохраню закупочные цены, остатки не трогаю…';
+    }
+    if (dryRun || stocksReadOnly) return '🔍 Проверяю файл, в Яндекс ничего записывать не буду…';
+    if (!savePrices) return '⏳ Загружаю остатки, закупочные цены не сохраняю…';
     return '⏳ Загружаю остатки, это займёт минуту…';
   }
 

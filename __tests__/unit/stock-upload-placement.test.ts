@@ -23,6 +23,7 @@ describe('StockUploadHandler: модель размещения', () => {
   let sync: ReturnType<typeof vi.fn>;
   let placementFor: ReturnType<typeof vi.fn>;
   let findByTelegramUser: ReturnType<typeof vi.fn>;
+  let findByUserAndBot: ReturnType<typeof vi.fn>;
   let getFileLink: ReturnType<typeof vi.fn>;
   let handler: StockUploadHandler;
 
@@ -49,6 +50,8 @@ describe('StockUploadHandler: модель размещения', () => {
     }));
     placementFor = vi.fn(async () => undefined);
     findByTelegramUser = vi.fn();
+    // Записи доступа нет → у обеих фич прайса действует умолчание «включено».
+    findByUserAndBot = vi.fn(async () => null);
     getFileLink = vi.fn(async () => ({ href: 'https://example.invalid/file.xlsx' }));
 
     // Скачивание файла — обычный fetch. В сеть за ним не ходим: тест про то,
@@ -63,6 +66,8 @@ describe('StockUploadHandler: модель размещения', () => {
       { findByTelegramUser } as never,
       { report: async () => undefined } as never,
       { replyNeedsStore: vi.fn(async () => undefined) } as never,
+      { findByUserAndBot } as never,
+      { isAdmin: () => false } as never,
     );
   });
 
@@ -195,5 +200,94 @@ describe('StockUploadHandler: модель размещения', () => {
 
     expect(placementFor).not.toHaveBeenCalled();
     expect(sync).toHaveBeenCalled();
+  });
+
+  /**
+   * Фичи прайса. Гейт документы не закрывает (исход бывает частичным), поэтому
+   * решение по двум фичам — `purchase_prices` и `stock_update` — принимает сам
+   * обработчик, до скачивания файла.
+   */
+  describe('фичи прайса', () => {
+    it('обе выключены — отказ до скачивания', async () => {
+      findByUserAndBot.mockResolvedValue({
+        features: { purchase_prices: false, stock_update: false },
+      });
+      findByTelegramUser.mockResolvedValue(storeDoc(FBS.campaignId, [FBS, FBY]));
+
+      const ctx = ctxWith();
+      await documentHandler()(ctx as never);
+
+      expect(said(ctx)).toContain('недоступна');
+      expect(getFileLink).not.toHaveBeenCalled();
+      expect(sync).not.toHaveBeenCalled();
+    });
+
+    it('остатки выключены — файл разбирается, sync знает про запрет, Маркет о модели не спрашивается', async () => {
+      findByUserAndBot.mockResolvedValue({ features: { stock_update: false } });
+      findByTelegramUser.mockResolvedValue(storeDoc(FBS.campaignId, undefined));
+
+      const ctx = ctxWith();
+      await documentHandler()(ctx as never);
+
+      expect(said(ctx)).toContain('отключена администратором');
+      expect(said(ctx)).not.toContain('Загружаю остатки');
+      // Раз писать не будем — модель не выясняем, тот же принцип, что у
+      // STOCK_WRITE_ENABLED.
+      expect(placementFor).not.toHaveBeenCalled();
+      expect(sync).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ stockWriteAllowed: false, savePurchasePrices: true }),
+      );
+    });
+
+    it('закуп выключен — остатки пишутся, sync цены не сохраняет', async () => {
+      findByUserAndBot.mockResolvedValue({ features: { purchase_prices: false } });
+      findByTelegramUser.mockResolvedValue(storeDoc(FBS.campaignId, [FBS, FBY]));
+
+      const ctx = ctxWith();
+      await documentHandler()(ctx as never);
+
+      expect(said(ctx)).toContain('закупочные цены не сохраняю');
+      expect(sync).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ stockWriteAllowed: true, savePurchasePrices: false }),
+      );
+    });
+
+    it('администратор минует обе фичи — как в featureGate', async () => {
+      handler = new StockUploadHandler(
+        { sync, placementFor } as never,
+        { findByTelegramUser } as never,
+        { report: async () => undefined } as never,
+        { replyNeedsStore: vi.fn(async () => undefined) } as never,
+        { findByUserAndBot } as never,
+        { isAdmin: () => true } as never,
+      );
+      findByTelegramUser.mockResolvedValue(storeDoc(FBS.campaignId, [FBS, FBY]));
+
+      await documentHandler()(ctxWith() as never);
+
+      // Запись доступа даже не читается — у админа её нет.
+      expect(findByUserAndBot).not.toHaveBeenCalled();
+      expect(sync).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ stockWriteAllowed: true, savePurchasePrices: true }),
+      );
+    });
+
+    it('FBY-магазин + выключенный закуп + без «проверки» — файлу нечего делать, отказ', async () => {
+      findByUserAndBot.mockResolvedValue({ features: { purchase_prices: false } });
+      findByTelegramUser.mockResolvedValue(storeDoc(FBY.campaignId, [FBS, FBY]));
+
+      const ctx = ctxWith();
+      await documentHandler()(ctx as never);
+
+      expect(said(ctx)).toContain('недоступна');
+      expect(getFileLink).not.toHaveBeenCalled();
+      expect(sync).not.toHaveBeenCalled();
+    });
   });
 });

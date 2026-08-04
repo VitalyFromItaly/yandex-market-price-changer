@@ -9,6 +9,7 @@ import {
   businessWarehousesPath,
   campaignsPath,
   fulfillmentWarehousesPath,
+  OFFER_IDS_BATCH,
   offerMappingsPath,
   ordersPath,
   PAGE_LIMITS,
@@ -17,6 +18,8 @@ import {
   stocksOnWarehousesGeneratePath,
   stocksPath,
   supplyRequestsPath,
+  TARIFFS_MAX_OFFERS,
+  tariffsCalculatePath,
   WAREHOUSE_PROBE_LIMIT,
 } from './yandex-api.paths';
 import { assertWithinHistoryWindow, toDateParam, type IDateRange } from './yandex-date-window';
@@ -160,6 +163,58 @@ export interface IStockUpdate {
   /** Остаток. 0 — валидное значение: означает «нет в наличии». */
   count: number;
 }
+
+/**
+ * Логистические параметры товара из каталога — то, что нужно калькулятору
+ * тарифов: категория Маркета и габариты с весом.
+ */
+export interface IOfferLogistics {
+  offerId: string;
+  /**
+   * Категория Маркета. Читается из `offer.marketCategoryId` с фолбэком на
+   * `mapping.marketCategoryId` — поле живёт в обоих местах ответа, и у части
+   * товаров заполнено только одно из них.
+   */
+  marketCategoryId?: number;
+  /** Габариты в сантиметрах, вес в килограммах — как хранит каталог. */
+  weightDimensions?: { length?: number; width?: number; height?: number; weight?: number };
+}
+
+/**
+ * Один товар в запросе калькулятора тарифов. Все поля обязательны по спеке
+ * (`exclusiveMinimum: 0` — ноль в любом измерении это 400, а не нулевой тариф).
+ */
+export interface ITariffOfferParams {
+  /** Листовая категория Маркета. */
+  categoryId: number;
+  /** Цена в рублях. */
+  price: number;
+  length: number;
+  width: number;
+  height: number;
+  weight: number;
+  quantity?: number;
+}
+
+/**
+ * Одна услуга из ответа калькулятора. `type` — сырой код Маркета строкой, не
+ * enum: на боевом набор бывает шире спеки (прецедент IFbySupplyRequest).
+ * `amount` опционален по спеке.
+ */
+export interface ICalculatedTariff {
+  type: string;
+  amount?: number;
+}
+
+/** Расчёт по одному товару: эхо запроса + список услуг. */
+export interface ITariffCalculation {
+  /** Эхо запроса — по нему сопоставляется товар (порядок Яндекс сохраняет). */
+  offer: ITariffOfferParams;
+  tariffs: ICalculatedTariff[];
+}
+
+/** Частота выплат — влияет на тариф приёма платежа (AGENCY_COMMISSION). */
+export type TPaymentFrequency = 'DAILY' | 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY';
 
 /** Статус генерации асинхронного отчёта и ссылка на готовый файл. */
 export interface IReportInfo {
@@ -713,6 +768,86 @@ export class YandexApiClient {
     return out;
   }
 
+  /**
+   * Логистические параметры товаров каталога по списку артикулов.
+   *
+   * Фильтр `offerIds` ВЗАИМОИСКЛЮЧИМ с пагинацией: запрос с ним не должен
+   * нести ни `limit`, ни `page_token` — такой список возвращается только
+   * целиком, поэтому params здесь пустые, а батчи режутся по лимиту самого
+   * фильтра (100, а не 200 страницы — см. OFFER_IDS_BATCH). Чанки идут
+   * последовательно: квота метода 600/мин, а 420 и так ловит withRetry.
+   */
+  public async getOfferMappings(
+    offerIds: readonly string[],
+  ): Promise<Map<string, IOfferLogistics>> {
+    const unique = [...new Set(offerIds)];
+    const out = new Map<string, IOfferLogistics>();
+
+    for (let i = 0; i < unique.length; i += OFFER_IDS_BATCH) {
+      const chunk = unique.slice(i, i + OFFER_IDS_BATCH);
+
+      const data = await this.post<{
+        result?: { offerMappings?: Array<TRawOfferMapping> };
+      }>(offerMappingsPath(this.credentials.businessId), {}, { offerIds: chunk });
+
+      for (const m of data.result?.offerMappings ?? []) {
+        const logistics = toOfferLogistics(m);
+        if (logistics) out.set(logistics.offerId, logistics);
+      }
+    }
+
+    return out;
+  }
+
+  /**
+   * Калькулятор стоимости услуг Маркета.
+   *
+   * campaignId уходит в ТЕЛЕ и числом (int64 по спеке; прецедент —
+   * generateStocksOnWarehousesReport). `sellingProgram` не отправляется
+   * никогда: он взаимоисключим с campaignId, вместе — ошибка.
+   *
+   * POST здесь — семантическое ЧТЕНИЕ (метод ничего не меняет), поэтому идёт
+   * через общий post() с повторами, в отличие от put().
+   *
+   * Порядок ответа равен порядку запроса, и конкатенация последовательных
+   * чанков его сохраняет — только так товар сопоставляется со своим расчётом.
+   */
+  public async calculateTariffs(
+    offers: readonly ITariffOfferParams[],
+    options: { frequency?: TPaymentFrequency } = {},
+  ): Promise<ITariffCalculation[]> {
+    const out: ITariffCalculation[] = [];
+
+    for (let i = 0; i < offers.length; i += TARIFFS_MAX_OFFERS) {
+      const chunk = offers.slice(i, i + TARIFFS_MAX_OFFERS);
+
+      const data = await this.post<{
+        result?: { offers?: Array<{ offer?: ITariffOfferParams; tariffs?: ICalculatedTariff[] }> };
+      }>(
+        tariffsCalculatePath(),
+        {},
+        {
+          parameters: prune({
+            campaignId: Number(this.credentials.campaignId),
+            frequency: options.frequency,
+          }),
+          offers: chunk,
+        },
+      );
+
+      for (const [index, entry] of (data.result?.offers ?? []).entries()) {
+        out.push({
+          // Эхо запроса. Если Яндекс его не вернул — восстанавливаем по
+          // позиции: порядок в ответе равен порядку в запросе по спеке.
+          offer: entry.offer ?? chunk[index],
+          tariffs: entry.tariffs ?? [],
+        });
+      }
+    }
+
+    return out;
+  }
+
   private async get<T>(path: string, params: Record<string, unknown>): Promise<T> {
     // Логируем путь и кампанию, но НИКОГДА заголовки: там токен продавца.
     this.logger.debug(`GET ${path} (кампания ${this.credentials.campaignId})`);
@@ -836,6 +971,31 @@ function toSupplyRequest(raw: TRawSupplyRequest): IFbySupplyRequest {
     planCount: Number(r.counters?.planCount) || 0,
     updatedAt: r.updatedAt,
     targetName: r.targetLocation?.name,
+  };
+}
+
+/** Сырая запись каталога из ответа offer-mappings. */
+type TRawOfferMapping = {
+  offer?: {
+    offerId?: string;
+    marketCategoryId?: number;
+    weightDimensions?: { length?: number; width?: number; height?: number; weight?: number };
+  };
+  mapping?: { marketCategoryId?: number };
+};
+
+/**
+ * Логистика одного товара, либо null без артикула. Категория — из `offer` с
+ * фолбэком на `mapping`: у части товаров она заполнена только в одном месте
+ * («Маркет ещё не определил категорию» — так документирует само поле offer).
+ */
+function toOfferLogistics(raw: TRawOfferMapping): IOfferLogistics | null {
+  const offerId = raw.offer?.offerId;
+  if (!offerId) return null;
+  return {
+    offerId,
+    marketCategoryId: raw.offer?.marketCategoryId ?? raw.mapping?.marketCategoryId,
+    weightDimensions: raw.offer?.weightDimensions,
   };
 }
 

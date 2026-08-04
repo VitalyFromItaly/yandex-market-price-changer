@@ -350,6 +350,90 @@ describe('StockSyncService: запись выключена настройкой
   });
 });
 
+/**
+ * Пофичные запреты: администратор может выключить продавцу запись остатков
+ * (`stock_update`) или сохранение закупа (`purchase_prices`) по отдельности.
+ * Умолчания опций повторяют прежнее поведение — старые вызовы (скрипт
+ * load-purchase-prices, тесты выше) не передают их вовсе.
+ */
+describe('StockSyncService: фичи прайса', () => {
+  const file = readFileSync(FIXTURE);
+
+  it('stockWriteAllowed: false — остатки не пишутся, повод «feature-disabled»', async () => {
+    const client = fakeClient(['FAA02006M'], { placementType: 'FBS' });
+    const result = await serviceWith(client).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+      stockWriteAllowed: false,
+    });
+
+    expect(client.updateStocks).not.toHaveBeenCalled();
+    // Модель даже не спрашивается — писать всё равно не будем.
+    expect(client.listStores).not.toHaveBeenCalled();
+    expect(result.writeSkipReason).toBe('feature-disabled');
+    expect(result.updated).toBe(0);
+  });
+
+  it('закуп при выключенных остатках сохраняется — фичи независимы', async () => {
+    const prices = fakePurchasePrices();
+    const result = await serviceWith(fakeClient(['FAA02006M']), prices).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+      stockWriteAllowed: false,
+    });
+
+    expect(prices.upsertMany).toHaveBeenCalledTimes(1);
+    expect(result.purchasePricesSaved).toBeGreaterThan(0);
+  });
+
+  it('savePurchasePrices: false — закуп не пишется, остатки идут как обычно', async () => {
+    const client = fakeClient(['FAA02006M'], { placementType: 'FBS' });
+    const prices = fakePurchasePrices();
+    const result = await serviceWith(client, prices).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+      savePurchasePrices: false,
+    });
+
+    expect(prices.upsertMany).not.toHaveBeenCalled();
+    expect(result.purchasePricesSaved).toBe(0);
+    expect(result.purchasePricesSkipped).toBe(true);
+    expect(client.updateStocks).toHaveBeenCalled();
+    expect(result.updated).toBe(1);
+  });
+
+  it('среда важнее фичи: при STOCK_WRITE_ENABLED=false повод — «write-disabled»', async () => {
+    // Иначе отчёт отправил бы продавца к администратору там, где дело в среде.
+    const result = await serviceWith(fakeClient(['FAA02006M']), undefined, false).sync(
+      CREDENTIALS,
+      file,
+      { telegramUserId: USER, stockWriteAllowed: false },
+    );
+
+    expect(result.writeSkipReason).toBe('write-disabled');
+  });
+
+  it('отчёт про выключенные остатки ведёт к администратору, а не к смене магазина', async () => {
+    const result = await serviceWith(fakeClient(['FAA02006M'])).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+      stockWriteAllowed: false,
+    });
+    const text = formatStockReport(result);
+
+    expect(text).toContain('отключена администратором');
+    expect(text).toContain('напишите администратору');
+    expect(text).not.toContain('Сменить магазин');
+    expect(text).not.toContain('Остатки обновлены');
+  });
+
+  it('отчёт про выключенный закуп объясняет, почему сохранённых цен ноль', async () => {
+    const result = await serviceWith(fakeClient(['FAA02006M'])).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+      savePurchasePrices: false,
+    });
+    const text = formatStockReport(result);
+
+    expect(text).toContain('Закупочные цены не сохранялись');
+  });
+});
+
 describe('StockSyncService: закупочные цены', () => {
   const file = readFileSync(FIXTURE);
 

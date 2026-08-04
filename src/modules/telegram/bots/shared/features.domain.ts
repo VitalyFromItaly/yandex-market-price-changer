@@ -2,6 +2,7 @@ import type { TReportKey } from '../../../yandex/reports/report-status-map';
 
 import { parsePromoCallback } from '../../../yandex/reports/promo';
 import { REPORT } from '../../../yandex/reports/report-status-map';
+import { isFby } from '../../../yandex/stocks/placement';
 import { MENU, menuLayout } from '../price-changer-bot/menu.constants';
 import {
   MENU_TO_REPORT,
@@ -38,14 +39,24 @@ export const FEATURE = {
   REPORT_PROFIT: 'report_profit',
   /** «⏰ Рассылка» — раздел настройки и сам ежедневный дайджест */
   SCHEDULE: 'schedule',
-  /** Приём прайса документом → запись остатков в Partner API */
-  STOCK_UPLOAD: 'stock_upload',
+  /**
+   * Прайс документом: две НЕЗАВИСИМЫЕ половины одной загрузки. Прежний единый
+   * `stock_upload` закрывал файл целиком, а админ должен уметь оставить
+   * продавцу закупочные цены (кормят «Прибыль», пишутся в нашу Mongo), забрав
+   * запись остатков (уходит в Partner API) — и наоборот. Старые явные записи
+   * `stock_upload` в `UserAccess.features` инертны: их никто больше не читает,
+   * к новым ключам применяется умолчание «включено».
+   */
+  PURCHASE_PRICES: 'purchase_prices',
+  STOCK_UPDATE: 'stock_update',
   /** «🏬 Склады» — обзор складов по типам (FBY и склад магазина) */
   WAREHOUSES: 'warehouses',
   /** «📦 FBY» — сводка по складу Маркета: остатки, брак, заявки, доставка */
   FBY: 'fby',
   /** «📣 Продвижение» — комиссия за буст по брендам, вычитается в «Прибыли» */
   PROMOTION: 'promotion',
+  /** Строка «🧮 По калькулятору Маркета» в «Прибыли» — сверка комиссии */
+  TARIFF_CALC: 'tariff_calc',
 } as const;
 
 export type TFeatureKey = (typeof FEATURE)[keyof typeof FEATURE];
@@ -66,10 +77,12 @@ const FEATURE_KEY_SET: Record<TFeatureKey, true> = {
   [FEATURE.REPORT_IN_TRANSIT]: true,
   [FEATURE.REPORT_PROFIT]: true,
   [FEATURE.SCHEDULE]: true,
-  [FEATURE.STOCK_UPLOAD]: true,
+  [FEATURE.PURCHASE_PRICES]: true,
+  [FEATURE.STOCK_UPDATE]: true,
   [FEATURE.WAREHOUSES]: true,
   [FEATURE.FBY]: true,
   [FEATURE.PROMOTION]: true,
+  [FEATURE.TARIFF_CALC]: true,
 };
 
 export const FEATURE_KEYS = Object.keys(FEATURE_KEY_SET) as TFeatureKey[];
@@ -126,9 +139,14 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     description: 'Ежедневная автоматическая отправка отчётов по расписанию.',
     defaultEnabled: true,
   },
-  [FEATURE.STOCK_UPLOAD]: {
-    label: '📥 Загрузка прайса',
-    description: 'Приём прайс-листа и обновление остатков на Яндекс.Маркете.',
+  [FEATURE.PURCHASE_PRICES]: {
+    label: '💾 Закуп из прайса',
+    description: 'Сохранение закупочных цен из прайс-листа — без них не считается «Прибыль».',
+    defaultEnabled: true,
+  },
+  [FEATURE.STOCK_UPDATE]: {
+    label: '📥 Остатки из прайса',
+    description: 'Запись остатков из прайс-листа на Яндекс.Маркет.',
     defaultEnabled: true,
   },
   [FEATURE.WAREHOUSES]: {
@@ -153,6 +171,18 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     description: 'Комиссия за продвижение по брендам — вычитается в отчёте «Прибыль».',
     defaultEnabled: true,
   },
+  [FEATURE.TARIFF_CALC]: {
+    // Не кнопка вовсе — дополнительная строка внутри «Прибыли», поэтому ни
+    // ключа в MENU, ни записи в MENU_TO_FEATURE/REPORT_TO_FEATURE: гейтить
+    // нечего, флаг читают сами сборщики отчёта (кнопка и рассылка).
+    label: '🧮 Калькулятор Маркета',
+    description:
+      'Строка «По калькулятору Маркета» в отчёте «Прибыль»: услуги Маркета по ' +
+      'тарифам (категория, габариты, цена) — для сверки с плоским процентом комиссии.',
+    // Default-off: экспериментальная, включается точечно из панели. Стоит
+    // 2–8 лишних запросов к Partner API на каждый отчёт «Прибыль».
+    defaultEnabled: false,
+  },
 };
 
 /** Карта явных решений администратора. Отсутствие ключа — не «выключено». */
@@ -161,6 +191,19 @@ export type TFeatureMap = Record<string, boolean> | undefined;
 export function isFeatureEnabled(features: TFeatureMap, key: TFeatureKey): boolean {
   const explicit = features?.[key];
   return typeof explicit === 'boolean' ? explicit : FEATURE_META[key].defaultEnabled;
+}
+
+/**
+ * Карта «всё включено» — для раскладки администратора. `featureGate` админов
+ * пропускает целиком, и клавиатура обязана говорить то же самое: прятать от
+ * админа кнопку, которую бот ему разрешает, значит рассинхронизировать два
+ * слоя одной проверки. Умолчания-off (например, у экранов склада Маркета)
+ * админа поэтому не касаются.
+ */
+export function allFeaturesEnabled(): Record<string, boolean> {
+  const resolved: Record<string, boolean> = {};
+  for (const key of FEATURE_KEYS) resolved[key] = true;
+  return resolved;
 }
 
 /** Все фичи с разрешёнными значениями — для панели и для сборки клавиатуры. */
@@ -246,13 +289,26 @@ export function requiredFeatures(input: {
     return [];
   }
 
-  // Документ — единственный путь записи в Partner API. Проверяется до текста:
-  // у документа бывает подпись («проверка»), и она не должна решать ничего.
-  if (input.hasDocument) return [FEATURE.STOCK_UPLOAD];
+  // Документ гейт НЕ закрывает — проверяется до текста только затем, чтобы
+  // подпись («проверка») не увела апдейт в ветку «это кнопка меню». Прайс
+  // делает два независимых дела (закупочные цены и остатки), каждое под своей
+  // фичей, и исход бывает частичным — «разобрать файл, но не писать остатки».
+  // Гейт умеет только отбить апдейт целиком, поэтому решение принимает
+  // stock-upload.handler — тот же класс исключений, что pending-ответы,
+  // которые гейт не видит.
+  if (input.hasDocument) return [];
 
   const feature = input.text === undefined ? undefined : MENU_TO_FEATURE[input.text];
   return feature ? [feature] : [];
 }
+
+/**
+ * Кнопки, живущие только у FBY-магазина: оба экрана — про склад Маркета, и у
+ * продавца на FBS/DBS/Express они пусты. Условие раскладки ВТОРОЕ, поверх
+ * фичи: показывается кнопка при «фича включена И активный магазин FBY».
+ * Хендлеры экранов перепроверяют модель сами — подпись можно набрать текстом.
+ */
+const FBY_ONLY_LABELS: ReadonlySet<string> = new Set([MENU.WAREHOUSES, MENU.FBY]);
 
 /**
  * Раскладка меню без кнопок выключенных фич.
@@ -261,14 +317,20 @@ export function requiredFeatures(input: {
  * же причина, по которой существует `MENU_LAYOUT_UNCONFIGURED`. Но на одной
  * раскладке полагаться нельзя: подпись кнопки можно прислать текстом, а старая
  * inline-кнопка живёт в истории чата вечно — поэтому есть ещё и гейт.
+ *
+ * `placementType` — модель активного магазина (из кэша `stores`); не-FBY и
+ * неизвестная модель прячут FBY-only кнопки. Неизвестная — потому что кэш
+ * пополняется фоном (`ensureStoresCached`) и кнопка догонит со следующей
+ * отрисовкой, а показать её продавцу FBS значит повести в тупик.
  */
-export function featureMenuLayout(features: TFeatureMap): string[][] {
+export function featureMenuLayout(features: TFeatureMap, placementType?: string): string[][] {
   return menuLayout()
-    .map((row) => row.filter((label) => allowsLabel(features, label)))
+    .map((row) => row.filter((label) => allowsLabel(features, label, placementType)))
     .filter((row) => row.length > 0);
 }
 
-function allowsLabel(features: TFeatureMap, label: string): boolean {
+function allowsLabel(features: TFeatureMap, label: string, placementType?: string): boolean {
+  if (FBY_ONLY_LABELS.has(label) && !isFby(placementType)) return false;
   const feature = MENU_TO_FEATURE[label];
   return !feature || isFeatureEnabled(features, feature);
 }

@@ -145,10 +145,17 @@ export class ReportsProcessor {
         return;
       }
 
-      // Прибыль — своим сервисом и своим текстом, ровно как по кнопке.
+      // Прибыль — своим сервисом и своим текстом, ровно как по кнопке: и флаг
+      // калькулятора проверяется так же, иначе кнопка и рассылка разойдутся —
+      // тот самый известный источник жалоб. Запись доступа здесь есть всегда
+      // (проверена выше), фолбэк «нет записи = админ» не нужен.
       const text =
         key === REPORT.PROFIT
-          ? formatProfitReport(await this.profit.build(store, period))
+          ? formatProfitReport(
+              await this.profit.build(store, period, new Date(), {
+                tariffEstimate: isFeatureEnabled(account.features, FEATURE.TARIFF_CALC),
+              }),
+            )
           : formatReport(await this.reports.build(store, key, new Date(), period));
 
       await bot.telegraf.telegram.sendMessage(account.telegramChatId, text, htmlOptions());

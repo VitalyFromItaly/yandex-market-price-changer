@@ -4,6 +4,7 @@ import { Context } from 'telegraf';
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { placementOfCampaign } from '../../../../yandex/stocks/placement';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { ADMIN_CB_PATTERN, parseAdminCallback } from '../../shared/access.domain';
@@ -109,10 +110,14 @@ export class AdminApprovalHandler {
       if (access.status === 'approved') {
         // Раскладку собираем для ЗАЯВИТЕЛЯ, а не для нажавшего кнопку админа:
         // ctx.from здесь — администратор, и его права к меню получателя
-        // отношения не имеют.
+        // отношения не имеют. Магазин — тоже заявителя: от его модели зависит,
+        // будут ли в меню FBY-кнопки.
+        const store = await this.yandexMarketService.findByTelegramUser(access.telegramUserId);
         const kb = await this.keyboard.createMenuKeyboard(
           this.config.isAdmin(access.telegramUserId),
           access.features,
+          false,
+          placementOfCampaign(store?.stores, store?.campaign_id),
         );
         // Текст — из access-decision.text.ts, общего с веб-панелью: она умеет
         // открывать доступ тем же тумблером, и две копии этой фразы разошлись

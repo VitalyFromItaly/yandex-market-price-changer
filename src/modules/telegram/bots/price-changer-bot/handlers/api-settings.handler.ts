@@ -63,6 +63,7 @@ import {
   type TPromoConfig,
   type TPromoPending,
 } from '../../../../yandex/reports/promo';
+import { placementOfCampaign } from '../../../../yandex/stocks/placement';
 import { YandexAuthError } from '../../../../yandex/yandex-api.errors';
 import { YandexClientFactory } from '../../../../yandex/yandex-client.factory';
 import { TTelegrafBot } from '../../../domain.telegram';
@@ -1688,7 +1689,15 @@ export class ApiSettingsHandler {
           '',
           'Отчёты доступны в меню ниже.',
         ].join('\n'),
-        keyboard: await this.keyboard.createMenuKeyboard(isAdmin, access?.features),
+        // Модель — из кэша `stores`; при первом подключении он добирается
+        // фоном (refreshStores), и FBY-кнопки догонят со следующей отрисовкой
+        // меню — прятать их сейчас безопаснее, чем показать продавцу FBS.
+        keyboard: await this.keyboard.createMenuKeyboard(
+          isAdmin,
+          access?.features,
+          false,
+          placementOfCampaign(store?.stores, store?.campaign_id),
+        ),
       };
     }
 

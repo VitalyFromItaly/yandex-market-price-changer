@@ -71,6 +71,17 @@ export function isStockWritable(placementType: string | undefined | null): boole
   return STOCK_WRITABLE[placementType.trim().toUpperCase() as TPlacement] === true;
 }
 
+/**
+ * Это FBY? Нормализация та же, что в `isStockWritable`: строка приходит от
+ * Маркета нетипизированной, «fby» и «FBY» обязаны значить одно. Неизвестная
+ * или пустая модель — НЕ FBY: экраны склада Маркета без магазина Маркета
+ * бессмысленны, и прятать их безопаснее, чем показывать.
+ */
+export function isFby(placementType: string | undefined | null): boolean {
+  if (!placementType) return false;
+  return placementType.trim().toUpperCase() === PLACEMENT.FBY;
+}
+
 /** Магазин в объёме, нужном для определения модели. Совпадает и с `IStoreRef`, и с `IStoreEntry`. */
 export interface IPlacementRef {
   campaignId: string;
@@ -126,3 +137,23 @@ export const PLACEMENT_UNKNOWN = [
   'Так безопаснее: на модели FBY складом распоряжается Маркет, и запись туда',
   'не отменяется. Закупочные цены из файла при этом сохранятся.',
 ].join('\n');
+
+/**
+ * Отказ экранов склада Маркета («🏬 Склады», «📦 FBY») на не-FBY магазине.
+ *
+ * Один текст на оба хендлера — правило «один экран, один текст»: две копии
+ * разъедутся так же, как когда-то разъехались экраны справки. Показывает
+ * модель активного магазина, когда она известна, — «у вас FBS» объясняет
+ * больше, чем «этот экран не для вас».
+ */
+export function fbyOnlyScreenText(placementType: string | undefined | null): string {
+  const model = placementType?.trim()
+    ? `модель <b>${placementType.trim().toUpperCase()}</b>`
+    : 'модель определить не удалось';
+  return [
+    `🏬 У активного магазина ${model}, а этот экран — про склад Маркета (FBY).`,
+    '',
+    'Если у вас есть FBY-магазин, переключитесь на него через «🏪 Сменить магазин» —',
+    'и кнопка заработает.',
+  ].join('\n');
+}

@@ -2,6 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { Context } from 'telegraf';
 
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import {
+  fbyOnlyScreenText,
+  isFby,
+  placementOfCampaign,
+} from '../../../../../modules/yandex/stocks/placement';
+import { StockSyncService } from '../../../../../modules/yandex/stocks/stock-sync.service';
 import { formatWarehousesOverview } from '../../../../../modules/yandex/warehouses/warehouses-message';
 import { WarehousesService } from '../../../../../modules/yandex/warehouses/warehouses.service';
 import { YandexApiError } from '../../../../../modules/yandex/yandex-api.errors';
@@ -16,7 +22,8 @@ import { StorePromptService } from '../../shared/services/store-prompt.service';
  * через ReportsHandler, поэтому в пайплайн composer'а отдельным шагом не
  * встаёт. Доступ закрыт фичей `warehouses` (по умолчанию выключена): гейт
  * возможностей отбивает кнопку раньше этого хендлера, свободного текста у
- * обзора нет, так что перепроверять флаг здесь не нужно.
+ * обзора нет, так что перепроверять флаг здесь не нужно. Модель магазина —
+ * нужно: экран живёт только у FBY, а гейт про магазины ничего не знает.
  *
  * Запрос к Partner API — только чтение (два GET), никакой записи.
  */
@@ -34,6 +41,7 @@ export class WarehousesHandler {
     private readonly stores: YandexMarketService,
     private readonly errors: ErrorReporter,
     private readonly storePrompt: StorePromptService,
+    private readonly stockSync: StockSyncService,
   ) {}
 
   public async handle(ctx: Context): Promise<void> {
@@ -48,6 +56,22 @@ export class WarehousesHandler {
       const store = await this.stores.findByTelegramUser(ctx.from.id.toString());
       if (!store) {
         await this.storePrompt.replyNeedsStore(ctx);
+        return;
+      }
+
+      // Экран — про склад Маркета, не-FBY магазину показывать нечего. Кнопку
+      // из меню на не-FBY уже вырезала раскладка, но подпись можно набрать
+      // текстом. Сначала кэш `stores` (обычный случай — без единого запроса),
+      // при пустом кэше — живой listStores, чтобы не отказывать несправедливо.
+      const placement =
+        placementOfCampaign(store.stores, store.campaign_id) ??
+        (await this.stockSync.placementFor({
+          token: store.token,
+          campaignId: store.campaign_id,
+          businessId: store.business_id,
+        }));
+      if (!isFby(placement)) {
+        await ctx.reply(fbyOnlyScreenText(placement), htmlOptions());
         return;
       }
 

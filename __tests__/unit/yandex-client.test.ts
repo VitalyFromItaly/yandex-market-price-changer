@@ -9,6 +9,7 @@ import {
   PAGE_LIMITS,
   ordersPath,
   returnsPath,
+  tariffsCalculatePath,
 } from '../../src/modules/yandex/yandex-api.paths';
 import {
   YandexAuthError,
@@ -29,10 +30,27 @@ function stubAxios() {
     baseURL: string;
     path: string;
     params: Record<string, unknown>;
+    /** Тело запроса — только у POST; GET его не несёт. */
+    body?: unknown;
   }> = [];
   let respond: () => Promise<unknown> = async () => ({ data: {} });
   let onError: (error: unknown) => unknown = (e) => {
     throw e;
+  };
+
+  const record = async (call: (typeof calls)[number]) => {
+    calls.push(call);
+    try {
+      return await respond();
+    } catch (raw) {
+      // Повторяем поведение axios: ошибку пропускаем через интерцептор.
+      return await Promise.resolve(onError(raw)).then(
+        (v) => v,
+        (e) => {
+          throw e;
+        },
+      );
+    }
   };
 
   vi.spyOn(axios, 'create').mockImplementation((config: any) => {
@@ -44,25 +62,21 @@ function stubAxios() {
           },
         },
       },
-      get: async (path: string, opts: { params: Record<string, unknown> }) => {
-        calls.push({
+      get: async (path: string, opts: { params: Record<string, unknown> }) =>
+        record({
           headers: config.headers,
           baseURL: config.baseURL,
           path,
           params: opts?.params ?? {},
-        });
-        try {
-          return await respond();
-        } catch (raw) {
-          // Повторяем поведение axios: ошибку пропускаем через интерцептор.
-          return await Promise.resolve(onError(raw)).then(
-            (v) => v,
-            (e) => {
-              throw e;
-            },
-          );
-        }
-      },
+        }),
+      post: async (path: string, body: unknown, opts: { params: Record<string, unknown> }) =>
+        record({
+          headers: config.headers,
+          baseURL: config.baseURL,
+          path,
+          params: opts?.params ?? {},
+          body,
+        }),
     };
     return instance as never;
   });
@@ -71,6 +85,10 @@ function stubAxios() {
     calls,
     setResponse(data: unknown) {
       respond = async () => ({ data });
+    },
+    /** Очередь ответов для методов с батчами: по одному на запрос, последний — по умолчанию. */
+    setResponses(...queue: unknown[]) {
+      respond = async () => ({ data: queue.length > 1 ? queue.shift() : queue[0] });
     },
     setFailure(status: number | undefined, payload?: unknown, message = 'boom') {
       respond = async () => {
@@ -298,6 +316,182 @@ describe('YandexApiClient: формирование запроса', () => {
     axiosStub.setFailure(undefined, undefined, 'socket hang up');
 
     await expect(client().getReturns()).rejects.toBeInstanceOf(YandexNetworkError);
+  });
+});
+
+describe('YandexApiClient: логистика каталога (getOfferMappings)', () => {
+  let axiosStub: ReturnType<typeof stubAxios>;
+
+  beforeEach(() => {
+    axiosStub = stubAxios();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const client = () =>
+    new YandexApiClient(
+      { token: 'ACMA:secret', campaignId: '12345', businessId: '67890' },
+      BASE_URL,
+      { sleep: async () => undefined },
+    );
+
+  it('фильтр offerIds уходит в теле, а params ПУСТЫЕ — без limit и page_token', async () => {
+    // По спеке offerIds взаимоисключим с пагинацией: запрос с обоими — 400.
+    // loadCatalogOfferIds шлёт limit/page_token, и скопировать это сюда легко.
+    axiosStub.setResponse({ result: { offerMappings: [] } });
+    await client().getOfferMappings(['A-1', 'B-2']);
+
+    expect(axiosStub.calls).toHaveLength(1);
+    expect(axiosStub.calls[0].path).toBe('/v2/businesses/67890/offer-mappings');
+    expect(axiosStub.calls[0].body).toEqual({ offerIds: ['A-1', 'B-2'] });
+    expect(axiosStub.calls[0].params).toEqual({});
+  });
+
+  it('батчи по 100 артикулов — НЕ по 200 из спеки, дубли схлопываются', async () => {
+    // Спека обещает до 200 offerIds, но боевой отвечает
+    // «400: offerIds size must be between 1 and 100 (rejected size: 200)» —
+    // проверено 04-08-2026. Лимит фильтра ≠ лимиту страницы.
+    axiosStub.setResponse({ result: { offerMappings: [] } });
+    const ids = Array.from({ length: 250 }, (_, i) => `SKU-${i}`);
+    await client().getOfferMappings([...ids, 'SKU-0', 'SKU-1']);
+
+    expect(axiosStub.calls).toHaveLength(3);
+    expect((axiosStub.calls[0].body as { offerIds: string[] }).offerIds).toHaveLength(100);
+    expect((axiosStub.calls[1].body as { offerIds: string[] }).offerIds).toHaveLength(100);
+    expect((axiosStub.calls[2].body as { offerIds: string[] }).offerIds).toHaveLength(50);
+  });
+
+  it('категория берётся из offer с фолбэком на mapping', async () => {
+    // marketCategoryId живёт в ДВУХ местах ответа, и у части товаров заполнено
+    // только одно: offer-поле документировано как «может отсутствовать, если
+    // Маркет ещё не определил категорию».
+    axiosStub.setResponse({
+      result: {
+        offerMappings: [
+          {
+            offer: {
+              offerId: 'A-1',
+              marketCategoryId: 111,
+              weightDimensions: { length: 10, width: 8, height: 5, weight: 0.4 },
+            },
+            mapping: { marketCategoryId: 999 },
+          },
+          { offer: { offerId: 'B-2' }, mapping: { marketCategoryId: 222 } },
+          { mapping: { marketCategoryId: 333 } }, // без артикула — пропускается
+        ],
+      },
+    });
+
+    const map = await client().getOfferMappings(['A-1', 'B-2']);
+
+    expect(map.get('A-1')?.marketCategoryId).toBe(111);
+    expect(map.get('A-1')?.weightDimensions).toEqual({
+      length: 10,
+      width: 8,
+      height: 5,
+      weight: 0.4,
+    });
+    expect(map.get('B-2')?.marketCategoryId).toBe(222);
+    expect(map.get('B-2')?.weightDimensions).toBeUndefined();
+    expect(map.size).toBe(2);
+  });
+});
+
+describe('YandexApiClient: калькулятор тарифов (calculateTariffs)', () => {
+  let axiosStub: ReturnType<typeof stubAxios>;
+
+  beforeEach(() => {
+    axiosStub = stubAxios();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const client = () =>
+    new YandexApiClient(
+      { token: 'ACMA:secret', campaignId: '12345', businessId: '67890' },
+      BASE_URL,
+      { sleep: async () => undefined },
+    );
+
+  const offer = (n: number) => ({
+    categoryId: 100 + n,
+    price: 1000 + n,
+    length: 11,
+    width: 11,
+    height: 11,
+    weight: 0.3,
+  });
+
+  it('campaignId уходит в ТЕЛЕ и числом, sellingProgram не отправляется', async () => {
+    // По спеке campaignId — int64, а sellingProgram взаимоисключим с ним:
+    // вместе — ошибка. Строковый campaignId из кредов должен стать числом.
+    axiosStub.setResponse({ result: { offers: [] } });
+    await client().calculateTariffs([offer(1)]);
+
+    expect(axiosStub.calls[0].path).toBe(tariffsCalculatePath());
+    expect(axiosStub.calls[0].path).toBe('/v2/tariffs/calculate');
+    expect(axiosStub.calls[0].params).toEqual({});
+
+    const body = axiosStub.calls[0].body as {
+      parameters: Record<string, unknown>;
+      offers: unknown[];
+    };
+    expect(body.parameters.campaignId).toBe(12345);
+    expect(body.parameters).not.toHaveProperty('sellingProgram');
+    expect(body.parameters).not.toHaveProperty('frequency');
+    expect(body.offers).toEqual([offer(1)]);
+  });
+
+  it('frequency уходит только когда передан', async () => {
+    axiosStub.setResponse({ result: { offers: [] } });
+    await client().calculateTariffs([offer(1)], { frequency: 'WEEKLY' });
+
+    const body = axiosStub.calls[0].body as { parameters: Record<string, unknown> };
+    expect(body.parameters.frequency).toBe('WEEKLY');
+  });
+
+  it('больше 200 товаров режется на батчи с сохранением порядка', async () => {
+    // Порядок — единственный способ сопоставить расчёт с товаром.
+    const offers = Array.from({ length: 250 }, (_, i) => offer(i));
+    axiosStub.setResponses(
+      {
+        result: {
+          offers: offers.slice(0, 200).map((o) => ({
+            offer: o,
+            tariffs: [{ type: 'FEE', amount: o.price * 0.1 }],
+          })),
+        },
+      },
+      {
+        result: {
+          offers: offers.slice(200).map((o) => ({
+            offer: o,
+            tariffs: [{ type: 'FEE', amount: o.price * 0.1 }],
+          })),
+        },
+      },
+    );
+
+    const result = await client().calculateTariffs(offers);
+
+    expect(axiosStub.calls).toHaveLength(2);
+    expect((axiosStub.calls[0].body as { offers: unknown[] }).offers).toHaveLength(200);
+    expect((axiosStub.calls[1].body as { offers: unknown[] }).offers).toHaveLength(50);
+    expect(result).toHaveLength(250);
+    expect(result[0].offer.categoryId).toBe(100);
+    expect(result[249].offer.categoryId).toBe(349);
+    expect(result[249].tariffs).toEqual([{ type: 'FEE', amount: 124.9 }]);
+  });
+
+  it('эхо без offer восстанавливается по позиции, пустые tariffs — пустым массивом', async () => {
+    axiosStub.setResponse({ result: { offers: [{}] } });
+    const result = await client().calculateTariffs([offer(7)]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].offer).toEqual(offer(7));
+    expect(result[0].tariffs).toEqual([]);
   });
 });
 

@@ -6,6 +6,7 @@ import { Context } from 'telegraf';
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { placementOfCampaign } from '../../../../yandex/stocks/placement';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { hoursUntilRetry, isRejectionExpired } from '../../shared/access.domain';
@@ -131,6 +132,7 @@ export class StartHandler {
       isAdmin,
       features,
       (store?.stores?.length ?? 0) > 1,
+      placementOfCampaign(store?.stores, store?.campaign_id),
     );
     await ctx.reply('🎉 С возвращением! Выберите отчёт:', htmlOptions(kb));
   }

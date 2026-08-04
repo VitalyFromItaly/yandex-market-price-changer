@@ -1,5 +1,7 @@
 import type { YandexMarketDocument } from '../../../database/schemas/yandex-market.schema';
+import type { IReportOrder } from './order-reports.service';
 import type { IProfitTotals } from './profit';
+import type { ITariffEstimate } from './tariff-estimate';
 import type { IReportPeriod } from './report-period';
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -10,6 +12,7 @@ import { YandexClientFactory } from '../yandex-client.factory';
 
 import { OrderReportsService } from './order-reports.service';
 import { applyDiscounts, orderSkus, profitOf, ratesOf } from './profit';
+import { buildTariffRows, estimateOf, unitCostsOf } from './tariff-estimate';
 import { DEFAULT_PERIOD } from './report-period';
 import { REPORT } from './report-status-map';
 
@@ -29,6 +32,23 @@ export interface IProfitReport {
   cancelledOrders: number;
   /** Когда последний раз загружали прайс. null — закупа нет вовсе. */
   pricesUpdatedAt: Date | null;
+  /**
+   * Услуги Маркета по калькулятору тарифов — информационная строка отчёта.
+   * Нет — либо флаг tariff_calc выключен, либо калькулятор недоступен: строка
+   * просто не печатается, отчёт живёт без неё.
+   */
+  tariffEstimate?: ITariffEstimate;
+}
+
+/** Настройки сборки отчёта, зависящие от вызывающего. */
+export interface IProfitBuildOptions {
+  /**
+   * Считать ли строку калькулятора тарифов. Решение принимает вызывающий по
+   * флагу tariff_calc из UserAccess: сервис до доступа не дотягивается (Mongo
+   * доступа — забота telegram-слоя), а считать всем подряд — это 2–8 лишних
+   * запросов к Partner API у продавцов, которым строка не нужна.
+   */
+  tariffEstimate?: boolean;
 }
 
 /**
@@ -53,6 +73,7 @@ export class ProfitService {
     store: YandexMarketDocument,
     period: IReportPeriod = DEFAULT_PERIOD,
     now: Date = new Date(),
+    options: IProfitBuildOptions = {},
   ): Promise<IProfitReport> {
     // Заказы берём тем же кодом, что и остальные отчёты: статусы, фильтр даты,
     // проверка 30-дневного окна и обход страниц — всё уже там.
@@ -93,13 +114,61 @@ export class ProfitService {
         `возвращено ${totals.returnedOrders}, закуп известен по ${costs.size} из ${skus.length}`,
     );
 
+    // Оценка по калькулятору — для того набора, чей блок печатает комиссию:
+    // тот же предикат, что placedIsMain в profit-message. Считается ПОСЛЕ
+    // profitOf, потому что предикат смотрит на не-исключённые заказы.
+    const tariffEstimate = options.tariffEstimate
+      ? placed.orders
+        ? await this.tariffEstimateOf(store, placedOrders.orders, 'placed')
+        : await this.tariffEstimateOf(store, result.orders, 'redeemed')
+      : undefined;
+
     return {
       period: result.period,
       totals,
       placed,
       cancelledOrders: placedOrders.cancelled.length,
       pricesUpdatedAt: await this.purchasePrices.lastUpdatedAt(store.telegramUserId),
+      tariffEstimate,
     };
+  }
+
+  /**
+   * Услуги Маркета по калькулятору тарифов для набора заказов.
+   *
+   * `frequency` НЕ передаётся намеренно: без него Яндекс берёт реальный график
+   * выплат продавца, а неподходящее значение — 400 INVALID_PAYMENT_SETTINGS
+   * («payout frequency WEEKLY and delay weeks null are not supported»,
+   * проверено на боевом 04-08-2026).
+   *
+   * Отказ калькулятора НЕ роняет отчёт — образец returnedOrderIds: строка
+   * информационная, отчёт без неё полноценен. Но администратору видно.
+   */
+  private async tariffEstimateOf(
+    store: YandexMarketDocument,
+    orders: readonly IReportOrder[],
+    scope: ITariffEstimate['scope'],
+  ): Promise<ITariffEstimate | undefined> {
+    if (!orders.length) return undefined;
+
+    try {
+      const client = this.clients.forStore(store);
+      const logistics = await client.getOfferMappings(orderSkus([...orders]));
+      const { rows } = buildTariffRows(orders, logistics);
+      if (!rows.length) return undefined;
+
+      const calculations = await client.calculateTariffs(rows.map((row) => row.params));
+      return estimateOf(orders, unitCostsOf(rows, calculations), scope);
+    } catch (error) {
+      void this.errors.report({
+        error,
+        source: 'yandex',
+        context: 'profit:tariffs',
+        telegramUserId: store.telegramUserId,
+        action: 'калькулятор тарифов для отчёта о прибыли',
+      });
+      return undefined;
+    }
   }
 
   /**

@@ -92,7 +92,8 @@ describe('Разрешение флага', () => {
   it('решение по одной фиче не задевает соседние', () => {
     const features = { [FEATURE.REPORT_PROFIT]: false };
     expect(isFeatureEnabled(features, FEATURE.REPORT_REDEEMED)).toBe(true);
-    expect(isFeatureEnabled(features, FEATURE.STOCK_UPLOAD)).toBe(true);
+    expect(isFeatureEnabled(features, FEATURE.STOCK_UPDATE)).toBe(true);
+    expect(isFeatureEnabled(features, FEATURE.PURCHASE_PRICES)).toBe(true);
   });
 
   it('resolveFeatures отдаёт значение для КАЖДОГО ключа', () => {
@@ -199,36 +200,52 @@ describe('Какие возможности нужны апдейту', () => {
     expect(requiredFeatures({ callbackData: 'promo:pick:rolex' })).toEqual([]);
   });
 
-  it('документ требует загрузку прайса', () => {
-    expect(requiredFeatures({ hasDocument: true })).toEqual([FEATURE.STOCK_UPLOAD]);
+  it('документ гейтом не закрывается — решение у stock-upload.handler', () => {
+    // Прайс делает два независимых дела (закуп и остатки), каждое под своей
+    // фичей, и исход бывает частичным. Гейт умеет отбить апдейт только
+    // целиком, поэтому по документам он обязан молчать.
+    expect(requiredFeatures({ hasDocument: true })).toEqual([]);
   });
 
   it('подпись к документу ничего не решает', () => {
     // У прайса бывает подпись «проверка», и она не должна уводить апдейт в
-    // ветку «это кнопка меню».
-    expect(requiredFeatures({ hasDocument: true, text: MENU.PROFIT })).toEqual([
-      FEATURE.STOCK_UPLOAD,
-    ]);
+    // ветку «это кнопка меню» — иначе подпись «💰 Прибыль» гейтила бы файл
+    // как отчёт.
+    expect(requiredFeatures({ hasDocument: true, text: MENU.PROFIT })).toEqual([]);
   });
 });
 
 describe('Раскладка меню по возможностям', () => {
   it('без ограничений видны все default-on кнопки, но не выключенные по умолчанию', () => {
-    // «Склады» и «FBY» — default-off, поэтому у продавца без явного решения их
-    // кнопок нет; ряды схлопываются целиком. Остальная раскладка — прежняя.
-    const DEFAULT_OFF: string[] = [MENU.WAREHOUSES, MENU.FBY];
+    // «Склады» и «FBY» — default-off И только для FBY-магазина, поэтому у
+    // продавца без явного решения их кнопок нет; ряды схлопываются целиком.
+    // Остальная раскладка — прежняя.
+    const FBY_ONLY: string[] = [MENU.WAREHOUSES, MENU.FBY];
     const layout = featureMenuLayout(undefined);
-    for (const label of DEFAULT_OFF) expect(layout.flat()).not.toContain(label);
+    for (const label of FBY_ONLY) expect(layout.flat()).not.toContain(label);
     expect(layout).toEqual(
       menuLayout()
-        .map((row) => row.filter((l) => !DEFAULT_OFF.includes(l)))
+        .map((row) => row.filter((l) => !FBY_ONLY.includes(l)))
         .filter((row) => row.length),
     );
   });
 
-  it('явно включённая default-off кнопка появляется', () => {
-    expect(featureMenuLayout({ [FEATURE.WAREHOUSES]: true }).flat()).toContain(MENU.WAREHOUSES);
-    expect(featureMenuLayout({ [FEATURE.FBY]: true }).flat()).toContain(MENU.FBY);
+  it('кнопки склада Маркета требуют И включённую фичу, И FBY-магазин', () => {
+    const enabled = { [FEATURE.WAREHOUSES]: true, [FEATURE.FBY]: true };
+    // Оба условия выполнены — кнопки на месте.
+    expect(featureMenuLayout(enabled, 'FBY').flat()).toContain(MENU.WAREHOUSES);
+    expect(featureMenuLayout(enabled, 'FBY').flat()).toContain(MENU.FBY);
+    // Фича включена, но магазин FBS (или модель неизвестна) — кнопок нет.
+    expect(featureMenuLayout(enabled, 'FBS').flat()).not.toContain(MENU.WAREHOUSES);
+    expect(featureMenuLayout(enabled).flat()).not.toContain(MENU.FBY);
+    // Магазин FBY, но фичи выключены (умолчание) — кнопок тоже нет.
+    expect(featureMenuLayout(undefined, 'FBY').flat()).not.toContain(MENU.WAREHOUSES);
+    expect(featureMenuLayout(undefined, 'FBY').flat()).not.toContain(MENU.FBY);
+  });
+
+  it('модель сравнивается без регистра — Маркет строку не типизирует', () => {
+    const enabled = { [FEATURE.FBY]: true };
+    expect(featureMenuLayout(enabled, ' fby ').flat()).toContain(MENU.FBY);
   });
 
   it('кнопка закрытой возможности исчезает', () => {

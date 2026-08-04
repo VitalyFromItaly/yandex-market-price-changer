@@ -3,6 +3,7 @@ import type { UserAccessDocument } from '../../database/schemas/user-access.sche
 import { Injectable, Logger } from '@nestjs/common';
 
 import { AppConfigService } from '../../config/app-config.service';
+import { YandexMarketService } from '../../database/services/yandex-market.service';
 import { BotRegistry } from '../telegram/bots/bot-registry.service';
 import {
   ACCESS_GRANTED_TEXT,
@@ -10,6 +11,7 @@ import {
 } from '../telegram/bots/price-changer-bot/access-decision.text';
 import { PriceChangerKeyboard } from '../telegram/bots/price-changer-bot/price-changer.keyboard';
 import { htmlOptions } from '../telegram/formatting/telegram-format';
+import { placementOfCampaign } from '../yandex/stocks/placement';
 
 /**
  * Сообщить продавцу, что доступ открыли или закрыли из веб-панели.
@@ -32,6 +34,7 @@ export class AccessNotifierService {
     private readonly registry: BotRegistry,
     private readonly keyboard: PriceChangerKeyboard,
     private readonly config: AppConfigService,
+    private readonly yandexMarketService: YandexMarketService,
   ) {}
 
   /**
@@ -57,10 +60,13 @@ export class AccessNotifierService {
 
       // Раскладка собирается для ПОЛУЧАТЕЛЯ: и права администратора, и его
       // набор открытых возможностей — его собственные, а не того, кто нажал
-      // тумблер в панели.
+      // тумблер в панели. Магазин — тоже его: от модели зависят FBY-кнопки.
+      const store = await this.yandexMarketService.findByTelegramUser(access.telegramUserId);
       const kb = await this.keyboard.createMenuKeyboard(
         this.config.isAdmin(access.telegramUserId),
         access.features,
+        false,
+        placementOfCampaign(store?.stores, store?.campaign_id),
       );
       await bot.telegraf.telegram.sendMessage(
         access.telegramChatId,

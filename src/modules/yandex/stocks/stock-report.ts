@@ -19,10 +19,11 @@ export function formatStockReport(result: IStockSyncResult): string {
 
   /**
    * Заголовок отвечает на «что произошло с моим файлом», и поводов НЕ записать
-   * ТРИ. Итог у всех общий — «в Яндекс ничего не ушло», — а действие от продавца
-   * требуется разное: прислать файл без пометки, сменить магазин, либо вообще
-   * никакое (запись выключена настройкой). Один заголовок на всех означал бы «записано 0»
-   * без объяснения.
+   * ЧЕТЫРЕ. Итог у всех общий — «в Яндекс ничего не ушло», — а действие от
+   * продавца требуется разное: прислать файл без пометки, сменить магазин,
+   * написать администратору (фича выключена) либо вообще никакое (запись
+   * выключена настройкой среды). Один заголовок на всех означал бы
+   * «записано 0» без объяснения.
    *
    * Запрет проверяется РАНЬШЕ просьбы: если продавец попросил сверку на
    * FBY-магазине, важнее сказать, что записать туда нельзя в принципе.
@@ -57,6 +58,12 @@ export function formatStockReport(result: IStockSyncResult): string {
   // вообще ничего», и продавец не поймёт, откуда взялась прибыль.
   if (result.purchasePricesSaved) {
     lines.push(`💵 Закупочных цен сохранено: ${b(result.purchasePricesSaved)}`);
+  }
+
+  // Выключенный закуп называем явно: ноль сохранённых цен бывает и у файла без
+  // цен, а продавец должен понять, почему «Прибыль» не пополнилась.
+  if (result.purchasePricesSkipped) {
+    lines.push('💾 Закупочные цены не сохранялись — сохранение выключено администратором.');
   }
 
   // Пропуски — главное, ради чего отчёт читают. Прячем их в конец только если
@@ -126,6 +133,9 @@ function headline(result: IStockSyncResult): string {
   if (result.writeSkipReason === 'write-disabled') {
     return `🧪 ${b('Запись остатков выключена')} — в Яндекс ничего не отправлено`;
   }
+  if (result.writeSkipReason === 'feature-disabled') {
+    return `🔒 ${b('Остатки не записаны')} — запись отключена администратором`;
+  }
   if (result.writeSkipReason === 'placement') {
     return `🏬 ${b('Остатки не записаны')} — магазин на модели ${esc(placement(result))}`;
   }
@@ -140,6 +150,9 @@ function skipExplanation(result: IStockSyncResult): string | null {
   if (result.writeSkipReason === 'write-disabled') {
     return 'В этой среде запись остатков отключена настройкой (STOCK_WRITE_ENABLED=false).';
   }
+  if (result.writeSkipReason === 'feature-disabled') {
+    return 'Администратор бота отключил вам запись остатков из прайса.';
+  }
   if (result.writeSkipReason !== 'placement') return null;
 
   return result.placementType
@@ -152,6 +165,12 @@ function skipAdvice(result: IStockSyncResult): string | null {
   // Выключенная запись — решение развёртывания, а не продавца: советовать ему
   // нечего, и фраза про смену магазина увела бы не туда.
   if (result.writeSkipReason === 'write-disabled') return null;
+
+  // Выключенная фича — решение администратора о продавце: единственное
+  // осмысленное действие — обсудить с ним, а не менять магазин или файл.
+  if (result.writeSkipReason === 'feature-disabled') {
+    return 'Если запись остатков вам нужна — напишите администратору бота.';
+  }
 
   if (result.writeSkipReason === 'placement') {
     return result.placementType

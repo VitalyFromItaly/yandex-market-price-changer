@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
+import { placementOfCampaign } from '../../../../yandex/stocks/placement';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { MENU } from '../menu.constants';
@@ -95,6 +96,7 @@ export class CallbackQueryHandler {
             this.config.isAdmin(ctx.from.id),
             account?.features,
             (store?.stores?.length ?? 0) > 1,
+            placementOfCampaign(store?.stores, store?.campaign_id),
           );
           // Два сообщения здесь неизбежны: editMessageText убирает inline-
           // кнопки из старого сообщения, а reply-клавиатуру можно прицепить

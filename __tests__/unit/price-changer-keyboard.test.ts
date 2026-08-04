@@ -2,10 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import { MENU } from '../../src/modules/telegram/bots/price-changer-bot/menu.constants';
 import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
-import {
-  FEATURE,
-  type TFeatureMap,
-} from '../../src/modules/telegram/bots/shared/features.domain';
+import { FEATURE, type TFeatureMap } from '../../src/modules/telegram/bots/shared/features.domain';
 
 /**
  * Главное меню обязано зависеть от подключённого магазина.
@@ -69,6 +66,55 @@ describe('PriceChangerKeyboard.buildMainKeyboard', () => {
     const buttons = await labels(true, true);
     expect(buttons).toContain(MENU.PROFIT);
     expect(buttons).toContain(MENU.USERS);
+  });
+});
+
+/**
+ * FBY-only кнопки: «🏬 Склады» и «📦 FBY» живут только у FBY-магазина, поверх
+ * своей фичи. Обычному продавцу нужны оба условия; администратору — только
+ * магазин: гейт его и так пропускает, а записи флагов у него нет вовсе, и без
+ * обхода фичевого фильтра он никогда не увидел бы кнопку, которую бот ему
+ * разрешает.
+ */
+describe('FBY-only кнопки в главном меню', () => {
+  const keyboard = new PriceChangerKeyboard();
+  const FBY_ENABLED: TFeatureMap = { [FEATURE.WAREHOUSES]: true, [FEATURE.FBY]: true };
+
+  const labels = async (
+    isAdmin: boolean,
+    features?: TFeatureMap,
+    placementType?: string,
+  ): Promise<string[]> => {
+    const kb = await keyboard.buildMainKeyboard(true, isAdmin, features, false, placementType);
+    return (kb.reply_markup.keyboard as string[][]).flat();
+  };
+
+  it('продавцу — только при включённой фиче И FBY-магазине', async () => {
+    expect(await labels(false, FBY_ENABLED, 'FBY')).toContain(MENU.WAREHOUSES);
+    expect(await labels(false, FBY_ENABLED, 'FBY')).toContain(MENU.FBY);
+    // Фича есть, магазин FBS — кнопок нет.
+    expect(await labels(false, FBY_ENABLED, 'FBS')).not.toContain(MENU.FBY);
+    // Магазин FBY, фичи по умолчанию выключены — кнопок нет.
+    expect(await labels(false, undefined, 'FBY')).not.toContain(MENU.FBY);
+    // Модель неизвестна — кнопок нет (кэш доберётся фоном, кнопка догонит).
+    expect(await labels(false, FBY_ENABLED)).not.toContain(MENU.FBY);
+  });
+
+  it('администратору — по одному условию: FBY-магазин', async () => {
+    const onFby = await labels(true, undefined, 'FBY');
+    expect(onFby).toContain(MENU.WAREHOUSES);
+    expect(onFby).toContain(MENU.FBY);
+    // Модель магазина обходом не является: FBY-экраны без FBY-магазина пусты
+    // у кого угодно.
+    expect(await labels(true, undefined, 'FBS')).not.toContain(MENU.FBY);
+  });
+
+  it('обход фич админом не воскрешает кнопку, закрытую самому админу явно', async () => {
+    // Явных записей у админа не бывает (нет UserAccess), но даже переданная
+    // карта игнорируется — раскладка обязана совпадать с гейтом, который флаги
+    // админа не читает.
+    const closed: TFeatureMap = { [FEATURE.FBY]: false };
+    expect(await labels(true, closed, 'FBY')).toContain(MENU.FBY);
   });
 });
 
