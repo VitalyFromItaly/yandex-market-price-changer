@@ -45,6 +45,16 @@ export interface IActionLogQuery {
 export const MAX_PAGE_SIZE = 500;
 const DEFAULT_PAGE_SIZE = 100;
 
+/**
+ * Метка «мусор»: 404 на несматченный маршрут — сплошь внешние сканеры,
+ * прочёсывающие публичный IP на предмет утёкших секретов (`GET /.env`,
+ * `/.git/config`, `/.aws/credentials`). Это `source` таких записей. В основном
+ * журнале и в счётчике ошибок обзора они СКРЫТЫ (иначе вытеснили бы из
+ * 90-дневного TTL то, ради чего журнал заведён), а видны в отдельной вкладке
+ * «Мусор» — запрос с `source=scanner`.
+ */
+export const JUNK_SOURCE = 'scanner' as const;
+
 @Injectable()
 export class ActionLogService {
   private readonly logger = new Logger(ActionLogService.name);
@@ -82,7 +92,11 @@ export class ActionLogService {
     if (query.kind) filter.kind = query.kind;
     if (query.direction) filter.direction = query.direction;
     if (query.status) filter.status = query.status;
+    // Явный source (в т.ч. `scanner` для вкладки «Мусор») отбирает ровно его;
+    // без source «мусор» сканеров ПРЯЧЕТСЯ — он не должен засорять ни основной
+    // журнал, ни счётчик ошибок обзора (тот тоже ходит сюда без source).
     if (query.source) filter.source = query.source;
+    else filter.source = { $ne: JUNK_SOURCE };
     if (query.since || query.until) {
       filter.createdAt = {};
       if (query.since) filter.createdAt.$gte = query.since;

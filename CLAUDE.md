@@ -723,7 +723,16 @@ per-user attribution and does not survive a restart.
   `setAlertSender` at bootstrap. A direct dependency would be a DI cycle: `BotRegistry` calls the
   reporter from `telegraf.catch`. A failure _while sending an alert_ is logged, never reported —
   otherwise it would generate another alert, forever.
-- 4xx does **not** alert (client behaviour), 5xx does. Both are recorded.
+- 4xx does **not** alert (client behaviour), 5xx does. Both are recorded. A **404 on an unmatched
+  route** is recorded too, but tagged `source: JUNK_SOURCE` (`'scanner'`) instead of `'http'`: those
+  are entirely external scanners probing the public IP for leaked secrets (`GET /.env`,
+  `/.git/config`, `/.aws/credentials`) — not a seller action and not a fault. The signal is
+  `!request.route` (a 404 thrown _inside_ a real controller has the route set and stays plain
+  `'http'`). `ActionLogService.filterOf` **hides `scanner` from the default query** (`source: {$ne:
+  'scanner'}`), so the main journal and the overview's error counter never show them; the panel's
+  **«Мусор»** tab requests them explicitly with `source=scanner`. The app never served those files —
+  every probe already got a bare 404; this only sorts them out of the way. The `scanner` value is a
+  member of `TErrorSource`.
 
 Wired in: global `AllExceptionsFilter`, the error branch of `LoggerInterceptor` (`tap` with a single
 callback never fired on error), `process.on('unhandledRejection'|'uncaughtException')` in `main.ts`,

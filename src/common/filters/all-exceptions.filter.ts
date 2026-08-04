@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 
 import { Catch, HttpException, HttpStatus } from '@nestjs/common';
 
+import { JUNK_SOURCE } from '../../database/services/action-log.service';
 import { ErrorReporter } from '../../modules/errors/error-reporter.service';
 
 /**
@@ -29,15 +30,25 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const status =
       exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
 
+    const target = `${request.method} ${request.url}`;
+
+    // 404 на НЕсматченный маршрут — это сплошь внешние сканеры, прочёсывающие
+    // публичный IP на предмет утёкших секретов (`GET /.env`, `/.git/config`,
+    // `/.aws/credentials`, …). Не действие продавца и не поломка. Пишем их как
+    // и прежде, но с source=scanner, чтобы панель прятала их из основного
+    // журнала и показывала в отдельной вкладке «Мусор». Признак «маршрут не
+    // сматчился» — отсутствие `request.route` (у 404, брошенного ВНУТРИ
+    // реального контроллера, он проставлен, и такой 404 остаётся обычным).
+    const routeNotFound = status === HttpStatus.NOT_FOUND && !request.route;
+
     // 4xx — это поведение клиента, а не поломка: неверный пароль и опечатка в
     // дате не должны будить администратора алертом. В журнал пишутся обе
     // группы, различить их можно по httpStatus.
     const serverFault = status >= HttpStatus.INTERNAL_SERVER_ERROR;
-    const target = `${request.method} ${request.url}`;
 
     void this.reporter.report({
       error: exception,
-      source: 'http',
+      source: routeNotFound ? JUNK_SOURCE : 'http',
       // В контексте — шаблон маршрута, а не конкретный url: иначе каждый запрос
       // с новым id даёт новый ключ, и троттлинг алертов не срабатывает никогда.
       context: `http:${request.method} ${request.route?.path ?? request.url}`,

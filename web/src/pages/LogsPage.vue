@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import type { IActionLogRow, ILogsQuery } from '../api';
 
@@ -8,6 +8,14 @@ import { describeError, token } from '../auth';
 import FiltersPanel from '../components/FiltersPanel.vue';
 import LogTable from '../components/LogTable.vue';
 import MessageModal from '../components/MessageModal.vue';
+
+/**
+ * Один экран на две вкладки. `junk=true` — это «Мусор»: те же таблица и модалка,
+ * но выборка жёстко по `source=scanner` (404-зонды сканеров секретов), а
+ * фильтры прячутся — фильтровать однородный шум незачем. Роутер переиспользует
+ * ЭТОТ ЖЕ компонент для /logs и /junk, поэтому смену вкладки ловим watch'ем.
+ */
+const props = defineProps<{ junk?: boolean }>();
 
 const REFRESH_MS = 10_000;
 
@@ -27,7 +35,9 @@ function emptyFilters(): ILogsQuery {
     kind: '',
     direction: '',
     status: '',
-    source: '',
+    // В «Мусоре» источник зафиксирован сканером; в обычном журнале он пуст, а
+    // бэкенд сам прячет из выдачи записи сканеров.
+    source: props.junk ? 'scanner' : '',
     since: '',
     until: '',
     limit: 100,
@@ -47,6 +57,17 @@ onMounted(load);
 // при переходе в «Пользователи», и живой setInterval продолжал бы дёргать
 // /api/logs с чужого экрана.
 onBeforeUnmount(stopTimer);
+
+// /logs ↔ /junk — один и тот же компонент, onMounted при переключении не
+// сработает. Сбрасываем фильтры под новую вкладку и перезагружаем.
+watch(
+  () => props.junk,
+  async () => {
+    Object.assign(filters, emptyFilters());
+    skip.value = 0;
+    await load();
+  },
+);
 
 async function load(): Promise<void> {
   if (!token.value) return;
@@ -100,7 +121,7 @@ function stopTimer(): void {
 
 <template>
   <header>
-    <h1>Журнал действий</h1>
+    <h1>{{ junk ? 'Мусор' : 'Журнал действий' }}</h1>
     <div class="tools">
       <button type="button" :disabled="loading" @click="load">
         {{ loading ? 'Загрузка…' : 'Обновить' }}
@@ -111,7 +132,13 @@ function stopTimer(): void {
     </div>
   </header>
 
-  <FiltersPanel v-model="filters" @apply="apply" @reset="reset" />
+  <p v-if="junk" class="muted note">
+    Внешние сканеры, ищущие утёкшие секреты (<code>/.env</code>, <code>/.git/config</code>,
+    <code>/.aws/credentials</code>). Таких файлов у нас нет — каждый запрос получает 404.
+    Держим отдельно, чтобы не засоряли журнал.
+  </p>
+
+  <FiltersPanel v-if="!junk" v-model="filters" @apply="apply" @reset="reset" />
 
   <p v-if="loadError" class="error">{{ loadError }}</p>
 
@@ -165,5 +192,17 @@ footer {
 .muted {
   color: var(--muted);
   font-size: 13px;
+}
+
+.note {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.note code {
+  font-size: 12px;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
 }
 </style>

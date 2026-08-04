@@ -7,8 +7,12 @@ import { YandexApiError } from '../yandex/yandex-api.errors';
 
 import { AlertThrottle } from './alert-throttle';
 
-/** Откуда прилетела ошибка. */
-export type TErrorSource = 'bot' | 'http' | 'queue' | 'process' | 'yandex';
+/**
+ * Откуда прилетела ошибка. `scanner` — внешний сканер секретов (404 на
+ * несматченный маршрут); такие записи прячутся из основного журнала и живут во
+ * вкладке «Мусор» (см. JUNK_SOURCE в action-log.service).
+ */
+export type TErrorSource = 'bot' | 'http' | 'queue' | 'process' | 'yandex' | 'scanner';
 
 /**
  * Владелец записи, когда пользователя нет: ошибка HTTP-слоя, падение процесса,

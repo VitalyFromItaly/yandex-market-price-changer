@@ -28,6 +28,9 @@ export const router = createRouter({
   routes: [
     { path: '/', name: 'home', component: HomePage },
     { path: '/logs', name: 'logs', component: LogsPage },
+    // Вкладка «Мусор» — тот же экран журнала, но показывает ТОЛЬКО записи
+    // сканеров (source=scanner). Из основного журнала они скрыты.
+    { path: '/junk', name: 'junk', component: LogsPage, props: { junk: true } },
     { path: '/queues', name: 'queues', component: QueuesPage },
     { path: '/users', name: 'users', component: UsersPage },
     {

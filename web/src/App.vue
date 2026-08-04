@@ -48,6 +48,7 @@ onMounted(async () => {
         <RouterLink to="/users">Пользователи</RouterLink>
         <RouterLink to="/logs">Журнал действий</RouterLink>
         <RouterLink to="/queues">Очереди</RouterLink>
+        <RouterLink to="/junk">Мусор</RouterLink>
       </nav>
 
       <button type="button" class="exit" @click="signOut">Выйти</button>
