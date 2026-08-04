@@ -30,6 +30,7 @@ import { StorePromptService } from './bots/shared/services/store-prompt.service'
 import { FileProcessingProcessor } from './queue/processors/file-processing.processor';
 import { NotificationsProcessor } from './queue/processors/notifications.processor';
 import { ReportsProcessor } from './queue/processors/reports.processor';
+import { StockSyncProcessor } from './queue/processors/stock-sync.processor';
 import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
 import { FileProcessingService } from './queue/services/file-processing.service';
 import { ReportSchedulerService } from './queue/services/report-scheduler.service';
@@ -127,6 +128,7 @@ import { QUEUE_NAMES } from './index';
     YandexApiProcessor,
     NotificationsProcessor,
     ReportsProcessor,
+    StockSyncProcessor,
     ReportSchedulerService,
   ],
   // PriceChangerKeyboard наружу — веб-панель, открывая доступ, шлёт продавцу

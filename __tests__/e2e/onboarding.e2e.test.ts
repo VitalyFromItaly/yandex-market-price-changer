@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 import { Test } from '@nestjs/testing';
+import { getQueueToken } from '@nestjs/bull';
 import { getModelToken } from '@nestjs/mongoose';
 import axios from 'axios';
+
+import { QUEUE_NAMES } from '../../src/modules/telegram/index';
 
 import { PriceChangerComposer } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.composer';
 import { AccessGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/access-gate.handler';
@@ -189,8 +192,16 @@ describe('Онбординг: от /start до отчёта', () => {
         StockUploadHandler,
         AdminUsersHandler,
         // Загрузка остатков в этом сценарии не участвует, но обработчик —
-        // часть пайплайна, и без заглушки его зависимость не резолвится.
+        // часть пайплайна, и без заглушек его зависимости не резолвятся.
         { provide: StockSyncService, useValue: { sync: async () => ({}) } },
+        {
+          provide: getQueueToken(QUEUE_NAMES.FILE_PROCESSING),
+          useValue: {
+            add: async () => ({ id: 1 }),
+            getWaitingCount: async () => 0,
+            getActiveCount: async () => 0,
+          },
+        },
         FallbackHandler,
         PriceChangerKeyboard,
         AdminNotifierService,

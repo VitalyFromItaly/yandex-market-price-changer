@@ -1,6 +1,7 @@
 import type { IStockSyncResult } from './stock-sync.service';
 
 import { b, code, esc } from '../../telegram/formatting/telegram-format';
+import { YandexApiError } from '../yandex-api.errors';
 
 /**
  * Отчёт о загрузке остатков.
@@ -188,4 +189,19 @@ function skipAdvice(result: IStockSyncResult): string | null {
 /** Как назвать модель в заголовке, когда определить её не удалось. */
 function placement(result: IStockSyncResult): string {
   return result.placementType ?? 'неизвестной модели';
+}
+
+/**
+ * Текст об ошибке обработки файла — для пользователя.
+ *
+ * Один на оба пути: постановку в очередь (stock-upload.handler) и саму
+ * обработку (stock-sync.processor). Две копии разъехались бы ровно так же,
+ * как когда-то экраны помощи.
+ */
+export function uploadErrorText(error: unknown): string {
+  const text =
+    error instanceof YandexApiError
+      ? error.userMessage
+      : 'Не удалось обработать файл. Проверьте, что это прайс в обычном формате, и попробуйте ещё раз.';
+  return `❌ ${text}`;
 }

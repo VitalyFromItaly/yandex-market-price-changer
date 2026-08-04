@@ -44,6 +44,8 @@ const SAFE_DATA_KEYS = [
   'reportKey',
   'sessionId',
   'step',
+  // Джоба sync-stocks: имя файла лежит в корне payload'а (не во fileInfo).
+  'fileName',
 ] as const;
 
 /**

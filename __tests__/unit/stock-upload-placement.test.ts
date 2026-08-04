@@ -1,6 +1,10 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { StockUploadHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
+import { JOB_TYPES } from '../../src/modules/telegram/index';
+import {
+  StockUploadHandler,
+  queueNote,
+} from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
 import { FBY_STOCKS_READONLY } from '../../src/modules/yandex/stocks/placement';
 
 /**
@@ -9,22 +13,26 @@ import { FBY_STOCKS_READONLY } from '../../src/modules/yandex/stocks/placement';
  * Файл при этом ПРИНИМАЕТСЯ: из него сохраняются закупочные цены, без которых
  * «Прибыль» у FBY-продавца не считается вовсе (`PurchasePrice` ключуется по
  * продавцу, а не по магазину, так что одна загрузка обслуживает и FBS, и FBY).
- * Задача обработчика здесь — предупредить ДО скачивания, а не отказать: сказать
- * «загружаю остатки» и через минуту прислать «остатки не записаны» значит
- * выглядеть сломанным.
+ * Задача обработчика здесь — предупредить ДО постановки в очередь, а не
+ * отказать: сказать «загружаю остатки» и через минуту прислать «остатки не
+ * записаны» значит выглядеть сломанным.
  *
- * Запрещает же всё равно `StockSyncService` (см. stocks-sync.test.ts) — слоёв
- * два, и перепутать, какой за что отвечает, легко.
+ * Сам обработчик файл больше НЕ обрабатывает — только проверяет и ставит
+ * джобу sync-stocks (обработка в stock-sync.processor, вне цикла апдейтов
+ * telegraf). Запрещает же запись всё равно `StockSyncService`
+ * (см. stocks-sync.test.ts) — слоёв два, и перепутать, какой за что
+ * отвечает, легко.
  */
 describe('StockUploadHandler: модель размещения', () => {
   const FBS = { campaignId: '148655119', businessId: 'b', placementType: 'FBS' };
   const FBY = { campaignId: '148704883', businessId: 'b', placementType: 'FBY' };
 
-  let sync: ReturnType<typeof vi.fn>;
   let placementFor: ReturnType<typeof vi.fn>;
   let findByTelegramUser: ReturnType<typeof vi.fn>;
   let findByUserAndBot: ReturnType<typeof vi.fn>;
-  let getFileLink: ReturnType<typeof vi.fn>;
+  let queueAdd: ReturnType<typeof vi.fn>;
+  let getWaitingCount: ReturnType<typeof vi.fn>;
+  let getActiveCount: ReturnType<typeof vi.fn>;
   let handler: StockUploadHandler;
 
   const storeDoc = (campaignId: string, stores?: unknown[]) => ({
@@ -34,45 +42,31 @@ describe('StockUploadHandler: модель размещения', () => {
     stores,
   });
 
-  beforeEach(() => {
-    sync = vi.fn(async () => ({
-      totalRows: 1,
-      matched: 1,
-      zeroed: 0,
-      updated: 1,
-      skipped: [],
-      matchedBy: {},
-      errors: [],
-      dryRun: false,
-      catalogSize: 1,
-      purchasePricesSaved: 1,
-      writeSkipReason: undefined,
-    }));
-    placementFor = vi.fn(async () => undefined);
-    findByTelegramUser = vi.fn();
-    // Записи доступа нет → у обеих фич прайса действует умолчание «включено».
-    findByUserAndBot = vi.fn(async () => null);
-    getFileLink = vi.fn(async () => ({ href: 'https://example.invalid/file.xlsx' }));
+  /** Payload последней поставленной джобы. */
+  const enqueued = () => queueAdd.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
 
-    // Скачивание файла — обычный fetch. В сеть за ним не ходим: тест про то,
-    // ДОШЛИ ли до скачивания, а не про сам файл.
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })),
-    );
-
-    handler = new StockUploadHandler(
-      { sync, placementFor } as never,
+  function buildHandler(isAdmin: boolean): StockUploadHandler {
+    return new StockUploadHandler(
+      { placementFor } as never,
       { findByTelegramUser } as never,
       { report: async () => undefined } as never,
       { replyNeedsStore: vi.fn(async () => undefined) } as never,
       { findByUserAndBot } as never,
-      { isAdmin: () => false } as never,
+      { isAdmin: () => isAdmin } as never,
+      { add: queueAdd, getWaitingCount, getActiveCount } as never,
     );
-  });
+  }
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
+  beforeEach(() => {
+    placementFor = vi.fn(async () => undefined);
+    findByTelegramUser = vi.fn();
+    // Записи доступа нет → у обеих фич прайса действует умолчание «включено».
+    findByUserAndBot = vi.fn(async () => null);
+    queueAdd = vi.fn(async () => ({ id: 1 }));
+    getWaitingCount = vi.fn(async () => 0);
+    getActiveCount = vi.fn(async () => 0);
+
+    handler = buildHandler(false);
   });
 
   /** Достать обработчик документа, зарегистрированный через bot.on. */
@@ -89,7 +83,6 @@ describe('StockUploadHandler: модель размещения', () => {
       botInfo: { id: 999 },
       chat: { id: 222 },
       message: { document: { file_id: 'f', file_name: 'stock.xlsx', file_size: 1024 } },
-      telegram: { getFileLink },
       reply: vi.fn(async () => undefined),
     };
   }
@@ -106,8 +99,41 @@ describe('StockUploadHandler: модель размещения', () => {
 
     expect(said(ctx)).toContain('FBY');
     // Ради «Прибыли»: без этого закуп у FBY-продавца брать неоткуда.
-    expect(sync).toHaveBeenCalled();
-    expect(getFileLink).toHaveBeenCalled();
+    expect(queueAdd).toHaveBeenCalled();
+  });
+
+  it('джоба ставится с полным payload и attempts: 1', async () => {
+    findByTelegramUser.mockResolvedValue(storeDoc(FBS.campaignId, [FBS, FBY]));
+
+    await documentHandler()(ctxWith() as never);
+
+    expect(queueAdd).toHaveBeenCalledWith(
+      JOB_TYPES.SYNC_STOCKS,
+      {
+        botId: 999,
+        chatId: '222',
+        telegramUserId: '222',
+        fileId: 'f',
+        fileName: 'stock.xlsx',
+        dryRun: false,
+        savePurchasePrices: true,
+        stockWriteAllowed: true,
+      },
+      // Дефолт очереди — attempts: 2; авто-повтор записи остатков жжёт
+      // часовую квоту Partner API.
+      { attempts: 1 },
+    );
+  });
+
+  it('токен и креды в payload НЕ кладутся — их перечитает процессор', async () => {
+    findByTelegramUser.mockResolvedValue(storeDoc(FBS.campaignId, [FBS, FBY]));
+
+    await documentHandler()(ctxWith() as never);
+
+    const payload = enqueued();
+    expect(JSON.stringify(payload)).not.toContain('ACMA:x');
+    expect(payload).not.toHaveProperty('token');
+    expect(payload).not.toHaveProperty('campaignId');
   });
 
   it('на FBY бот не обещает загрузить остатки', async () => {
@@ -122,7 +148,7 @@ describe('StockUploadHandler: модель размещения', () => {
     expect(said(ctx)).toContain('остатки не трогаю');
   });
 
-  it('предупреждение приходит ДО скачивания файла', async () => {
+  it('предупреждение приходит ДО постановки в очередь', async () => {
     findByTelegramUser.mockResolvedValue(storeDoc(FBY.campaignId, [FBS, FBY]));
     const ctx = ctxWith();
 
@@ -131,14 +157,14 @@ describe('StockUploadHandler: модель размещения', () => {
       order.push(String(text).includes('FBY') ? 'предупреждение' : 'прочее');
       return undefined;
     });
-    getFileLink.mockImplementation(async () => {
-      order.push('скачивание');
-      return { href: 'https://example.invalid/file.xlsx' };
+    queueAdd.mockImplementation(async () => {
+      order.push('очередь');
+      return { id: 1 };
     });
 
     await documentHandler()(ctx as never);
 
-    expect(order.indexOf('предупреждение')).toBeLessThan(order.indexOf('скачивание'));
+    expect(order.indexOf('предупреждение')).toBeLessThan(order.indexOf('очередь'));
   });
 
   it('FBS в кэше — работает как раньше', async () => {
@@ -146,11 +172,10 @@ describe('StockUploadHandler: модель размещения', () => {
 
     await documentHandler()(ctxWith() as never);
 
-    expect(getFileLink).toHaveBeenCalled();
-    expect(sync).toHaveBeenCalled();
+    expect(queueAdd).toHaveBeenCalled();
   });
 
-  it('кэш не знает модель — спрашиваем Маркет, и предупреждаем до скачивания', async () => {
+  it('кэш не знает модель — спрашиваем Маркет, и предупреждаем до очереди', async () => {
     // У продавца, подключившегося до появления кэша, модели в документе нет.
     findByTelegramUser.mockResolvedValue(storeDoc(FBY.campaignId, undefined));
     placementFor.mockResolvedValue('FBY');
@@ -160,7 +185,7 @@ describe('StockUploadHandler: модель размещения', () => {
 
     expect(placementFor).toHaveBeenCalled();
     expect(said(ctx)).toContain('FBY');
-    expect(sync).toHaveBeenCalled();
+    expect(queueAdd).toHaveBeenCalled();
   });
 
   it('кэш не знает, Маркет говорит FBS — работаем', async () => {
@@ -169,7 +194,7 @@ describe('StockUploadHandler: модель размещения', () => {
 
     await documentHandler()(ctxWith() as never);
 
-    expect(sync).toHaveBeenCalled();
+    expect(queueAdd).toHaveBeenCalled();
   });
 
   it('модель не определилась — предупреждаем, но не обвиняем в FBY', async () => {
@@ -188,7 +213,7 @@ describe('StockUploadHandler: модель размещения', () => {
     expect(text).not.toContain('Сменить магазин');
     expect(text).not.toContain(FBY_STOCKS_READONLY);
     // Файл всё равно разбираем: закупочные цены нужны независимо от модели.
-    expect(sync).toHaveBeenCalled();
+    expect(queueAdd).toHaveBeenCalled();
   });
 
   it('кэш знает модель — лишнего запроса к Маркету нет', async () => {
@@ -199,16 +224,52 @@ describe('StockUploadHandler: модель размещения', () => {
     await documentHandler()(ctxWith() as never);
 
     expect(placementFor).not.toHaveBeenCalled();
-    expect(sync).toHaveBeenCalled();
+    expect(queueAdd).toHaveBeenCalled();
+  });
+
+  /**
+   * Позиция в очереди. Типовой случай — очередь пуста, и упоминать её незачем;
+   * но когда впереди чужие файлы, молчание читается как «бот завис».
+   */
+  describe('позиция в очереди', () => {
+    it('очередь пуста — обычный текст без позиции', async () => {
+      findByTelegramUser.mockResolvedValue(storeDoc(FBS.campaignId, [FBS, FBY]));
+      const ctx = ctxWith();
+
+      await documentHandler()(ctx as never);
+
+      expect(said(ctx)).toContain('Загружаю остатки');
+      expect(said(ctx)).not.toContain('Перед вами в очереди');
+    });
+
+    it('впереди файлы (waiting + active) — позиция в ответе', async () => {
+      findByTelegramUser.mockResolvedValue(storeDoc(FBS.campaignId, [FBS, FBY]));
+      getWaitingCount.mockResolvedValue(1);
+      getActiveCount.mockResolvedValue(1);
+      const ctx = ctxWith();
+
+      await documentHandler()(ctx as never);
+
+      expect(said(ctx)).toContain('Перед вами в очереди: 2 файла');
+    });
+
+    it('queueNote склоняет «файл» по-русски', () => {
+      expect(queueNote(1)).toContain('1 файл —');
+      expect(queueNote(3)).toContain('3 файла');
+      expect(queueNote(5)).toContain('5 файлов');
+      expect(queueNote(11)).toContain('11 файлов');
+      expect(queueNote(21)).toContain('21 файл —');
+      expect(queueNote(0)).toBe('');
+    });
   });
 
   /**
    * Фичи прайса. Гейт документы не закрывает (исход бывает частичным), поэтому
    * решение по двум фичам — `purchase_prices` и `stock_update` — принимает сам
-   * обработчик, до скачивания файла.
+   * обработчик, до постановки в очередь.
    */
   describe('фичи прайса', () => {
-    it('обе выключены — отказ до скачивания', async () => {
+    it('обе выключены — отказ до очереди', async () => {
       findByUserAndBot.mockResolvedValue({
         features: { purchase_prices: false, stock_update: false },
       });
@@ -218,11 +279,10 @@ describe('StockUploadHandler: модель размещения', () => {
       await documentHandler()(ctx as never);
 
       expect(said(ctx)).toContain('недоступна');
-      expect(getFileLink).not.toHaveBeenCalled();
-      expect(sync).not.toHaveBeenCalled();
+      expect(queueAdd).not.toHaveBeenCalled();
     });
 
-    it('остатки выключены — файл разбирается, sync знает про запрет, Маркет о модели не спрашивается', async () => {
+    it('остатки выключены — джоба знает про запрет, Маркет о модели не спрашивается', async () => {
       findByUserAndBot.mockResolvedValue({ features: { stock_update: false } });
       findByTelegramUser.mockResolvedValue(storeDoc(FBS.campaignId, undefined));
 
@@ -234,14 +294,10 @@ describe('StockUploadHandler: модель размещения', () => {
       // Раз писать не будем — модель не выясняем, тот же принцип, что у
       // STOCK_WRITE_ENABLED.
       expect(placementFor).not.toHaveBeenCalled();
-      expect(sync).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.anything(),
-        expect.objectContaining({ stockWriteAllowed: false, savePurchasePrices: true }),
-      );
+      expect(enqueued()).toMatchObject({ stockWriteAllowed: false, savePurchasePrices: true });
     });
 
-    it('закуп выключен — остатки пишутся, sync цены не сохраняет', async () => {
+    it('закуп выключен — остатки пишутся, джоба цены не сохраняет', async () => {
       findByUserAndBot.mockResolvedValue({ features: { purchase_prices: false } });
       findByTelegramUser.mockResolvedValue(storeDoc(FBS.campaignId, [FBS, FBY]));
 
@@ -249,33 +305,18 @@ describe('StockUploadHandler: модель размещения', () => {
       await documentHandler()(ctx as never);
 
       expect(said(ctx)).toContain('закупочные цены не сохраняю');
-      expect(sync).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.anything(),
-        expect.objectContaining({ stockWriteAllowed: true, savePurchasePrices: false }),
-      );
+      expect(enqueued()).toMatchObject({ stockWriteAllowed: true, savePurchasePrices: false });
     });
 
     it('администратор минует обе фичи — как в featureGate', async () => {
-      handler = new StockUploadHandler(
-        { sync, placementFor } as never,
-        { findByTelegramUser } as never,
-        { report: async () => undefined } as never,
-        { replyNeedsStore: vi.fn(async () => undefined) } as never,
-        { findByUserAndBot } as never,
-        { isAdmin: () => true } as never,
-      );
+      handler = buildHandler(true);
       findByTelegramUser.mockResolvedValue(storeDoc(FBS.campaignId, [FBS, FBY]));
 
       await documentHandler()(ctxWith() as never);
 
       // Запись доступа даже не читается — у админа её нет.
       expect(findByUserAndBot).not.toHaveBeenCalled();
-      expect(sync).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.anything(),
-        expect.objectContaining({ stockWriteAllowed: true, savePurchasePrices: true }),
-      );
+      expect(enqueued()).toMatchObject({ stockWriteAllowed: true, savePurchasePrices: true });
     });
 
     it('FBY-магазин + выключенный закуп + без «проверки» — файлу нечего делать, отказ', async () => {
@@ -286,8 +327,7 @@ describe('StockUploadHandler: модель размещения', () => {
       await documentHandler()(ctx as never);
 
       expect(said(ctx)).toContain('недоступна');
-      expect(getFileLink).not.toHaveBeenCalled();
-      expect(sync).not.toHaveBeenCalled();
+      expect(queueAdd).not.toHaveBeenCalled();
     });
   });
 });

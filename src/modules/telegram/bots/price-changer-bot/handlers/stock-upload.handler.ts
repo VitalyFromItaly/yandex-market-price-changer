@@ -1,6 +1,9 @@
 import type { TTelegrafBot } from '../../../domain.telegram';
+import type { IStockSyncJob } from '../../../queue/processors/stock-sync.processor';
 
+import { InjectQueue } from '@nestjs/bull';
 import { Injectable, Logger } from '@nestjs/common';
+import { Queue } from 'bull';
 import { message } from 'telegraf/filters';
 
 import { AppConfigService } from '../../../../../config/app-config.service';
@@ -13,18 +16,22 @@ import {
   isStockWritable,
   placementOfCampaign,
 } from '../../../../yandex/stocks/placement';
-import { formatStockReport } from '../../../../yandex/stocks/stock-report';
+import { uploadErrorText } from '../../../../yandex/stocks/stock-report';
 import { StockSyncService } from '../../../../yandex/stocks/stock-sync.service';
-import { YandexApiError } from '../../../../yandex/yandex-api.errors';
 import { htmlOptions } from '../../../formatting/telegram-format';
+import { JOB_TYPES, QUEUE_NAMES } from '../../../index';
 import { FEATURE, isFeatureEnabled } from '../../shared/features.domain';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
 
 /**
- * Приём прайс-листа и обновление остатков.
+ * Приём прайс-листа: быстрые проверки и постановка джобы в очередь.
  *
- * ЕДИНСТВЕННЫЙ путь записи в Яндекс из интерфейса бота. Всё остальное —
- * отчёты — только читает.
+ * Сама обработка (скачивание, разбор, запись остатков) — в
+ * `stock-sync.processor.ts`, и это не оптимизация, а необходимость: в режиме
+ * polling telegraf не забирает следующую пачку getUpdates, пока не завершены
+ * все апдейты текущей, так что синхронная обработка на минуты останавливала
+ * бота для ВСЕХ пользователей. Запись в Яндекс из интерфейса бота идёт только
+ * этим путём; всё остальное — отчёты — только читает.
  */
 
 /**
@@ -70,9 +77,6 @@ export const PURCHASE_PRICES_DISABLED_TEXT = [
 export class StockUploadHandler {
   private readonly logger = new Logger(StockUploadHandler.name);
 
-  /** Кто прямо сейчас грузит. Защёлка против двойной отправки одного файла. */
-  private readonly inFlight = new Set<string>();
-
   constructor(
     private readonly stocks: StockSyncService,
     private readonly yandexMarketService: YandexMarketService,
@@ -80,26 +84,18 @@ export class StockUploadHandler {
     private readonly storePrompt: StorePromptService,
     private readonly accessService: UserAccessService,
     private readonly config: AppConfigService,
+    @InjectQueue(QUEUE_NAMES.FILE_PROCESSING) private readonly queue: Queue,
   ) {}
 
   public register(bot: TTelegrafBot): void {
+    // Защёлки «предыдущий файл ещё обрабатывается» больше нет: второй файл
+    // встаёт в очередь СЛЕДОМ, а гонку записи, ради которой защёлка
+    // существовала, убирает сама очередь — джобы идут строго по одной.
     bot.on(message('document'), async (ctx) => {
-      const lock = `${ctx.botInfo.id}:${ctx.from.id}`;
-
-      // Защёлку ставим синхронно с проверкой, до первого await: иначе два
-      // быстрых файла проскочат оба и устроят гонку записи остатков.
-      if (this.inFlight.has(lock)) {
-        await ctx.reply('⏳ Предыдущий файл ещё обрабатывается, подождите.');
-        return;
-      }
-      this.inFlight.add(lock);
-
       try {
         await this.handleDocument(ctx);
       } catch (error) {
         await this.replyWithError(ctx, error);
-      } finally {
-        this.inFlight.delete(lock);
       }
     });
   }
@@ -216,37 +212,53 @@ export class StockUploadHandler {
       await ctx.reply(PURCHASE_PRICES_DISABLED_TEXT, htmlOptions());
     }
 
-    // Обещаем ровно то, что сделаем. «Загружаю остатки» там, где их не будет, —
-    // обещание, которое отчёт следом опровергнет.
-    await ctx.reply(this.progressText(dryRun, stocksReadOnly, savePrices));
+    /**
+     * Дальше — очередь. Скачивание и обработка идут в stock-sync.processor:
+     * джоба лежит в Redis, поэтому переживает редеплой (waiting — целиком,
+     * active после смерти воркера возвращается в очередь механизмом
+     * stalled-jobs), тогда как синхронная обработка умирала вместе с
+     * процессом бесследно.
+     *
+     * Сколько файлов впереди, снимается ДО постановки своей джобы — иначе
+     * она посчитала бы саму себя.
+     */
+    const ahead = await this.jobsAhead();
 
-    // Файл держим В ПАМЯТИ, на диск не пишем.
-    //
-    // Прежний конвейер сохранял его в static/temp и на успешном пути НЕ удалял:
-    // fileInfo пересобиралcя с filePath:'' , из-за чего условие удаления не
-    // срабатывало никогда, и каталог рос после каждой обработки. Прайс — это
-    // мегабайты, буфер живёт секунды: файловая система тут не нужна вовсе,
-    // а значит и утечь нечему.
-    const link = await ctx.telegram.getFileLink(doc.file_id);
-    const response = await fetch(link.href);
-    if (!response.ok) {
-      throw new Error(`не удалось скачать файл: ${response.status}`);
-    }
-    const buffer = Buffer.from(await response.arrayBuffer());
-
-    const result = await this.stocks.sync(credentials, buffer, {
-      dryRun,
+    const payload: IStockSyncJob = {
+      botId: ctx.botInfo.id,
+      chatId: ctx.chat.id.toString(),
       telegramUserId: ctx.from.id.toString(),
+      fileId: doc.file_id,
+      fileName,
+      dryRun,
       savePurchasePrices: savePrices,
       stockWriteAllowed: stockFeatureOn,
-    });
+    };
+
+    // attempts: 1 перебивает дефолт очереди (2): авто-повтор упавшей записи
+    // остатков жжёт часовую квоту Partner API — довод очереди reports.
+    await this.queue.add(JOB_TYPES.SYNC_STOCKS, payload, { attempts: 1 });
 
     this.logger.log(
-      `Остатки (${dryRun ? 'проверка' : 'запись'}) для ${ctx.from.id}: ` +
-        `${result.updated}/${result.matched} из ${result.totalRows}, пропущено ${result.skipped.length}`,
+      `Прайс от ${ctx.from.id} поставлен в очередь (${fileName}` +
+        `${dryRun ? ', проверка' : ''}, впереди ${ahead})`,
     );
 
-    await ctx.reply(formatStockReport(result), htmlOptions());
+    // Обещаем ровно то, что сделаем. «Загружаю остатки» там, где их не будет, —
+    // обещание, которое отчёт следом опровергнет.
+    await ctx.reply(this.progressText(dryRun, stocksReadOnly, savePrices) + queueNote(ahead));
+  }
+
+  /**
+   * Сколько прайсов уже ждёт или обрабатывается. Очередь общая с мёртвым
+   * конвейером, но живые джобы в ней только наши, так что счётчики честные.
+   */
+  private async jobsAhead(): Promise<number> {
+    const [waiting, active] = await Promise.all([
+      this.queue.getWaitingCount(),
+      this.queue.getActiveCount(),
+    ]);
+    return waiting + active;
   }
 
   /**
@@ -277,11 +289,25 @@ export class StockUploadHandler {
       action: 'загрузка остатков',
     });
 
-    const text =
-      error instanceof YandexApiError
-        ? error.userMessage
-        : 'Не удалось обработать файл. Проверьте, что это прайс в обычном формате, и попробуйте ещё раз.';
-
-    await ctx.reply(`❌ ${text}`);
+    await ctx.reply(uploadErrorText(error));
   }
+}
+
+/**
+ * Строка о позиции в очереди. Пустая очередь — пустая строка: в типовом
+ * случае перед файлом никого, и упоминание очереди только пугало бы.
+ */
+export function queueNote(ahead: number): string {
+  if (ahead <= 0) return '';
+  return `\n\n📥 Перед вами в очереди: ${ahead} ${fileWord(ahead)} — обработаю по порядку.`;
+}
+
+/** «1 файл», «2 файла», «5 файлов» — включая 11–14. */
+function fileWord(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 14) return 'файлов';
+  const ones = n % 10;
+  if (ones === 1) return 'файл';
+  if (ones >= 2 && ones <= 4) return 'файла';
+  return 'файлов';
 }
