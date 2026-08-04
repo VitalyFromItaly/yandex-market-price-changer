@@ -57,10 +57,25 @@ export interface IOrdersQuery {
  * пор приходят в ответе, поэтому прочитать их легко по привычке — и получить
  * сумму без валюты, которая когда-нибудь просто исчезнет.
  */
+/** Ответ метода возвратов: полезная нагрузка бывает и в `result`, и на верхнем уровне. */
+interface IReturnsPayload {
+  returns?: unknown[];
+  paging?: { nextPageToken?: string };
+}
+
+type IReturnsResponse = IReturnsPayload & { result?: IReturnsPayload };
+
 export interface IReturnRecord {
   returnId?: number;
   orderId?: number;
   shipmentStatus?: string;
+  /**
+   * Когда возврат оформлен, ISO 8601 со смещением.
+   *
+   * Единственный способ показать «возвраты за месяц»: сам метод дат не
+   * принимает, и период фильтруется у нас (см. collectReturns).
+   */
+  creationDate?: string;
   /** Сумма возврата: значение + валюта. */
   amount?: { value?: number; currencyId?: string };
   /** Компенсация партнёру. */
@@ -272,20 +287,35 @@ export class YandexApiClient {
   public async getReturns(query: IReturnsQuery = {}): Promise<IPagedResult<IReturnRecord>> {
     const limit = Math.min(query.limit ?? PAGE_LIMITS.returns.default, PAGE_LIMITS.returns.max);
 
-    const data = await this.get<{ returns?: unknown[]; paging?: { nextPageToken?: string } }>(
-      returnsPath(this.credentials.campaignId),
-      {
-        pageToken: query.pageToken,
-        limit,
-        shipmentStatuses: query.shipmentStatuses,
-      },
-    );
+    /**
+     * ⚠️ Возвраты завёрнуты в `result`, а заказы — НЕТ. Форма ответа у Partner
+     * API не единая:
+     *
+     *   GET .../orders  → { orders, paging }
+     *   GET .../returns → { status, result: { returns, paging } }
+     *
+     * Пока читали `data.returns`, поле всегда было `undefined`, и метод молча
+     * отдавал пустой список. Ошибки при этом не было ни одной: «возвратов нет»
+     * — законный ответ, и отличить его от «мы не туда посмотрели» снаружи было
+     * невозможно. Отчёт «Едет обратно» из-за этого показывал только невыкупы из
+     * заказов, а собственно возвраты не показывал никогда.
+     *
+     * Читаем ОБА уровня: Яндекс уже расходится между методами, и полагаться на
+     * то, что форма не поменяется, не на чем.
+     */
+    const data = await this.get<IReturnsResponse>(returnsPath(this.credentials.campaignId), {
+      pageToken: query.pageToken,
+      limit,
+      shipmentStatuses: query.shipmentStatuses,
+    });
+
+    const payload = data?.result ?? data;
 
     // Пустой список возвратов — нормальный ответ, а не ошибка: у продавца
     // просто может не быть возвратов.
     return {
-      items: (data.returns ?? []).map(toReturnRecord),
-      nextPageToken: data.paging?.nextPageToken,
+      items: (payload?.returns ?? []).map(toReturnRecord),
+      nextPageToken: payload?.paging?.nextPageToken,
     };
   }
 
@@ -746,6 +776,7 @@ function toReturnRecord(raw: unknown): IReturnRecord {
     returnId: item.returnId,
     orderId: item.orderId,
     shipmentStatus: item.shipmentStatus,
+    creationDate: item.creationDate,
     amount: item.amount,
     partnerCompensationAmount: item.partnerCompensationAmount,
     raw,

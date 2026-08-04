@@ -12,6 +12,9 @@ import {
   queryStatuses,
   reportDefinition,
   type TReportKey,
+  RETURN_ACTIVE_STATUSES,
+  RETURN_SHIPMENT_STATUSES,
+  returnStage,
 } from '../../src/modules/yandex/reports/report-status-map';
 
 /**
@@ -261,6 +264,77 @@ describe('Статусы не размазаны по коду', () => {
     for (const key of Object.values(REPORT) as TReportKey[]) {
       expect(reportDefinition(key)).toBeDefined();
       expect(reportDefinition(key).title.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+/**
+ * Стадии возврата.
+ *
+ * Правило проверяется тестом, потому что ошибка здесь не даёт ни ошибки
+ * компиляции, ни падения: отчёт просто начинает показывать не то число, с
+ * которым продавец сверяется в кабинете. Ровно так и было — 38 вместо 50.
+ */
+describe('Стадии возврата', () => {
+  it('спрашиваем у Маркета все пять стадий', () => {
+    expect(RETURN_SHIPMENT_STATUSES).toEqual([
+      'CREATED',
+      'RECEIVED',
+      'IN_TRANSIT',
+      'READY_FOR_PICKUP',
+      'PICKED',
+    ]);
+  });
+
+  it('«едет» — это RECEIVED, IN_TRANSIT и READY_FOR_PICKUP', () => {
+    // Их сумма и есть число «в пути» из кабинета: на боевых данных
+    // RECEIVED (12) + IN_TRANSIT (38) = 50.
+    expect(returnStage('RECEIVED')).toBe('inFlight');
+    expect(returnStage('IN_TRANSIT')).toBe('inFlight');
+    expect(returnStage('READY_FOR_PICKUP')).toBe('inFlight');
+  });
+
+  it('CREATED НЕ едет: покупатель товар ещё не сдал', () => {
+    // С ним получалось 52 против 50 в кабинете. И такой возврат может висеть
+    // месяцами — на боевых данных один создан 19-03-2026 и не двигался.
+    expect(returnStage('CREATED')).toBe('declared');
+  });
+
+  it('PICKED — путь закончен', () => {
+    expect(returnStage('PICKED')).toBe('settled');
+  });
+
+  it('неизвестный статус не выдаётся за «едет»', () => {
+    expect(returnStage('НЕЧТО')).toBe('declared');
+    expect(returnStage(undefined)).toBe('declared');
+  });
+
+  it('активные — только три транзитные стадии', () => {
+    // Их сумма и есть число из кабинета. CREATED сюда не входит: покупатель
+    // товар ещё не сдал, а такая запись может висеть месяцами.
+    expect(RETURN_ACTIVE_STATUSES).toEqual(['RECEIVED', 'IN_TRANSIT', 'READY_FOR_PICKUP']);
+    expect(RETURN_ACTIVE_STATUSES).not.toContain('CREATED');
+    expect(RETURN_ACTIVE_STATUSES).not.toContain('PICKED');
+  });
+
+  it('активные — подмножество спрашиваемых', () => {
+    for (const status of RETURN_ACTIVE_STATUSES) {
+      expect(RETURN_SHIPMENT_STATUSES).toContain(status);
+    }
+  });
+
+  it('не состоявшиеся и складские статусы не спрашиваем вовсе', () => {
+    // CANCELLED/EXPIRED/LOST — возврат не состоялся; FULFILMENT_RECEIVED и
+    // утилизация — склад Маркета, это уже не «едет к продавцу».
+    for (const status of [
+      'CANCELLED',
+      'EXPIRED',
+      'LOST',
+      'UNKNOWN',
+      'FULFILMENT_RECEIVED',
+      'UTILIZED',
+    ]) {
+      expect(RETURN_SHIPMENT_STATUSES).not.toContain(status);
     }
   });
 });

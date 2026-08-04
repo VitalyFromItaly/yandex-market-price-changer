@@ -39,7 +39,7 @@ export function isReportKey(value: string | undefined): value is TReportKey {
 // Лимит Telegram на callback_data — 64 байта; самое длинное здесь
 // `rep:month:shipped_today` — 23.
 
-export const REPORT_CB_PATTERN = /^rep:(today|day|week|month):([a-z_]+)$/;
+export const REPORT_CB_PATTERN = /^rep:(today|day|week|month|all):([a-z_]+)$/;
 
 export function reportCallback(period: TPeriodKey, reportKey: TReportKey): string {
   return `rep:${period}:${reportKey}`;

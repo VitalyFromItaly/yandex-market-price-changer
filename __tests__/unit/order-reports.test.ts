@@ -5,8 +5,16 @@ import { YandexClientFactory } from '../../src/modules/yandex/yandex-client.fact
 import { REPORT } from '../../src/modules/yandex/reports/report-status-map';
 import { formatReport } from '../../src/modules/yandex/reports/report-message';
 import { NBSP } from '../../src/modules/yandex/reports/money';
+import { PERIOD } from '../../src/modules/yandex/reports/report-period';
 
 const NOW = new Date('2026-07-29T10:00:00Z');
+/**
+ * Дата оформления возврата в пределах NOW по Москве.
+ *
+ * Обязательна: период возвратов фильтруется НА НАШЕЙ стороне (метод дат не
+ * принимает), и запись без даты считается вне периода — намеренно.
+ */
+const RETURN_DATE = '2026-07-29T12:00:00+03:00';
 const STORE = { token: 'ACMA:x', campaign_id: '1', business_id: '2' } as never;
 
 /** Клиент-заглушка: отдаёт заранее заданные заказы и возвраты. */
@@ -134,18 +142,28 @@ describe('Отчёт «едет обратно» (TASK-025)', () => {
     expect(result.totals.items).toBe(100);
   });
 
-  it('возвраты берутся со статусом отгрузки «в пути»', async () => {
+  it('возвраты берутся по ВСЕМ стадиям пути, а не по одной', async () => {
+    // С единственным IN_TRANSIT отчёт показывал 38 возвратов там, где в
+    // кабинете 50: «в пути» — только один шаг из нескольких.
     const { reports, returnQueries } = await service();
     await reports.build(STORE, REPORT.RETURNING, NOW);
 
-    expect(returnQueries[0].shipmentStatuses).toEqual(['IN_TRANSIT']);
+    expect(returnQueries[0].shipmentStatuses).toEqual([
+      'CREATED',
+      'RECEIVED',
+      'IN_TRANSIT',
+      'READY_FOR_PICKUP',
+      'PICKED',
+    ]);
   });
 
   it('заказ из ОБОИХ источников считается один раз', async () => {
     // Невыкуп приходит и заказом с подстатусом, и записью в методе возвратов.
     const { reports } = await service({
       orders: [{ id: 42, status: 'DELIVERY', substatus: 'FULL_NOT_RANSOM', itemsTotal: 500 }],
-      returns: [{ returnId: 7, orderId: 42, amount: { value: 500, currencyId: 'RUR' } }],
+      returns: [
+        { returnId: 7, orderId: 42, creationDate: RETURN_DATE, amount: { value: 500, currencyId: 'RUR' } },
+      ],
     });
 
     const result = await reports.build(STORE, REPORT.RETURNING, NOW);
@@ -157,7 +175,9 @@ describe('Отчёт «едет обратно» (TASK-025)', () => {
   it('возврат без соответствующего заказа добавляется к отчёту', async () => {
     const { reports } = await service({
       orders: [{ id: 42, status: 'DELIVERY', substatus: 'FULL_NOT_RANSOM', itemsTotal: 500 }],
-      returns: [{ returnId: 7, orderId: 99, amount: { value: 300, currencyId: 'RUR' } }],
+      returns: [
+        { returnId: 7, orderId: 99, creationDate: RETURN_DATE, amount: { value: 300, currencyId: 'RUR' } },
+      ],
     });
 
     const result = await reports.build(STORE, REPORT.RETURNING, NOW);
@@ -169,8 +189,8 @@ describe('Отчёт «едет обратно» (TASK-025)', () => {
   it('дубли внутри самого списка возвратов тоже схлопываются', async () => {
     const { reports } = await service({
       returns: [
-        { returnId: 1, orderId: 5, amount: { value: 100 } },
-        { returnId: 2, orderId: 5, amount: { value: 100 } },
+        { returnId: 1, orderId: 5, creationDate: RETURN_DATE, amount: { value: 100 } },
+        { returnId: 2, orderId: 5, creationDate: RETURN_DATE, amount: { value: 100 } },
       ],
     });
 
@@ -402,5 +422,136 @@ describe('Период длиннее 30 дней собирается неск�
     expect(queries).toHaveLength(1);
     expect(queries[0]).not.toHaveProperty('updatedAtFrom');
     expect(queries[0]).not.toHaveProperty('fromDate');
+  });
+});
+
+/**
+ * Возвраты и период.
+ *
+ * Метод возвратов дат НЕ принимает — в запросе только pageToken, limit и
+ * shipmentStatuses. Пока фильтра не было, половина отчёта резалась по периоду, а
+ * половина нет, и «за сегодня» с «с 1 числа месяца» давали одинаковый набор
+ * возвратов. Продавец это и увидел как «не видно возвратов за текущий месяц».
+ */
+describe('Возвраты: период и разбивка', () => {
+  const AUG = new Date('2026-08-03T10:00:00+03:00');
+  const MONTH = { key: PERIOD.MONTH } as const;
+  const TODAY = { key: PERIOD.TODAY } as const;
+  const ALL = { key: PERIOD.ALL } as const;
+
+  const ret = (id: number, creationDate: string, shipmentStatus = 'IN_TRANSIT') => ({
+    returnId: id,
+    orderId: 1000 + id,
+    creationDate,
+    shipmentStatus,
+    amount: { value: 100 },
+  });
+
+  it('возврат вне периода не считается', async () => {
+    const { reports } = await service({
+      returns: [ret(1, '2026-08-02T12:00:00+03:00'), ret(2, '2026-07-15T12:00:00+03:00')],
+    });
+    const result = await reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
+
+    expect(result.count).toBe(1);
+    expect(result.totals.items).toBe(100);
+  });
+
+  it('«сегодня» и «с 1 числа» дают РАЗНОЕ — это и был баг', async () => {
+    const returns = [ret(1, '2026-08-03T09:00:00+03:00'), ret(2, '2026-08-01T09:00:00+03:00')];
+
+    const month = await (await service({ returns })).reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
+    const today = await (await service({ returns })).reports.build(STORE, REPORT.RETURNING, AUG, TODAY);
+
+    expect(month.count).toBe(2);
+    expect(today.count).toBe(1);
+  });
+
+  it('на «Всего» период не режет и дат в запрос заказов не уходит', async () => {
+    const { reports, queries } = await service({
+      returns: [ret(1, '2026-03-19T12:00:00+03:00'), ret(2, '2026-08-02T12:00:00+03:00')],
+    });
+    const result = await reports.build(STORE, REPORT.RETURNING, AUG, ALL);
+
+    expect(result.count).toBe(2);
+    expect(queries[0]).not.toHaveProperty('updatedAtFrom');
+    expect(queries[0]).not.toHaveProperty('updatedAtTo');
+  });
+
+  it('на «Всего» спрашиваются только АКТИВНЫЕ стадии', async () => {
+    // «Все возвраты за всё время» — это 1979 записей, из которых 1928 уже
+    // выданы магазину: число, которое ни о чём не говорит. Плюс двадцать
+    // страниц запросов вместо одной.
+    const { reports, returnQueries } = await service();
+    await reports.build(STORE, REPORT.RETURNING, AUG, ALL);
+
+    expect(returnQueries[0].shipmentStatuses).toEqual([
+      'RECEIVED',
+      'IN_TRANSIT',
+      'READY_FOR_PICKUP',
+    ]);
+  });
+
+  it('за период стадии спрашиваются ВСЕ — нужна полная картина месяца', async () => {
+    const { reports, returnQueries } = await service();
+    await reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
+
+    expect(returnQueries[0].shipmentStatuses).toHaveLength(5);
+    expect(returnQueries[0].shipmentStatuses).toContain('PICKED');
+  });
+
+  it('возврат без даты считается ВНЕ периода, а не «сегодняшним»', async () => {
+    // Молча зачесть битую дату в текущий месяц хуже, чем не показать: число
+    // перестанет сходиться с кабинетом, а понять почему будет не по чему.
+    const { reports } = await service({ returns: [{ returnId: 1, orderId: 5, amount: { value: 100 } }] });
+    const result = await reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
+
+    expect(result.count).toBe(0);
+  });
+
+  it('разбивка «едет / выдано» считается по стадиям', async () => {
+    const { reports } = await service({
+      returns: [
+        ret(1, '2026-08-02T12:00:00+03:00', 'IN_TRANSIT'),
+        ret(2, '2026-08-02T12:00:00+03:00', 'RECEIVED'),
+        ret(3, '2026-08-02T12:00:00+03:00', 'READY_FOR_PICKUP'),
+        ret(4, '2026-08-02T12:00:00+03:00', 'PICKED'),
+        // «Создан» не едет и не доехал: покупатель товар ещё не сдал.
+        ret(5, '2026-08-02T12:00:00+03:00', 'CREATED'),
+      ],
+    });
+    const result = await reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
+
+    expect(result.count).toBe(5);
+    expect(result.returns?.inFlight).toBe(3);
+    expect(result.returns?.settled).toBe(1);
+  });
+
+  it('текст печатает разбивку, а на «Всего» — оговорку про 30 дней', async () => {
+    const { reports } = await service({
+      returns: [
+        ret(1, '2026-08-02T12:00:00+03:00', 'IN_TRANSIT'),
+        ret(2, '2026-08-02T12:00:00+03:00', 'PICKED'),
+      ],
+    });
+
+    const month = formatReport(await reports.build(STORE, REPORT.RETURNING, AUG, MONTH), AUG);
+    expect(month).toContain('едет');
+    expect(month).toContain('выдано магазину');
+    expect(month).not.toContain('не старше');
+
+    const all = formatReport(await reports.build(STORE, REPORT.RETURNING, AUG, ALL), AUG);
+    expect(all).toContain('не старше');
+    // Разбивка «выдано магазину 0» на срезе активных ничего не сообщает.
+    expect(all).toContain('Активных возвратов');
+    expect(all).not.toContain('выдано магазину');
+  });
+
+  it('пустой отчёт называет период — иначе «возвратов нет» нечем проверить', async () => {
+    const { reports } = await service();
+    const text = formatReport(await reports.build(STORE, REPORT.RETURNING, AUG, MONTH), AUG);
+
+    expect(text).toContain('Возвратов и невыкупов нет');
+    expect(text).toContain('01-08-2026');
   });
 });

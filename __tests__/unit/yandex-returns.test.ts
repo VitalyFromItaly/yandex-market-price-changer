@@ -36,7 +36,7 @@ describe('Метод возвратов', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('путь содержит версию v2', async () => {
-    const calls = stubAxios([{ returns: [] }]);
+    const calls = stubAxios([{ result: { returns: [] } }]);
     await client().getReturns();
 
     expect(calls[0].path).toBe(`/${API_VERSIONS.returns}/campaigns/12345/returns`);
@@ -44,7 +44,7 @@ describe('Метод возвратов', () => {
   });
 
   it('отбор возвратов в пути идёт через shipmentStatuses', async () => {
-    const calls = stubAxios([{ returns: [] }]);
+    const calls = stubAxios([{ result: { returns: [] } }]);
     await client().getReturns({
       shipmentStatuses: [RETURN_SHIPMENT_STATUS.IN_TRANSIT],
     });
@@ -56,14 +56,14 @@ describe('Метод возвратов', () => {
     // refundAmount приходит числом без валюты и однажды исчезнет.
     stubAxios([
       {
-        returns: [
+        result: { returns: [
           {
             returnId: 1,
             orderId: 555,
             amount: { value: 2500, currencyId: 'RUR' },
             refundAmount: 999,
           },
-        ],
+        ] },
       },
     ]);
 
@@ -76,13 +76,13 @@ describe('Метод возвратов', () => {
   it('компенсация читается из partnerCompensationAmount', async () => {
     stubAxios([
       {
-        returns: [
+        result: { returns: [
           {
             returnId: 2,
             partnerCompensationAmount: { value: 300, currencyId: 'RUR' },
             partnerCompensation: 111,
           },
-        ],
+        ] },
       },
     ]);
 
@@ -93,7 +93,7 @@ describe('Метод возвратов', () => {
   });
 
   it('сырой ответ сохраняется — отчётам нужны и другие поля', async () => {
-    stubAxios([{ returns: [{ returnId: 3, someOtherField: 'x' }] }]);
+    stubAxios([{ result: { returns: [{ returnId: 3, someOtherField: 'x' }] } }]);
 
     const page = await client().getReturns();
     expect((page.items[0].raw as { someOtherField: string }).someOtherField).toBe('x');
@@ -102,7 +102,7 @@ describe('Метод возвратов', () => {
   it('пустой список возвратов — нормальный ответ, а не ошибка', async () => {
     // У продавца просто может не быть возвратов; отчёт должен сказать «ноль»,
     // а не «ошибка получения данных».
-    stubAxios([{ returns: [] }]);
+    stubAxios([{ result: { returns: [] } }]);
     const page = await client().getReturns();
 
     expect(page.items).toEqual([]);
@@ -116,8 +116,8 @@ describe('Метод возвратов', () => {
 
   it('пагинация работает и сохраняет фильтр на всех страницах', async () => {
     const calls = stubAxios([
-      { returns: [{ returnId: 1 }], paging: { nextPageToken: 'p2' } },
-      { returns: [{ returnId: 2 }] },
+      { result: { returns: [{ returnId: 1 }], paging: { nextPageToken: 'p2' } } },
+      { result: { returns: [{ returnId: 2 }] } },
     ]);
 
     const all: unknown[] = [];
@@ -139,3 +139,50 @@ describe('Метод возвратов', () => {
 // report-money-day.test.ts — единым списком DEPRECATED_MONEY_FIELDS и с
 // единственным исключением для money.ts, где этот список и объявлен.
 // Дублировать его здесь значило бы поддерживать две расходящиеся проверки.
+
+/**
+ * Форма ответа: у возвратов полезная нагрузка лежит в `result`, у заказов — на
+ * верхнем уровне. Пока клиент читал `data.returns`, поле всегда было
+ * `undefined`, метод молча отдавал пустой список, и отчёт «Едет обратно»
+ * показывал только невыкупы из заказов. Ошибки при этом не возникало ни одной:
+ * «возвратов нет» — законный ответ.
+ */
+describe('Возвраты завёрнуты в result', () => {
+  it('читает боевую форму ответа — result.returns', async () => {
+    stubAxios([
+      { status: 'OK', result: { returns: [{ returnId: 1, orderId: 42 }], paging: {} } },
+    ]);
+
+    const page = await client().getReturns();
+
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0].orderId).toBe(42);
+  });
+
+  it('терпит и плоскую форму — Яндекс уже расходится между методами', async () => {
+    stubAxios([{ returns: [{ returnId: 2, orderId: 7 }] }]);
+
+    const page = await client().getReturns();
+
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0].orderId).toBe(7);
+  });
+
+  it('pageToken тоже берётся из result', async () => {
+    stubAxios([{ result: { returns: [{ returnId: 1 }], paging: { nextPageToken: 'p2' } } }]);
+
+    const page = await client().getReturns();
+
+    expect(page.nextPageToken).toBe('p2');
+  });
+
+  it('дата оформления доезжает до отчёта — по ней режется период', async () => {
+    stubAxios([
+      { result: { returns: [{ returnId: 1, creationDate: '2026-08-01T17:29:02.452+03:00' }] } },
+    ]);
+
+    const page = await client().getReturns();
+
+    expect(page.items[0].creationDate).toBe('2026-08-01T17:29:02.452+03:00');
+  });
+});

@@ -5,11 +5,13 @@ import type { IOrdersQuery, YandexApiClient } from '../yandex-api.client';
 import {
   PLACED_DEFINITION,
   REPORT,
-  RETURN_SHIPMENT_STATUS,
+  RETURN_ACTIVE_STATUSES,
+  RETURN_SHIPMENT_STATUSES,
   isCancelled,
   matchesDefinition,
   queryStatuses,
   reportDefinition,
+  returnStage,
   type IReportDefinition,
   type TReportKey,
 } from './report-status-map';
@@ -26,9 +28,12 @@ import {
   DEFAULT_PERIOD,
   assertPeriodSupported,
   creationDateParams,
+  isUnbounded,
+  periodBounds,
   periodWindows,
   shipmentDateParams,
   updatedAtParams,
+  withinPeriod,
   type IPeriodBounds,
   type IReportPeriod,
 } from './report-period';
@@ -88,6 +93,22 @@ export interface IReportExport {
   caption?: string;
 }
 
+/**
+ * Возвраты отчёта отдельным блоком.
+ *
+ * `count` уже входит в общий `IReportResult.count`, но разбивка нужна тексту:
+ * «возвратов 41» не отвечает на вопрос, ради которого кнопку жмут, — сколько
+ * ещё ЕДЕТ. Сумма `inFlight` — то самое число, что продавец видит в кабинете.
+ */
+export interface IReturnsSummary {
+  count: number;
+  totals: IMoneyTotals;
+  /** Едут к продавцу: принят у покупателя, в пути, ждёт в пункте выдачи. */
+  inFlight: number;
+  /** Уже выданы магазину — путь закончен. */
+  settled: number;
+}
+
 export interface IReportResult {
   key: TReportKey;
   title: string;
@@ -96,6 +117,8 @@ export interface IReportResult {
   orders: IReportOrder[];
   /** За какой период собран — заголовок сообщения печатает именно его. */
   period: IReportPeriod;
+  /** Есть только у отчётов с `usesReturnsApi`. */
+  returns?: IReturnsSummary;
 }
 
 /**
@@ -127,14 +150,15 @@ export class OrderReportsService {
     );
 
     let count = orders.length;
+    let returns: IReturnsSummary | undefined;
 
     if (definition.usesReturnsApi) {
-      const returns = await this.collectReturns(client, orders);
+      returns = await this.collectReturns(client, orders, period, now);
       totals = addTotals(totals, returns.totals);
       count += returns.count;
     }
 
-    return { key, title: definition.title, count, totals, orders, period };
+    return { key, title: definition.title, count, totals, orders, period, returns };
   }
 
   /**
@@ -183,12 +207,20 @@ export class OrderReportsService {
     // Период проверяем ДО сети — но только там, где он вообще применяется.
     // У среза «что сейчас в пути» фильтра даты нет, и отклонять его из-за
     // слишком старой даты было бы отказом на ровном месте.
-    if (definition.dateFilter !== 'none') {
+    if (definition.dateFilter !== 'none' && !isUnbounded(period)) {
       assertPeriodSupported(period, now);
     }
 
-    // У среза без фильтра даты окон нет — это один запрос «что сейчас».
-    const windows = definition.dateFilter === 'none' ? [null] : periodWindows(period, now);
+    /**
+     * Окон нет в двух случаях, и оба означают «дат в запрос не шлём».
+     *
+     * `dateFilter: 'none'` — срез «что сейчас в пути», у него периода нет по
+     * определению. `PERIOD.ALL` — продавец сам попросил без ограничения; для
+     * заказов это не «за всё время», а «сколько отдаст Partner API» (он хранит
+     * около 30 дней), и текст отчёта обязан это проговорить.
+     */
+    const unbounded = definition.dateFilter === 'none' || isUnbounded(period);
+    const windows = unbounded ? [null] : periodWindows(period, now);
 
     const collected: IReportOrder[] = [];
     const seen = new Set<number>();
@@ -256,24 +288,52 @@ export class OrderReportsService {
   }
 
   /**
-   * Возвраты «в пути» из отдельного метода.
+   * Возвраты из отдельного метода — с фильтром по периоду НА НАШЕЙ стороне.
+   *
+   * Дат метод возвратов не принимает вовсе: в запросе только pageToken, limit и
+   * shipmentStatuses. Пока фильтра здесь не было, половина отчёта резалась по
+   * периоду, а половина — нет, и «за сегодня» с «с 1 числа месяца» давали
+   * одинаковый набор возвратов. Именно так это и выглядело у продавца: число к
+   * выбранному месяцу отношения не имело.
+   *
+   * Режем по `creationDate` — дате ОФОРМЛЕНИЯ возврата: «возвраты за август» это
+   * про то, что случилось в августе, а не про то, что в августе обновилось.
+   * На `PERIOD.ALL` не режем вовсе.
+   *
+   * Набор стадий зависит от того, есть ли период:
+   *
+   * - ЗА ПЕРИОД спрашиваем все пять — продавцу нужна полная картина месяца,
+   *   включая уже выданные. С единственным IN_TRANSIT отчёт показывал 38
+   *   возвратов там, где в кабинете 50;
+   * - на «ВСЕГО» — только активные. «Все возвраты за всё время» это 1979 записей,
+   *   из которых 1928 уже закрыты: число, которое ни о чём не говорит. Полезен
+   *   один вопрос — что едет ко мне сейчас, и он же сверяется с кабинетом.
+   *   Заодно это одна страница вместо двадцати.
    *
    * Один и тот же заказ приходит и сюда, и в список заказов с возвратным
-   * подстатусом — считать его дважды нельзя. Дедупликация по orderId: возврат,
-   * чей заказ уже посчитан, добавляет только ноль.
+   * подстатусом — считать его дважды нельзя. Дедупликация по orderId.
    */
   private async collectReturns(
     client: YandexApiClient,
     alreadyCounted: IReportOrder[],
-  ): Promise<{ count: number; totals: IMoneyTotals }> {
+    period: IReportPeriod,
+    now: Date,
+  ): Promise<IReturnsSummary> {
     const seen = new Set(alreadyCounted.map((order) => order.id).filter((id) => id != null));
+    const unbounded = isUnbounded(period);
+    const bounds = unbounded ? null : periodBounds(period, now);
+
     let totals = ZERO_TOTALS;
     let count = 0;
+    let inFlight = 0;
+    let settled = 0;
 
-    for await (const page of client.iterateReturns({
-      shipmentStatuses: [RETURN_SHIPMENT_STATUS.IN_TRANSIT],
-    })) {
+    const stages = unbounded ? RETURN_ACTIVE_STATUSES : RETURN_SHIPMENT_STATUSES;
+
+    for await (const page of client.iterateReturns({ shipmentStatuses: [...stages] })) {
       for (const record of page) {
+        if (bounds && !withinPeriod(bounds, record.creationDate)) continue;
+
         // Возврат, чей заказ уже посчитан по подстатусу, пропускаем целиком:
         // иначе один невыкуп попадёт в отчёт дважды — и штукой, и суммой.
         if (record.orderId != null && seen.has(record.orderId)) continue;
@@ -284,10 +344,14 @@ export class OrderReportsService {
         const value = amountValue(record.amount);
         totals = addTotals(totals, { items: value, withDelivery: value });
         count += 1;
+
+        const stage = returnStage(record.shipmentStatus);
+        if (stage === 'inFlight') inFlight += 1;
+        if (stage === 'settled') settled += 1;
       }
     }
 
-    return { count, totals };
+    return { count, totals, inFlight, settled };
   }
 
   /**

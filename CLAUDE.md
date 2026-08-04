@@ -280,6 +280,43 @@ excluded from tsconfig, imported nowhere, and its `core/request.ts` only emits
 `Authorization: Bearer`, which is wrong for Yandex) and `src/services/yandex-market-api.service.ts`
 (429 lines, hardcoded base URL + Bearer auth, imported nowhere).
 
+### «Едет обратно»: два источника и три грабли на возвратах
+
+The report sums non-redemptions from the **orders** endpoint (by return substatuses) and records from
+the **returns** endpoint, deduped by `orderId`. The returns half was broken three separate ways, and
+each failure was silent.
+
+- **The response shape differs between methods.** `GET .../orders` returns `{ orders, paging }` at
+  the top level; `GET .../returns` returns `{ status, result: { returns, paging } }`. The client read
+  `data.returns`, which was always `undefined`, so the method quietly yielded an empty list and the
+  report showed only the orders half — actual returns, never. No error was ever raised: "no returns"
+  is a legitimate answer, and from the outside it is indistinguishable from "we looked in the wrong
+  place". `getReturns` now reads **both** levels, and a test pins the live shape.
+- **Only one stage out of five was queried.** `shipmentStatuses` was `['IN_TRANSIT']`, which showed
+  38 returns where the cabinet showed 50. `RETURN_STAGE` splits the five stages into `inFlight`
+  (`RECEIVED`, `IN_TRANSIT`, `READY_FOR_PICKUP` — **this sum is the cabinet's number**), `declared`
+  (`CREATED`) and `settled` (`PICKED`). `CREATED` is out of "in flight" **because of the data**:
+  `RECEIVED + IN_TRANSIT` is exactly 50, adding `CREATED` gave 52 — and such a return can hang for
+  months (one on the live account was created 19-03-2026 and had not moved since April).
+- **The period was not applied at all.** The returns method takes no dates — only `pageToken`,
+  `limit`, `shipmentStatuses` — so half the report was cut by `updatedAt` and half was not, and «за
+  сегодня» and «с 1 числа месяца» returned the same set. That is precisely what the seller reported
+  as "returns for the current month are not visible": the number had nothing to do with the month.
+  Filtering now happens on our side by `creationDate` via `withinPeriod`, in Moscow calendar days
+  rather than millisecond arithmetic. A return with no date counts as **outside** the period —
+  silently folding a broken date into the current month is worse than dropping it, because the number
+  stops matching the cabinet with nothing to explain why.
+- **`PERIOD.ALL` («Всего») is not another range, it is the absence of one — and for returns it means
+  ACTIVE ones, not all of them.** "Every return ever" is 1979 records of which 1928 are already
+  handed to the shop: a number that answers nothing. Without a period the only useful question is
+  "what is coming back to me right now", and that is the number checked against the cabinet. So
+  `collectReturns` asks for `RETURN_ACTIVE_STATUSES` (the `inFlight` three) when unbounded and all
+  five when a period is chosen — the period view wants the full picture of the month, closed returns
+  included. Side benefit, and a large one: one page instead of twenty (5.5 s vs 27.7 s measured live).
+  For **orders**, `ALL` still means whatever Partner API keeps (~30 days), so the report prints that
+  caveat — «Всего» without it reads as a promise it does not keep. `ALL` stays out of
+  `SCHEDULE_PERIODS`: a daily digest "for all time" would send the same number every day.
+
 ### Profit
 
 The fifth report (`REPORT.PROFIT`) is the only screen that shows money **after** costs. It prints

@@ -80,10 +80,84 @@ export const RETURN_SUBSTATUS = {
 
 export type TReturnSubstatus = (typeof RETURN_SUBSTATUS)[keyof typeof RETURN_SUBSTATUS];
 
-/** Статус отгрузки возврата — для GET v2/campaigns/{id}/returns. */
+/**
+ * Статус отгрузки возврата — для GET v2/campaigns/{id}/returns.
+ *
+ * Раньше здесь было ОДНО значение, `IN_TRANSIT`, и отчёт «Едет обратно» на боевом
+ * магазине показывал 38 возвратов там, где в кабинете их 50. Путь возврата к
+ * продавцу состоит из нескольких шагов, и «в пути» — только один из них.
+ *
+ * Не входят сюда: `CANCELLED`, `EXPIRED`, `LOST`, `UNKNOWN` — возврат не
+ * состоялся; `FULFILMENT_RECEIVED`, `PREPARED_FOR_UTILIZATION`, `NOT_IN_DEMAND`,
+ * `UTILIZED`, `READY_FOR_EXPROPRIATION`, `RECEIVED_FOR_EXPROPRIATION` — склад
+ * Маркета, утилизация и перепродажа, то есть уже не «едет к продавцу».
+ */
 export const RETURN_SHIPMENT_STATUS = {
+  /** Возврат создан: покупатель заявил, но товар ещё не сдал. */
+  CREATED: 'CREATED',
+  /** Принят у покупателя — поехал. */
+  RECEIVED: 'RECEIVED',
+  /** В пути. */
   IN_TRANSIT: 'IN_TRANSIT',
+  /** Доехал до пункта выдачи, ждёт магазин. */
+  READY_FOR_PICKUP: 'READY_FOR_PICKUP',
+  /** Выдан магазину — путь закончен. */
+  PICKED: 'PICKED',
 } as const;
+
+export type TReturnShipmentStatus =
+  (typeof RETURN_SHIPMENT_STATUS)[keyof typeof RETURN_SHIPMENT_STATUS];
+
+/**
+ * Три группы, потому что у статусов три разных смысла для продавца.
+ *
+ * `Record<TReturnShipmentStatus, ...>` вместо массивов-литералов — как
+ * `FEATURE_KEY_SET` и `DRAFT_FIELDS`: массив не заставляет компилятор потребовать
+ * решения для нового статуса, а «куда его отнести» умолчанием не принимается.
+ */
+type TReturnStage = 'declared' | 'inFlight' | 'settled';
+
+const RETURN_STAGE: Record<TReturnShipmentStatus, TReturnStage> = {
+  /**
+   * «Создан» — НЕ «едет», и это проверено на боевых данных: RECEIVED + IN_TRANSIT
+   * дают ровно 50, то самое число, что видит продавец в кабинете, а вместе с
+   * CREATED получалось 52 и не сходилось. Покупатель заявил возврат, но товар не
+   * сдал: из двух таких записей одна создана минуту назад, а вторая висит с
+   * 19-03-2026 без движения с апреля. Сложить их с «едет» значит навсегда
+   * завысить именно то число, по которому продавец сверяется с кабинетом.
+   */
+  [RETURN_SHIPMENT_STATUS.CREATED]: 'declared',
+  [RETURN_SHIPMENT_STATUS.RECEIVED]: 'inFlight',
+  [RETURN_SHIPMENT_STATUS.IN_TRANSIT]: 'inFlight',
+  [RETURN_SHIPMENT_STATUS.READY_FOR_PICKUP]: 'inFlight',
+  [RETURN_SHIPMENT_STATUS.PICKED]: 'settled',
+};
+
+/** Все статусы — для отчёта ЗА ПЕРИОД: там нужна полная картина, включая закрытые. */
+export const RETURN_SHIPMENT_STATUSES = Object.keys(RETURN_STAGE) as TReturnShipmentStatus[];
+
+/**
+ * АКТИВНЫЕ возвраты — для среза «Всего», где периода нет.
+ *
+ * Без периода «все возвраты» бесполезны: у боевого продавца это 1979 записей,
+ * из которых 1928 уже выданы магазину. Полезен ровно один вопрос — что едет ко
+ * мне прямо сейчас, и ответ на него сверяется с кабинетом (там 50).
+ *
+ * `CREATED` сюда НЕ входит по той же причине, по которой он не входит в «едет»:
+ * покупатель заявил возврат, но товар не сдал, и такая запись может висеть
+ * месяцами — на боевых данных одна создана 19-03-2026 и не двигалась с апреля.
+ * Считать её активной значило бы снова разойтись с кабинетом на эти две штуки.
+ *
+ * Побочная выгода крупная: активных — одна страница вместо двадцати.
+ */
+export const RETURN_ACTIVE_STATUSES = RETURN_SHIPMENT_STATUSES.filter(
+  (status) => RETURN_STAGE[status] === 'inFlight',
+);
+
+/** На каком шаге возврат. Неизвестный статус считаем «оформлен»: не едет и не доехал. */
+export function returnStage(shipmentStatus: string | undefined): TReturnStage {
+  return RETURN_STAGE[shipmentStatus as TReturnShipmentStatus] ?? 'declared';
+}
 
 /**
  * Типы субсидий Маркета. Тоже перечисление Partner API, и живёт оно ЗДЕСЬ по той

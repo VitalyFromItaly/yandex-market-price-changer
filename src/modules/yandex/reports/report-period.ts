@@ -20,11 +20,13 @@ import { YandexDateRangeError, daysBetween } from '../yandex-date-window';
  * обычными юнит-тестами. Ровно по той же причине рядом живут
  * report-status-map.ts и moscow-day.ts.
  *
- * ⚠️ Глубина ограничена АПИ, а не нами: `getOrders` не отдаёт заказы старше
- * 30 дней и не принимает диапазон длиннее 30 дней. Поэтому «за всё время»
- * здесь нет — вместо молча неполного отчёта пользователь получает внятный
- * отказ. История глубже — только через POST v1/businesses/{id}/orders,
- * который в клиенте пока не реализован.
+ * ⚠️ Глубина ЗАКАЗОВ ограничена АПИ, а не нами: `getOrders` не отдаёт заказы
+ * старше 30 дней и не принимает диапазон длиннее 30 дней. История глубже —
+ * только через POST v1/businesses/{id}/orders, который в клиенте не реализован.
+ *
+ * Поэтому `PERIOD.ALL` («Всего») честен лишь наполовину: ВОЗВРАТЫ он отдаёт все
+ * (их метод дат не принимает вовсе), а ЗАКАЗЫ — сколько отдаст Partner API.
+ * Асимметрия неустранима и обязана быть проговорена в тексте отчёта.
  */
 
 export const PERIOD = {
@@ -36,6 +38,16 @@ export const PERIOD = {
   WEEK: 'week',
   /** С первого числа текущего месяца по сегодня. */
   MONTH: 'month',
+  /**
+   * Без ограничения по датам.
+   *
+   * Для ВОЗВРАТОВ это буквально «всё»: их метод дат не принимает вовсе, и мы
+   * просто не режем список у себя. Для ЗАКАЗОВ «всё» — сколько отдаст Partner
+   * API, а он хранит примерно 30 дней (HISTORY_WINDOW_DAYS). Асимметрия
+   * неустранима, поэтому отчёт обязан её проговаривать: «Всего» без оговорки
+   * читается как обещание, которого он не держит.
+   */
+  ALL: 'all',
 } as const;
 
 export type TPeriodKey = (typeof PERIOD)[keyof typeof PERIOD];
@@ -59,6 +71,17 @@ export const DEFAULT_PERIOD: IReportPeriod = { key: PERIOD.TODAY };
  * рассылки осмысленны только периоды, отсчитываемые от «сейчас».
  */
 export const SCHEDULE_PERIODS: readonly TPeriodKey[] = [PERIOD.TODAY, PERIOD.WEEK, PERIOD.MONTH];
+
+/**
+ * Период без границ — «Всего».
+ *
+ * Отдельным предикатом, а не сравнением в десяти местах: на этом периоде
+ * меняется поведение и запроса заказов (дат не шлём), и фильтра возвратов (не
+ * режем), и проверки глубины истории.
+ */
+export function isUnbounded(period: IReportPeriod | undefined): boolean {
+  return period?.key === PERIOD.ALL;
+}
 
 /** Границы периода в календарных датах Москвы. */
 export interface IPeriodBounds {
@@ -125,6 +148,31 @@ export function periodWindows(period: IReportPeriod, now: Date = new Date()): IP
   return windows.length ? windows : [bounds];
 }
 
+/**
+ * Попадает ли дата записи в период.
+ *
+ * Нужен ВОЗВРАТАМ: их метод дат не принимает вовсе (в запросе только pageToken,
+ * limit и shipmentStatuses), поэтому единственный способ показать «возвраты за
+ * месяц» — отфильтровать список у себя.
+ *
+ * Сравнение календарными датами Москвы через moscowDay, а НЕ вычитанием
+ * миллисекунд: контейнер живёт в UTC, и с 21:00 до 00:00 МСК «сегодня» на
+ * сервере — уже завтра в Москве. Ровно от этого способа ушёл moscow-day.ts.
+ *
+ * Нераспознанная дата считается ВНЕ периода: молча зачесть запись с битой датой
+ * в текущий месяц хуже, чем не показать её, — число перестанет сходиться с
+ * кабинетом, а понять почему будет не по чему.
+ */
+export function withinPeriod(bounds: IPeriodBounds, isoDate: string | undefined): boolean {
+  if (!isoDate) return false;
+
+  const parsed = new Date(isoDate);
+  if (Number.isNaN(parsed.getTime())) return false;
+
+  const day = moscowDay(parsed);
+  return compareDates(day, bounds.from) >= 0 && compareDates(day, bounds.to) <= 0;
+}
+
 /** Параметры Partner API для фильтра `supplierShipmentDate` (DD-MM-YYYY). */
 export function shipmentDateParams(bounds: IPeriodBounds): { from: string; to: string } {
   return { from: calendarDateParam(bounds.from), to: calendarDateParam(bounds.to) };
@@ -179,6 +227,10 @@ export function updatedAtParams(
  * запроса.
  */
 export function assertPeriodSupported(period: IReportPeriod, now: Date = new Date()): void {
+  // «Всего» границ не имеет: проверять возраст начала нечего, а нижняя граница
+  // истории всё равно определяется тем, сколько отдаст сам Partner API.
+  if (isUnbounded(period)) return;
+
   const bounds = periodBounds(period, now);
   const from = calendarDayStart(bounds.from, now);
 
@@ -216,6 +268,8 @@ export function periodButtonLabel(key: TPeriodKey): string {
       return '📆 С начала недели';
     case PERIOD.MONTH:
       return '🗓 С 1 числа месяца';
+    case PERIOD.ALL:
+      return '📚 Всего';
     default:
       return '📅 Сегодня';
   }
@@ -258,6 +312,8 @@ export function nextSchedulePeriod(current: TPeriodKey): TPeriodKey {
  * продавец потом смотрит в кабинете, сверяя цифры.
  */
 export function periodTitle(period: IReportPeriod, now: Date = new Date()): string {
+  if (isUnbounded(period)) return 'за всё время';
+
   const bounds = periodBounds(period, now);
   const from = calendarDateParam(bounds.from);
   const to = calendarDateParam(bounds.to);

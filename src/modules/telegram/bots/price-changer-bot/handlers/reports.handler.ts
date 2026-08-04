@@ -162,6 +162,10 @@ export class ReportsHandler {
     const rows = [
       [PERIOD.TODAY, PERIOD.DAY],
       [PERIOD.WEEK, PERIOD.MONTH],
+      // «Всего» отдельным рядом и последним: это не ещё один календарный
+      // период, а его отсутствие, и в паре с «месяцем» читалось бы как один из
+      // равных вариантов.
+      [PERIOD.ALL],
     ].map((row) =>
       row.map((period) => ({
         text: periodButtonLabel(period),

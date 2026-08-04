@@ -13,6 +13,9 @@ import {
   schedulePeriod,
   shipmentDateParams,
   updatedAtParams,
+  isUnbounded,
+  withinPeriod,
+  periodButtonLabel,
 } from '../../src/modules/yandex/reports/report-period';
 import { YandexDateRangeError } from '../../src/modules/yandex/yandex-date-window';
 
@@ -334,5 +337,65 @@ describe('Период рассылки', () => {
     }
     expect(seen.at(-1)).toBe(PERIOD.TODAY);
     expect(new Set(seen).size).toBe(SCHEDULE_PERIODS.length);
+  });
+});
+
+/**
+ * Период «Всего».
+ *
+ * Не ещё один календарный диапазон, а его отсутствие: для возвратов это
+ * буквально всё (их метод дат не принимает), для заказов — сколько отдаст
+ * Partner API. Асимметрия неустранима и проговаривается в тексте отчёта.
+ */
+describe('PERIOD.ALL', () => {
+  const NOW = new Date('2026-08-03T10:00:00+03:00');
+  const ALL = { key: PERIOD.ALL } as const;
+
+  it('распознаётся как период без границ', () => {
+    expect(isUnbounded(ALL)).toBe(true);
+    expect(isUnbounded({ key: PERIOD.MONTH })).toBe(false);
+    expect(isUnbounded(undefined)).toBe(false);
+  });
+
+  it('проверку глубины истории не проходит, а пропускает', () => {
+    // Проверять возраст начала нечего: начала нет.
+    expect(() => assertPeriodSupported(ALL, NOW)).not.toThrow();
+  });
+
+  it('в заголовке — «за всё время», а не диапазон дат', () => {
+    expect(periodTitle(ALL, NOW)).toBe('за всё время');
+  });
+
+  it('у кнопки своя подпись', () => {
+    expect(periodButtonLabel(PERIOD.ALL)).toContain('Всего');
+  });
+
+  it('в рассылку не попадает: каждый день приходило бы одно и то же число', () => {
+    expect(SCHEDULE_PERIODS).not.toContain(PERIOD.ALL);
+  });
+});
+
+describe('withinPeriod', () => {
+  const bounds = { from: { year: 2026, month: 8, day: 1 }, to: { year: 2026, month: 8, day: 3 } };
+
+  it('включает обе границы', () => {
+    expect(withinPeriod(bounds, '2026-08-01T00:00:00+03:00')).toBe(true);
+    expect(withinPeriod(bounds, '2026-08-03T23:59:00+03:00')).toBe(true);
+  });
+
+  it('отсекает соседние дни', () => {
+    expect(withinPeriod(bounds, '2026-07-31T23:59:00+03:00')).toBe(false);
+    expect(withinPeriod(bounds, '2026-08-04T00:00:00+03:00')).toBe(false);
+  });
+
+  it('сутки считает по МОСКВЕ, а не по UTC', () => {
+    // 31-07 21:30 UTC — это уже 01-08 00:30 МСК. Контейнер живёт в UTC, и
+    // наивное сравнение выкинуло бы этот возврат из августа.
+    expect(withinPeriod(bounds, '2026-07-31T21:30:00Z')).toBe(true);
+  });
+
+  it('дата отсутствует или битая — ВНЕ периода', () => {
+    expect(withinPeriod(bounds, undefined)).toBe(false);
+    expect(withinPeriod(bounds, 'не дата')).toBe(false);
   });
 });
