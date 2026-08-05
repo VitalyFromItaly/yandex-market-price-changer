@@ -70,6 +70,13 @@ export interface IFbyProblemSku {
 export interface IFbyStockSummary {
   totals: Record<TFbyStockType, number>;
   problems: IFbyProblemSku[];
+  /**
+   * Те же типы, но по складам (колонка WAREHOUSE отчёта) — для свёртки по
+   * кластерам-территориям на экране. Ключ '' — строки без названия склада:
+   * выбросить их нельзя, иначе сумма по складам разойдётся с totals. Парсер
+   * про кластеры не знает — какие склады чьи, решает fby-clusters при выводе.
+   */
+  byWarehouse: Record<string, Record<TFbyStockType, number>>;
 }
 
 /** Итог одной проблемной позиции — для сортировки и порога «в файл». */
@@ -94,11 +101,18 @@ export function parseFbyStockCsv(csv: string): IFbyStockSummary {
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
   const totals = emptyTotals();
+  const byWarehouse: Record<string, Record<TFbyStockType, number>> = {};
   const byProblemSku = new Map<string, IFbyProblemSku>();
 
   for (const row of rows) {
+    const warehouse = String(row.WAREHOUSE ?? '').trim();
+    // Один внутренний цикл кормит и totals, и склад — сумма по складам равна
+    // общим итогам ПО ПОСТРОЕНИЮ, а не благодаря параллельным фильтрам.
+    const warehouseTotals = (byWarehouse[warehouse] ??= emptyTotals());
     for (const [column, type] of Object.entries(COLUMN_TO_TYPE)) {
-      totals[type] += numeric(row[column]);
+      const count = numeric(row[column]);
+      totals[type] += count;
+      warehouseTotals[type] += count;
     }
 
     const defect = numeric(row.DEFECT);
@@ -126,7 +140,7 @@ export function parseFbyStockCsv(csv: string): IFbyStockSummary {
     (a, b) => problemTotal(b) - problemTotal(a) || a.sku.localeCompare(b.sku),
   );
 
-  return { totals, problems };
+  return { totals, problems, byWarehouse };
 }
 
 function emptyTotals(): Record<TFbyStockType, number> {

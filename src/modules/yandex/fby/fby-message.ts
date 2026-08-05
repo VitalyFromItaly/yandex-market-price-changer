@@ -4,6 +4,9 @@ import type { IFbyStockSummary, TFbyStockType } from './fby-stock-report';
 import { b, esc } from '../../telegram/formatting/telegram-format';
 import { moscowStamp } from '../reports/moscow-day';
 import { SUPPLY_STATUS } from '../reports/report-status-map';
+import { YandexApiError } from '../yandex-api.errors';
+
+import { groupByCluster } from './fby-clusters';
 
 /**
  * Текст сводки FBY одним экраном.
@@ -65,6 +68,21 @@ const STOCK_ORDER: readonly TFbyStockType[] = [
   'UTILIZATION',
 ];
 
+/**
+ * Короткие подписи для строки кластера — ровно те слова, что уже печатает
+ * problemLines (брак/просрочка/утиль): один экран не должен звать одно и то же
+ * по-разному. Record по объединению — компилятор требует полноты.
+ */
+const STOCK_SHORT_LABEL: Readonly<Record<TFbyStockType, string>> = {
+  AVAILABLE: 'доступно',
+  FIT: 'годный',
+  FREEZE: 'резерв',
+  QUARANTINE: 'карантин',
+  DEFECT: 'брак',
+  EXPIRED: 'просрочка',
+  UTILIZATION: 'утиль',
+};
+
 /** Тип заявки → короткое слово. */
 const REQUEST_TYPE_LABEL: Readonly<Record<string, string>> = {
   WITHDRAW: 'вывоз',
@@ -121,8 +139,47 @@ function stockSection(data: IFbyOverviewData): string[] {
     lines.push(`${STOCK_LABEL[type]}: ${b(formatCount(data.stock.totals[type]))}`);
   }
 
+  lines.push(...clusterLines(data.stock.byWarehouse));
   lines.push('', ...problemLines(data.stock.problems));
   return lines;
+}
+
+/**
+ * Разбивка остатков по кластерам-территориям — компактной строкой на кластер,
+ * только ненулевые типы (экран и так длинный: заявки, проблемные позиции).
+ *
+ * Какие склады чьи — решает реестр fby-clusters; склад вне реестра печатается
+ * СВОИМ именем (данные Маркета → через esc внутри b), а не прячется в «прочие»:
+ * новая площадка Яндекса должна быть видна без правки кода. Заголовки кластеров
+ * из реестра — наши литералы, как STOCK_LABEL.
+ */
+function clusterLines(byWarehouse: IFbyStockSummary['byWarehouse']): string[] {
+  const groups = groupByCluster(byWarehouse);
+  if (!groups.length) return [];
+
+  const lines = groups.map((group) => {
+    const totals = sumTotals(group.warehouses.map((w) => w.value));
+    const parts = STOCK_ORDER.filter((type) => totals[type] > 0).map(
+      (type) => `${STOCK_SHORT_LABEL[type]} ${b(formatCount(totals[type]))}`,
+    );
+    // Пустое имя склада бывает у строк CSV без колонки WAREHOUSE — парсер их
+    // не выбрасывает, чтобы сумма кластеров сходилась с общими итогами.
+    const title = group.key === null ? esc(group.title || 'склад без названия') : group.title;
+    return `📍 ${title}: ${parts.length ? parts.join(' · ') : 'пусто'}`;
+  });
+
+  return ['', ...lines];
+}
+
+/** Сумма по-складовых итогов группы — по типам. */
+function sumTotals(
+  values: readonly Record<TFbyStockType, number>[],
+): Record<TFbyStockType, number> {
+  const sum = {} as Record<TFbyStockType, number>;
+  for (const type of STOCK_ORDER) {
+    sum[type] = values.reduce((acc, totals) => acc + totals[type], 0);
+  }
+  return sum;
 }
 
 function problemLines(problems: IFbyStockSummary['problems']): string[] {
@@ -197,4 +254,18 @@ function formatCount(value: number): string {
   return Math.round(value)
     .toString()
     .replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
+/**
+ * Текст об ошибке сборки сводки — для пользователя.
+ *
+ * Один на оба пути: постановку джобы (fby.handler) и саму сборку
+ * (fby-overview.processor) — паттерн uploadErrorText из stock-report.ts.
+ */
+export function fbyOverviewErrorText(error: unknown): string {
+  const text =
+    error instanceof YandexApiError
+      ? error.userMessage
+      : 'Не удалось собрать сводку FBY. Попробуйте позже.';
+  return `❌ ${text}`;
 }

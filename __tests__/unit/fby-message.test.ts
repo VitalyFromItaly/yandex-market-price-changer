@@ -5,11 +5,15 @@ import {
   formatFbyOverview,
   type IFbyOverviewData,
 } from '../../src/modules/yandex/fby/fby-message';
-import type { IFbyProblemSku } from '../../src/modules/yandex/fby/fby-stock-report';
+import type {
+  IFbyProblemSku,
+  IFbyStockSummary,
+  TFbyStockType,
+} from '../../src/modules/yandex/fby/fby-stock-report';
 
 const NOW = new Date('2026-08-02T06:30:00Z'); // 09:30 МСК
 
-function stock(problems: IFbyProblemSku[] = []) {
+function stock(problems: IFbyProblemSku[] = [], byWarehouse: IFbyStockSummary['byWarehouse'] = {}) {
   return {
     totals: {
       AVAILABLE: 253,
@@ -21,6 +25,21 @@ function stock(problems: IFbyProblemSku[] = []) {
       UTILIZATION: 0,
     },
     problems,
+    byWarehouse,
+  };
+}
+
+/** Итоги одного склада: все типы нули, кроме переданных. */
+function wh(counts: Partial<Record<TFbyStockType, number>>): Record<TFbyStockType, number> {
+  return {
+    AVAILABLE: 0,
+    FIT: 0,
+    FREEZE: 0,
+    QUARANTINE: 0,
+    DEFECT: 0,
+    EXPIRED: 0,
+    UTILIZATION: 0,
+    ...counts,
   };
 }
 
@@ -77,6 +96,49 @@ describe('formatFbyOverview', () => {
   it('нет проблемных — так и пишет', () => {
     const text = formatFbyOverview(fullData({ stock: stock([]) }), NOW);
     expect(text).toContain('Проблемных позиций нет');
+  });
+
+  it('остатки по кластерам: склады одной территории складываются в одну строку', () => {
+    const text = formatFbyOverview(
+      fullData({
+        stock: stock([], {
+          Софьино: wh({ AVAILABLE: 1200, FREEZE: 50 }),
+          Томилино: wh({ AVAILABLE: 34, FREEZE: 6, DEFECT: 7 }),
+          Екатеринбург: wh({ AVAILABLE: 27, EXPIRED: 2 }),
+        }),
+      }),
+      NOW,
+    );
+
+    // Софьино и Томилино — одна Москва; нулевые типы в строку не попадают.
+    expect(text).toContain('📍 Москва: доступно <b>1 234</b> · резерв <b>56</b> · брак <b>7</b>');
+    expect(text).toContain('📍 Екатеринбург: доступно <b>27</b> · просрочка <b>2</b>');
+    expect(text).not.toContain('Софьино');
+  });
+
+  it('склад вне реестра — отдельной строкой со своим именем, через esc', () => {
+    const text = formatFbyOverview(
+      fullData({
+        stock: stock([], {
+          Софьино: wh({ AVAILABLE: 5 }),
+          'Новый склад <X>': wh({ AVAILABLE: 12 }),
+        }),
+      }),
+      NOW,
+    );
+
+    expect(text).toContain('📍 Новый склад &lt;X&gt;: доступно <b>12</b>');
+    expect(text).not.toContain('Новый склад <X>');
+  });
+
+  it('кластер со сплошными нулями показывается как «пусто», а не исчезает', () => {
+    const text = formatFbyOverview(fullData({ stock: stock([], { Софьино: wh({}) }) }), NOW);
+    expect(text).toContain('📍 Москва: пусто');
+  });
+
+  it('без данных по складам кластерных строк нет (пустой byWarehouse)', () => {
+    const text = formatFbyOverview(fullData({ stock: stock([], {}) }), NOW);
+    expect(text).not.toContain('📍');
   });
 
   it('заявки печатаются с номером, статусом и складом; неизвестный статус — как есть', () => {
@@ -139,6 +201,7 @@ describe('formatFbyOverview', () => {
     expect(text).toContain('Остатки временно недоступны');
     expect(text).toContain('Заявки временно недоступны');
     expect(text).toContain('недоступно'); // счётчики доставки
+    expect(text).not.toContain('📍'); // без остатков нет и кластерных строк
     // Шапка на месте — экран собран, а не упал.
     expect(text).toContain('FBY');
   });
