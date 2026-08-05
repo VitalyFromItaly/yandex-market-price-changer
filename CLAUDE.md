@@ -588,28 +588,41 @@ into one line and loses commission, tax and cost.
     pass `{tariffEstimate}` into `ProfitService.build`; the service deliberately does not read
     `UserAccess` (Mongo доступа is the telegram layer's business). In `ReportsHandler` an absent
     access record means admin → flag open, the `allFeaturesEnabled` argument.
-  * **«🧮 Калькулятор» is also a menu button — the sixth report.** `REPORT.TARIFF_CALC` =
-    `'tariff_calc'` (report key == feature key, like the other five), which buys the whole report
-    machinery for free: the period picker and `rep:` callbacks, «Другой день» via
-    `pendingReportDay`, `featureGate` through `REPORT_TO_FEATURE`, the schedule section and the
-    daily digest (both branch on the key in `reports.handler` / `reports.processor`). Its
-    definition takes the **placed** statuses (`PLACED_STATUSES`, `creationDate`, no `CANCELLED` —
-    a cancelled order has no services); `PLACED_STATUSES` moved above `REPORT_DEFINITIONS` because
-    the definition references it and `const` has no hoisting. The screen (single-source module
-    `reports/tariff-calc-message.ts`, used by button and digest) shows the sum, the **per-service
-    breakdown** (`serviceLabel` in `tariff-estimate.ts`, unknown codes print as-is — the
-    `IFbySupplyRequest` precedent) sorted by amount, and a flat-rate comparison line over the same
-    `coveredRevenue` base. Unlike the line inside «Прибыль», `buildTariffReport` **throws** on
-    Partner API failure — this screen IS the calculator, so the error is reported to the seller
-    instead of vanishing. The button **enqueues** `SEND_TARIFF_REPORT` on the `reports` queue
-    (`tariff-report.processor.ts`) for the same reason as «Прибыль»: windowed order queries plus
-    catalog plus the calculator are tens of seconds, and waiting in the handler froze telegraf's
-    polling loop for everyone. Its payload carries **no** feature flag, unlike `IProfitReportJob`:
-    there the flag decides whether to print a line inside someone else's report, here it decides
-    whether the screen exists at all — already checked by the gate and the handler.
-    The button sits in the top row next to «💰 Прибыль»
-    (money screens together; default-off keeps the row single-button for most sellers, and
-    `withSwitchStore` may make it three for an admin — pinned in `price-changer-keyboard.test`).
+  * **«🧮 Калькулятор» is also a menu button — the sixth report, and a full P&L of its own.**
+    `REPORT.TARIFF_CALC` = `'tariff_calc'` (report key == feature key, like the other five), which
+    buys the whole report machinery for free: the period picker and `rep:` callbacks, «Другой день»
+    via `pendingReportDay`, `featureGate` through `REPORT_TO_FEATURE`, the schedule section and the
+    daily digest. Its definition takes the **placed** statuses (`PLACED_STATUSES`, `creationDate`,
+    no `CANCELLED` — a cancelled order has no services); `PLACED_STATUSES` moved above
+    `REPORT_DEFINITIONS` because the definition references it and `const` has no hoisting.
+    - **The screen prints the same chain as «Прибыль»** — продажи → услуги → налог → продвижение →
+      закуп → чистая — with the flat commission replaced by the calculator's services. The seller
+      asked for it in those words («если бы ещё подтягивал закуп, и раздел чистой в него
+      перенести»). Purchase cost comes from where it always does: `PurchasePrice` + `applyDiscounts`
+      — Partner API has no cost of goods (`offer.purchasePrice` is in the spec and empty on both
+      live stores).
+    - **Two screens print a net now, and that is deliberate: a different BASE, not a different
+      formula.** The arithmetic stays in `profitOf`, which gained an optional
+      `services: Map<orderId, number>` — pass it and the commission is that sum instead of
+      `revenue × commission%`. A second copy of the net calculation is exactly the pair that drifts
+      (the help screens did). Hence the comparison line is mandatory: live, the calculator says
+      ≈24–29 % against a configured 16 %, and without it the seller reads one screen as broken.
+    - **An order counts only when BOTH its cost and its services are known** — `profitOf` excludes on
+      either, and the excluded block names both reasons (нет закупочной цены / нет категории в
+      каталоге). Returns drop the order whole, as in «Прибыль».
+    - `byService` is accumulated in the **same pass** that builds the services map (`orderServices`
+      in `tariff-estimate.ts`, shared with `estimateOf`), so the breakdown sums to «Услуги Маркета»
+      by construction rather than by two filters happening to agree — the `IReturnsSummary.records`
+      argument.
+    - The button **enqueues** `SEND_TARIFF_REPORT` on the `reports` queue
+      (`tariff-report.processor.ts`) for the same reason as «Прибыль»: windowed order queries plus
+      catalog plus the calculator are tens of seconds, and waiting in the handler froze telegraf's
+      polling loop for everyone. Its payload carries **no** feature flag, unlike `IProfitReportJob`:
+      there the flag decides whether to print a line inside someone else's report, here it decides
+      whether the screen exists at all — already checked by the gate and the handler. The button
+      sits in the top row next to «💰 Прибыль» (money screens together; default-off keeps the row
+      single-button for most sellers, and `withSwitchStore` may make it three for an admin — pinned
+      in `price-changer-keyboard.test`).
   * **One estimate per report, for the main block only** — the same `placed.orders ? placed :
 redeemed` predicate as `placedIsMain`, computed after `profitOf`. `formatProfitReport` re-checks
     `estimate.scope` against the block it prints into: if the two predicates ever drift, a line with

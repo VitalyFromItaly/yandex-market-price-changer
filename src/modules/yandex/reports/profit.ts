@@ -246,6 +246,31 @@ export interface IProfitOptions {
    * считается нулевым: карта costs для этого не годится, в ней уже числа.
    */
   rows?: ReadonlyMap<string, IPurchaseRow>;
+  /**
+   * Услуги Маркета ПО ЗАКАЗАМ вместо плоской комиссии — заказ → сумма услуг
+   * (`id` заказа, как у `returned`). Так считает экран «Калькулятор»: у него
+   * та же формула чистой, отличается только чем заменена комиссия.
+   *
+   * Формула живёт здесь, а не копией в калькуляторе, намеренно: два места,
+   * считающих чистую, разъедутся — ровно так уже расходились экраны справки и
+   * настроек.
+   *
+   * Заказ, которого в карте НЕТ, исключается так же, как заказ без закупочной
+   * цены: посчитать его нечем, а взять услуги нулём значило бы завысить
+   * прибыль молча. Не передали карту вовсе — работает обычный режим плоской
+   * ставки.
+   */
+  services?: ReadonlyMap<number | string, number>;
+}
+
+/** Услуги по заказу, если они известны. Сравнение id и числом, и строкой. */
+function servicesOf(
+  order: IProfitOrder,
+  services?: IProfitOptions['services'],
+): number | null | undefined {
+  if (!services) return undefined;
+  if (order?.id == null) return null;
+  return services.get(order.id) ?? services.get(String(order.id)) ?? null;
 }
 
 /** Есть ли по заказу возврат. Сравнение и числом, и строкой: id приходит по-разному. */
@@ -412,6 +437,9 @@ export function profitOf(
   let promo = 0;
   let purchase = 0;
   let counted = 0;
+  // Комиссия по услугам копится по заказам; при плоской ставке она считается
+  // от итоговой выручки ниже.
+  let services = 0;
   let excludedOrders = 0;
   let excludedRevenue = 0;
   let returnedOrders = 0;
@@ -436,8 +464,11 @@ export function profitOf(
     }
 
     const resolved = orderPurchase(order, costs);
+    const orderServices = servicesOf(order, options?.services);
 
-    if (resolved === null) {
+    // Заказ считается, только когда известно И то и другое: наполовину
+    // посчитанный заказ дал бы правдоподобное неверное число.
+    if (resolved === null || orderServices === null) {
       excludedOrders += 1;
       excludedRevenue += orderRevenue;
       for (const item of order?.items ?? []) {
@@ -449,6 +480,7 @@ export function profitOf(
     revenue += orderRevenue;
     subsidies += orderSubsidies;
     purchase += resolved;
+    services += orderServices ?? 0;
     counted += 1;
 
     // Только по УЧТЁННЫМ заказам — возвраты и исключённые ушли по continue
@@ -470,7 +502,10 @@ export function profitOf(
     }
   }
 
-  const commission = (revenue * commissionPercent) / 100;
+  // Комиссия — либо сумма услуг по калькулятору (накоплена по заказам), либо
+  // плоская ставка от выручки. Строка одна: чистая считается ниже одинаково,
+  // чем бы комиссия ни была.
+  const commission = options?.services ? services : (revenue * commissionPercent) / 100;
   const tax = (revenue * taxPercent) / 100;
 
   return {

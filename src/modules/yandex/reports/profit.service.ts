@@ -12,8 +12,8 @@ import { YandexClientFactory } from '../yandex-client.factory';
 
 import { subsidiesTotal, orderTotals } from './money';
 import { OrderReportsService } from './order-reports.service';
-import { applyDiscounts, orderSkus, profitOf, ratesOf } from './profit';
-import { buildTariffRows, estimateOf, unitCostsOf } from './tariff-estimate';
+import { applyDiscounts, orderPurchase, orderSkus, profitOf, ratesOf } from './profit';
+import { buildTariffRows, estimateOf, orderServices, unitCostsOf } from './tariff-estimate';
 import { DEFAULT_PERIOD } from './report-period';
 import { REPORT } from './report-status-map';
 
@@ -41,16 +41,26 @@ export interface IProfitReport {
   tariffEstimate?: ITariffEstimate;
 }
 
-/** Экран «🧮 Калькулятор Маркета»: услуги по оформленным заказам периода. */
+/**
+ * Экран «🧮 Калькулятор Маркета» — полный расчёт по ОФОРМЛЕННЫМ заказам
+ * периода, где место плоской комиссии занимают услуги Маркета по тарифам.
+ *
+ * Второй экран с чистой, и это осознанно: у него другая БАЗА, а не другая
+ * формула. Арифметика одна — `profitOf`, куда услуги приходят параметром;
+ * иначе две копии расчёта разъехались бы (так уже расходились экраны справки).
+ */
 export interface ITariffCalcReport {
   period: IReportPeriod;
-  /** Оформленных заказов за период (без отменённых — по ним услуг нет). */
-  ordersCount: number;
-  /** Выручка всего набора: товары + субсидии Маркета. */
-  revenue: number;
+  /** Оформленных заказов за период — всего, до исключений. */
+  totalOrders: number;
+  /** Расчёт: `totals.commission` здесь — сумма услуг, а не ставка от выручки. */
+  totals: IProfitTotals;
+  /** Услуги в разрезе видов; сумма равна `totals.commission` по построению. */
+  byService: Record<string, number>;
   /** Плоская ставка продавца — для строки сравнения. */
   commissionPercent: number;
-  estimate: ITariffEstimate;
+  /** Когда последний раз загружали прайс. null — закупа нет вовсе. */
+  pricesUpdatedAt: Date | null;
 }
 
 /** Настройки сборки отчёта, зависящие от вызывающего. */
@@ -161,27 +171,74 @@ export class ProfitService {
   ): Promise<ITariffCalcReport> {
     const result = await this.reports.build(store, REPORT.TARIFF_CALC, now, period);
     const orders = result.orders as IReportOrder[];
+    const rates = ratesOf(store);
 
-    const revenue = orders.reduce(
-      (sum, order) => sum + orderTotals(order).items + subsidiesTotal(order),
-      0,
-    );
+    // Заказов нет — ни каталог, ни калькулятор, ни база не нужны.
+    if (!orders.length) {
+      return {
+        period: result.period,
+        totalOrders: 0,
+        totals: profitOf([], new Map(), rates, { services: new Map() }),
+        byService: {},
+        commissionPercent: rates.commissionPercent,
+        pricesUpdatedAt: null,
+      };
+    }
 
-    const client = this.clients.forStore(store);
-    const logistics = orders.length
-      ? await client.getOfferMappings(orderSkus([...orders]))
-      : new Map<string, never>();
+    // Закуп — из нашей Mongo, ровно как в «Прибыли»: цена прайса минус скидка
+    // бренда. Другого источника нет, Partner API себестоимость не отдаёт.
+    const skus = orderSkus(orders);
+    const [purchaseRows, logistics, returned] = await Promise.all([
+      this.purchasePrices.findBySkus(store.telegramUserId, skus),
+      this.clients.forStore(store).getOfferMappings(skus),
+      this.returnedOrderIds(store),
+    ]);
+    const costs = applyDiscounts(purchaseRows, rates);
+
     const { rows } = buildTariffRows(orders, logistics);
     const calculations = rows.length
-      ? await client.calculateTariffs(rows.map((row) => row.params))
+      ? await this.clients.forStore(store).calculateTariffs(rows.map((row) => row.params))
       : [];
+    const unitCosts = unitCostsOf(rows, calculations);
+
+    /**
+     * Услуги по заказам — вход для profitOf вместо плоской комиссии, и разбивка
+     * по видам услуг в том же проходе.
+     *
+     * Разбивка копится ЗДЕСЬ, а не отдельным сводом, чтобы её сумма совпадала с
+     * «Услуги Маркета» по построению: profitOf исключает заказ и без закупа
+     * тоже, и второй проход по своим правилам дал бы другое число в той же
+     * шапке. Возвращённые заказы пропускаются по той же причине.
+     */
+    const services = new Map<number | string, number>();
+    const byService: Record<string, number> = {};
+
+    for (const order of orders) {
+      if (order.id == null || returned.has(order.id) || returned.has(String(order.id))) continue;
+
+      const resolved = orderServices(order, unitCosts);
+      if (!resolved || orderPurchase(order, costs) === null) continue;
+
+      services.set(order.id, resolved.servicesTotal);
+      for (const [type, value] of Object.entries(resolved.byService)) {
+        byService[type] = (byService[type] ?? 0) + value;
+      }
+    }
+
+    const totals = profitOf(orders, costs, rates, { returned, rows: purchaseRows, services });
+
+    this.logger.log(
+      `Калькулятор для ${store.telegramUserId}: заказов ${totals.orders} из ${orders.length}, ` +
+        `услуги ${Math.round(totals.commission)} ₽, чистая ${Math.round(totals.net)} ₽`,
+    );
 
     return {
       period: result.period,
-      ordersCount: orders.length,
-      revenue,
-      commissionPercent: ratesOf(store).commissionPercent,
-      estimate: estimateOf(orders, unitCostsOf(rows, calculations), 'placed'),
+      totalOrders: orders.length,
+      totals,
+      byService,
+      commissionPercent: rates.commissionPercent,
+      pricesUpdatedAt: await this.purchasePrices.lastUpdatedAt(store.telegramUserId),
     };
   }
 

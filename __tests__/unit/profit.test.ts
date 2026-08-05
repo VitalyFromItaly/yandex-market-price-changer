@@ -176,6 +176,54 @@ describe('Формула прибыли', () => {
   });
 });
 
+describe('Услуги вместо плоской комиссии (экран калькулятора)', () => {
+  it('комиссия берётся из карты услуг, ставка не применяется', () => {
+    // Формула чистой одна на два экрана — меняется только чем заменена
+    // комиссия. Ставка 23 % дала бы 2300, услуги дают 3000.
+    const totals = profitOf([ORDER], COSTS, DEFAULT_RATES, {
+      services: new Map([[1, 3000]]),
+    });
+
+    expect(totals.commission).toBe(3000);
+    // Налог по-прежнему от ВЫРУЧКИ, а не от остатка: база налога не меняется.
+    expect(totals.tax).toBe(700);
+    expect(totals.net).toBe(10000 - 3000 - 700 - 5000);
+  });
+
+  it('заказ без услуг исключается так же, как заказ без закупа', () => {
+    // Взять услуги нулём значило бы завысить прибыль молча.
+    const totals = profitOf([ORDER], COSTS, DEFAULT_RATES, { services: new Map() });
+
+    expect(totals.orders).toBe(0);
+    expect(totals.excludedOrders).toBe(1);
+    expect(totals.commission).toBe(0);
+  });
+
+  it('id заказа сопоставляется и числом, и строкой', () => {
+    const totals = profitOf([ORDER], COSTS, DEFAULT_RATES, {
+      services: new Map<number | string, number>([['1', 3000]]),
+    });
+
+    expect(totals.orders).toBe(1);
+    expect(totals.commission).toBe(3000);
+  });
+
+  it('без карты услуг работает прежний режим плоской ставки', () => {
+    // Регресс: опция не должна менять поведение «Прибыли».
+    expect(profitOf([ORDER], COSTS, DEFAULT_RATES).commission).toBe(2300);
+  });
+
+  it('возврат уводит заказ раньше услуг — причина называется правильно', () => {
+    const totals = profitOf([ORDER], COSTS, DEFAULT_RATES, {
+      services: new Map(),
+      returned: new Set([1]),
+    });
+
+    expect(totals.returnedOrders).toBe(1);
+    expect(totals.excludedOrders).toBe(0);
+  });
+});
+
 describe('Заказы без закупа', () => {
   it('заказ с неизвестной позицией исключается ЦЕЛИКОМ', () => {
     const totals = profitOf(

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ITariffReportJob } from '../../src/modules/telegram/queue/processors/tariff-report.processor';
 
 import { TariffReportProcessor } from '../../src/modules/telegram/queue/processors/tariff-report.processor';
+import { DEFAULT_RATES } from '../../src/modules/yandex/reports/profit';
 import { DEFAULT_PERIOD } from '../../src/modules/yandex/reports/report-period';
 import { YandexAuthError } from '../../src/modules/yandex/yandex-api.errors';
 
@@ -24,17 +25,26 @@ describe('TariffReportProcessor', () => {
 
   const CALC_RESULT = {
     period: DEFAULT_PERIOD,
-    ordersCount: 5,
-    revenue: 10_000,
-    commissionPercent: 16,
-    estimate: {
-      scope: 'placed' as const,
-      servicesTotal: 2400,
-      byService: { FEE: 1500, DELIVERY_TO_CUSTOMER: 900 },
-      coveredOrders: 5,
-      totalOrders: 5,
-      coveredRevenue: 10_000,
+    totalOrders: 5,
+    totals: {
+      revenue: 10_000,
+      subsidies: 0,
+      commission: 2400,
+      tax: 700,
+      promo: 0,
+      purchase: 5000,
+      net: 1900,
+      orders: 5,
+      excludedOrders: 0,
+      excludedRevenue: 0,
+      unknownSkus: [] as string[],
+      returnedOrders: 0,
+      returnedRevenue: 0,
+      rates: DEFAULT_RATES,
     },
+    byService: { FEE: 1500, DELIVERY_TO_CUSTOMER: 900 },
+    commissionPercent: 16,
+    pricesUpdatedAt: new Date('2026-08-01T09:00:00Z'),
   };
 
   const jobData: ITariffReportJob = {
@@ -78,6 +88,9 @@ describe('TariffReportProcessor', () => {
     expect(chatId).toBe('222');
     expect(text).toContain('Услуги Маркета');
     expect(text).toContain('Размещение на Маркете');
+    // Экран стал полным расчётом: закуп и чистая пришли из profitOf.
+    expect(text).toContain('Закуп');
+    expect(text).toContain('Ожидается чистая');
   });
 
   it('период берётся из джобы', async () => {

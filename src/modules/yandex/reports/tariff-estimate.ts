@@ -198,11 +198,45 @@ export function unitCostsOf(
 }
 
 /**
- * Свод по набору заказов: стоимость единицы × количество.
+ * Услуги по ОДНОМУ заказу: стоимость единицы × количество.
  *
- * Заказ, у которого не посчиталась хоть одна позиция, ИСКЛЮЧАЕТСЯ ЦЕЛИКОМ —
- * тот же принцип, по которому profitOf исключает заказ без закупочной цены:
- * частично посчитанный заказ дал бы сумму, которую не с чем сверить.
+ * `null`, если не посчиталась хоть одна позиция или позиций нет вовсе, —
+ * заказ исключается целиком, тот же принцип, по которому `orderPurchase`
+ * возвращает `null` при неизвестном закупе. Отдельной функцией, потому что
+ * читателя два: свод для строки в «Прибыли» и карта услуг для `profitOf` на
+ * экране калькулятора; два прохода по одному правилу разъехались бы.
+ */
+export function orderServices(
+  order: ITariffEstimateOrder,
+  unitCosts: ReadonlyMap<string, ITariffUnitCost>,
+): ITariffUnitCost | null {
+  const items = order?.items ?? [];
+  if (!items.length) return null;
+
+  let servicesTotal = 0;
+  const byService: Record<string, number> = {};
+
+  for (const item of items) {
+    const sku = item.offerId;
+    const cost = sku ? unitCosts.get(rowKeyOf(sku, tariffPriceOf(item))) : undefined;
+    if (!cost) return null;
+
+    const count = Number(item.count) || 1;
+    servicesTotal += cost.servicesTotal * count;
+    for (const [type, value] of Object.entries(cost.byService)) {
+      byService[type] = (byService[type] ?? 0) + value * count;
+    }
+  }
+
+  return { servicesTotal, byService };
+}
+
+/**
+ * Свод по набору заказов — для строки сверки в отчёте «Прибыль».
+ *
+ * Заказ, у которого не посчиталась хоть одна позиция, ИСКЛЮЧАЕТСЯ ЦЕЛИКОМ
+ * (см. orderServices). Экран калькулятора этот свод НЕ использует: там услуги
+ * едут в profitOf, который исключает заказ ещё и без закупочной цены.
  */
 export function estimateOf(
   orders: readonly ITariffEstimateOrder[],
@@ -215,31 +249,13 @@ export function estimateOf(
   const byService: Record<string, number> = {};
 
   for (const order of orders) {
-    const items = order.items ?? [];
-    let orderTotal = 0;
-    const orderByService: Record<string, number> = {};
-    let covered = items.length > 0;
-
-    for (const item of items) {
-      const sku = item.offerId;
-      const cost = sku ? unitCosts.get(rowKeyOf(sku, tariffPriceOf(item))) : undefined;
-      if (!cost) {
-        covered = false;
-        break;
-      }
-      const count = Number(item.count) || 1;
-      orderTotal += cost.servicesTotal * count;
-      for (const [type, value] of Object.entries(cost.byService)) {
-        orderByService[type] = (orderByService[type] ?? 0) + value * count;
-      }
-    }
-
-    if (!covered) continue;
+    const resolved = orderServices(order, unitCosts);
+    if (!resolved) continue;
 
     coveredOrders += 1;
-    servicesTotal += orderTotal;
+    servicesTotal += resolved.servicesTotal;
     coveredRevenue += orderTotals(order).items + subsidiesTotal(order);
-    for (const [type, value] of Object.entries(orderByService)) {
+    for (const [type, value] of Object.entries(resolved.byService)) {
       byService[type] = (byService[type] ?? 0) + value;
     }
   }
