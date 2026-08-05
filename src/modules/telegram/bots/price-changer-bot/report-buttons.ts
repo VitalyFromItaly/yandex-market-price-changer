@@ -27,6 +27,7 @@ export const MENU_TO_REPORT: Readonly<Record<string, TReportKey>> = {
   [MENU.RETURNING]: REPORT.RETURNING,
   [MENU.IN_TRANSIT]: REPORT.IN_TRANSIT,
   [MENU.PROFIT]: REPORT.PROFIT,
+  [MENU.TARIFF_CALC]: REPORT.TARIFF_CALC,
 };
 
 /** Ключ отчёта, пришедший из callback_data, — данные извне, а не наш тип. */

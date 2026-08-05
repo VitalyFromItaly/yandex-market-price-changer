@@ -563,10 +563,26 @@ into one line and loses commission, tax and cost.
   (the seller's own worked example, 2689 × 23%).
   - **Behind `FEATURE.TARIFF_CALC`, `defaultEnabled: false`** — the registry's designed-for case:
     experimental, opened per seller from the panel, costs 2–8 extra Partner API requests per report.
-    The flag maps to **no update**, so `featureGate` never sees it — both callers read it themselves
-    and pass `{tariffEstimate}` into `ProfitService.build`; the service deliberately does not read
+    For the comparison **line** the flag maps to no update — both callers read it themselves and
+    pass `{tariffEstimate}` into `ProfitService.build`; the service deliberately does not read
     `UserAccess` (Mongo доступа is the telegram layer's business). In `ReportsHandler` an absent
     access record means admin → flag open, the `allFeaturesEnabled` argument.
+  - **«🧮 Калькулятор» is also a menu button — the sixth report.** `REPORT.TARIFF_CALC` =
+    `'tariff_calc'` (report key == feature key, like the other five), which buys the whole report
+    machinery for free: the period picker and `rep:` callbacks, «Другой день» via
+    `pendingReportDay`, `featureGate` through `REPORT_TO_FEATURE`, the schedule section and the
+    daily digest (both branch on the key in `reports.handler` / `reports.processor`). Its
+    definition takes the **placed** statuses (`PLACED_STATUSES`, `creationDate`, no `CANCELLED` —
+    a cancelled order has no services); `PLACED_STATUSES` moved above `REPORT_DEFINITIONS` because
+    the definition references it and `const` has no hoisting. The screen (single-source module
+    `reports/tariff-calc-message.ts`, used by button and digest) shows the sum, the **per-service
+    breakdown** (`serviceLabel` in `tariff-estimate.ts`, unknown codes print as-is — the
+    `IFbySupplyRequest` precedent) sorted by amount, and a flat-rate comparison line over the same
+    `coveredRevenue` base. Unlike the line inside «Прибыль», `buildTariffReport` **throws** on
+    Partner API failure — this screen IS the calculator, so errors go to `replyWithError` like any
+    report, not into silent omission. The button sits in the top row next to «💰 Прибыль»
+    (money screens together; default-off keeps the row single-button for most sellers, and
+    `withSwitchStore` may make it three for an admin — pinned in `price-changer-keyboard.test`).
   - **One estimate per report, for the main block only** — the same `placed.orders ? placed :
     redeemed` predicate as `placedIsMain`, computed after `profitOf`. `formatProfitReport` re-checks
     `estimate.scope` against the block it prints into: if the two predicates ever drift, a line with
@@ -932,14 +948,15 @@ rejected   credentials wiped; 24h during which even entering credentials is refu
 
 ### Per-feature access: approval says _whether_, flags say _what_
 
-`UserAccess.status` is boolean — all or nothing. On top of it sits a registry of eleven features
+`UserAccess.status` is boolean — all or nothing. On top of it sits a registry of twelve features
 (`src/modules/telegram/bots/shared/features.domain.ts`), each switchable **per user** from the admin
 panel. This is not a second access system: `canPass(status, kind)` still answers "may this person
 use the bot", `requiredFeatures(update)` answers "which function is being invoked". Merging the two
 tables would mean a change to access rules silently reshapes the feature set, and the reverse.
 
-The five report keys are **literally the values of `REPORT`** — a second taxonomy for the same five
-things would drift, and the digest already keys its schedules by them. Plus `schedule`, the two
+The six report keys are **literally the values of `REPORT`** — a second taxonomy for the same six
+things would drift, and the digest already keys its schedules by them (`tariff_calc` is both the
+sixth report key and its feature key, same string). Plus `schedule`, the two
 price-list halves `purchase_prices` / `stock_update`, `promotion` (the promo-commission editor on
 the settings screen), and the two FBY-only screens `warehouses` / `fby`. `/start`, «🏠 Главное
 меню», «⚙️ Настройки», «❓ Помощь», «📊 Мой профиль»,

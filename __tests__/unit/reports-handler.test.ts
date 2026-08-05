@@ -71,6 +71,20 @@ async function build(
   };
 
   const profit = {
+    buildTariffReport: vi.fn(async () => ({
+      period: DEFAULT_PERIOD,
+      ordersCount: 2,
+      revenue: 1000,
+      commissionPercent: 16,
+      estimate: {
+        scope: 'placed' as const,
+        servicesTotal: 240,
+        byService: { FEE: 240 },
+        coveredOrders: 2,
+        totalOrders: 2,
+        coveredRevenue: 1000,
+      },
+    })),
     build: vi.fn(
       opts.profit ??
         (async () => ({
@@ -420,6 +434,27 @@ describe('Прибыль', () => {
     expect(profit.build).toHaveBeenCalledWith(expect.anything(), DEFAULT_PERIOD, expect.any(Date), {
       tariffEstimate: true,
     });
+  });
+
+  it('кнопка калькулятора зовёт свой сервисный метод и отвечает своим экраном', async () => {
+    const { handler, profit } = await build({ features: { tariff_calc: true } });
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.TARIFF_CALC, DEFAULT_PERIOD);
+
+    expect(profit.buildTariffReport).toHaveBeenCalledWith(expect.anything(), DEFAULT_PERIOD);
+    expect(profit.build).not.toHaveBeenCalled();
+    expect(ctx.texts().at(-1)).toContain('Калькулятор Маркета');
+  });
+
+  it('калькулятор без флага отбивается — ключ отчёта совпадает с ключом фичи', async () => {
+    const { handler, profit } = await build({ features: {} });
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.TARIFF_CALC, DEFAULT_PERIOD);
+
+    expect(profit.buildTariffReport).not.toHaveBeenCalled();
+    expect(ctx.texts().some((t) => t.includes('недоступен'))).toBe(true);
   });
 
   it('без настроек API прибыль не считается', async () => {

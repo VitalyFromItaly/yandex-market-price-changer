@@ -233,9 +233,34 @@ export const REPORT = {
   IN_TRANSIT: 'in_transit',
   /** (д) Чистая прибыль по выкупленным заказам. */
   PROFIT: 'profit',
+  /**
+   * (е) Услуги Маркета по калькулятору тарифов — отдельный экран с разбивкой.
+   * Значение равно ключу фичи `tariff_calc` — как у остальных пяти: ключи
+   * отчётов буквально совпадают со значениями фич.
+   */
+  TARIFF_CALC: 'tariff_calc',
 } as const;
 
 export type TReportKey = (typeof REPORT)[keyof typeof REPORT];
+
+/**
+ * Статусы ОФОРМЛЕННОГО заказа — то, что продавец видит в кабинете.
+ * Используются и набором «Оформлено» внутри прибыли (PLACED_DEFINITION ниже),
+ * и экраном калькулятора тарифов.
+ */
+export const PLACED_STATUSES: readonly TOrderStatus[] = [
+  // Недооформленные (PLACING, RESERVED) сюда не входят: заказа ещё нет.
+  // UNPAID входит — это оформленный заказ с отложенным платежом, продавец
+  // видит его в кабинете и считает своим.
+  ORDER_STATUS.UNPAID,
+  ORDER_STATUS.PENDING,
+  ORDER_STATUS.PROCESSING,
+  ORDER_STATUS.DELIVERY,
+  ORDER_STATUS.PICKUP,
+  ORDER_STATUS.DELIVERED,
+  ORDER_STATUS.PARTIALLY_RETURNED,
+  ORDER_STATUS.RETURNED,
+];
 
 export const REPORT_DEFINITIONS: Readonly<Record<TReportKey, IReportDefinition>> = {
   [REPORT.SHIPPED_TODAY]: {
@@ -305,6 +330,18 @@ export const REPORT_DEFINITIONS: Readonly<Record<TReportKey, IReportDefinition>>
     dateFilter: 'updatedAt',
     usesReturnsApi: false,
   },
+
+  [REPORT.TARIFF_CALC]: {
+    title: 'Калькулятор Маркета',
+    // Оформленные заказы периода — тот же набор, с которым продавец сверяет
+    // кабинет и по которому «Прибыль» печатает основной блок: услуги Маркета
+    // интересны по тому, что оформлено, а не только по уже выкупленному.
+    // CANCELLED не входит: по отменённому заказу услуг нет.
+    statuses: [...PLACED_STATUSES],
+    substatuses: [],
+    dateFilter: 'creationDate',
+    usesReturnsApi: false,
+  },
 };
 
 export function reportDefinition(key: TReportKey): IReportDefinition {
@@ -334,27 +371,14 @@ export function queryStatuses(definition: IReportDefinition): TOrderStatus[] {
  *
  * Ключа в `REPORT` намеренно НЕТ: `Object.values(REPORT)` питает
  * `OrderReportsService.keys`, то есть новый ключ означал бы новую кнопку отчёта
- * и новую строку в рассылке, которых никто не просил.
+ * и новую строку в рассылке, которых никто не просил. (У калькулятора тарифов
+ * ключ ЕСТЬ — там кнопку и строку рассылки как раз просили.)
  *
  * Зачем этот набор вообще. Продавец сверяется с кабинетом, где видит
  * ОФОРМЛЕННЫЕ заказы, а прибыль считается по ВЫКУПЛЕННЫМ: 30-07-2026 это дало
  * 11 против 10 при дневной норме магазина 40–50, и расхождение выглядело
  * поломкой. Теперь обе цифры в одном сообщении.
  */
-export const PLACED_STATUSES: readonly TOrderStatus[] = [
-  // Недооформленные (PLACING, RESERVED) сюда не входят: заказа ещё нет.
-  // UNPAID входит — это оформленный заказ с отложенным платежом, продавец
-  // видит его в кабинете и считает своим.
-  ORDER_STATUS.UNPAID,
-  ORDER_STATUS.PENDING,
-  ORDER_STATUS.PROCESSING,
-  ORDER_STATUS.DELIVERY,
-  ORDER_STATUS.PICKUP,
-  ORDER_STATUS.DELIVERED,
-  ORDER_STATUS.PARTIALLY_RETURNED,
-  ORDER_STATUS.RETURNED,
-];
-
 export const PLACED_DEFINITION: IReportDefinition = {
   title: 'Оформлено',
   // CANCELLED ЗАПРАШИВАЕТСЯ вместе с остальными, хотя в прибыль не идёт:

@@ -10,6 +10,7 @@ import { YandexMarketService } from '../../../../database/services/yandex-market
 import { ErrorReporter } from '../../../errors/error-reporter.service';
 import { OrderReportsService } from '../../../yandex/reports/order-reports.service';
 import { formatProfitReport } from '../../../yandex/reports/profit-message';
+import { formatTariffCalcReport } from '../../../yandex/reports/tariff-calc-message';
 import { ProfitService } from '../../../yandex/reports/profit.service';
 import { formatReport } from '../../../yandex/reports/report-message';
 import { schedulePeriod, type IReportPeriod } from '../../../yandex/reports/report-period';
@@ -141,6 +142,19 @@ export class ReportsProcessor {
           account.telegramChatId,
           { source: exported.buffer, filename: exported.filename },
           htmlOptions({ caption: exported.caption }),
+        );
+        return;
+      }
+
+      // Экран калькулятора — своим сервисом и своим текстом, ровно как по
+      // кнопке. isReportEnabled выше уже проверил фичу tariff_calc: ключ
+      // отчёта совпадает с ключом фичи, как у остальных пяти.
+      if (key === REPORT.TARIFF_CALC) {
+        const calc = await this.profit.buildTariffReport(store, period);
+        await bot.telegraf.telegram.sendMessage(
+          account.telegramChatId,
+          formatTariffCalcReport(calc),
+          htmlOptions(),
         );
         return;
       }

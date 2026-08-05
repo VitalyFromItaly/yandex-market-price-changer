@@ -218,15 +218,15 @@ describe('Какие возможности нужны апдейту', () => {
 
 describe('Раскладка меню по возможностям', () => {
   it('без ограничений видны все default-on кнопки, но не выключенные по умолчанию', () => {
-    // «Склады» и «FBY» — default-off И только для FBY-магазина, поэтому у
-    // продавца без явного решения их кнопок нет; ряды схлопываются целиком.
-    // Остальная раскладка — прежняя.
-    const FBY_ONLY: string[] = [MENU.WAREHOUSES, MENU.FBY];
+    // «Склады» и «FBY» — default-off И только для FBY-магазина, «Калькулятор» —
+    // просто default-off, поэтому у продавца без явного решения этих кнопок
+    // нет; их ряды схлопываются или худеют. Остальная раскладка — прежняя.
+    const HIDDEN_BY_DEFAULT: string[] = [MENU.WAREHOUSES, MENU.FBY, MENU.TARIFF_CALC];
     const layout = featureMenuLayout(undefined);
-    for (const label of FBY_ONLY) expect(layout.flat()).not.toContain(label);
+    for (const label of HIDDEN_BY_DEFAULT) expect(layout.flat()).not.toContain(label);
     expect(layout).toEqual(
       menuLayout()
-        .map((row) => row.filter((l) => !FBY_ONLY.includes(l)))
+        .map((row) => row.filter((l) => !HIDDEN_BY_DEFAULT.includes(l)))
         .filter((row) => row.length),
     );
   });

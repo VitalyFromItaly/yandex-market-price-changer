@@ -23,9 +23,9 @@ import {
  * пусто». Поэтому проверяется каждое правило по отдельности.
  */
 describe('Определения отчётов', () => {
-  it('описаны все пять отчётов', () => {
+  it('описаны все шесть отчётов', () => {
     expect(Object.keys(REPORT_DEFINITIONS).sort()).toEqual(
-      ['in_transit', 'profit', 'redeemed', 'returning', 'shipped_today'].sort(),
+      ['in_transit', 'profit', 'redeemed', 'returning', 'shipped_today', 'tariff_calc'].sort(),
     );
   });
 

@@ -62,6 +62,10 @@ export class MenuCommandsHandler {
       this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.IN_TRANSIT]),
     );
     bot.hears(MENU.PROFIT, (ctx) => this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.PROFIT]));
+    // Калькулятор тарифов — шестой отчёт, едет по общей отчётной механике.
+    bot.hears(MENU.TARIFF_CALC, (ctx) =>
+      this.reportsHandler.handle(ctx, MENU_TO_REPORT[MENU.TARIFF_CALC]),
+    );
     // Обзор складов. Работа — в WarehousesHandler; здесь только пара
     // «метка ↔ hears», которую требует инвариант menu-labels.
     bot.hears(MENU.WAREHOUSES, (ctx) => this.warehousesHandler.handle(ctx));

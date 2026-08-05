@@ -172,15 +172,12 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     defaultEnabled: true,
   },
   [FEATURE.TARIFF_CALC]: {
-    // Не кнопка вовсе — дополнительная строка внутри «Прибыли», поэтому ни
-    // ключа в MENU, ни записи в MENU_TO_FEATURE/REPORT_TO_FEATURE: гейтить
-    // нечего, флаг читают сами сборщики отчёта (кнопка и рассылка).
-    label: '🧮 Калькулятор Маркета',
+    label: MENU.TARIFF_CALC,
     description:
-      'Строка «По калькулятору Маркета» в отчёте «Прибыль»: услуги Маркета по ' +
-      'тарифам (категория, габариты, цена) — для сверки с плоским процентом комиссии.',
+      'Услуги Маркета по калькулятору тарифов: отдельный экран с разбивкой ' +
+      'по услугам и строка сверки в отчёте «Прибыль».',
     // Default-off: экспериментальная, включается точечно из панели. Стоит
-    // 2–8 лишних запросов к Partner API на каждый отчёт «Прибыль».
+    // 2–8 лишних запросов к Partner API на каждый показ.
     defaultEnabled: false,
   },
 };
@@ -224,6 +221,7 @@ const REPORT_TO_FEATURE: Readonly<Record<TReportKey, TFeatureKey>> = {
   [REPORT.RETURNING]: FEATURE.REPORT_RETURNING,
   [REPORT.IN_TRANSIT]: FEATURE.REPORT_IN_TRANSIT,
   [REPORT.PROFIT]: FEATURE.REPORT_PROFIT,
+  [REPORT.TARIFF_CALC]: FEATURE.TARIFF_CALC,
 };
 
 export function featureOfReport(key: TReportKey): TFeatureKey {
@@ -249,6 +247,7 @@ const MENU_TO_FEATURE: Readonly<Record<string, TFeatureKey>> = {
   [MENU.RETURNING]: FEATURE.REPORT_RETURNING,
   [MENU.IN_TRANSIT]: FEATURE.REPORT_IN_TRANSIT,
   [MENU.PROFIT]: FEATURE.REPORT_PROFIT,
+  [MENU.TARIFF_CALC]: FEATURE.TARIFF_CALC,
   [MENU.SCHEDULE]: FEATURE.SCHEDULE,
   [MENU.WAREHOUSES]: FEATURE.WAREHOUSES,
   [MENU.FBY]: FEATURE.FBY,

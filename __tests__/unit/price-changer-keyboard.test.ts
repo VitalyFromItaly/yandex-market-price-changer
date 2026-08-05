@@ -156,7 +156,9 @@ describe('Место кнопки «Сменить магазин» в раск�
     const kb = await keyboard.buildMainKeyboard(true, true, undefined, true);
     const layout = kb.reply_markup.keyboard as string[][];
     expect(layout.at(-1)).toEqual([MENU.USERS]);
-    expect(layout[0]).toEqual([MENU.PROFIT, MENU.SWITCH_STORE]);
+    // У администратора открыты все фичи (allFeaturesEnabled), поэтому в первом
+    // ряду видна и default-off кнопка калькулятора.
+    expect(layout[0]).toEqual([MENU.PROFIT, MENU.TARIFF_CALC, MENU.SWITCH_STORE]);
   });
 
   it('ни один ряд не пустой и подписи не дублируются', async () => {

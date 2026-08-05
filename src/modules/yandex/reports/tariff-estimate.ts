@@ -30,6 +30,25 @@ import { SUBSIDY_TYPE } from './report-status-map';
 export const DEFAULT_DIMENSION_CM = 11;
 export const DEFAULT_WEIGHT_KG = 0.3;
 
+/**
+ * Подписи услуг для экрана. Неизвестный код печатается как есть, а не
+ * прячется: набор на боевом бывает шире спеки (прецедент IFbySupplyRequest).
+ */
+const SERVICE_LABELS: Readonly<Record<string, string>> = {
+  FEE: 'Размещение на Маркете',
+  AGENCY_COMMISSION: 'Приём платежа',
+  PAYMENT_TRANSFER: 'Перевод платежа',
+  DELIVERY_TO_CUSTOMER: 'Доставка покупателю',
+  CROSSREGIONAL_DELIVERY: 'Доставка в другой регион',
+  EXPRESS_DELIVERY: 'Экспресс-доставка',
+  SORTING: 'Обработка заказа',
+  MIDDLE_MILE: 'Средняя миля',
+};
+
+export function serviceLabel(type: string): string {
+  return SERVICE_LABELS[type] ?? type;
+}
+
 /** Позиция заказа в объёме, нужном оценке. Субсидии позиции — НА ЕДИНИЦУ. */
 export interface ITariffEstimateItem {
   offerId?: string;

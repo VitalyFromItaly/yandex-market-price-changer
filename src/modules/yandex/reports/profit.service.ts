@@ -10,6 +10,7 @@ import { PurchasePriceService } from '../../../database/services/purchase-price.
 import { ErrorReporter } from '../../errors/error-reporter.service';
 import { YandexClientFactory } from '../yandex-client.factory';
 
+import { subsidiesTotal, orderTotals } from './money';
 import { OrderReportsService } from './order-reports.service';
 import { applyDiscounts, orderSkus, profitOf, ratesOf } from './profit';
 import { buildTariffRows, estimateOf, unitCostsOf } from './tariff-estimate';
@@ -38,6 +39,18 @@ export interface IProfitReport {
    * просто не печатается, отчёт живёт без неё.
    */
   tariffEstimate?: ITariffEstimate;
+}
+
+/** Экран «🧮 Калькулятор Маркета»: услуги по оформленным заказам периода. */
+export interface ITariffCalcReport {
+  period: IReportPeriod;
+  /** Оформленных заказов за период (без отменённых — по ним услуг нет). */
+  ordersCount: number;
+  /** Выручка всего набора: товары + субсидии Маркета. */
+  revenue: number;
+  /** Плоская ставка продавца — для строки сравнения. */
+  commissionPercent: number;
+  estimate: ITariffEstimate;
 }
 
 /** Настройки сборки отчёта, зависящие от вызывающего. */
@@ -130,6 +143,45 @@ export class ProfitService {
       cancelledOrders: placedOrders.cancelled.length,
       pricesUpdatedAt: await this.purchasePrices.lastUpdatedAt(store.telegramUserId),
       tariffEstimate,
+    };
+  }
+
+  /**
+   * Экран «🧮 Калькулятор Маркета»: услуги по оформленным заказам периода.
+   *
+   * В отличие от строки внутри «Прибыли», ошибки здесь НЕ гасятся: строка —
+   * приложение к другому отчёту и молча пропадает, а этот экран и ЕСТЬ
+   * калькулятор — отказ Partner API должен дойти до продавца обычным путём
+   * (`replyWithError`), как у остальных отчётов.
+   */
+  public async buildTariffReport(
+    store: YandexMarketDocument,
+    period: IReportPeriod = DEFAULT_PERIOD,
+    now: Date = new Date(),
+  ): Promise<ITariffCalcReport> {
+    const result = await this.reports.build(store, REPORT.TARIFF_CALC, now, period);
+    const orders = result.orders as IReportOrder[];
+
+    const revenue = orders.reduce(
+      (sum, order) => sum + orderTotals(order).items + subsidiesTotal(order),
+      0,
+    );
+
+    const client = this.clients.forStore(store);
+    const logistics = orders.length
+      ? await client.getOfferMappings(orderSkus([...orders]))
+      : new Map<string, never>();
+    const { rows } = buildTariffRows(orders, logistics);
+    const calculations = rows.length
+      ? await client.calculateTariffs(rows.map((row) => row.params))
+      : [];
+
+    return {
+      period: result.period,
+      ordersCount: orders.length,
+      revenue,
+      commissionPercent: ratesOf(store).commissionPercent,
+      estimate: estimateOf(orders, unitCostsOf(rows, calculations), 'placed'),
     };
   }
 

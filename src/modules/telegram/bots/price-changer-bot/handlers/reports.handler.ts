@@ -7,6 +7,7 @@ import { UserAccessService } from '../../../../../database/services/user-access.
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { OrderReportsService } from '../../../../../modules/yandex/reports/order-reports.service';
 import { formatProfitReport } from '../../../../../modules/yandex/reports/profit-message';
+import { formatTariffCalcReport } from '../../../../../modules/yandex/reports/tariff-calc-message';
 import { ProfitService } from '../../../../../modules/yandex/reports/profit.service';
 import { formatReport } from '../../../../../modules/yandex/reports/report-message';
 import {
@@ -229,6 +230,15 @@ export class ReportsHandler {
       // не помещаются. Подпись к файлу — тот же текст отчёта.
       if (key === REPORT.RETURNING) {
         await this.sendExport(ctx, await this.reports.exportReturning(store, period));
+        return;
+      }
+
+      // Экран калькулятора тарифов: свой сервисный метод и свой текст. Ошибки
+      // Partner API доезжают до replyWithError, как у остальных отчётов, — в
+      // отличие от строки внутри «Прибыли», которая при отказе молча исчезает.
+      if (key === REPORT.TARIFF_CALC) {
+        const calc = await this.profit.buildTariffReport(store, period);
+        await ctx.reply(formatTariffCalcReport(calc), htmlOptions());
         return;
       }
 
