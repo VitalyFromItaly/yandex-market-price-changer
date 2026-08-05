@@ -66,10 +66,25 @@ export interface IFbyProblemSku {
   utilization: number;
 }
 
+/** Одна строка отчёта: позиция на конкретном складе. */
+export interface IFbyStockRow {
+  sku: string;
+  name: string;
+  warehouse: string;
+  totals: Record<TFbyStockType, number>;
+}
+
 /** Агрегат отчёта: итоги по типам и проблемные позиции. */
 export interface IFbyStockSummary {
   totals: Record<TFbyStockType, number>;
   problems: IFbyProblemSku[];
+  /**
+   * Плоская таблица SKU×склад — та же, что в CSV, но разобранная и без пустых
+   * строк. В сообщение она не влезает ни при каком пороге (тысячи позиций),
+   * поэтому живёт только в xlsx. Строки, где по всем типам ноль, отброшены:
+   * они ничего не сообщают, а на десяти складах раздували бы файл в разы.
+   */
+  rows: IFbyStockRow[];
   /**
    * Те же типы, но по складам (колонка WAREHOUSE отчёта) — для свёртки по
    * кластерам-территориям на экране. Ключ '' — строки без названия склада:
@@ -102,17 +117,31 @@ export function parseFbyStockCsv(csv: string): IFbyStockSummary {
 
   const totals = emptyTotals();
   const byWarehouse: Record<string, Record<TFbyStockType, number>> = {};
+  const detailed: IFbyStockRow[] = [];
   const byProblemSku = new Map<string, IFbyProblemSku>();
 
   for (const row of rows) {
     const warehouse = String(row.WAREHOUSE ?? '').trim();
-    // Один внутренний цикл кормит и totals, и склад — сумма по складам равна
-    // общим итогам ПО ПОСТРОЕНИЮ, а не благодаря параллельным фильтрам.
+    // Один внутренний цикл кормит и totals, и склад, и построчную выгрузку —
+    // все три сходятся ПО ПОСТРОЕНИЮ, а не благодаря параллельным фильтрам.
     const warehouseTotals = (byWarehouse[warehouse] ??= emptyTotals());
+    const rowTotals = emptyTotals();
+    let rowSum = 0;
     for (const [column, type] of Object.entries(COLUMN_TO_TYPE)) {
       const count = numeric(row[column]);
       totals[type] += count;
       warehouseTotals[type] += count;
+      rowTotals[type] = count;
+      rowSum += count;
+    }
+
+    if (rowSum > 0) {
+      detailed.push({
+        sku: String(row.SHOP_SKU ?? '').trim(),
+        name: String(row.PRODUCT_NAME ?? '').trim(),
+        warehouse,
+        totals: rowTotals,
+      });
     }
 
     const defect = numeric(row.DEFECT);
@@ -140,7 +169,7 @@ export function parseFbyStockCsv(csv: string): IFbyStockSummary {
     (a, b) => problemTotal(b) - problemTotal(a) || a.sku.localeCompare(b.sku),
   );
 
-  return { totals, problems, byWarehouse };
+  return { totals, problems, byWarehouse, rows: detailed };
 }
 
 function emptyTotals(): Record<TFbyStockType, number> {

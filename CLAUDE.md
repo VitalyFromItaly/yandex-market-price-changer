@@ -265,7 +265,7 @@ in `BotRegistry`, and register any new service as a normal Nest provider.
 
 Queue names and job types are constants in `src/modules/telegram/index.ts` (a constants file, not a
 barrel). Queues are registered with per-queue retry/backoff in `telegram.module.ts`; processors live
-in `src/modules/telegram/queue/processors/`. Five are alive: `reports.processor.ts` (the daily
+in `src/modules/telegram/queue/processors/`. Six are alive: `reports.processor.ts` (the daily
 digest), `stock-sync.processor.ts` (the price-list upload, `SYNC_STOCKS` — see the `stockUpload`
 bullet above), `fby-overview.processor.ts` (`SEND_FBY_OVERVIEW` on the `reports` queue — the FBY
 screen waits out Market's generate→poll report cycle, minutes at worst, which used to stall the
@@ -276,18 +276,32 @@ is 1/min — and enqueues), `profit-report.processor.ts` (`SEND_PROFIT_REPORT`, 
 the tariff calculator, tens of seconds. The `tariff_calc` flag is computed **in the handler** and
 travels in the payload — an admin has no `UserAccess` row, so a blind re-check against a default-off
 feature in the processor would refuse exactly them, the same reason `fby-overview.processor` does not
-re-check `fby`) and `tariff-report.processor.ts` (`SEND_TARIFF_REPORT`, same queue and same reason —
-see the calculator screen below). **Only those two reports moved**; the rest are fast enough and keep
-`ReportsHandler`'s in-memory `inFlight` latch. All four new processors carry `botId`/`chatId`
+re-check `fby`), `tariff-report.processor.ts` (`SEND_TARIFF_REPORT`, same queue and same reason —
+see the calculator screen below) and `warehouses-overview.processor.ts` (`SEND_WAREHOUSES_OVERVIEW`,
+same queue — the warehouses screen was two instant GETs until it started printing stock under each
+warehouse; that number comes from the same report, see "Warehouses" below).
+**Only those two reports moved**; the rest are fast enough and keep
+`ReportsHandler`'s in-memory `inFlight` latch. All five new processors carry `botId`/`chatId`
 and never a token, re-reading credentials from Mongo, and none declares a second `@OnQueueFailed` on
 the `reports` queue — `ReportsProcessor` already owns that hook and a second one would double every
-journal entry. The FBY stock section is also broken down by
+journal entry. The «уже собирается» latch of the queued screens is one shared
+`queue/queued-for-user.ts` and matches **its own** job name: refusing the warehouses screen because
+the seller pressed «📦 FBY» a minute ago would treat a rate limit by banning the bot, and the limit
+is handled where it belongs (see "Warehouses"). The FBY stock section is also broken down by
 **cluster-territories** («Москва», «Самара», «Екатеринбург»…): the report CSV carries a `WAREHOUSE`
 column, the parser accumulates per-warehouse totals in the same loop as the global ones (sums match
 by construction), and `fby/fby-clusters.ts` — a leaf registry, the `brands.ts` pattern, because the
 API has no cluster concept — folds warehouses by name markers at render time. A warehouse unknown to
 the registry prints under **its own name** rather than a «прочие» bucket, so a new Yandex site stays
-visible with no code change. The chain below is the **dead** price-changing flow;
+visible with no code change. **The FBY summary always ships an xlsx** (`fby/fby-workbook.ts`, three
+sheets: per-warehouse totals, the flat SKU×warehouse table straight from the report, and the problem
+list) — always rather than "when it did not fit", because the positions table is thousands of rows and
+fits in no message at any threshold, while a file-on-condition would leave the seller guessing why
+there is none this time. Rows that are zero across all types are dropped: they say nothing and on ten
+warehouses would inflate the file several times over. The message itself now goes through
+`splitMessage` — problems, requests and clusters together outgrow 4096 characters, and Telegram
+answers 400, i.e. the screen would not arrive at all rather than arrive in two parts. The chain below
+is the **dead** price-changing flow;
 nothing enqueues its job types.
 
 ```
@@ -310,6 +324,56 @@ the mirror while everything else works. The **live** processors do it differentl
 carries the numeric `botId`, the bot comes from `BotRegistry.findByTelegramId`, messages go through
 `bot.telegraf.telegram` (and thus through the outgoing action-log funnel), and no token ever sits
 in Redis.
+
+### Warehouses: the list is the screen, the stock is enrichment
+
+> **The «🏬 Склады» button is currently out of `MENU_LAYOUT`** — a switched-off feature is not enough,
+> admins bypass the feature filter. Everything else is intact (`bot.hears`, the feature, the gate, the
+> handler), so the screen is still reachable by typing the label; restoring it is putting the
+> `[MENU.WAREHOUSES]` row back.
+
+«🏬 Склады» prints each Market warehouse **with what lies on it**. The numbers come from the same
+`stocks-on-warehouses` report as «📦 FBY» — the synchronous `getStocks` returns empty for FBY, so
+there is no cheaper source — which is why the screen stopped being two instant GETs and moved to the
+queue like «📦 FBY» did.
+
+- **One report, one fetch loop, one place that knows about the limit.** generate→poll→download→parse
+  moved out of `FbyService.safeStock` into `FbyStockService` (`fby/fby-stock.service.ts`), injected
+  by both screens. Not "make `safeStock` public and inject `FbyService`": that class is the _builder_
+  of another screen — it returns text and an xlsx, knows the inline limits and drags
+  `OrderReportsService` — so tomorrow any new dependency of the FBY summary would silently arrive in
+  the warehouses screen.
+- **The 1/min generation limit is handled by single-flight + a 60 s memo, not by refusing a screen.**
+  A parallel call awaits the same promise; a repeat within the window gets the parsed report. Since
+  the next generation cannot start until a TTL **after** the previous one finished, the interval is
+  always over a minute and the limit is unreachable by construction — without it the second screen
+  loses the race by design. A failure is deliberately **not** memoised (a one-off outage would stick
+  for a minute and pressing the button again would fix nothing), and the snapshot carries `takenAt`,
+  the moment it was **taken** — which is why the screen prints two timestamps, header and stock line.
+  The queue latch (`queue/queued-for-user.ts`) therefore stays per-job-name: it guards double taps,
+  not the limit.
+- **The join is by name and exact.** There is no shared identifier — `GET v2/warehouses` gives a
+  numeric `id`, the report only a `WAREHOUSE` column with a name. `warehouses/warehouse-stock.ts`
+  (pure) normalises (case, `ё`→`е`, quotes, dash variants, whitespace) and compares for equality.
+  Substring matching is refused on purpose: «Ростов-на-Дону-1» and «Ростов-на-Дону-2» are different
+  sites and glued numbers would move **silently**, whereas an unmatched row is visible on the screen.
+- **Nothing is hidden, and the sum stays reconcilable.** A warehouse in the list but not in the
+  report is «пусто» (the report is a full SKU×warehouse table, so absent means empty, not unknown —
+  hence `totals: null` means "no report at all" and nothing else); a warehouse in the report but not
+  in the list prints under its CSV name with «нет в списке складов Маркета»; rows with no warehouse
+  become «склад без названия» when non-zero. Same-named warehouses of the list collapse into **one**
+  row carrying both ids — the report gives one set of numbers per name and there is nothing to split
+  it by, while two rows would double-count. «Итого» is summed **from the printed rows**, so what is
+  shown adds up to what is signed underneath; taking `summary.totals` instead would hide a join bug.
+- **Cluster-territories are deliberately not reused here.** Folding is the answer of «📦 FBY»; this
+  screen answers "which warehouses do I have and what is on each", and folding would destroy exactly
+  that. Two screens repeating one answer in the same words is the drift «one screen, one text»
+  exists to prevent.
+- **`GET v2/warehouses` is the whole list available to the token**, not "my warehouses", so with a
+  stock line under each entry 4096 characters stopped being theoretical — the processor sends through
+  `splitMessage` (its first live use). Stock unavailable degrades to exactly the old screen plus one
+  reason line (`fbyStockUnavailableLine`, shared with «📦 FBY» — one failure must not be described by
+  two different sentences).
 
 ### Yandex Market access
 

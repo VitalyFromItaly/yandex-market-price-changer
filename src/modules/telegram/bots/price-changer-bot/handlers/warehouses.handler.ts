@@ -1,4 +1,8 @@
+import type { IWarehousesOverviewJob } from '../../../queue/processors/warehouses-overview.processor';
+
+import { InjectQueue } from '@nestjs/bull';
 import { Injectable } from '@nestjs/common';
+import { Queue } from 'bull';
 import { Context } from 'telegraf';
 
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
@@ -8,15 +12,16 @@ import {
   placementOfCampaign,
 } from '../../../../../modules/yandex/stocks/placement';
 import { StockSyncService } from '../../../../../modules/yandex/stocks/stock-sync.service';
-import { formatWarehousesOverview } from '../../../../../modules/yandex/warehouses/warehouses-message';
-import { WarehousesService } from '../../../../../modules/yandex/warehouses/warehouses.service';
-import { YandexApiError } from '../../../../../modules/yandex/yandex-api.errors';
+import { warehousesErrorText } from '../../../../../modules/yandex/warehouses/warehouses-message';
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { htmlOptions } from '../../../formatting/telegram-format';
+import { JOB_TYPES, QUEUE_NAMES } from '../../../index';
+import { isQueuedFor } from '../../../queue/queued-for-user';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
 
 /**
- * Обзор складов продавца по типам (FBY и склад магазина).
+ * Обзор складов продавца по типам (FBY и склад магазина) с остатками на каждом
+ * складе Маркета.
  *
  * Зовётся из кнопки меню «🏬 Склады» через MenuCommandsHandler — как отчёты
  * через ReportsHandler, поэтому в пайплайн composer'а отдельным шагом не
@@ -25,34 +30,34 @@ import { StorePromptService } from '../../shared/services/store-prompt.service';
  * обзора нет, так что перепроверять флаг здесь не нужно. Модель магазина —
  * нужно: экран живёт только у FBY, а гейт про магазины ничего не знает.
  *
- * Запрос к Partner API — только чтение (два GET), никакой записи.
+ * Сборка — в warehouses-overview.processor.ts, хендлер только проверяет и
+ * ставит джобу. Причина та же, что у сводки FBY: остатки по складам приходят
+ * из асинхронного отчёта Маркета (generate → поллинг, минуты), а polling-цикл
+ * telegraf не забирает новые апдейты, пока не завершены все текущие, — то есть
+ * ожидание в хендлере останавливало бы бота для ВСЕХ.
+ *
+ * Запрос к Partner API — только чтение, никакой записи.
  */
 @Injectable()
 export class WarehousesHandler {
-  /**
-   * Кто прямо сейчас строит обзор. В памяти процесса — защёлка против двойного
-   * нажатия одним человеком, как в ReportsHandler: два быстрых нажатия иначе
-   * ушли бы двумя парами запросов вместо одной.
-   */
-  private readonly inFlight = new Set<string>();
-
   constructor(
-    private readonly warehouses: WarehousesService,
     private readonly stores: YandexMarketService,
     private readonly errors: ErrorReporter,
     private readonly storePrompt: StorePromptService,
     private readonly stockSync: StockSyncService,
+    @InjectQueue(QUEUE_NAMES.REPORTS) private readonly queue: Queue,
   ) {}
 
   public async handle(ctx: Context): Promise<void> {
-    const lock = `${ctx.botInfo.id}:${ctx.from.id}`;
-    if (this.inFlight.has(lock)) {
-      await ctx.reply('⏳ Список складов уже собирается, подождите немного.');
-      return;
-    }
-    this.inFlight.add(lock);
-
     try {
+      // Защёлка «уже собирается» — по очереди, а не в памяти процесса: см.
+      // isQueuedFor.
+      const jobs = await this.queue.getJobs(['waiting', 'active']);
+      if (isQueuedFor(jobs, JOB_TYPES.SEND_WAREHOUSES_OVERVIEW, ctx.from.id.toString())) {
+        await ctx.reply('⏳ Список складов уже собирается, подождите немного.');
+        return;
+      }
+
       const store = await this.stores.findByTelegramUser(ctx.from.id.toString());
       if (!store) {
         await this.storePrompt.replyNeedsStore(ctx);
@@ -75,14 +80,16 @@ export class WarehousesHandler {
         return;
       }
 
-      await ctx.reply('⏳ Собираю список складов…');
+      const payload: IWarehousesOverviewJob = {
+        botId: ctx.botInfo.id,
+        chatId: ctx.chat.id.toString(),
+        telegramUserId: ctx.from.id.toString(),
+      };
+      await this.queue.add(JOB_TYPES.SEND_WAREHOUSES_OVERVIEW, payload);
 
-      const overview = await this.warehouses.overview(store);
-      await ctx.reply(formatWarehousesOverview(overview), htmlOptions());
+      await ctx.reply('⏳ Собираю склады с остатками, пришлю, как будет готово…');
     } catch (error) {
       await this.replyWithError(ctx, error);
-    } finally {
-      this.inFlight.delete(lock);
     }
   }
 
@@ -102,11 +109,6 @@ export class WarehousesHandler {
       action: 'обзор складов',
     });
 
-    const message =
-      error instanceof YandexApiError
-        ? error.userMessage
-        : 'Не удалось получить список складов. Попробуйте позже.';
-
-    await ctx.reply(`❌ ${message}`, htmlOptions());
+    await ctx.reply(warehousesErrorText(error), htmlOptions());
   }
 }

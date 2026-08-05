@@ -7,6 +7,7 @@ import { SUPPLY_STATUS } from '../reports/report-status-map';
 import { YandexApiError } from '../yandex-api.errors';
 
 import { groupByCluster } from './fby-clusters';
+import { FBY_STOCK_TYPES } from './fby-stock-report';
 
 /**
  * Текст сводки FBY одним экраном.
@@ -58,22 +59,22 @@ const STOCK_LABEL: Readonly<Record<TFbyStockType, string>> = {
   UTILIZATION: '♻️ К утилизации',
 };
 
-const STOCK_ORDER: readonly TFbyStockType[] = [
-  'AVAILABLE',
-  'FIT',
-  'FREEZE',
-  'QUARANTINE',
-  'DEFECT',
-  'EXPIRED',
-  'UTILIZATION',
-];
+/**
+ * Порядок вывода типов. Берётся из парсера, а не пишется заново: там он уже
+ * объявлен как «сперва живые, затем проблемные», и вторая копия разъехалась бы.
+ */
+const STOCK_ORDER: readonly TFbyStockType[] = FBY_STOCK_TYPES;
 
 /**
  * Короткие подписи для строки кластера — ровно те слова, что уже печатает
  * problemLines (брак/просрочка/утиль): один экран не должен звать одно и то же
  * по-разному. Record по объединению — компилятор требует полноты.
+ *
+ * Экспортируется: экран «🏬 Склады» печатает те же остатки под каждым складом,
+ * и третья копия слов гарантированно разъехалась бы — два экрана про один
+ * склад обязаны звать одно и то же одинаково.
  */
-const STOCK_SHORT_LABEL: Readonly<Record<TFbyStockType, string>> = {
+export const STOCK_SHORT_LABEL: Readonly<Record<TFbyStockType, string>> = {
   AVAILABLE: 'доступно',
   FIT: 'годный',
   FREEZE: 'резерв',
@@ -123,16 +124,23 @@ export function formatFbyOverview(data: IFbyOverviewData, now: Date = new Date()
   ].join('\n');
 }
 
+/**
+ * Одна строка про то, почему остатков нет.
+ *
+ * Экспортируется и зовётся с экрана «🏬 Склады»: сбой у обоих экранов один и
+ * тот же (один отчёт, один лимит), и говорить о нём двумя разными фразами
+ * значит утверждать, что случилось разное.
+ */
+export function fbyStockUnavailableLine(error?: TFbyStockError): string {
+  return error === 'rate_limit'
+    ? '⚠️ Остатки обновляются, попробуйте через минуту.'
+    : '⚠️ Остатки временно недоступны.';
+}
+
 function stockSection(data: IFbyOverviewData): string[] {
   const title = b('📊 Остатки на складе Маркета');
 
-  if (!data.stock) {
-    const line =
-      data.stockError === 'rate_limit'
-        ? '⚠️ Остатки обновляются, попробуйте через минуту.'
-        : '⚠️ Остатки временно недоступны.';
-    return [title, line];
-  }
+  if (!data.stock) return [title, fbyStockUnavailableLine(data.stockError)];
 
   const lines = [title];
   for (const type of STOCK_ORDER) {
@@ -141,6 +149,7 @@ function stockSection(data: IFbyOverviewData): string[] {
 
   lines.push(...clusterLines(data.stock.byWarehouse));
   lines.push('', ...problemLines(data.stock.problems));
+  lines.push(...exportLine());
   return lines;
 }
 
@@ -182,14 +191,23 @@ function sumTotals(
   return sum;
 }
 
+/**
+ * Строка про файл. Он приходит ВСЕГДА, когда остатки добылись, — сообщение
+ * остаётся сводкой, а таблица SKU×склад живёт только в xlsx: тысячи строк не
+ * помещаются в 4096 символов ни при каком пороге.
+ */
+function exportLine(): string[] {
+  return ['', '📎 Полные данные — в файле ниже: остатки по складам, позиции и проблемные 👇'];
+}
+
 function problemLines(problems: IFbyStockSummary['problems']): string[] {
   const title = '🔴 ' + b('Проблемные позиции') + ' (брак/просрочка/утиль)';
 
   if (!problems.length) return ['✅ Проблемных позиций нет.'];
 
-  if (problems.length > FBY_PROBLEM_INLINE_LIMIT) {
-    return [`${title}: ${b(problems.length)}`, 'Полный список — в файле ниже 👇'];
-  }
+  // Длинный список не перечисляем — на файл указывает общая строка ниже, и две
+  // отсылки к одному и тому же файлу читались бы как два разных файла.
+  if (problems.length > FBY_PROBLEM_INLINE_LIMIT) return [`${title}: ${b(problems.length)}`];
 
   const rows = problems.map((p) => {
     const parts = [
@@ -249,8 +267,8 @@ function countsLine(data: IFbyOverviewData): string {
   return `📦 Едет до клиента: ${inTransit} · ↩️ Едет обратно: ${returning}`;
 }
 
-/** Целое с разбивкой тысяч пробелом: 12 345. */
-function formatCount(value: number): string {
+/** Целое с разбивкой тысяч пробелом: 12 345. Экран складов печатает так же. */
+export function formatCount(value: number): string {
   return Math.round(value)
     .toString()
     .replace(/\B(?=(\d{3})+(?!\d))/g, ' ');

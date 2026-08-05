@@ -7,7 +7,7 @@ import { ErrorReporter } from '../../../errors/error-reporter.service';
 import { fbyOverviewErrorText } from '../../../yandex/fby/fby-message';
 import { FbyService } from '../../../yandex/fby/fby.service';
 import { BotRegistry } from '../../bots/bot-registry.service';
-import { htmlOptions } from '../../formatting/telegram-format';
+import { htmlOptions, splitMessage } from '../../formatting/telegram-format';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
 
 /**
@@ -78,12 +78,18 @@ export class FbyOverviewProcessor {
       }
 
       const result = await this.fby.build(store);
-      await bot.telegraf.telegram.sendMessage(chatId, result.text, htmlOptions());
+      // Сводка режется на сообщения: проблемные позиции, заявки и разбивка по
+      // кластерам вместе перерастают 4096 символов, а на превышение Telegram
+      // отвечает 400 — экран не доходил бы вовсе, вместо того чтобы прийти
+      // двумя частями.
+      for (const chunk of splitMessage(result.text)) {
+        await bot.telegraf.telegram.sendMessage(chatId, chunk, htmlOptions());
+      }
 
-      if (result.problemExport) {
+      if (result.stockExport) {
         await bot.telegraf.telegram.sendDocument(chatId, {
-          source: result.problemExport.buffer,
-          filename: result.problemExport.filename,
+          source: result.stockExport.buffer,
+          filename: result.stockExport.filename,
         });
       }
     } catch (error) {

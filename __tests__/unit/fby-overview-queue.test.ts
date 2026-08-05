@@ -141,7 +141,7 @@ describe('FbyOverviewProcessor', () => {
   it('проблемные позиции сверх порога — отдельным документом', async () => {
     build.mockResolvedValue({
       text: 'сводка',
-      problemExport: { buffer: Buffer.from('x'), filename: 'fby.xlsx' },
+      stockExport: { buffer: Buffer.from('x'), filename: 'fby.xlsx' },
     });
 
     await processor.run(jobWith());

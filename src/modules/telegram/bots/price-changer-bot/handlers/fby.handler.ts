@@ -16,6 +16,7 @@ import { StockSyncService } from '../../../../../modules/yandex/stocks/stock-syn
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { JOB_TYPES, QUEUE_NAMES } from '../../../index';
+import { isQueuedFor } from '../../../queue/queued-for-user';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
 
 /**
@@ -47,12 +48,8 @@ export class FbyHandler {
 
   public async handle(ctx: Context): Promise<void> {
     try {
-      /**
-       * Защёлка «уже собирается» теперь по очереди, а не в памяти: генерация
-       * отчёта у Маркета лимитирована 1/мин, и второй тап по кнопке ставил бы
-       * джобу, которая заведомо упрётся в лимит. Списки короткие по построению
-       * (removeOnComplete), проверка дешёвая.
-       */
+      // Защёлка «уже собирается» — по очереди, а не в памяти процесса: см.
+      // isQueuedFor.
       if (await this.alreadyQueued(ctx.from.id.toString())) {
         await ctx.reply('⏳ Сводка FBY уже собирается, подождите немного.');
         return;
@@ -96,12 +93,7 @@ export class FbyHandler {
   /** Есть ли у продавца живая джоба сводки — ждущая или уже в работе. */
   private async alreadyQueued(telegramUserId: string): Promise<boolean> {
     const jobs = await this.queue.getJobs(['waiting', 'active']);
-    return jobs.some(
-      (job) =>
-        !!job &&
-        job.name === JOB_TYPES.SEND_FBY_OVERVIEW &&
-        (job.data as IFbyOverviewJob)?.telegramUserId === telegramUserId,
-    );
+    return isQueuedFor(jobs, JOB_TYPES.SEND_FBY_OVERVIEW, telegramUserId);
   }
 
   private async replyWithError(ctx: Context, error: unknown): Promise<void> {

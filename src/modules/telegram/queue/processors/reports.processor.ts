@@ -10,11 +10,11 @@ import { YandexMarketService } from '../../../../database/services/yandex-market
 import { ErrorReporter } from '../../../errors/error-reporter.service';
 import { OrderReportsService } from '../../../yandex/reports/order-reports.service';
 import { formatProfitReport } from '../../../yandex/reports/profit-message';
-import { formatTariffCalcReport } from '../../../yandex/reports/tariff-calc-message';
 import { ProfitService } from '../../../yandex/reports/profit.service';
 import { formatReport } from '../../../yandex/reports/report-message';
 import { schedulePeriod, type IReportPeriod } from '../../../yandex/reports/report-period';
 import { REPORT, type TReportKey } from '../../../yandex/reports/report-status-map';
+import { formatTariffCalcReport } from '../../../yandex/reports/tariff-calc-message';
 import { BotRegistry } from '../../bots/bot-registry.service';
 import { FEATURE, isFeatureEnabled, isReportEnabled } from '../../bots/shared/features.domain';
 import { htmlOptions } from '../../formatting/telegram-format';

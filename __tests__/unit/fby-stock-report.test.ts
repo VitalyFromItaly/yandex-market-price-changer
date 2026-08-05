@@ -93,6 +93,25 @@ describe('parseFbyStockCsv', () => {
     expect(summary.byWarehouse['Екатеринбург'].QUARANTINE).toBe(0);
   });
 
+  it('копит построчную таблицу SKU×склад и выбрасывает пустые строки', () => {
+    const summary = parseFbyStockCsv(
+      csv(
+        'A1,A1,1,Часы A1,3,1,2,0,0,0,0,Софьино',
+        'A1,A1,1,Часы A1,7,0,6,0,0,0,0,Екатеринбург',
+        // Позиция, которой нигде нет: в выгрузке она была бы шумом.
+        'DEAD,DEAD,3,Снятая,0,0,0,0,0,0,0,Софьино',
+      ),
+    );
+
+    expect(summary.rows).toHaveLength(2);
+    expect(summary.rows[0]).toMatchObject({ sku: 'A1', warehouse: 'Софьино' });
+    expect(summary.rows[0].totals.FIT).toBe(3);
+    expect(summary.rows[1].warehouse).toBe('Екатеринбург');
+    // Построчная таблица и итоги по складам считаются в одном цикле — сходятся.
+    const fitFromRows = summary.rows.reduce((sum, row) => sum + row.totals.FIT, 0);
+    expect(fitFromRows).toBe(summary.totals.FIT);
+  });
+
   it('сумма по складам сходится с общими итогами — по построению', () => {
     const summary = parseFbyStockCsv(
       csv('A1,A1,1,Часы A1,3,1,2,0,0,1,0,Софьино', 'B2,B2,2,Часы B2,5,0,4,1,2,0,3,Екатеринбург'),

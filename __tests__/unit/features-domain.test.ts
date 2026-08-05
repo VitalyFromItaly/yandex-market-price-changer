@@ -233,15 +233,17 @@ describe('Раскладка меню по возможностям', () => {
 
   it('кнопки склада Маркета требуют И включённую фичу, И FBY-магазин', () => {
     const enabled = { [FEATURE.WAREHOUSES]: true, [FEATURE.FBY]: true };
-    // Оба условия выполнены — кнопки на месте.
-    expect(featureMenuLayout(enabled, 'FBY').flat()).toContain(MENU.WAREHOUSES);
+    // Оба условия выполнены — кнопка на месте.
     expect(featureMenuLayout(enabled, 'FBY').flat()).toContain(MENU.FBY);
     // Фича включена, но магазин FBS (или модель неизвестна) — кнопок нет.
-    expect(featureMenuLayout(enabled, 'FBS').flat()).not.toContain(MENU.WAREHOUSES);
+    expect(featureMenuLayout(enabled, 'FBS').flat()).not.toContain(MENU.FBY);
     expect(featureMenuLayout(enabled).flat()).not.toContain(MENU.FBY);
     // Магазин FBY, но фичи выключены (умолчание) — кнопок тоже нет.
-    expect(featureMenuLayout(undefined, 'FBY').flat()).not.toContain(MENU.WAREHOUSES);
     expect(featureMenuLayout(undefined, 'FBY').flat()).not.toContain(MENU.FBY);
+
+    // «🏬 Склады» временно вне раскладки: ряд убран из MENU_LAYOUT, поэтому
+    // фича и модель на неё уже не влияют — кнопки нет ни при каких условиях.
+    expect(featureMenuLayout(enabled, 'FBY').flat()).not.toContain(MENU.WAREHOUSES);
   });
 
   it('модель сравнивается без регистра — Маркет строку не типизирует', () => {

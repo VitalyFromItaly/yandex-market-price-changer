@@ -34,6 +34,7 @@ import { ProfitReportProcessor } from './queue/processors/profit-report.processo
 import { ReportsProcessor } from './queue/processors/reports.processor';
 import { StockSyncProcessor } from './queue/processors/stock-sync.processor';
 import { TariffReportProcessor } from './queue/processors/tariff-report.processor';
+import { WarehousesOverviewProcessor } from './queue/processors/warehouses-overview.processor';
 import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
 import { FileProcessingService } from './queue/services/file-processing.service';
 import { ReportSchedulerService } from './queue/services/report-scheduler.service';
@@ -133,6 +134,7 @@ import { QUEUE_NAMES } from './index';
     ReportsProcessor,
     StockSyncProcessor,
     FbyOverviewProcessor,
+    WarehousesOverviewProcessor,
     ProfitReportProcessor,
     TariffReportProcessor,
     ReportSchedulerService,

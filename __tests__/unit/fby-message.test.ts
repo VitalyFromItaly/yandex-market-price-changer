@@ -77,10 +77,12 @@ describe('formatFbyOverview', () => {
     expect(text).toContain('A159W-N1');
     expect(text).toContain('брак 2');
     expect(text).toContain('просрочка 1');
-    expect(text).not.toContain('в файле');
+    // Файл приходит всегда — на него указывает общая строка, а список при этом
+    // остаётся в сообщении.
+    expect(text).toContain('в файле');
   });
 
-  it('проблемных больше порога — вместо списка отсылка к файлу', () => {
+  it('проблемных больше порога — список не печатается, файл всё равно есть', () => {
     const many: IFbyProblemSku[] = Array.from({ length: FBY_PROBLEM_INLINE_LIMIT + 1 }, (_, i) => ({
       sku: `SKU${i}`,
       name: `Часы ${i}`,

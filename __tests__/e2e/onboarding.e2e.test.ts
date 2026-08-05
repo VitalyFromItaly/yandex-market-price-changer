@@ -26,6 +26,7 @@ import { ScheduleHandler } from '../../src/modules/telegram/bots/price-changer-b
 import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
 import { FbyHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/fby.handler';
 import { WarehousesHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/warehouses.handler';
+import { FbyStockService } from '../../src/modules/yandex/fby/fby-stock.service';
 import { FbyService } from '../../src/modules/yandex/fby/fby.service';
 import { WarehousesService } from '../../src/modules/yandex/warehouses/warehouses.service';
 import { reportCallback } from '../../src/modules/telegram/bots/price-changer-bot/report-buttons';
@@ -231,6 +232,9 @@ describe('Онбординг: от /start до отчёта', () => {
         WarehousesService,
         FbyHandler,
         FbyService,
+        // Экраны складов и FBY кормит один и тот же отчёт Маркета; в сценарии
+        // онбординга он не запрашивается, но без провайдера не резолвятся оба.
+        { provide: FbyStockService, useValue: { safeLoad: async () => ({ snapshot: null }) } },
         ApiSettingsHandler,
         StockUploadHandler,
         AdminUsersHandler,
