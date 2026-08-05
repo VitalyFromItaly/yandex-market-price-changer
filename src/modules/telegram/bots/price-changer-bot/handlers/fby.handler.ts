@@ -1,17 +1,21 @@
+import type { IFbyOverviewJob } from '../../../queue/processors/fby-overview.processor';
+
+import { InjectQueue } from '@nestjs/bull';
 import { Injectable } from '@nestjs/common';
+import { Queue } from 'bull';
 import { Context } from 'telegraf';
 
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
-import { FbyService } from '../../../../../modules/yandex/fby/fby.service';
+import { fbyOverviewErrorText } from '../../../../../modules/yandex/fby/fby-message';
 import {
   fbyOnlyScreenText,
   isFby,
   placementOfCampaign,
 } from '../../../../../modules/yandex/stocks/placement';
 import { StockSyncService } from '../../../../../modules/yandex/stocks/stock-sync.service';
-import { YandexApiError } from '../../../../../modules/yandex/yandex-api.errors';
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { htmlOptions } from '../../../formatting/telegram-format';
+import { JOB_TYPES, QUEUE_NAMES } from '../../../index';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
 
 /**
@@ -25,32 +29,35 @@ import { StorePromptService } from '../../shared/services/store-prompt.service';
  * перепроверять флаг здесь не нужно. Модель магазина — нужно: экран живёт
  * только у FBY, а гейт про магазины ничего не знает.
  *
- * Запрос к Partner API — только чтение. Экран небыстрый: остатки FBY приходят
- * из асинхронного отчёта (~10–20 c), поэтому есть и «⏳ Собираю…», и защёлка от
- * повторного запуска. Проблемные позиции сверх порога уходят ОТДЕЛЬНЫМ
- * документом (а не подписью к файлу) — обходим лимит подписи Telegram в 1024.
+ * Сборка — в fby-overview.processor.ts, хендлер только проверяет и ставит
+ * джобу. Причина та же, что у загрузки прайса: остатки FBY приходят из
+ * асинхронного отчёта Маркета (generate → поллинг, минуты), а polling-цикл
+ * telegraf не забирает новые апдейты, пока не завершены все текущие, — то есть
+ * ожидание в хендлере останавливало бота для ВСЕХ.
  */
 @Injectable()
 export class FbyHandler {
-  private readonly inFlight = new Set<string>();
-
   constructor(
-    private readonly fby: FbyService,
     private readonly stores: YandexMarketService,
     private readonly errors: ErrorReporter,
     private readonly storePrompt: StorePromptService,
     private readonly stockSync: StockSyncService,
+    @InjectQueue(QUEUE_NAMES.REPORTS) private readonly queue: Queue,
   ) {}
 
   public async handle(ctx: Context): Promise<void> {
-    const lock = `${ctx.botInfo.id}:${ctx.from.id}`;
-    if (this.inFlight.has(lock)) {
-      await ctx.reply('⏳ Сводка FBY уже собирается, подождите немного.');
-      return;
-    }
-    this.inFlight.add(lock);
-
     try {
+      /**
+       * Защёлка «уже собирается» теперь по очереди, а не в памяти: генерация
+       * отчёта у Маркета лимитирована 1/мин, и второй тап по кнопке ставил бы
+       * джобу, которая заведомо упрётся в лимит. Списки короткие по построению
+       * (removeOnComplete), проверка дешёвая.
+       */
+      if (await this.alreadyQueued(ctx.from.id.toString())) {
+        await ctx.reply('⏳ Сводка FBY уже собирается, подождите немного.');
+        return;
+      }
+
       const store = await this.stores.findByTelegramUser(ctx.from.id.toString());
       if (!store) {
         await this.storePrompt.replyNeedsStore(ctx);
@@ -73,22 +80,28 @@ export class FbyHandler {
         return;
       }
 
-      await ctx.reply('⏳ Собираю сводку FBY, это займёт до минуты…');
+      const payload: IFbyOverviewJob = {
+        botId: ctx.botInfo.id,
+        chatId: ctx.chat.id.toString(),
+        telegramUserId: ctx.from.id.toString(),
+      };
+      await this.queue.add(JOB_TYPES.SEND_FBY_OVERVIEW, payload);
 
-      const result = await this.fby.build(store);
-      await ctx.reply(result.text, htmlOptions());
-
-      if (result.problemExport) {
-        await ctx.replyWithDocument({
-          source: result.problemExport.buffer,
-          filename: result.problemExport.filename,
-        });
-      }
+      await ctx.reply('⏳ Собираю сводку FBY, пришлю, как будет готова…');
     } catch (error) {
       await this.replyWithError(ctx, error);
-    } finally {
-      this.inFlight.delete(lock);
     }
+  }
+
+  /** Есть ли у продавца живая джоба сводки — ждущая или уже в работе. */
+  private async alreadyQueued(telegramUserId: string): Promise<boolean> {
+    const jobs = await this.queue.getJobs(['waiting', 'active']);
+    return jobs.some(
+      (job) =>
+        !!job &&
+        job.name === JOB_TYPES.SEND_FBY_OVERVIEW &&
+        (job.data as IFbyOverviewJob)?.telegramUserId === telegramUserId,
+    );
   }
 
   private async replyWithError(ctx: Context, error: unknown): Promise<void> {
@@ -103,11 +116,6 @@ export class FbyHandler {
       action: 'сводка FBY',
     });
 
-    const message =
-      error instanceof YandexApiError
-        ? error.userMessage
-        : 'Не удалось собрать сводку FBY. Попробуйте позже.';
-
-    await ctx.reply(`❌ ${message}`, htmlOptions());
+    await ctx.reply(fbyOverviewErrorText(error), htmlOptions());
   }
 }

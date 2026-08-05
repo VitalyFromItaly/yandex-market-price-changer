@@ -1,15 +1,20 @@
 import type { IReportExport } from '../../../../../modules/yandex/reports/order-reports.service';
+import type { IProfitReportJob } from '../../../queue/processors/profit-report.processor';
+import type { ITariffReportJob } from '../../../queue/processors/tariff-report.processor';
 
+import { InjectQueue } from '@nestjs/bull';
 import { Injectable, Logger } from '@nestjs/common';
+import { Queue } from 'bull';
 import { Context } from 'telegraf';
 
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { OrderReportsService } from '../../../../../modules/yandex/reports/order-reports.service';
-import { formatProfitReport } from '../../../../../modules/yandex/reports/profit-message';
-import { formatTariffCalcReport } from '../../../../../modules/yandex/reports/tariff-calc-message';
 import { ProfitService } from '../../../../../modules/yandex/reports/profit.service';
-import { formatReport } from '../../../../../modules/yandex/reports/report-message';
+import {
+  formatReport,
+  reportErrorText,
+} from '../../../../../modules/yandex/reports/report-message';
 import {
   DEFAULT_PERIOD,
   PERIOD,
@@ -22,11 +27,11 @@ import {
   reportDefinition,
   type TReportKey,
 } from '../../../../../modules/yandex/reports/report-status-map';
-import { YandexApiError } from '../../../../../modules/yandex/yandex-api.errors';
 import { HISTORY_WINDOW_DAYS } from '../../../../../modules/yandex/yandex-api.paths';
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
+import { JOB_TYPES, QUEUE_NAMES } from '../../../index';
 import { FEATURE, isFeatureEnabled, isReportEnabled } from '../../shared/features.domain';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
@@ -60,6 +65,7 @@ export class ReportsHandler {
     private readonly access: UserAccessService,
     private readonly errors: ErrorReporter,
     private readonly storePrompt: StorePromptService,
+    @InjectQueue(QUEUE_NAMES.REPORTS) private readonly queue: Queue,
   ) {}
 
   /**
@@ -217,6 +223,48 @@ export class ReportsHandler {
         return;
       }
 
+      /**
+       * «Прибыль» уходит в ОЧЕРЕДЬ, остальные отчёты считаются здесь.
+       *
+       * Это самый дорогой отчёт: два набора заказов оконными запросами по 30
+       * дней, возвраты, калькулятор тарифов — десятки секунд. А polling-цикл
+       * telegraf не забирает новые апдейты, пока не завершены все текущие, то
+       * есть ожидание здесь останавливало бота для ВСЕХ (та же причина, по
+       * которой в очередь уехали загрузка прайса и сводка FBY).
+       *
+       * Флаг калькулятора вычисляется ЗДЕСЬ и едет в payload: запись доступа
+       * уже прочитана выше, а её отсутствие означает администратора —
+       * перепроверка в процессоре по default-off фиче отбила бы именно его.
+       */
+      if (key === REPORT.PROFIT) {
+        const payload: IProfitReportJob = {
+          botId: ctx.botInfo.id,
+          chatId: ctx.chat.id.toString(),
+          telegramUserId: ctx.from.id.toString(),
+          period,
+          tariffEstimate: account ? isFeatureEnabled(account.features, FEATURE.TARIFF_CALC) : true,
+        };
+        await this.queue.add(JOB_TYPES.SEND_PROFIT_REPORT, payload);
+        await ctx.reply('⏳ Считаю прибыль, пришлю, как будет готово…');
+        return;
+      }
+
+      // Экран калькулятора — в ту же очередь и по той же причине: заказы
+      // периода оконными запросами, каталог и сам калькулятор тарифов дают на
+      // месяце десятки секунд. Флаг фичи в payload не едет: он решает, доступен
+      // ли экран вообще, и это уже проверено выше.
+      if (key === REPORT.TARIFF_CALC) {
+        const payload: ITariffReportJob = {
+          botId: ctx.botInfo.id,
+          chatId: ctx.chat.id.toString(),
+          telegramUserId: ctx.from.id.toString(),
+          period,
+        };
+        await this.queue.add(JOB_TYPES.SEND_TARIFF_REPORT, payload);
+        await ctx.reply('⏳ Считаю услуги Маркета, пришлю, как будет готово…');
+        return;
+      }
+
       // Пользователь должен видеть, что запрос пошёл: обход страниц занимает
       // секунды, и молчащий бот неотличим от сломанного.
       await ctx.reply('⏳ Собираю отчёт…');
@@ -230,29 +278,6 @@ export class ReportsHandler {
       // не помещаются. Подпись к файлу — тот же текст отчёта.
       if (key === REPORT.RETURNING) {
         await this.sendExport(ctx, await this.reports.exportReturning(store, period));
-        return;
-      }
-
-      // Экран калькулятора тарифов: свой сервисный метод и свой текст. Ошибки
-      // Partner API доезжают до replyWithError, как у остальных отчётов, — в
-      // отличие от строки внутри «Прибыли», которая при отказе молча исчезает.
-      if (key === REPORT.TARIFF_CALC) {
-        const calc = await this.profit.buildTariffReport(store, period);
-        await ctx.reply(formatTariffCalcReport(calc), htmlOptions());
-        return;
-      }
-
-      // Прибыль собирается своим сервисом: к заказам добавляется закуп из базы,
-      // а вычитания и текст у неё собственные. Строка калькулятора — под
-      // флагом tariff_calc; отсутствие записи доступа — администратор (гейт
-      // пропускает его до ensure), и флаги для него открыты все, как в
-      // allFeaturesEnabled.
-      if (key === REPORT.PROFIT) {
-        const tariffEstimate = account
-          ? isFeatureEnabled(account.features, FEATURE.TARIFF_CALC)
-          : true;
-        const profit = await this.profit.build(store, period, new Date(), { tariffEstimate });
-        await ctx.reply(formatProfitReport(profit), htmlOptions());
         return;
       }
 
@@ -301,11 +326,6 @@ export class ReportsHandler {
       action: `отчёт ${key}`,
     });
 
-    const message =
-      error instanceof YandexApiError
-        ? error.userMessage
-        : 'Не удалось собрать отчёт. Попробуйте позже.';
-
-    await ctx.reply(`❌ ${message}`, htmlOptions());
+    await ctx.reply(reportErrorText(error), htmlOptions());
   }
 }

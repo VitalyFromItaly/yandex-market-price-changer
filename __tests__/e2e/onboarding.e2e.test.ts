@@ -5,7 +5,10 @@ import { getQueueToken } from '@nestjs/bull';
 import { getModelToken } from '@nestjs/mongoose';
 import axios from 'axios';
 
-import { QUEUE_NAMES } from '../../src/modules/telegram/index';
+import { JOB_TYPES, QUEUE_NAMES } from '../../src/modules/telegram/index';
+import { BotRegistry } from '../../src/modules/telegram/bots/bot-registry.service';
+import { ProfitReportProcessor } from '../../src/modules/telegram/queue/processors/profit-report.processor';
+import { TariffReportProcessor } from '../../src/modules/telegram/queue/processors/tariff-report.processor';
 
 import { PriceChangerComposer } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.composer';
 import { AccessGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/access-gate.handler';
@@ -164,6 +167,46 @@ describe('Онбординг: от /start до отчёта', () => {
       unschedule: vi.fn(async () => undefined),
     };
 
+    /**
+     * Фейковый бот создаётся ДО модуля: «Прибыль» теперь считается в очереди, и
+     * процессору нужен BotRegistry, чтобы ответить продавцу.
+     */
+    const fake = createFakeBot(BOT_ID);
+    const registry = { findByTelegramId: () => ({ telegraf: { telegram: fake.bot.telegram } }) };
+
+    /**
+     * Очередь исполняет джобу СРАЗУ и в том же тике — иначе сквозной тест
+     * перестал бы проверять то, ради чего он есть: путь от нажатия кнопки до
+     * текста отчёта. Порядок и отложенность здесь неинтересны, они проверяются
+     * юнит-тестами хендлера и процессора.
+     */
+    let profitProcessor: ProfitReportProcessor;
+    let tariffProcessor: TariffReportProcessor;
+
+    /**
+     * Поставленные джобы копятся и исполняются ПОСЛЕ апдейта (drainQueue в
+     * send/tap), а не внутри queue.add: иначе отчёт уходил бы продавцу раньше
+     * «⏳ Считаю…», то есть в порядке, невозможном в бою.
+     */
+    const queued: Array<{ name: string; data: unknown }> = [];
+
+    const reportsQueue = {
+      add: vi.fn(async (name: string, data: unknown) => {
+        queued.push({ name, data });
+        return { id: 1 };
+      }),
+      getJobs: async () => [],
+    };
+
+    async function drainQueue(): Promise<void> {
+      while (queued.length) {
+        const { name, data } = queued.shift();
+        const job = { id: 1, name, data } as never;
+        if (name === JOB_TYPES.SEND_PROFIT_REPORT) await profitProcessor.run(job);
+        if (name === JOB_TYPES.SEND_TARIFF_REPORT) await tariffProcessor.run(job);
+      }
+    }
+
     const moduleRef = await Test.createTestingModule({
       providers: [
         // Ловитель ошибок: в тестах он заглушка — предмет проверки здесь
@@ -202,6 +245,12 @@ describe('Онбординг: от /start до отчёта', () => {
             getActiveCount: async () => 0,
           },
         },
+        { provide: getQueueToken(QUEUE_NAMES.REPORTS), useValue: reportsQueue },
+        // Процессоры «Прибыли» и калькулятора — настоящие: они теперь и есть
+        // путь этих отчётов.
+        ProfitReportProcessor,
+        TariffReportProcessor,
+        { provide: BotRegistry, useValue: registry },
         FallbackHandler,
         PriceChangerKeyboard,
         AdminNotifierService,
@@ -231,17 +280,30 @@ describe('Онбординг: от /start до отчёта', () => {
     }).compile();
 
     const composer = moduleRef.get(PriceChangerComposer);
-    const fake = createFakeBot(BOT_ID);
+    // `fake` создан выше — его telegram отдан фейковому BotRegistry, через
+    // который отвечают фоновые процессоры отчётов.
+    profitProcessor = moduleRef.get(ProfitReportProcessor);
+    tariffProcessor = moduleRef.get(TariffReportProcessor);
     await composer.compose(fake.bot as never);
 
-    return { fake, accessModel, marketModel, pricesModel, scheduler };
+    return { fake, accessModel, marketModel, pricesModel, scheduler, drainQueue };
   }
 
   const user = { id: USER_ID, username: 'vasya', first_name: 'Вася' };
   const admin = { id: ADMIN_ID, username: 'boss', first_name: 'Босс' };
 
-  const send = (text: string, from = user) => harness.fake.dispatch({ from, text });
-  const tap = (callbackData: string, from = user) => harness.fake.dispatch({ from, callbackData });
+  // После апдейта дожидаемся фоновых джоб: «Прибыль» и калькулятор считаются в
+  // очереди, и без этого тест видел бы только «⏳ Считаю…».
+  const send = async (text: string, from = user) => {
+    const result = await harness.fake.dispatch({ from, text });
+    await harness.drainQueue();
+    return result;
+  };
+  const tap = async (callbackData: string, from = user) => {
+    const result = await harness.fake.dispatch({ from, callbackData });
+    await harness.drainQueue();
+    return result;
+  };
 
   beforeEach(async () => {
     harness = await build();

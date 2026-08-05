@@ -4,6 +4,7 @@ import { moscowStamp } from './moscow-day';
 import { DEFAULT_PERIOD, isUnbounded, periodTitle } from './report-period';
 import { REPORT } from './report-status-map';
 import { HISTORY_WINDOW_DAYS } from '../yandex-api.paths';
+import { YandexApiError } from '../yandex-api.errors';
 import type { IReportResult } from './order-reports.service';
 
 /**
@@ -101,3 +102,17 @@ const ICONS: Record<string, string> = {
   [REPORT.RETURNING]: '↩️',
   [REPORT.IN_TRANSIT]: '📦',
 };
+
+/**
+ * Текст об ошибке сборки отчёта — для пользователя.
+ *
+ * Один на оба пути: хендлер (replyWithError) и фоновые процессоры отчётов —
+ * паттерн uploadErrorText из stock-report.ts.
+ */
+export function reportErrorText(error: unknown): string {
+  const text =
+    error instanceof YandexApiError
+      ? error.userMessage
+      : 'Не удалось собрать отчёт. Попробуйте позже.';
+  return `❌ ${text}`;
+}

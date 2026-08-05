@@ -11,6 +11,23 @@ export const JOB_TYPES = {
    * очереди file-processing. НЕ часть мёртвого 4-хопового конвейера ниже.
    */
   SYNC_STOCKS: 'sync-stocks',
+  /**
+   * Живая сводка FBY по кнопке: generate→поллинг отчёта Маркета занимает до
+   * минут, в хендлере это стопорило polling-цикл telegraf для всех.
+   */
+  SEND_FBY_OVERVIEW: 'send-fby-overview',
+  /**
+   * Живой отчёт «Прибыль» по кнопке: самый дорогой из отчётов (оба набора
+   * заказов оконными запросами + возвраты + калькулятор), в хендлере он
+   * держал polling-цикл telegraf на десятки секунд.
+   */
+  SEND_PROFIT_REPORT: 'send-profit-report',
+  /**
+   * Живой экран «🧮 Калькулятор» по кнопке: те же оконные запросы заказов плюс
+   * каталог и сам калькулятор тарифов — на месяце это десятки секунд, и в
+   * хендлере они держали polling-цикл telegraf.
+   */
+  SEND_TARIFF_REPORT: 'send-tariff-report',
   PROCESS_FILE: 'process-file',
   PARSE_FILE: 'parse-file',
   COMPARE_DATA: 'compare-data',

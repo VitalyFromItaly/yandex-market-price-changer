@@ -27,10 +27,13 @@ import { PriceChangerComposer } from './bots/price-changer-bot/price-changer.com
 import { PriceChangerKeyboard } from './bots/price-changer-bot/price-changer.keyboard';
 import { AdminNotifierService } from './bots/shared/services/admin-notifier.service';
 import { StorePromptService } from './bots/shared/services/store-prompt.service';
+import { FbyOverviewProcessor } from './queue/processors/fby-overview.processor';
 import { FileProcessingProcessor } from './queue/processors/file-processing.processor';
 import { NotificationsProcessor } from './queue/processors/notifications.processor';
+import { ProfitReportProcessor } from './queue/processors/profit-report.processor';
 import { ReportsProcessor } from './queue/processors/reports.processor';
 import { StockSyncProcessor } from './queue/processors/stock-sync.processor';
+import { TariffReportProcessor } from './queue/processors/tariff-report.processor';
 import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
 import { FileProcessingService } from './queue/services/file-processing.service';
 import { ReportSchedulerService } from './queue/services/report-scheduler.service';
@@ -129,6 +132,9 @@ import { QUEUE_NAMES } from './index';
     NotificationsProcessor,
     ReportsProcessor,
     StockSyncProcessor,
+    FbyOverviewProcessor,
+    ProfitReportProcessor,
+    TariffReportProcessor,
     ReportSchedulerService,
   ],
   // PriceChangerKeyboard наружу — веб-панель, открывая доступ, шлёт продавцу

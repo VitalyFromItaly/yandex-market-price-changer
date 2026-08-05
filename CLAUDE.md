@@ -265,9 +265,30 @@ in `BotRegistry`, and register any new service as a normal Nest provider.
 
 Queue names and job types are constants in `src/modules/telegram/index.ts` (a constants file, not a
 barrel). Queues are registered with per-queue retry/backoff in `telegram.module.ts`; processors live
-in `src/modules/telegram/queue/processors/`. Two are alive: `reports.processor.ts` (the daily
-digest) and `stock-sync.processor.ts` (the price-list upload, `SYNC_STOCKS` — see the `stockUpload`
-bullet above). The chain below is the **dead** price-changing flow; nothing enqueues its job types.
+in `src/modules/telegram/queue/processors/`. Five are alive: `reports.processor.ts` (the daily
+digest), `stock-sync.processor.ts` (the price-list upload, `SYNC_STOCKS` — see the `stockUpload`
+bullet above), `fby-overview.processor.ts` (`SEND_FBY_OVERVIEW` on the `reports` queue — the FBY
+screen waits out Market's generate→poll report cycle, minutes at worst, which used to stall the
+telegraf polling loop for everyone; the poll ceiling is ~3 min now that it runs in the background.
+`FbyHandler` only checks feature/placement, dedupes against the queue — the report generation limit
+is 1/min — and enqueues), `profit-report.processor.ts` (`SEND_PROFIT_REPORT`, same queue —
+«Прибыль» is the most expensive report: both order sets over 30-day windows, the returns endpoint,
+the tariff calculator, tens of seconds. The `tariff_calc` flag is computed **in the handler** and
+travels in the payload — an admin has no `UserAccess` row, so a blind re-check against a default-off
+feature in the processor would refuse exactly them, the same reason `fby-overview.processor` does not
+re-check `fby`) and `tariff-report.processor.ts` (`SEND_TARIFF_REPORT`, same queue and same reason —
+see the calculator screen below). **Only those two reports moved**; the rest are fast enough and keep
+`ReportsHandler`'s in-memory `inFlight` latch. All four new processors carry `botId`/`chatId`
+and never a token, re-reading credentials from Mongo, and none declares a second `@OnQueueFailed` on
+the `reports` queue — `ReportsProcessor` already owns that hook and a second one would double every
+journal entry. The FBY stock section is also broken down by
+**cluster-territories** («Москва», «Самара», «Екатеринбург»…): the report CSV carries a `WAREHOUSE`
+column, the parser accumulates per-warehouse totals in the same loop as the global ones (sums match
+by construction), and `fby/fby-clusters.ts` — a leaf registry, the `brands.ts` pattern, because the
+API has no cluster concept — folds warehouses by name markers at render time. A warehouse unknown to
+the registry prints under **its own name** rather than a «прочие» bucket, so a new Yandex site stays
+visible with no code change. The chain below is the **dead** price-changing flow;
+nothing enqueues its job types.
 
 ```
 file-upload.handler.ts        getFileLink → FileUploadService.saveFile (static/temp/) → enqueue PROCESS_FILE
@@ -554,20 +575,20 @@ into one line and loses commission, tax and cost.
   (`reports.processor.ts`) must branch on `REPORT.PROFIT` — a divergence between them is the known
   complaint pattern.
 - **«🧮 По калькулятору Маркета» is a comparison line, not arithmetic** (`POST v2/tariffs/calculate`
-  + offer dims/category from `getOfferMappings`; pure math in `reports/tariff-estimate.ts`, I/O in
-  `ProfitService.tariffEstimateOf`). The flat `commissionPercent` stays the seller-controlled source
-  of truth — the calculator is «примерный» by its own docs, so its sum prints under the commission
-  line for сверка and never enters `profitOf`. Verified live (July-2026): calculator total is 23.9%
-  of revenue when priced as `item.price + per-unit subsidies` vs 20.0% without — the subsidy variant
-  is the one baked into `tariffPriceOf`, because real commission is charged on the subsidized price
-  (the seller's own worked example, 2689 × 23%).
-  - **Behind `FEATURE.TARIFF_CALC`, `defaultEnabled: false`** — the registry's designed-for case:
+  - offer dims/category from `getOfferMappings`; pure math in `reports/tariff-estimate.ts`, I/O in
+    `ProfitService.tariffEstimateOf`). The flat `commissionPercent` stays the seller-controlled source
+    of truth — the calculator is «примерный» by its own docs, so its sum prints under the commission
+    line for сверка and never enters `profitOf`. Verified live (July-2026): calculator total is 23.9%
+    of revenue when priced as `item.price + per-unit subsidies` vs 20.0% without — the subsidy variant
+    is the one baked into `tariffPriceOf`, because real commission is charged on the subsidized price
+    (the seller's own worked example, 2689 × 23%).
+  * **Behind `FEATURE.TARIFF_CALC`, `defaultEnabled: false`** — the registry's designed-for case:
     experimental, opened per seller from the panel, costs 2–8 extra Partner API requests per report.
     For the comparison **line** the flag maps to no update — both callers read it themselves and
     pass `{tariffEstimate}` into `ProfitService.build`; the service deliberately does not read
     `UserAccess` (Mongo доступа is the telegram layer's business). In `ReportsHandler` an absent
     access record means admin → flag open, the `allFeaturesEnabled` argument.
-  - **«🧮 Калькулятор» is also a menu button — the sixth report.** `REPORT.TARIFF_CALC` =
+  * **«🧮 Калькулятор» is also a menu button — the sixth report.** `REPORT.TARIFF_CALC` =
     `'tariff_calc'` (report key == feature key, like the other five), which buys the whole report
     machinery for free: the period picker and `rep:` callbacks, «Другой день» via
     `pendingReportDay`, `featureGate` through `REPORT_TO_FEATURE`, the schedule section and the
@@ -579,30 +600,36 @@ into one line and loses commission, tax and cost.
     breakdown** (`serviceLabel` in `tariff-estimate.ts`, unknown codes print as-is — the
     `IFbySupplyRequest` precedent) sorted by amount, and a flat-rate comparison line over the same
     `coveredRevenue` base. Unlike the line inside «Прибыль», `buildTariffReport` **throws** on
-    Partner API failure — this screen IS the calculator, so errors go to `replyWithError` like any
-    report, not into silent omission. The button sits in the top row next to «💰 Прибыль»
+    Partner API failure — this screen IS the calculator, so the error is reported to the seller
+    instead of vanishing. The button **enqueues** `SEND_TARIFF_REPORT` on the `reports` queue
+    (`tariff-report.processor.ts`) for the same reason as «Прибыль»: windowed order queries plus
+    catalog plus the calculator are tens of seconds, and waiting in the handler froze telegraf's
+    polling loop for everyone. Its payload carries **no** feature flag, unlike `IProfitReportJob`:
+    there the flag decides whether to print a line inside someone else's report, here it decides
+    whether the screen exists at all — already checked by the gate and the handler.
+    The button sits in the top row next to «💰 Прибыль»
     (money screens together; default-off keeps the row single-button for most sellers, and
     `withSwitchStore` may make it three for an admin — pinned in `price-changer-keyboard.test`).
-  - **One estimate per report, for the main block only** — the same `placed.orders ? placed :
-    redeemed` predicate as `placedIsMain`, computed after `profitOf`. `formatProfitReport` re-checks
+  * **One estimate per report, for the main block only** — the same `placed.orders ? placed :
+redeemed` predicate as `placedIsMain`, computed after `profitOf`. `formatProfitReport` re-checks
     `estimate.scope` against the block it prints into: if the two predicates ever drift, a line with
     the wrong set's numbers is worse than no line.
-  - **An order not fully priced is excluded whole** (the `orderPurchase` argument), and the ≈% uses
+  * **An order not fully priced is excluded whole** (the `orderPurchase` argument), and the ≈% uses
     `coveredRevenue` as denominator — partial coverage says «по 3 из 5 заказов» instead of silently
     understating the percent. Missing dims fall back to 11×11×11 см / 0.3 кг (watch store, customer's
     decision; live delta vs real dims ≤9 ₽/item) — so the only uncoverable case is a sku with no
     `marketCategoryId`.
-  - **`frequency` is never sent**: omitted, Yandex uses the seller's actual payout schedule; a wrong
+  * **`frequency` is never sent**: omitted, Yandex uses the seller's actual payout schedule; a wrong
     value is `400 INVALID_PAYMENT_SETTINGS` («payout frequency WEEKLY and delay weeks null are not
     supported», live). Calculator failure degrades like the returns call: line omitted,
     `ErrorReporter` with `context: 'profit:tariffs'`.
-  - **Live spec drift**: `offerIds` filter of offer-mappings takes **≤100** per request
+  * **Live spec drift**: `offerIds` filter of offer-mappings takes **≤100** per request
     (`OFFER_IDS_BATCH`) — the spec says 200, the live API answers
     `400 offerIds size must be between 1 and 100`. The filter is mutually exclusive with paging, so
     `getOfferMappings` sends **no** `limit`/`page_token` (pinned by test). `campaignId` goes in the
     **body as a number**; `sellingProgram` is XOR with it and never sent. No caching yet: a report is
     ~2–8 requests against quotas of 600/min (mappings) and 100/min (calculator).
-  - `npx ts-node scripts/diagnose-tariffs.ts --user=<id> [--from=DD-MM-YYYY --to=…]` — the read-only
+  * `npx ts-node scripts/diagnose-tariffs.ts --user=<id> [--from=DD-MM-YYYY --to=…]` — the read-only
     сверка that answered the gate questions above (leaf-category acceptance, price variant, batch
     behaviour on 400 via bisect, frequency, coverage).
 - **Two read-only scripts exist for exactly the questions this report raises** (both boot
@@ -666,6 +693,7 @@ enough either: it is exactly when the database is unreachable that a log line ma
   the single funnel every Bot API call passes through — via `BotRegistry.installOutgoingLog`.
   Wrapping the context methods instead would mean a dozen wrappers and a silent hole in the journal
   the first time one is forgotten.
+
   - **The wrap is installed in _two_ places, and both are load-bearing** — telegraf 4.16 does **not**
     route `ctx.reply` through `telegraf.telegram`. On **every** update it builds a **fresh `Telegram`
     instance** (`telegraf.js`: `new Telegram(token, options, webhookResponse)`) and hands it to the
@@ -819,7 +847,7 @@ per-user attribution and does not survive a restart.
   `/.git/config`, `/.aws/credentials`) — not a seller action and not a fault. The signal is
   `!request.route` (a 404 thrown _inside_ a real controller has the route set and stays plain
   `'http'`). `ActionLogService.filterOf` **hides `scanner` from the default query** (`source: {$ne:
-  'scanner'}`), so the main journal and the overview's error counter never show them; the panel's
+'scanner'}`), so the main journal and the overview's error counter never show them; the panel's
   **«Мусор»** tab requests them explicitly with `source=scanner`. The app never served those files —
   every probe already got a bare 404; this only sorts them out of the way. The `scanner` value is a
   member of `TErrorSource`.

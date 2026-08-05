@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 import { Test } from '@nestjs/testing';
+import { getQueueToken } from '@nestjs/bull';
+import { JOB_TYPES, QUEUE_NAMES } from '../../src/modules/telegram/index';
 import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
 import { MENU_TO_REPORT } from '../../src/modules/telegram/bots/price-changer-bot/report-buttons';
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
@@ -113,6 +115,10 @@ async function build(
     ),
   };
 
+  // «Прибыль» считается не здесь, а в очереди (profit-report.processor):
+  // расчёт занимает десятки секунд и в хендлере стопорил polling-цикл.
+  const queue = { add: vi.fn(async () => ({ id: 1 })) };
+
   const moduleRef = await Test.createTestingModule({
     providers: [
       // Ловитель ошибок: в тестах он заглушка — предмет проверки здесь
@@ -126,16 +132,24 @@ async function build(
       { provide: ProfitService, useValue: profit },
       { provide: YandexMarketService, useValue: yandexMarketService },
       { provide: UserAccessService, useValue: access },
+      { provide: getQueueToken(QUEUE_NAMES.REPORTS), useValue: queue },
     ],
   }).compile();
 
-  return { handler: moduleRef.get(ReportsHandler), reports, access, profit };
+  return { handler: moduleRef.get(ReportsHandler), reports, access, profit, queue };
 }
+
+/** Полезная нагрузка последней поставленной джобы. */
+const enqueued = (queue: { add: ReturnType<typeof vi.fn> }) =>
+  queue.add.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
 
 function fakeCtx() {
   return {
     from: { id: 222 },
     botInfo: { id: 999 },
+    // Личка: chat.id совпадает с id пользователя. Нужен «Прибыли» — она уходит
+    // в очередь, а процессору для ответа доступен только chatId.
+    chat: { id: 222 },
     reply: vi.fn(async () => undefined),
     replyWithDocument: vi.fn(async () => undefined),
     texts(): string[] {
@@ -361,110 +375,118 @@ describe('«Едет обратно» файлом', () => {
 });
 
 describe('Прибыль', () => {
-  it('идёт в ProfitService, а не в обычный отчёт', async () => {
-    const { handler, reports, profit } = await build();
+  it('уходит в очередь, а не считается в хендлере', async () => {
+    const { handler, reports, profit, queue } = await build();
     const ctx = fakeCtx();
 
     await handler.run(ctx as never, REPORT.PROFIT, DEFAULT_PERIOD);
 
-    expect(profit.build).toHaveBeenCalledTimes(1);
-    // Заказы ProfitService берёт сам; напрямую отсюда обычный отчёт не строится.
+    // Расчёт — десятки секунд; в хендлере он держал polling-цикл telegraf.
+    expect(profit.build).not.toHaveBeenCalled();
     expect(reports.build).not.toHaveBeenCalled();
+    expect(queue.add).toHaveBeenCalledWith(JOB_TYPES.SEND_PROFIT_REPORT, expect.anything());
+    expect(ctx.texts().at(-1)).toContain('Считаю прибыль');
   });
 
-  it('в тексте видны все вычитания и чистая', async () => {
-    const { handler } = await build();
-    const ctx = fakeCtx();
+  it('в payload нет токена — креды перечитает процессор', async () => {
+    const { handler, queue } = await build();
 
-    await handler.run(ctx as never, REPORT.PROFIT, DEFAULT_PERIOD);
+    await handler.run(fakeCtx() as never, REPORT.PROFIT, DEFAULT_PERIOD);
 
-    const text = ctx.texts().at(-1)!;
-    expect(text).toContain('Продажи');
-    expect(text).toContain('Комиссия 23%');
-    expect(text).toContain('Налог 7%');
-    expect(text).toContain('Закуп');
-    expect(text).toContain('Чистая');
+    const payload = enqueued(queue);
+    expect(JSON.stringify(payload)).not.toContain('ACMA:x');
+    expect(payload).toMatchObject({ botId: 999, chatId: '222', telegramUserId: '222' });
   });
 
   it('кнопка «Прибыль» сначала спрашивает период', async () => {
-    const { handler, profit } = await build();
+    const { handler, queue } = await build();
     const ctx = fakeCtx();
 
     await handler.handle(ctx as never, REPORT.PROFIT);
 
-    expect(profit.build).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
     expect(ctx.texts().at(-1)).toContain('за какой период');
   });
 
-  it('выбранный период доезжает до расчёта прибыли', async () => {
-    const { handler, profit } = await build();
-    const ctx = fakeCtx();
+  it('выбранный период доезжает до джобы', async () => {
+    const { handler, queue } = await build();
 
-    await handler.run(ctx as never, REPORT.PROFIT, { key: 'month' } as never);
+    await handler.run(fakeCtx() as never, REPORT.PROFIT, { key: 'month' } as never);
 
-    expect(profit.build).toHaveBeenCalledWith(
-      expect.anything(),
-      { key: 'month' },
-      expect.any(Date),
-      // Записи доступа нет (администратор) — калькулятор открыт, как и всё
-      // остальное: гейт админов пропускает целиком.
-      { tariffEstimate: true },
-    );
+    // Записи доступа нет (администратор) — калькулятор открыт, как и всё
+    // остальное: гейт админов пропускает целиком.
+    expect(enqueued(queue)).toMatchObject({ period: { key: 'month' }, tariffEstimate: true });
   });
 
   it('без флага tariff_calc калькулятор не считается — умолчание «выключено»', async () => {
     // Пустая карта флагов — обычный продавец, которому ничего не включали:
     // отчёт «Прибыль» открыт (default-on), а строка калькулятора — нет.
-    const { handler, profit } = await build({ features: {} });
-    const ctx = fakeCtx();
+    // Флаг вычисляет ХЕНДЛЕР: у администратора записи доступа нет, и слепая
+    // перепроверка в процессоре по default-off фиче отбила бы именно его.
+    const { handler, queue } = await build({ features: {} });
 
-    await handler.run(ctx as never, REPORT.PROFIT, DEFAULT_PERIOD);
+    await handler.run(fakeCtx() as never, REPORT.PROFIT, DEFAULT_PERIOD);
 
-    expect(profit.build).toHaveBeenCalledWith(expect.anything(), DEFAULT_PERIOD, expect.any(Date), {
-      tariffEstimate: false,
-    });
+    expect(enqueued(queue)).toMatchObject({ tariffEstimate: false });
   });
 
-  it('включённый tariff_calc доезжает до сервиса опцией', async () => {
-    const { handler, profit } = await build({ features: { tariff_calc: true } });
-    const ctx = fakeCtx();
+  it('включённый tariff_calc доезжает до джобы флагом', async () => {
+    const { handler, queue } = await build({ features: { tariff_calc: true } });
 
-    await handler.run(ctx as never, REPORT.PROFIT, DEFAULT_PERIOD);
+    await handler.run(fakeCtx() as never, REPORT.PROFIT, DEFAULT_PERIOD);
 
-    expect(profit.build).toHaveBeenCalledWith(expect.anything(), DEFAULT_PERIOD, expect.any(Date), {
-      tariffEstimate: true,
-    });
+    expect(enqueued(queue)).toMatchObject({ tariffEstimate: true });
   });
 
-  it('кнопка калькулятора зовёт свой сервисный метод и отвечает своим экраном', async () => {
-    const { handler, profit } = await build({ features: { tariff_calc: true } });
-    const ctx = fakeCtx();
-
-    await handler.run(ctx as never, REPORT.TARIFF_CALC, DEFAULT_PERIOD);
-
-    expect(profit.buildTariffReport).toHaveBeenCalledWith(expect.anything(), DEFAULT_PERIOD);
-    expect(profit.build).not.toHaveBeenCalled();
-    expect(ctx.texts().at(-1)).toContain('Калькулятор Маркета');
-  });
-
-  it('калькулятор без флага отбивается — ключ отчёта совпадает с ключом фичи', async () => {
-    const { handler, profit } = await build({ features: {} });
+  it('калькулятор тоже уходит в очередь, а не считается в хендлере', async () => {
+    // Та же причина, что у прибыли: заказы периода оконными запросами плюс
+    // каталог и сам калькулятор — на месяце десятки секунд.
+    const { handler, profit, queue } = await build({ features: { tariff_calc: true } });
     const ctx = fakeCtx();
 
     await handler.run(ctx as never, REPORT.TARIFF_CALC, DEFAULT_PERIOD);
 
     expect(profit.buildTariffReport).not.toHaveBeenCalled();
+    expect(queue.add).toHaveBeenCalledWith(JOB_TYPES.SEND_TARIFF_REPORT, expect.anything());
+    expect(enqueued(queue)).toMatchObject({
+      botId: 999,
+      chatId: '222',
+      telegramUserId: '222',
+      period: DEFAULT_PERIOD,
+    });
+    // Токена в payload нет — креды перечитает процессор.
+    expect(enqueued(queue)).not.toHaveProperty('token');
+    expect(ctx.texts().at(-1)).toContain('Считаю услуги Маркета');
+  });
+
+  it('калькулятор без флага не ставит джобу — ключ отчёта совпадает с ключом фичи', async () => {
+    const { handler, queue } = await build({ features: {} });
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.TARIFF_CALC, DEFAULT_PERIOD);
+
+    expect(queue.add).not.toHaveBeenCalled();
     expect(ctx.texts().some((t) => t.includes('недоступен'))).toBe(true);
   });
 
-  it('без настроек API прибыль не считается', async () => {
-    const { handler, profit } = await build({ store: null });
+  it('без настроек API джоба не ставится', async () => {
+    const { handler, queue } = await build({ store: null });
     const ctx = fakeCtx();
 
     await handler.run(ctx as never, REPORT.PROFIT, DEFAULT_PERIOD);
 
-    expect(profit.build).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
     expect(ctx.texts().at(-1)).toContain('настройки API');
+  });
+
+  it('закрытый отчёт «Прибыль» в очередь не попадает', async () => {
+    const { handler, queue } = await build({ features: { report_profit: false } });
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.PROFIT, DEFAULT_PERIOD);
+
+    expect(queue.add).not.toHaveBeenCalled();
+    expect(ctx.texts().some((t) => t.includes('недоступен'))).toBe(true);
   });
 });
 
