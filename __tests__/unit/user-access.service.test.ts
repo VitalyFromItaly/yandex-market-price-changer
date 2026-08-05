@@ -158,6 +158,7 @@ describe('UserAccessService: атомарность переходов', () => {
     await service.setPendingRate('1', '2', 'brand:casio');
     await service.setPendingRate('1', '2', 'promo:casio:flat');
     await service.setPendingRate('1', '2', 'promo:casio:limit');
+    await service.setPendingRate('1', '2', 'promo:casio:from');
     await service.setPendingRate('1', '2', 'promo:casio:above:10000:2');
 
     await expect(service.setPendingRate('1', '2', 'promo:rolex:limit')).rejects.toThrow();

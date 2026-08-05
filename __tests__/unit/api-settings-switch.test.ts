@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
+import { MENU } from '../../src/modules/telegram/bots/price-changer-bot/menu.constants';
+import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
 
 /**
  * Смена магазина уже подключённым продавцом.
@@ -9,6 +11,9 @@ import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-change
  * API. Кэш пуст (старый аккаунт) → один раз спрашиваем API и сохраняем. Выбор
  * пишется прямо в YandexMarket через updateByTelegramUser, черновик не трогается.
  * Точка входа — публичный `startSwitch` (его зовёт bot.hears кнопки меню).
+ *
+ * Клавиатура собирается НАСТОЯЩАЯ (PriceChangerKeyboard без моков): проверять
+ * надо подписи кнопок, которые увидит продавец, а не факт вызова билдера.
  */
 describe('ApiSettingsHandler: смена магазина', () => {
   const STORES = [
@@ -42,16 +47,22 @@ describe('ApiSettingsHandler: смена магазина', () => {
     saveDraftField = vi.fn(async () => ({}));
 
     const yandexMarketService = { findByTelegramUser, updateByTelegramUser } as never;
-    const accessService = { saveDraftField, findByUserAndBot: vi.fn(async () => null) } as never;
+    // FBY-экраны закрыты по умолчанию (defaultEnabled: false) — без явного
+    // разрешения кнопок не будет ни на какой модели, и проверка модели была бы
+    // проверкой не того.
+    const accessService = {
+      saveDraftField,
+      findByUserAndBot: vi.fn(async () => ({ features: { fby: true, warehouses: true } })),
+    } as never;
     const clients = { forTokenOnly: vi.fn(() => ({ listStores })) } as never;
     const stub = {} as never;
 
     handler = new ApiSettingsHandler(
-      stub, // keyboard
+      new PriceChangerKeyboard() as never,
       yandexMarketService,
       accessService,
       stub, // adminNotifier
-      stub, // config
+      { isAdmin: () => false } as never, // config
       stub, // scheduleHandler
       clients,
       stub, // reportsHandler
@@ -87,6 +98,14 @@ describe('ApiSettingsHandler: смена магазина', () => {
       reply_markup?: { inline_keyboard?: { text: string; callback_data: string }[][] };
     };
     return (options?.reply_markup?.inline_keyboard ?? []).flat();
+  };
+
+  /** Подписи reply-клавиатуры (меню под полем ввода) последнего сообщения. */
+  const menuLabelsOf = (ctx: { reply: ReturnType<typeof vi.fn> }) => {
+    const options = ctx.reply.mock.calls.at(-1)![1] as {
+      reply_markup?: { keyboard?: string[][] };
+    };
+    return (options?.reply_markup?.keyboard ?? []).flat();
   };
 
   it('из кэша БД показывает пикер со store_switch: и НЕ ходит в API', async () => {
@@ -146,6 +165,39 @@ describe('ApiSettingsHandler: смена магазина', () => {
     expect(fbyText).toContain('FBY');
     expect(fbsText).toContain('FBS');
     expect(fbyText).not.toBe(fbsText);
+  });
+
+  /**
+   * Раскладка меню обязана смениться ВМЕСТЕ с магазином.
+   *
+   * FBY-кнопки зависят от модели активного магазина, а рисуются только при
+   * отрисовке меню — и до этой правки смена магазина её не вызывала: продавец,
+   * переключившийся на FBY, не видел «📦 FBY» и «🏬 Склады», пока не отправит
+   * /start. Проверяем подписи настоящей клавиатуры, а не факт вызова билдера.
+   */
+  it('переключение на FBY сразу показывает FBY-кнопки, без /start', async () => {
+    const ctx = ctxWith('store_switch:2');
+    await actionFor('store_switch:2')(ctx as never);
+
+    const labels = menuLabelsOf(ctx);
+    expect(labels).toContain(MENU.FBY);
+    expect(labels).toContain(MENU.WAREHOUSES);
+    // Клавиатура пришла тем же сообщением, что и подтверждение.
+    expect(String(ctx.reply.mock.calls.at(-1)![0])).toContain('переключён');
+  });
+
+  it('переключение на FBS убирает FBY-кнопки — раскладка не «прилипает»', async () => {
+    findByTelegramUser.mockResolvedValue({ token: 'ACMA:x', campaign_id: '2', stores: STORES });
+    const ctx = ctxWith('store_switch:1');
+    await actionFor('store_switch:1')(ctx as never);
+
+    const labels = menuLabelsOf(ctx);
+    expect(labels).not.toContain(MENU.FBY);
+    expect(labels).not.toContain(MENU.WAREHOUSES);
+    // Обычные кнопки на месте — раскладка полная, а не пустая.
+    expect(labels).toContain(MENU.PROFIT);
+    // Магазинов больше одного — кнопка смены остаётся под рукой.
+    expect(labels).toContain(MENU.SWITCH_STORE);
   });
 
   it('когда магазин один — переключать не на что', async () => {

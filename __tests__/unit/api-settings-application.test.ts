@@ -30,7 +30,8 @@ describe('ApiSettingsHandler: подача заявки', () => {
   async function build(opts: {
     status?: string;
     draft?: Record<string, string>;
-    store?: Record<string, string> | null;
+    /** unknown, а не string: у магазина есть и вложенные настройки (promoCommissions). */
+    store?: Record<string, unknown> | null;
     delivered?: number;
     /** Что вернёт listStores(); по умолчанию — пусто, то есть «не определилось». */
     stores?: unknown[];
@@ -795,6 +796,88 @@ describe('ApiSettingsHandler: подача заявки', () => {
     expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
     expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
     expect(allReplies()).toContain('недоступн');
+  });
+
+  /**
+   * Нижний порог — поле поверх действующей настройки, а не отдельный режим:
+   * кнопка живёт на развилке настроенного бренда, ответ дописывает `from` в
+   * текущую конфигурацию одной записью, «0» его убирает.
+   */
+  const CONFIGURED = { ...FULL, promoCommissions: { casio: { mode: 'flat', percent: 2 } } };
+
+  it('кнопка порога есть только у настроенного бренда', async () => {
+    const configured = await build({ status: 'approved', store: { ...CONFIGURED } });
+    const withConfig = await tap(configured.handler, 'promo:pick:casio');
+    expect(withConfig.lastMarkup()).toContain('promo:floor:casio');
+
+    const empty = await build({ status: 'approved', store: { ...FULL } });
+    const withoutConfig = await tap(empty.handler, 'promo:pick:casio');
+    expect(withoutConfig.lastMarkup()).not.toContain('promo:floor:casio');
+  });
+
+  it('нижний порог: вопрос и ответ дописывают from в текущую настройку', async () => {
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...CONFIGURED },
+    });
+    await tap(handler, 'promo:floor:casio');
+
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      '999',
+      'promo:casio:from',
+    );
+    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
+
+    const { allReplies } = await send(handler, '3 000 ₽');
+
+    expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledTimes(1);
+    expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledWith(String(USER_ID), 'casio', {
+      mode: 'flat',
+      percent: 2,
+      from: 3000,
+    });
+    expect(allReplies()).toContain('от 3');
+  });
+
+  it('ноль убирает порог: ключ from в записи не остаётся', async () => {
+    const { handler, yandexMarketService } = await build({
+      status: 'approved',
+      store: { ...FULL, promoCommissions: { casio: { mode: 'flat', percent: 2, from: 3000 } } },
+      pendingRate: 'promo:casio:from',
+    });
+    await send(handler, '0');
+
+    const written = yandexMarketService.updatePromoCommission.mock.calls[0][2];
+    expect(written).toStrictEqual({ mode: 'flat', percent: 2 });
+  });
+
+  it('порог у ненастроенного бренда: отказ, вопрос не открывается', async () => {
+    // Кнопка живёт в истории чата вечно — настройку могли отключить после неё.
+    const { handler, accessService, yandexMarketService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    const { allReplies } = await tap(handler, 'promo:floor:casio');
+
+    expect(accessService.setPendingRate).not.toHaveBeenCalled();
+    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
+    expect(allReplies()).toContain('Сначала задайте процент');
+  });
+
+  it('ответ на порог при снятой настройке ничего не пишет', async () => {
+    // Пока вопрос висел, бренд отключили: выдумывать настройку ради порога
+    // нельзя — иначе продвижение включится само.
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'promo:casio:from',
+    });
+    const { allReplies } = await send(handler, '3000');
+
+    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
+    expect(allReplies()).toContain('не настроено');
   });
 
   it('«Отключить» снимает настройку бренда целиком', async () => {

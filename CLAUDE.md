@@ -986,7 +986,12 @@ The six report keys are **literally the values of `REPORT`** — a second taxono
 things would drift, and the digest already keys its schedules by them (`tariff_calc` is both the
 sixth report key and its feature key, same string). Plus `schedule`, the two
 price-list halves `purchase_prices` / `stock_update`, `promotion` (the promo-commission editor on
-the settings screen), and the two FBY-only screens `warehouses` / `fby`. `/start`, «🏠 Главное
+the settings screen — per brand, a flat percent or two price tiers, and on top of either an optional
+**нижний порог** `from`: the price from which promotion is charged at all, cheaper items give 0 %,
+the boundary inclusive like the tier's `limit`; entered by the same question, `0` removes it, and a
+junk `from` in Mongo drops the whole entry rather than being ignored — silently charging promo where
+the seller declared none would understate profit invisibly), and the two FBY-only screens
+`warehouses` / `fby`. `/start`, «🏠 Главное
 меню», «⚙️ Настройки», «❓ Помощь», «📊 Мой профиль»,
 the whole wizard and every admin button are **not** gateable: closing them locks the seller out of
 their own settings, with no way to fix a token or find out whom to ask.

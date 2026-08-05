@@ -6,6 +6,7 @@ import {
   PROMO_CB_MENU,
   promoCallback,
   promoConfigsOf,
+  promoLimitLabel,
   promoShortValue,
   promoValueLabel,
 } from '../../../yandex/reports/promo';
@@ -102,6 +103,12 @@ export function promotionModeText(store: YandexMarketDocument | null, brand: TBr
     '• Зависит от цены — до порога один процент, дороже — другой.',
   ];
 
+  // Пункт про нижний порог — только вместе с кнопкой: пока бренд не настроен,
+  // порогу не к чему применяться, и кнопки на экране нет.
+  if (current) {
+    lines.push('• Нижний порог — цена, с которой продвижение начисляется; дешевле — 0%.');
+  }
+
   return lines.join('\n');
 }
 
@@ -116,10 +123,20 @@ export function promotionModeKeyboardRows(
     [{ text: '🪜 Зависит от цены', callback_data: promoCallback('tier', brand) }],
   ];
 
-  // «Отключить» — только когда есть что отключать: продвижение opt-in, и
-  // задать плоский 0% — не то же самое, что убрать настройку (экран покажет
-  // «0%» вместо «—»).
-  if (configs[brand]) {
+  // «Нижний порог» и «Отключить» — только когда есть что настраивать/отключать:
+  // продвижение opt-in, порогу без процента негде жить, а задать плоский 0% —
+  // не то же самое, что убрать настройку (экран покажет «0%» вместо «—»).
+  const current = configs[brand];
+  if (current) {
+    rows.push([
+      {
+        text:
+          current.from !== undefined
+            ? `📏 Нижний порог: ${promoLimitLabel(current.from)}`
+            : '📏 Нижний порог',
+        callback_data: promoCallback('floor', brand),
+      },
+    ]);
     rows.push([{ text: '🚫 Отключить', callback_data: promoCallback('off', brand) }]);
   }
 

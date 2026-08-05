@@ -22,15 +22,21 @@ import { BRAND_KEYS, brandTitle, isBrandKey } from './brands';
 
 /**
  * Настройка продвижения одного бренда — дискриминированное объединение, не
- * пара «процент + необязательный порог»: у ступенчатой формы обязательны ВСЕ
- * три числа, и mode делает невозможным «порог есть, а второго процента нет».
+ * пара «процент + необязательный порог ступени»: у ступенчатой формы
+ * обязательны ВСЕ три числа, и mode делает невозможным «порог есть, а второго
+ * процента нет». `from` — другое дело: нижний порог, цена, с которой
+ * продвижение вообще начисляется (дешевле — 0%). Его отсутствие — полноценное
+ * состояние («с первого рубля»), и осмыслен он при любом режиме, поэтому это
+ * независимое необязательное поле, а не фрагмент режима.
  *
- * Граница включительно: цена, РАВНАЯ порогу, идёт по ставке `below` — «до
- * 10 000 ₽» читается как «10 000 ₽ ещё считается дешёвым». Тест пинит.
+ * Обе границы включительно: цена, РАВНАЯ `limit`, идёт по ставке `below`
+ * («до 10 000 ₽» читается как «10 000 ₽ ещё считается дешёвым»), цена, РАВНАЯ
+ * `from`, уже продвигается («от 3 000 ₽» — «3 000 ₽ уже считается»). Тесты
+ * пинят обе.
  */
 export type TPromoConfig =
-  | { mode: 'flat'; percent: number }
-  | { mode: 'tiered'; limit: number; below: number; above: number };
+  | { mode: 'flat'; percent: number; from?: number }
+  | { mode: 'tiered'; limit: number; below: number; above: number; from?: number };
 
 /** Границы процентов — те же 0–100, что у ставок; 0 % — валидная явная ставка. */
 const PROMO_MIN_PERCENT = 0;
@@ -54,6 +60,12 @@ function isLimit(value: unknown): value is number {
  * проверяется через isBrandKey, мусорная запись (не тот mode, нечисло, процент
  * вне 0–100, порог ≤ 0) выкидывается ПО-ЗАПИСНО. Одна испорченная запись не
  * должна ронять весь отчёт «Прибыль» — остальные бренды считаются как настроены.
+ *
+ * Мусорный `from` тоже роняет запись ЦЕЛИКОМ, а не отбрасывается молча:
+ * сохранённый порог — заявление продавца «дешевле не продвигается», и считать
+ * без него значило бы незаметно занижать прибыль; «—» на экране — видимая
+ * поломка, чинится в два тапа. `from: 0` в базе — тоже мусор: путь записи ноль
+ * не сохраняет (ноль убирает ключ).
  */
 export function promoConfigsOf(
   raw: Readonly<Record<string, unknown>> | null | undefined,
@@ -66,8 +78,14 @@ export function promoConfigsOf(
 
     const entry = value as Record<string, unknown>;
 
+    if (entry.from !== undefined && !isLimit(entry.from)) continue;
+    // Условный спред: ключ `from: undefined` не должен появляться в результате —
+    // toStrictEqual его видит, и в $set он бы уехал как есть. Проверка повторная
+    // ради сужения типа: отрицание составного условия его не даёт.
+    const from = isLimit(entry.from) ? { from: entry.from } : {};
+
     if (entry.mode === 'flat' && isPercent(entry.percent)) {
-      configs[key] = { mode: 'flat', percent: entry.percent };
+      configs[key] = { mode: 'flat', percent: entry.percent, ...from };
       continue;
     }
 
@@ -82,6 +100,7 @@ export function promoConfigsOf(
         limit: entry.limit,
         below: entry.below,
         above: entry.above,
+        ...from,
       };
     }
   }
@@ -95,6 +114,9 @@ export function promoConfigsOf(
  * штуки по 6 000 ₽ не должны перепрыгнуть порог только потому, что их две.
  */
 export function promoPercentAt(config: TPromoConfig, price: number): number {
+  // Нижний порог проверяется ПЕРВЫМ, до ступеней: при from > limit это даёт
+  // когерентное «дешевле from — 0, дальше по ступеням», а не кашу. Тест пинит.
+  if (config.from !== undefined && price < config.from) return 0;
   if (config.mode === 'flat') return config.percent;
   return price <= config.limit ? config.below : config.above;
 }
@@ -115,18 +137,21 @@ export function promoLimitLabel(limit: number): string {
 
 /**
  * Полная подпись настройки — для текста экрана, подтверждения и хвоста отчёта:
- * «2%» | «до 10 000 ₽ — 2%, свыше — 1%» | «—» (не настроено).
+ * «2%» | «до 10 000 ₽ — 2%, свыше — 1%» | «—» (не настроено). Нижний порог —
+ * префиксом: «от 3 000 ₽: 2%».
  */
 export function promoValueLabel(config: TPromoConfig | undefined): string {
   if (!config) return '—';
-  if (config.mode === 'flat') return `${config.percent}%`;
-  return `до ${promoLimitLabel(config.limit)} — ${config.below}%, свыше — ${config.above}%`;
+  const prefix = config.from !== undefined ? `от ${promoLimitLabel(config.from)}: ` : '';
+  if (config.mode === 'flat') return `${prefix}${config.percent}%`;
+  return `${prefix}до ${promoLimitLabel(config.limit)} — ${config.below}%, свыше — ${config.above}%`;
 }
 
 /**
  * Короткая форма для кнопки: «2%» | «2/1%» | «—». В ряду из двух кнопок
  * Telegram обрезает длинные подписи — довод rateShortLabel; полная форма
- * печатается в тексте экрана строкой выше.
+ * печатается в тексте экрана строкой выше. Нижний порог здесь не показывается
+ * намеренно — как не показывается и лимит ступеней.
  */
 export function promoShortValue(config: TPromoConfig | undefined): string {
   if (!config) return '—';
@@ -156,7 +181,7 @@ export function promoPercentTitle(key: TBrandKey, step: 'flat' | 'below' | 'abov
  * Формирование и разбор рядом — приём rateCallback/brandCallback: формат не
  * должен разъехаться между кнопкой и обработчиком.
  *
- * Самое длинное значение — `promo:pick:daniel-klein`, 23 байта при лимите
+ * Самое длинное значение — `promo:floor:daniel-klein`, 24 байта при лимите
  * Telegram в 64. Держится на том, что ключи брендов — ASCII-слаги; тест пинит.
  */
 export const PROMO_CB_PREFIX = 'promo:';
@@ -167,8 +192,11 @@ export const PROMO_CB_MENU = `${PROMO_CB_PREFIX}menu`;
 /** Отмена открытого вопроса — возврат на экран продвижения. */
 export const PROMO_CB_CANCEL = `${PROMO_CB_PREFIX}cancel`;
 
-/** Действия с брендом: выбрать, задать плоский процент, ступени, отключить. */
-const PROMO_ACTIONS = ['pick', 'flat', 'tier', 'off'] as const;
+/**
+ * Действия с брендом: выбрать, задать плоский процент, ступени, нижний порог,
+ * отключить.
+ */
+const PROMO_ACTIONS = ['pick', 'flat', 'tier', 'off', 'floor'] as const;
 
 type TPromoAction = (typeof PROMO_ACTIONS)[number];
 
@@ -209,6 +237,8 @@ export function parsePromoCallback(data: unknown): TPromoCallback | null {
  *   promo:<key>:limit             → ответ: порог X       → promo:<key>:below:<X>
  *   promo:<key>:below:<X>         → ответ: процент A     → promo:<key>:above:<X>:<A>
  *   promo:<key>:above:<X>:<A>     → ответ: процент B     → запись {tiered}
+ *   promo:<key>:from              → ответ: цена (0 — убрать) → merge в текущую
+ *                                    настройку и запись
  *
  * В документ магазина уходит ОДИН $set в самом конце: недоотвеченная цепочка
  * не должна оставлять полузаполненную настройку, по которой отчёт что-то
@@ -222,7 +252,8 @@ export type TPromoPending =
   | { brand: TBrandKey; step: 'flat' }
   | { brand: TBrandKey; step: 'limit' }
   | { brand: TBrandKey; step: 'below'; limit: number }
-  | { brand: TBrandKey; step: 'above'; limit: number; below: number };
+  | { brand: TBrandKey; step: 'above'; limit: number; below: number }
+  | { brand: TBrandKey; step: 'from' };
 
 export function promoPendingFlat(key: TBrandKey): string {
   return `${PROMO_CB_PREFIX}${key}:flat`;
@@ -230,6 +261,10 @@ export function promoPendingFlat(key: TBrandKey): string {
 
 export function promoPendingLimit(key: TBrandKey): string {
   return `${PROMO_CB_PREFIX}${key}:limit`;
+}
+
+export function promoPendingFrom(key: TBrandKey): string {
+  return `${PROMO_CB_PREFIX}${key}:from`;
 }
 
 export function promoPendingBelow(key: TBrandKey, limit: number): string {
@@ -255,6 +290,7 @@ export function parsePromoPending(value: unknown): TPromoPending | null {
   const step = parts[1];
   if (step === 'flat' && parts.length === 2) return { brand, step };
   if (step === 'limit' && parts.length === 2) return { brand, step };
+  if (step === 'from' && parts.length === 2) return { brand, step };
 
   if (step === 'below' && parts.length === 3) {
     const limit = Number(parts[2]);
@@ -298,6 +334,20 @@ export interface IPromoValidation {
 export function validatePromoLimit(value: number): IPromoValidation {
   if (!Number.isFinite(value) || value <= 0) {
     return { ok: false, error: 'Порог должен быть числом больше нуля — например 10000.' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Нижний порог, в отличие от порога ступени, принимает и ноль: «0» — это
+ * ответ «убрать порог», один вопрос обслуживает и установку, и снятие.
+ */
+export function validatePromoFrom(value: number): IPromoValidation {
+  if (!Number.isFinite(value) || value < 0) {
+    return {
+      ok: false,
+      error: 'Порог должен быть числом не меньше нуля — например 3000. 0 — убрать порог.',
+    };
   }
   return { ok: true };
 }

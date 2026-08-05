@@ -13,18 +13,22 @@ import {
   promoPendingAbove,
   promoPendingBelow,
   promoPendingFlat,
+  promoPendingFrom,
   promoPendingLimit,
   promoPercentAt,
   promoPercentTitle,
   promoShortValue,
   promoTitle,
   promoValueLabel,
+  validatePromoFrom,
   validatePromoLimit,
 } from '../../src/modules/yandex/reports/promo';
 import type { TPromoConfig } from '../../src/modules/yandex/reports/promo';
 
 const FLAT: TPromoConfig = { mode: 'flat', percent: 2 };
 const TIERED: TPromoConfig = { mode: 'tiered', limit: 10000, below: 2, above: 1 };
+const FLAT_FROM: TPromoConfig = { mode: 'flat', percent: 2, from: 3000 };
+const TIERED_FROM: TPromoConfig = { ...TIERED, from: 3000 };
 
 describe('promoPercentAt', () => {
   it('плоская ставка не зависит от цены', () => {
@@ -42,6 +46,28 @@ describe('promoPercentAt', () => {
     // границы молча меняет расход продвижения в отчёте — поэтому тест.
     expect(promoPercentAt(TIERED, 10000)).toBe(2);
     expect(promoPercentAt(TIERED, 10000.01)).toBe(1);
+  });
+
+  it('нижний порог: дешевле — 0%, на пороге ВКЛЮЧИТЕЛЬНО — ставка', () => {
+    // «от 3 000 ₽» читается как «3 000 ₽ уже продвигается» — зеркально
+    // включительной границе ступеней.
+    expect(promoPercentAt(FLAT_FROM, 2999.99)).toBe(0);
+    expect(promoPercentAt(FLAT_FROM, 3000)).toBe(2);
+    expect(promoPercentAt(FLAT_FROM, 5000)).toBe(2);
+  });
+
+  it('нижний порог поверх ступеней: сначала порог, потом ступень', () => {
+    expect(promoPercentAt(TIERED_FROM, 2000)).toBe(0);
+    expect(promoPercentAt(TIERED_FROM, 5000)).toBe(2);
+    expect(promoPercentAt(TIERED_FROM, 12000)).toBe(1);
+  });
+
+  it('порог выше лимита ступени — когерентно: порог срабатывает первым', () => {
+    // Настройка странная, но представимая; поведение задано порядком проверок
+    // в promoPercentAt и пинится здесь, а не запрещается валидацией.
+    const odd: TPromoConfig = { mode: 'tiered', limit: 10000, below: 2, above: 1, from: 15000 };
+    expect(promoPercentAt(odd, 12000)).toBe(0);
+    expect(promoPercentAt(odd, 15000)).toBe(1);
   });
 });
 
@@ -76,6 +102,26 @@ describe('promoConfigsOf', () => {
     expect(configs.casio).toEqual({ mode: 'flat', percent: 0 });
   });
 
+  it('нижний порог проходит в обеих формах и не появляется, когда его нет', () => {
+    const configs = promoConfigsOf({ casio: FLAT_FROM, vostok: TIERED_FROM, orient: FLAT });
+
+    expect(configs.casio).toStrictEqual(FLAT_FROM);
+    expect(configs.vostok).toStrictEqual(TIERED_FROM);
+    // Ключ `from: undefined` не должен появляться: toEqual его скроет, а в $set
+    // он уехал бы как есть.
+    expect('from' in configs.orient).toBe(false);
+  });
+
+  it('мусорный нижний порог роняет запись целиком, а не игнорируется', () => {
+    // Молча посчитать без порога — значит начислить продвижение там, где
+    // продавец его отключил, и занизить прибыль незаметно. «—» на экране видно.
+    for (const from of [-5, 0, 'три тысячи', Number.NaN, null]) {
+      const configs = promoConfigsOf({ casio: { ...FLAT, from }, vostok: TIERED });
+      expect(configs.casio).toBeUndefined();
+      expect(configs.vostok).toStrictEqual(TIERED);
+    }
+  });
+
   it('пустой и отсутствующий вход — пустая карта', () => {
     expect(promoConfigsOf(undefined)).toEqual({});
     expect(promoConfigsOf(null)).toEqual({});
@@ -86,7 +132,7 @@ describe('promoConfigsOf', () => {
 describe('callback_data продвижения', () => {
   it('разбирается обратно и укладывается в лимит Telegram', () => {
     for (const key of BRAND_KEYS) {
-      for (const action of ['pick', 'flat', 'tier', 'off'] as const) {
+      for (const action of ['pick', 'flat', 'tier', 'off', 'floor'] as const) {
         const data = promoCallback(action, key);
         expect(parsePromoCallback(data)).toEqual({ kind: action, brand: key });
         // Лимит Telegram на callback_data — 64 байта.
@@ -114,6 +160,7 @@ describe('pendingRate продвижения: пошаговая цепочка'
     for (const key of BRAND_KEYS) {
       expect(parsePromoPending(promoPendingFlat(key))).toEqual({ brand: key, step: 'flat' });
       expect(parsePromoPending(promoPendingLimit(key))).toEqual({ brand: key, step: 'limit' });
+      expect(parsePromoPending(promoPendingFrom(key))).toEqual({ brand: key, step: 'from' });
       expect(parsePromoPending(promoPendingBelow(key, 10000))).toEqual({
         brand: key,
         step: 'below',
@@ -144,6 +191,7 @@ describe('pendingRate продвижения: пошаговая цепочка'
     expect(parsePromoPending('promo:casio:above:10000:500')).toBeNull();
     expect(parsePromoPending('promo:casio:zzz')).toBeNull();
     expect(parsePromoPending('promo:casio:flat:extra')).toBeNull();
+    expect(parsePromoPending('promo:casio:from:extra')).toBeNull();
     expect(parsePromoPending('brand:casio')).toBeNull();
     expect(parsePromoPending('commissionPercent')).toBeNull();
     expect(parsePromoPending(undefined)).toBeNull();
@@ -154,6 +202,7 @@ describe('pendingRate продвижения: пошаговая цепочка'
     // Префикс общий нарочно (одна фича), но вторым сегментом у pending всегда
     // ключ бренда — «promo:pick:casio» из кнопки не должен открыть вопрос.
     expect(parsePromoPending('promo:pick:casio')).toBeNull();
+    expect(parsePromoPending('promo:floor:casio')).toBeNull();
     expect(parsePromoPending('promo:menu')).toBeNull();
     expect(parsePromoPending('promo:cancel')).toBeNull();
   });
@@ -184,6 +233,16 @@ describe('parsePromoLimit', () => {
     expect(validatePromoLimit(Number.NaN).ok).toBe(false);
     expect(validatePromoLimit(0).error).toBeTruthy();
   });
+
+  it('нижний порог принимает ноль — это ответ «убрать порог»', () => {
+    expect(validatePromoFrom(3000).ok).toBe(true);
+    expect(validatePromoFrom(0).ok).toBe(true);
+    expect(validatePromoFrom(-5).ok).toBe(false);
+    expect(validatePromoFrom(Number.NaN).ok).toBe(false);
+    // Подсказка обязана называть способ снять порог — другого пути нет.
+    expect(validatePromoFrom(-5).error).toContain('0');
+    expect(parsePromoLimit('0')).toBe(0);
+  });
 });
 
 describe('Подписи', () => {
@@ -194,10 +253,24 @@ describe('Подписи', () => {
     expect(promoValueLabel(undefined)).toBe('—');
   });
 
+  it('полная форма показывает нижний порог префиксом', () => {
+    expect(promoValueLabel(FLAT_FROM)).toBe('от 3\u00a0000\u00a0₽: 2%');
+    expect(promoValueLabel(TIERED_FROM)).toBe(
+      'от 3\u00a0000\u00a0₽: до 10\u00a0000\u00a0₽ — 2%, свыше — 1%',
+    );
+  });
+
   it('короткая форма для кнопки', () => {
     expect(promoShortValue(FLAT)).toBe('2%');
     expect(promoShortValue(TIERED)).toBe('2/1%');
     expect(promoShortValue(undefined)).toBe('—');
+  });
+
+  it('короткая форма порог не показывает — как не показывает и лимит ступеней', () => {
+    // В ряду из двух кнопок Telegram обрезает длинные подписи; полная форма
+    // печатается в тексте экрана строкой выше.
+    expect(promoShortValue(FLAT_FROM)).toBe('2%');
+    expect(promoShortValue(TIERED_FROM)).toBe('2/1%');
   });
 
   it('названия для подтверждений и ошибок содержат бренд', () => {

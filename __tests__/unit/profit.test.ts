@@ -970,6 +970,47 @@ describe('Продвижение в прибыли', () => {
     expect(totals.promo).toBe(240); // 6000 × 2 × 2 %
   });
 
+  it('нижний порог: позиция дешевле порога промо не даёт', () => {
+    const floorRates = {
+      ...DEFAULT_RATES,
+      promoCommissions: { casio: { mode: 'flat', percent: 2, from: 3000 } },
+    };
+    const orders = [
+      { id: 1, itemsTotal: 2000, items: [{ offerId: 'C1', count: 1, price: 2000 }] },
+      { id: 2, itemsTotal: 5000, items: [{ offerId: 'C1', count: 1, price: 5000 }] },
+    ];
+    const totals = profitOf(orders, PROMO_COSTS, floorRates, { rows: ROWS });
+
+    expect(totals.promo).toBe(100); // только второй заказ: 5000 × 2 %
+  });
+
+  it('нижний порог ВКЛЮЧИТЕЛЬНО: цена, равная порогу, уже продвигается', () => {
+    const floorRates = {
+      ...DEFAULT_RATES,
+      promoCommissions: { casio: { mode: 'flat', percent: 2, from: 3000 } },
+    };
+    const order = { id: 1, itemsTotal: 3000, items: [{ offerId: 'C1', count: 1, price: 3000 }] };
+    const totals = profitOf([order], PROMO_COSTS, floorRates, { rows: ROWS });
+
+    expect(totals.promo).toBe(60);
+  });
+
+  it('нижний порог поверх ступеней: сначала порог, потом ставка ступени', () => {
+    const floorTiered = {
+      ...DEFAULT_RATES,
+      promoCommissions: { casio: { mode: 'tiered', limit: 10000, below: 2, above: 1, from: 3000 } },
+    };
+    const orders = [
+      { id: 1, itemsTotal: 2000, items: [{ offerId: 'C1', count: 1, price: 2000 }] },
+      { id: 2, itemsTotal: 5000, items: [{ offerId: 'C1', count: 1, price: 5000 }] },
+      { id: 3, itemsTotal: 12000, items: [{ offerId: 'C1', count: 1, price: 12000 }] },
+    ];
+    const totals = profitOf(orders, PROMO_COSTS, floorTiered, { rows: ROWS });
+
+    // 0 + 5000 × 2 % + 12000 × 1 % = 100 + 120.
+    expect(totals.promo).toBe(220);
+  });
+
   it('бренд без настройки — 0 %: продвижение opt-in', () => {
     const order = { id: 1, itemsTotal: 500, items: [{ offerId: 'V1', count: 1, price: 500 }] };
     const totals = profitOf([order], PROMO_COSTS, flatRates, { rows: ROWS });

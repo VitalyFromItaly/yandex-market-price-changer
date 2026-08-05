@@ -18,6 +18,7 @@ import {
   brandDiscountTitle,
   brandInputLabel,
   brandPendingValue,
+  brandTitle,
   parseBrandCallback,
   parseBrandDiscountInput,
   parseBrandPending,
@@ -55,10 +56,12 @@ import {
   promoPendingAbove,
   promoPendingBelow,
   promoPendingFlat,
+  promoPendingFrom,
   promoPendingLimit,
   promoPercentTitle,
   promoTitle,
   promoValueLabel,
+  validatePromoFrom,
   validatePromoLimit,
   type TPromoConfig,
   type TPromoPending,
@@ -367,6 +370,9 @@ export class ApiSettingsHandler {
           case 'tier':
             await this.askPromotionLimit(ctx, target.brand);
             return;
+          case 'floor':
+            await this.askPromotionFloor(ctx, target.brand);
+            return;
           case 'off':
             await this.disablePromotion(ctx, target.brand);
             return;
@@ -631,6 +637,53 @@ export class ApiSettingsHandler {
     );
   }
 
+  /**
+   * Вопрос о нижнем пороге — цене, с которой продвижение начисляется. Порог —
+   * поле поверх действующей настройки, поэтому без неё вопрос не открывается:
+   * кнопка показывается только у настроенного бренда, но inline-кнопка живёт в
+   * истории чата вечно, и проверка при нажатии обязательна.
+   */
+  private async askPromotionFloor(ctx: Context, brand: TBrandKey): Promise<void> {
+    const telegramUserId = ctx.from.id.toString();
+
+    const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+    if (!store) {
+      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
+      return;
+    }
+
+    const current = promoConfigsOf(store.promoCommissions)[brand];
+    if (!current) {
+      await ctx.reply(
+        `Сначала задайте процент продвижения «${esc(brandTitle(brand))}» — ` +
+          'нижний порог применяется к нему.',
+        htmlOptions(),
+      );
+      await this.showPromotionMode(ctx, brand);
+      return;
+    }
+
+    await this.accessService.setPendingRate(
+      telegramUserId,
+      ctx.botInfo.id.toString(),
+      promoPendingFrom(brand),
+    );
+
+    const keyboard = await this.keyboard.createInlineButtons([
+      { text: '⬅️ Отмена', callback_data: PROMO_CB_CANCEL },
+    ]);
+
+    await ctx.reply(
+      [
+        `${esc(promoTitle(brand))} — сейчас ${b(promoValueLabel(current))}.`,
+        '',
+        'Пришлите цену в рублях, с которой начинается продвижение, — например <code>3000</code>.',
+        'Пришлите <code>0</code>, чтобы убрать порог.',
+      ].join('\n'),
+      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    );
+  }
+
   /** Вопросы 2 и 3 цепочки — проценты до и свыше порога. */
   private async askPromotionPercent(
     ctx: Context,
@@ -824,6 +877,39 @@ export class ApiSettingsHandler {
       );
       await this.askPromotionPercent(ctx, parsed.brand, 'below', value);
       return true;
+    }
+
+    // Нижний порог — тоже рубли; 0 убирает порог. Настройка перечитывается
+    // прямо перед записью: пока вопрос висел, продвижение могли отключить, и
+    // выдумывать конфиг ради порога нельзя.
+    if (parsed.step === 'from') {
+      const value = parsePromoLimit(text);
+      if (value === null) {
+        await this.accessService.setPendingRate(telegramUserId, botId, null);
+        return false;
+      }
+
+      const validation = validatePromoFrom(value);
+      if (!validation.ok) {
+        await ctx.reply(`❌ ${esc(validation.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
+        return true;
+      }
+
+      const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+      const current = promoConfigsOf(store?.promoCommissions)[parsed.brand];
+      if (!current) {
+        await this.accessService.setPendingRate(telegramUserId, botId, null);
+        await ctx.reply(
+          `${esc(promoTitle(parsed.brand))} не настроено — сначала задайте процент.`,
+          htmlOptions(),
+        );
+        await this.showPromotion(ctx);
+        return true;
+      }
+
+      const { from: _removed, ...rest } = current;
+      const config = value === 0 ? (rest as TPromoConfig) : { ...current, from: value };
+      return await this.savePromo(ctx, parsed.brand, config);
     }
 
     // Остальные шаги ждут процент — по тем же правилам, что ставки.
@@ -1320,6 +1406,11 @@ export class ApiSettingsHandler {
   /**
    * Выбран магазин для смены: перезаписываем campaign_id/business_id/name в том
    * же документе. Токен, ставки и кэш `stores` не трогаем — продавец тот же.
+   *
+   * Вместе с подтверждением ПЕРЕРИСОВЫВАЕМ меню: FBY-кнопки («📦 FBY»,
+   * «🏬 Склады») зависят от модели активного магазина, и без этого продавец,
+   * переключившийся на FBY, видел прежнюю раскладку до следующего /start —
+   * то есть смена магазина выглядела наполовину не сработавшей.
    */
   private async switchStorePick(ctx: Context): Promise<void> {
     const campaignId = this.callbackTail(ctx, PICK_STORE_SWITCH_PREFIX);
@@ -1337,12 +1428,36 @@ export class ApiSettingsHandler {
       name: store.storeName,
     });
 
+    /**
+     * Раскладка меню — по НОВОМУ магазину, тем же способом, что и в /start.
+     *
+     * Клавиатура именно REPLY, а не inline (тот же довод, что при подключении
+     * магазина ниже): меню под полем ввода меняет только она, inline-кнопки
+     * живут внутри сообщения. Прицепляем к подтверждению — Telegram разрешает
+     * одному сообщению один reply_markup, а второе сообщение здесь ни о чём.
+     *
+     * Модель берём из ВЫБРАННОГО магазина, а не перечитываем документ и не
+     * спрашиваем Маркет: пикер собран из того же кэша `stores`, и запись выше
+     * его не трогает — значение то же, что вернул бы placementOfCampaign.
+     */
+    const isAdmin = this.config.isAdmin(ctx.from.id);
+    const access = await this.accessService.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
+    const keyboard = await this.keyboard.createMenuKeyboard(
+      isAdmin,
+      access?.features,
+      stores.length > 1,
+      store.placementType,
+    );
+
     // Модель размещения называем ОБЯЗАТЕЛЬНО, той же подписью, что стояла на
     // кнопке пикера. Названия магазинов не уникальны: на боевом аккаунте две
     // кампании зовутся «Время с SBrand» — FBS и FBY, — и без модели это
     // сообщение не отвечает на вопрос, куда переключились. А разница
     // принципиальная: на FBY остатки записать нельзя.
-    await ctx.reply(`✅ Магазин переключён: ${b(storeLabel(store))}`, htmlOptions());
+    await ctx.reply(`✅ Магазин переключён: ${b(storeLabel(store))}`, htmlOptions(keyboard));
   }
 
   /** Сохранить выбранный магазин в черновик и подтвердить пользователю. */
