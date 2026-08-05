@@ -100,6 +100,23 @@ describe('formatFbyOverview', () => {
     expect(text).toContain('Проблемных позиций нет');
   });
 
+  it('подсказка про типы стоит между списком типов и кластерами', () => {
+    const text = formatFbyOverview(
+      fullData({ stock: stock([], { Софьино: wh({ AVAILABLE: 5 }) }) }),
+      NOW,
+    );
+    // Расшифровка объясняет только что перечисленные типы, поэтому идёт сразу
+    // за списком и до строк кластеров, которые пользуются теми же словами.
+    expect(text).toContain('Карантин — Маркет проверяет товар');
+    expect(text.indexOf('🟡 Карантин:')).toBeLessThan(text.indexOf('Карантин — Маркет'));
+    expect(text.indexOf('Карантин — Маркет')).toBeLessThan(text.indexOf('📍'));
+  });
+
+  it('без остатков подсказки про типы нет — расшифровывать нечего', () => {
+    const text = formatFbyOverview(fullData({ stock: null }), NOW);
+    expect(text).not.toContain('Карантин — Маркет');
+  });
+
   it('остатки по кластерам: склады одной территории складываются в одну строку', () => {
     const text = formatFbyOverview(
       fullData({
