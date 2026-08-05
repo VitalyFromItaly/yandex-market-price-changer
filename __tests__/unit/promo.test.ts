@@ -10,20 +10,18 @@ import {
   parsePromoPending,
   promoCallback,
   promoConfigsOf,
-  promoPendingAbove,
-  promoPendingBelow,
-  promoPendingFlat,
-  promoPendingFrom,
-  promoPendingLimit,
+  promoPendingValue,
   promoPercentAt,
   promoPercentTitle,
   promoShortValue,
+  promoStepTitle,
   promoTitle,
   promoValueLabel,
+  promoWithFloor,
   validatePromoFrom,
   validatePromoLimit,
 } from '../../src/modules/yandex/reports/promo';
-import type { TPromoConfig } from '../../src/modules/yandex/reports/promo';
+import type { TPromoConfig, TPromoPending } from '../../src/modules/yandex/reports/promo';
 
 const FLAT: TPromoConfig = { mode: 'flat', percent: 2 };
 const TIERED: TPromoConfig = { mode: 'tiered', limit: 10000, below: 2, above: 1 };
@@ -156,42 +154,87 @@ describe('callback_data продвижения', () => {
 });
 
 describe('pendingRate продвижения: пошаговая цепочка', () => {
+  /** Все пять шагов одного бренда — цепочка целиком, обе ветки. */
+  const STEPS = (brand: TPromoPending['brand']): TPromoPending[] => [
+    { brand, step: 'from', mode: 'flat' },
+    { brand, step: 'from', mode: 'tier' },
+    { brand, step: 'flat', from: 3000 },
+    { brand, step: 'limit', from: 3000 },
+    { brand, step: 'below', from: 3000, limit: 10000 },
+    { brand, step: 'above', from: 3000, limit: 10000, below: 2 },
+  ];
+
   it('кодек каждого шага ходит туда и обратно', () => {
     for (const key of BRAND_KEYS) {
-      expect(parsePromoPending(promoPendingFlat(key))).toEqual({ brand: key, step: 'flat' });
-      expect(parsePromoPending(promoPendingLimit(key))).toEqual({ brand: key, step: 'limit' });
-      expect(parsePromoPending(promoPendingFrom(key))).toEqual({ brand: key, step: 'from' });
-      expect(parsePromoPending(promoPendingBelow(key, 10000))).toEqual({
-        brand: key,
-        step: 'below',
-        limit: 10000,
-      });
-      expect(parsePromoPending(promoPendingAbove(key, 10000, 2))).toEqual({
-        brand: key,
-        step: 'above',
-        limit: 10000,
-        below: 2,
-      });
+      for (const step of STEPS(key)) {
+        expect(parsePromoPending(promoPendingValue(step))).toEqual(step);
+      }
     }
   });
 
-  it('дробные значения переживают сериализацию', () => {
-    expect(parsePromoPending(promoPendingAbove('casio', 9999.5, 2.5))).toEqual({
+  it('нижний порог едет в строке, и ноль тоже', () => {
+    // Ноль — «порога нет». В базу он не попадает, но в незакрытом вопросе живёт
+    // как обычное значение: иначе следующий шаг не знал бы, что уже спросили.
+    expect(promoPendingValue({ brand: 'casio', step: 'flat', from: 0 })).toBe('promo:casio:flat:0');
+    expect(parsePromoPending('promo:casio:flat:0')).toEqual({
       brand: 'casio',
-      step: 'above',
-      limit: 9999.5,
-      below: 2.5,
+      step: 'flat',
+      from: 0,
     });
   });
 
+  it('дробные значения переживают сериализацию', () => {
+    const step: TPromoPending = {
+      brand: 'casio',
+      step: 'above',
+      from: 2999.5,
+      limit: 9999.5,
+      below: 2.5,
+    };
+    expect(parsePromoPending(promoPendingValue(step))).toEqual(step);
+  });
+
+  it('ЛЕГАСИ: формы без нижнего порога читаются как «порога нет»', () => {
+    // Вопрос, открытый до появления порога. Вернуть null было бы хуже: pendingRate
+    // остался бы висеть в базе, а ответ уехал бы в визард с «Не понял, что нужно».
+    expect(parsePromoPending('promo:casio:flat')).toEqual({ brand: 'casio', step: 'flat', from: 0 });
+    expect(parsePromoPending('promo:casio:limit')).toEqual({
+      brand: 'casio',
+      step: 'limit',
+      from: 0,
+    });
+    expect(parsePromoPending('promo:casio:below:10000')).toEqual({
+      brand: 'casio',
+      step: 'below',
+      from: 0,
+      limit: 10000,
+    });
+    expect(parsePromoPending('promo:casio:above:10000:2')).toEqual({
+      brand: 'casio',
+      step: 'above',
+      from: 0,
+      limit: 10000,
+      below: 2,
+    });
+  });
+
+  it('форма кнопочной итерации «promo:<ключ>:from» вопросом не считается', () => {
+    // Кнопка «📏 Нижний порог» прожила один релиз и порог не задавала никогда.
+    expect(parsePromoPending('promo:casio:from')).toBeNull();
+  });
+
   it('мусор — null: испорченная строка закрывает вопрос, а не доживает до $set', () => {
-    expect(parsePromoPending('promo:rolex:limit')).toBeNull();
-    expect(parsePromoPending('promo:casio:below:abc')).toBeNull();
-    expect(parsePromoPending('promo:casio:below:-5')).toBeNull();
-    expect(parsePromoPending('promo:casio:above:10000:500')).toBeNull();
+    expect(parsePromoPending('promo:rolex:limit:0')).toBeNull();
+    // Number('') === 0 — пустой хвост не должен стать валидным нулевым порогом.
+    expect(parsePromoPending('promo:casio:flat:')).toBeNull();
+    expect(parsePromoPending('promo:casio:flat:-5')).toBeNull();
+    expect(parsePromoPending('promo:casio:from:zzz')).toBeNull();
+    expect(parsePromoPending('promo:casio:from:flat:3000')).toBeNull();
+    expect(parsePromoPending('promo:casio:below:0:abc')).toBeNull();
+    expect(parsePromoPending('promo:casio:below:0:-5')).toBeNull();
+    expect(parsePromoPending('promo:casio:above:0:10000:500')).toBeNull();
     expect(parsePromoPending('promo:casio:zzz')).toBeNull();
-    expect(parsePromoPending('promo:casio:flat:extra')).toBeNull();
-    expect(parsePromoPending('promo:casio:from:extra')).toBeNull();
+    expect(parsePromoPending('promo:casio:flat:0:extra')).toBeNull();
     expect(parsePromoPending('brand:casio')).toBeNull();
     expect(parsePromoPending('commissionPercent')).toBeNull();
     expect(parsePromoPending(undefined)).toBeNull();
@@ -205,6 +248,51 @@ describe('pendingRate продвижения: пошаговая цепочка'
     expect(parsePromoPending('promo:floor:casio')).toBeNull();
     expect(parsePromoPending('promo:menu')).toBeNull();
     expect(parsePromoPending('promo:cancel')).toBeNull();
+  });
+});
+
+describe('Нумерация шагов', () => {
+  it('общий процент — два шага, ступени — четыре', () => {
+    expect(promoStepTitle({ brand: 'casio', step: 'from', mode: 'flat' })).toBe('Шаг 1 из 2.');
+    expect(promoStepTitle({ brand: 'casio', step: 'flat', from: 0 })).toBe('Шаг 2 из 2.');
+
+    expect(promoStepTitle({ brand: 'casio', step: 'from', mode: 'tier' })).toBe('Шаг 1 из 4.');
+    expect(promoStepTitle({ brand: 'casio', step: 'limit', from: 0 })).toBe('Шаг 2 из 4.');
+    expect(promoStepTitle({ brand: 'casio', step: 'below', from: 0, limit: 10000 })).toBe(
+      'Шаг 3 из 4.',
+    );
+    expect(
+      promoStepTitle({ brand: 'casio', step: 'above', from: 0, limit: 10000, below: 2 }),
+    ).toBe('Шаг 4 из 4.');
+  });
+
+  it('нижний порог — первый вопрос ОБЕИХ цепочек', () => {
+    // Ради этого фича и переделывалась: кнопкой порог не задавался никогда.
+    for (const mode of ['flat', 'tier'] as const) {
+      expect(promoStepTitle({ brand: 'casio', step: 'from', mode })).toMatch(/^Шаг 1 из/);
+    }
+  });
+});
+
+describe('promoWithFloor', () => {
+  it('ноль порога ключа from не оставляет', () => {
+    // Хранимый from: 0 promoConfigsOf считает мусором и выкидывает запись
+    // целиком — значит ноль обязан исчезнуть на пути записи.
+    const written = promoWithFloor(FLAT, 0);
+    expect(written).toStrictEqual(FLAT);
+    expect('from' in written).toBe(false);
+  });
+
+  it('порог больше нуля дописывается в обе формы', () => {
+    expect(promoWithFloor(FLAT, 3000)).toStrictEqual(FLAT_FROM);
+    expect(promoWithFloor(TIERED, 3000)).toStrictEqual(TIERED_FROM);
+  });
+
+  it('записанное promoWithFloor переживает promoConfigsOf', () => {
+    // Проверка сквозная: правило «мусорный from роняет запись» не должно
+    // срабатывать на том, что пишем мы сами.
+    expect(promoConfigsOf({ casio: promoWithFloor(FLAT, 0) }).casio).toStrictEqual(FLAT);
+    expect(promoConfigsOf({ casio: promoWithFloor(FLAT, 3000) }).casio).toStrictEqual(FLAT_FROM);
   });
 });
 

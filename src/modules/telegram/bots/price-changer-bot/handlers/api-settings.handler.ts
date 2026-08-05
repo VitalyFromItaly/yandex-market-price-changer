@@ -18,7 +18,6 @@ import {
   brandDiscountTitle,
   brandInputLabel,
   brandPendingValue,
-  brandTitle,
   parseBrandCallback,
   parseBrandDiscountInput,
   parseBrandPending,
@@ -53,17 +52,16 @@ import {
   parsePromoPending,
   promoConfigsOf,
   promoLimitLabel,
-  promoPendingAbove,
-  promoPendingBelow,
-  promoPendingFlat,
-  promoPendingFrom,
-  promoPendingLimit,
+  promoPendingValue,
   promoPercentTitle,
+  promoStepTitle,
   promoTitle,
   promoValueLabel,
+  promoWithFloor,
   validatePromoFrom,
   validatePromoLimit,
   type TPromoConfig,
+  type TPromoMode,
   type TPromoPending,
 } from '../../../../yandex/reports/promo';
 import { placementOfCampaign } from '../../../../yandex/stocks/placement';
@@ -365,13 +363,16 @@ export class ApiSettingsHandler {
             await this.showPromotionMode(ctx, target.brand);
             return;
           case 'flat':
-            await this.askPromotionFlat(ctx, target.brand);
+            await this.startPromoSetup(ctx, target.brand, 'flat');
             return;
           case 'tier':
-            await this.askPromotionLimit(ctx, target.brand);
+            await this.startPromoSetup(ctx, target.brand, 'tier');
             return;
           case 'floor':
-            await this.askPromotionFloor(ctx, target.brand);
+            // ЛЕГАСИ: кнопка «📏 Нижний порог» жила один релиз. Порог теперь
+            // спрашивается первым шагом обеих цепочек, но кнопка осталась в
+            // истории чата — открываем ей развилку вместо «Неизвестной команды».
+            await this.showPromotionMode(ctx, target.brand);
             return;
           case 'off':
             await this.disablePromotion(ctx, target.brand);
@@ -570,144 +571,89 @@ export class ApiSettingsHandler {
     );
   }
 
-  /** Спросить общий процент продвижения бренда — зеркало askBrandDiscount. */
-  private async askPromotionFlat(ctx: Context, brand: TBrandKey): Promise<void> {
-    const telegramUserId = ctx.from.id.toString();
-
-    const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
-    if (!store) {
-      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
-      return;
-    }
-
-    await this.accessService.setPendingRate(
-      telegramUserId,
-      ctx.botInfo.id.toString(),
-      promoPendingFlat(brand),
-    );
-
-    const current = promoConfigsOf(store.promoCommissions)[brand];
-    const keyboard = await this.keyboard.createInlineButtons([
-      { text: '⬅️ Отмена', callback_data: PROMO_CB_CANCEL },
-    ]);
-
-    await ctx.reply(
-      [
-        `${esc(promoTitle(brand))} — сейчас ${b(promoValueLabel(current))}.`,
-        '',
-        'Пришлите процент от цены продажи — например <code>2</code>.',
-      ].join('\n'),
-      htmlOptions({ reply_markup: keyboard.reply_markup }),
-    );
-  }
-
   /**
-   * Первый из трёх вопросов ступенчатой настройки — порог. Промежуточные
-   * ответы живут в строке pendingRate (`promo:<ключ>:below:<порог>` и дальше),
-   * в документ магазина уходит один $set после последнего шага: брошенная на
-   * полпути цепочка не должна оставлять полузаполненную настройку.
+   * Вход обеих цепочек. Нижний порог спрашивается ПЕРВЫМ и у плоской ставки, и
+   * у ступеней: он осмыслен при любом режиме, а спрятанный за отдельной кнопкой
+   * (как было ровно один релиз) он не задавался никогда — кнопка показывалась
+   * только у уже настроенного бренда, так что продавец проходил настройку
+   * целиком и про порог не узнавал.
    */
-  private async askPromotionLimit(ctx: Context, brand: TBrandKey): Promise<void> {
-    const telegramUserId = ctx.from.id.toString();
-
-    const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
-    if (!store) {
-      await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
-      return;
-    }
-
-    await this.accessService.setPendingRate(
-      telegramUserId,
-      ctx.botInfo.id.toString(),
-      promoPendingLimit(brand),
-    );
-
-    const keyboard = await this.keyboard.createInlineButtons([
-      { text: '⬅️ Отмена', callback_data: PROMO_CB_CANCEL },
-    ]);
-
-    await ctx.reply(
-      [
-        `${esc(promoTitle(brand))} — ставка от цены товара.`,
-        '',
-        `${b('Шаг 1 из 3.')} До какой цены действует первая ставка?`,
-        'Пришлите границу в рублях — например <code>10000</code>.',
-      ].join('\n'),
-      htmlOptions({ reply_markup: keyboard.reply_markup }),
-    );
-  }
-
-  /**
-   * Вопрос о нижнем пороге — цене, с которой продвижение начисляется. Порог —
-   * поле поверх действующей настройки, поэтому без неё вопрос не открывается:
-   * кнопка показывается только у настроенного бренда, но inline-кнопка живёт в
-   * истории чата вечно, и проверка при нажатии обязательна.
-   */
-  private async askPromotionFloor(ctx: Context, brand: TBrandKey): Promise<void> {
-    const telegramUserId = ctx.from.id.toString();
-
-    const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
+  private async startPromoSetup(ctx: Context, brand: TBrandKey, mode: TPromoMode): Promise<void> {
+    const store = await this.yandexMarketService.findByTelegramUser(ctx.from.id.toString());
     if (!store) {
       await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
       return;
     }
 
     const current = promoConfigsOf(store.promoCommissions)[brand];
-    if (!current) {
-      await ctx.reply(
-        `Сначала задайте процент продвижения «${esc(brandTitle(brand))}» — ` +
-          'нижний порог применяется к нему.',
-        htmlOptions(),
-      );
-      await this.showPromotionMode(ctx, brand);
-      return;
-    }
 
-    await this.accessService.setPendingRate(
-      telegramUserId,
-      ctx.botInfo.id.toString(),
-      promoPendingFrom(brand),
-    );
-
-    const keyboard = await this.keyboard.createInlineButtons([
-      { text: '⬅️ Отмена', callback_data: PROMO_CB_CANCEL },
-    ]);
-
-    await ctx.reply(
-      [
-        `${esc(promoTitle(brand))} — сейчас ${b(promoValueLabel(current))}.`,
-        '',
-        'Пришлите цену в рублях, с которой начинается продвижение, — например <code>3000</code>.',
-        'Пришлите <code>0</code>, чтобы убрать порог.',
-      ].join('\n'),
-      htmlOptions({ reply_markup: keyboard.reply_markup }),
+    await this.askPromoStep(
+      ctx,
+      { brand, step: 'from', mode },
+      `${esc(promoTitle(brand))} — сейчас ${b(promoValueLabel(current))}.`,
     );
   }
 
-  /** Вопросы 2 и 3 цепочки — проценты до и свыше порога. */
-  private async askPromotionPercent(
+  /**
+   * Один вопрос цепочки. pendingRate и текст строятся из ОДНОГО дескриптора,
+   * поэтому сохранённый шаг и напечатанный номер разъехаться не могут; сама
+   * нумерация живёт в promo.ts, а не литералами здесь — литералами она уже
+   * разъезжалась.
+   */
+  private async askPromoStep(
     ctx: Context,
-    brand: TBrandKey,
-    step: 'below' | 'above',
-    limit: number,
+    pending: TPromoPending,
+    preamble?: string,
   ): Promise<void> {
+    await this.accessService.setPendingRate(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+      promoPendingValue(pending),
+    );
+
     const keyboard = await this.keyboard.createInlineButtons([
       { text: '⬅️ Отмена', callback_data: PROMO_CB_CANCEL },
     ]);
 
+    const lines = preamble ? [preamble, ''] : [];
+
     await ctx.reply(
-      step === 'below'
-        ? [
-            `${b('Шаг 2 из 3.')} Процент для товаров ценой до ${esc(promoLimitLabel(limit))} ` +
-              'включительно.',
-            'Например <code>2</code>.',
-          ].join('\n')
-        : [
-            `${b('Шаг 3 из 3.')} Процент для товаров дороже ${esc(promoLimitLabel(limit))}.`,
-            'Например <code>1</code>.',
-          ].join('\n'),
+      [...lines, ...this.promoStepLines(pending)].join('\n'),
       htmlOptions({ reply_markup: keyboard.reply_markup }),
     );
+  }
+
+  /** Текст каждого шага. Без default: новый шаг обязан получить свой вопрос. */
+  private promoStepLines(pending: TPromoPending): string[] {
+    const step = b(promoStepTitle(pending));
+
+    switch (pending.step) {
+      case 'from':
+        return [
+          `${step} До какой цены не учитывать продвижение?`,
+          'Товары дешевле этой цены дадут 0%, она сама и всё дороже — по ставке.',
+          'Пришлите цену в рублях — например <code>1000</code>.',
+          'Если такой цены нет — пришлите <code>0</code>.',
+        ];
+      case 'flat':
+        return [`${step} Процент продвижения от цены продажи.`, 'Например <code>2</code>.'];
+      case 'limit':
+        return [
+          `${step} До какой цены действует первая ставка?`,
+          'Пришлите границу в рублях — например <code>10000</code>.',
+        ];
+      case 'below':
+        return [
+          `${step} Процент для товаров ценой до ${esc(promoLimitLabel(pending.limit))} ` +
+            'включительно.',
+          'Например <code>2</code>.',
+        ];
+      case 'above':
+        return [
+          `${step} Процент для товаров дороже ${esc(promoLimitLabel(pending.limit))}.`,
+          'Например <code>1</code>.',
+        ];
+    }
   }
 
   /** Кнопка «🚫 Отключить»: настройка снимается целиком ($unset). */
@@ -855,33 +801,9 @@ export class ApiSettingsHandler {
       return true;
     }
 
-    // Порог — рубли, свой парсер («10 000 ₽» — валидный ответ). Дата и время
-    // в него не проходят, так что соседние вопросы не глохнут.
-    if (parsed.step === 'limit') {
-      const value = parsePromoLimit(text);
-      if (value === null) {
-        await this.accessService.setPendingRate(telegramUserId, botId, null);
-        return false;
-      }
-
-      const validation = validatePromoLimit(value);
-      if (!validation.ok) {
-        await ctx.reply(`❌ ${esc(validation.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
-        return true;
-      }
-
-      await this.accessService.setPendingRate(
-        telegramUserId,
-        botId,
-        promoPendingBelow(parsed.brand, value),
-      );
-      await this.askPromotionPercent(ctx, parsed.brand, 'below', value);
-      return true;
-    }
-
-    // Нижний порог — тоже рубли; 0 убирает порог. Настройка перечитывается
-    // прямо перед записью: пока вопрос висел, продвижение могли отключить, и
-    // выдумывать конфиг ради порога нельзя.
+    // Нижний порог — первый вопрос обеих цепочек. Рубли, свой парсер («3 000 ₽»
+    // валиден), а дата и время в него не проходят, так что соседние вопросы не
+    // глохнут. Ноль означает «порога нет» и до записи не доживает.
     if (parsed.step === 'from') {
       const value = parsePromoLimit(text);
       if (value === null) {
@@ -895,21 +817,37 @@ export class ApiSettingsHandler {
         return true;
       }
 
-      const store = await this.yandexMarketService.findByTelegramUser(telegramUserId);
-      const current = promoConfigsOf(store?.promoCommissions)[parsed.brand];
-      if (!current) {
+      await this.askPromoStep(
+        ctx,
+        parsed.mode === 'flat'
+          ? { brand: parsed.brand, step: 'flat', from: value }
+          : { brand: parsed.brand, step: 'limit', from: value },
+      );
+      return true;
+    }
+
+    // Граница ступени — тоже рубли, но ноль здесь не значит ничего: «до 0 ₽» не
+    // описывает ни один товар.
+    if (parsed.step === 'limit') {
+      const value = parsePromoLimit(text);
+      if (value === null) {
         await this.accessService.setPendingRate(telegramUserId, botId, null);
-        await ctx.reply(
-          `${esc(promoTitle(parsed.brand))} не настроено — сначала задайте процент.`,
-          htmlOptions(),
-        );
-        await this.showPromotion(ctx);
+        return false;
+      }
+
+      const validation = validatePromoLimit(value);
+      if (!validation.ok) {
+        await ctx.reply(`❌ ${esc(validation.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
         return true;
       }
 
-      const { from: _removed, ...rest } = current;
-      const config = value === 0 ? (rest as TPromoConfig) : { ...current, from: value };
-      return await this.savePromo(ctx, parsed.brand, config);
+      await this.askPromoStep(ctx, {
+        brand: parsed.brand,
+        step: 'below',
+        from: parsed.from,
+        limit: value,
+      });
+      return true;
     }
 
     // Остальные шаги ждут процент — по тем же правилам, что ставки.
@@ -926,25 +864,32 @@ export class ApiSettingsHandler {
     }
 
     if (parsed.step === 'flat') {
-      return await this.savePromo(ctx, parsed.brand, { mode: 'flat', percent: value });
+      return await this.savePromo(
+        ctx,
+        parsed.brand,
+        promoWithFloor({ mode: 'flat', percent: value }, parsed.from),
+      );
     }
 
     if (parsed.step === 'below') {
-      await this.accessService.setPendingRate(
-        telegramUserId,
-        botId,
-        promoPendingAbove(parsed.brand, parsed.limit, value),
-      );
-      await this.askPromotionPercent(ctx, parsed.brand, 'above', parsed.limit);
+      await this.askPromoStep(ctx, {
+        brand: parsed.brand,
+        step: 'above',
+        from: parsed.from,
+        limit: parsed.limit,
+        below: value,
+      });
       return true;
     }
 
-    return await this.savePromo(ctx, parsed.brand, {
-      mode: 'tiered',
-      limit: parsed.limit,
-      below: parsed.below,
-      above: value,
-    });
+    return await this.savePromo(
+      ctx,
+      parsed.brand,
+      promoWithFloor(
+        { mode: 'tiered', limit: parsed.limit, below: parsed.below, above: value },
+        parsed.from,
+      ),
+    );
   }
 
   /** Единственная запись настройки продвижения — после последнего шага. */

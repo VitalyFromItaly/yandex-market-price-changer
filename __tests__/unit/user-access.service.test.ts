@@ -156,13 +156,22 @@ describe('UserAccessService: атомарность переходов', () => {
     expect(call()[update].$set).toMatchObject({ pendingRate: 'commissionPercent' });
 
     await service.setPendingRate('1', '2', 'brand:casio');
+    await service.setPendingRate('1', '2', 'promo:casio:from:flat');
+    await service.setPendingRate('1', '2', 'promo:casio:from:tier');
+    await service.setPendingRate('1', '2', 'promo:casio:flat:0');
+    await service.setPendingRate('1', '2', 'promo:casio:limit:3000');
+    await service.setPendingRate('1', '2', 'promo:casio:below:0:10000');
+    await service.setPendingRate('1', '2', 'promo:casio:above:3000:10000:2');
+    // Формы до нижнего порога — вопросы, открытые прошлой версией бота.
     await service.setPendingRate('1', '2', 'promo:casio:flat');
-    await service.setPendingRate('1', '2', 'promo:casio:limit');
-    await service.setPendingRate('1', '2', 'promo:casio:from');
     await service.setPendingRate('1', '2', 'promo:casio:above:10000:2');
 
-    await expect(service.setPendingRate('1', '2', 'promo:rolex:limit')).rejects.toThrow();
+    // Голый `from` — форма кнопочной итерации, писать её больше нечему.
+    await expect(service.setPendingRate('1', '2', 'promo:casio:from')).rejects.toThrow();
+    await expect(service.setPendingRate('1', '2', 'promo:casio:from:zzz')).rejects.toThrow();
+    await expect(service.setPendingRate('1', '2', 'promo:rolex:limit:0')).rejects.toThrow();
     await expect(service.setPendingRate('1', '2', 'promo:casio:below:abc')).rejects.toThrow();
+    await expect(service.setPendingRate('1', '2', 'promo:casio:flat:-5')).rejects.toThrow();
     await expect(service.setPendingRate('1', '2', 'status')).rejects.toThrow();
 
     // null снимает вопрос, а не пишет его.

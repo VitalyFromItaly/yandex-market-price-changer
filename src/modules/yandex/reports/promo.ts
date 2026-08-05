@@ -56,6 +56,15 @@ function isLimit(value: unknown): value is number {
 }
 
 /**
+ * Нижний порог, в отличие от границы ступени, допускает ноль: «0» — это ответ
+ * «порога нет». В базу такой ноль не попадает (promoWithFloor его не пишет), но
+ * в строке незакрытого вопроса он живёт как обычное значение.
+ */
+function isFloor(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+/**
  * Карта настроек из сырого документа магазина — аналог discountsOf: ключ
  * проверяется через isBrandKey, мусорная запись (не тот mode, нечисло, процент
  * вне 0–100, порог ≤ 0) выкидывается ПО-ЗАПИСНО. Одна испорченная запись не
@@ -193,8 +202,14 @@ export const PROMO_CB_MENU = `${PROMO_CB_PREFIX}menu`;
 export const PROMO_CB_CANCEL = `${PROMO_CB_PREFIX}cancel`;
 
 /**
- * Действия с брендом: выбрать, задать плоский процент, ступени, нижний порог,
- * отключить.
+ * Действия с брендом: выбрать, задать плоский процент, ступени, отключить.
+ *
+ * `floor` — ЛЕГАСИ: кнопка «📏 Нижний порог» была отдельной ровно один релиз, и
+ * порог за ней не задавался никогда (она показывалась только у уже настроенного
+ * бренда, поэтому продавец проходил настройку целиком и про порог не узнавал).
+ * Теперь порог — первый вопрос обеих цепочек, а действие остаётся: inline-кнопка
+ * живёт в истории чата вечно, и без него она упала бы в default-ветку общего
+ * callback_query с «Неизвестной командой» — довод `rate:vostokDiscountPercent`.
  */
 const PROMO_ACTIONS = ['pick', 'flat', 'tier', 'off', 'floor'] as const;
 
@@ -233,12 +248,27 @@ export function parsePromoCallback(data: unknown): TPromoCallback | null {
  * о ставках и брендовых скидках, — и промежуточные ответы кодируются В САМОЙ
  * строке, а не пишутся в Mongo по одному:
  *
- *   promo:<key>:flat              → ответ: процент       → запись {flat}
- *   promo:<key>:limit             → ответ: порог X       → promo:<key>:below:<X>
- *   promo:<key>:below:<X>         → ответ: процент A     → promo:<key>:above:<X>:<A>
- *   promo:<key>:above:<X>:<A>     → ответ: процент B     → запись {tiered}
- *   promo:<key>:from              → ответ: цена (0 — убрать) → merge в текущую
- *                                    настройку и запись
+ *   promo:<key>:from:flat          → ответ: порог F     → promo:<key>:flat:<F>
+ *   promo:<key>:flat:<F>           → ответ: процент P   → запись {flat}
+ *
+ *   promo:<key>:from:tier          → ответ: порог F     → promo:<key>:limit:<F>
+ *   promo:<key>:limit:<F>          → ответ: граница X   → promo:<key>:below:<F>:<X>
+ *   promo:<key>:below:<F>:<X>      → ответ: процент A   → promo:<key>:above:<F>:<X>:<A>
+ *   promo:<key>:above:<F>:<X>:<A>  → ответ: процент B   → запись {tiered}
+ *
+ * НИЖНИЙ ПОРОГ — первый вопрос ОБЕИХ цепочек, а не отдельная кнопка. Кнопкой он
+ * был ровно один релиз и не задавался никогда: она показывалась только у уже
+ * настроенного бренда, так что продавец проходил настройку целиком и про порог
+ * не узнавал. Ответ «0» означает «порога нет» и в документ не попадает вовсе
+ * (promoWithFloor) — хранимый `from: 0` promoConfigsOf считает мусором.
+ *
+ * ЛЕГАСИ: формы без ведущего F (`promo:<key>:flat`, `:limit`, `:below:<X>`,
+ * `:above:<X>:<A>`) — вопросы, открытые до этого релиза; читаются как «порога
+ * нет», то есть ровно с той семантикой, что была в момент вопроса. Каждая ровно
+ * на один сегмент короче актуальной формы того же шага — отсюда табличный
+ * разбор ниже. Вернуть на них null было бы хуже, чем «вопрос потерян»: pendingRate
+ * остался бы висеть в базе, а числовой ответ уехал бы в визард с «Не понял, что
+ * именно нужно изменить».
  *
  * В документ магазина уходит ОДИН $set в самом конце: недоотвеченная цепочка
  * не должна оставлять полузаполненную настройку, по которой отчёт что-то
@@ -248,32 +278,37 @@ export function parsePromoCallback(data: unknown): TPromoCallback | null {
  * Префикс совпадает с callback-кодеком нарочно (это одна фича), а формы не
  * пересекаются: вторым сегментом здесь всегда ключ бренда, там — действие.
  */
+export type TPromoMode = 'flat' | 'tier';
+
 export type TPromoPending =
-  | { brand: TBrandKey; step: 'flat' }
-  | { brand: TBrandKey; step: 'limit' }
-  | { brand: TBrandKey; step: 'below'; limit: number }
-  | { brand: TBrandKey; step: 'above'; limit: number; below: number }
-  | { brand: TBrandKey; step: 'from' };
+  | { brand: TBrandKey; step: 'from'; mode: TPromoMode }
+  | { brand: TBrandKey; step: 'flat'; from: number }
+  | { brand: TBrandKey; step: 'limit'; from: number }
+  | { brand: TBrandKey; step: 'below'; from: number; limit: number }
+  | { brand: TBrandKey; step: 'above'; from: number; limit: number; below: number };
 
-export function promoPendingFlat(key: TBrandKey): string {
-  return `${PROMO_CB_PREFIX}${key}:flat`;
+/**
+ * Один кодер на все шаги — не пять функций: дескриптор шага и его строка обязаны
+ * меняться вместе, а разъехаться они могут только если их можно править порознь.
+ */
+export function promoPendingValue(pending: TPromoPending): string {
+  const head = `${PROMO_CB_PREFIX}${pending.brand}:${pending.step}`;
+
+  switch (pending.step) {
+    case 'from':
+      return `${head}:${pending.mode}`;
+    case 'flat':
+    case 'limit':
+      return `${head}:${String(pending.from)}`;
+    case 'below':
+      return `${head}:${String(pending.from)}:${String(pending.limit)}`;
+    case 'above':
+      return `${head}:${String(pending.from)}:${String(pending.limit)}:${String(pending.below)}`;
+  }
 }
 
-export function promoPendingLimit(key: TBrandKey): string {
-  return `${PROMO_CB_PREFIX}${key}:limit`;
-}
-
-export function promoPendingFrom(key: TBrandKey): string {
-  return `${PROMO_CB_PREFIX}${key}:from`;
-}
-
-export function promoPendingBelow(key: TBrandKey, limit: number): string {
-  return `${PROMO_CB_PREFIX}${key}:below:${String(limit)}`;
-}
-
-export function promoPendingAbove(key: TBrandKey, limit: number, below: number): string {
-  return `${PROMO_CB_PREFIX}${key}:above:${String(limit)}:${String(below)}`;
-}
+/** Сколько чисел в хвосте у актуальной формы шага; легаси-форма — на одно короче. */
+const PROMO_TAIL_ARITY = { flat: 1, limit: 1, below: 2, above: 3 } as const;
 
 /**
  * Разбор сохранённого pendingRate — или null (не промо-вопрос). Числовые
@@ -288,22 +323,71 @@ export function parsePromoPending(value: unknown): TPromoPending | null {
   if (!isBrandKey(brand)) return null;
 
   const step = parts[1];
-  if (step === 'flat' && parts.length === 2) return { brand, step };
-  if (step === 'limit' && parts.length === 2) return { brand, step };
-  if (step === 'from' && parts.length === 2) return { brand, step };
 
-  if (step === 'below' && parts.length === 3) {
-    const limit = Number(parts[2]);
-    return isLimit(limit) ? { brand, step, limit } : null;
+  // Первый шаг обеих цепочек: режим ещё не выражен числом и едет отдельным
+  // сегментом. Голый `promo:<key>:from` — форма кнопочной итерации, не вопрос.
+  if (step === 'from') {
+    if (parts.length !== 3) return null;
+    const mode = parts[2];
+    return mode === 'flat' || mode === 'tier' ? { brand, step, mode } : null;
   }
 
-  if (step === 'above' && parts.length === 4) {
-    const limit = Number(parts[2]);
-    const below = Number(parts[3]);
-    return isLimit(limit) && isPercent(below) ? { brand, step, limit, below } : null;
-  }
+  if (step !== 'flat' && step !== 'limit' && step !== 'below' && step !== 'above') return null;
 
-  return null;
+  // Number('') === 0, поэтому пустой сегмент обязан стать мусором явно — иначе
+  // «promo:casio:flat:» разобралось бы как валидный нулевой порог.
+  const tail = parts.slice(2).map((part) => (part === '' ? Number.NaN : Number(part)));
+  const arity = PROMO_TAIL_ARITY[step];
+
+  const numbers =
+    // eslint-disable-next-line no-nested-ternary
+    tail.length === arity ? tail : tail.length === arity - 1 ? [0, ...tail] : null;
+  if (numbers === null) return null;
+
+  const [from, limit, below] = numbers;
+  if (!isFloor(from)) return null;
+
+  switch (step) {
+    case 'flat':
+    case 'limit':
+      return { brand, step, from };
+    case 'below':
+      return isLimit(limit) ? { brand, step, from, limit } : null;
+    case 'above':
+      return isLimit(limit) && isPercent(below) ? { brand, step, from, limit, below } : null;
+  }
+}
+
+/**
+ * Порядок вопросов каждой цепочки. Нумерация «Шаг N из M» берётся ТОЛЬКО
+ * отсюда: литералами в хендлере она уже разъезжалась (после добавления порога
+ * там осталось «Шаг 1 из 3» на цепочке из четырёх шагов).
+ */
+const PROMO_CHAIN = {
+  flat: ['from', 'flat'],
+  tier: ['from', 'limit', 'below', 'above'],
+} as const;
+
+/** «Шаг 2 из 4.» — по дескриптору шага, а не по литералу рядом с текстом. */
+export function promoStepTitle(pending: TPromoPending): string {
+  const chain: readonly string[] =
+    pending.step === 'from' ? PROMO_CHAIN[pending.mode] : PROMO_CHAIN[promoModeOf(pending.step)];
+
+  return `Шаг ${chain.indexOf(pending.step) + 1} из ${chain.length}.`;
+}
+
+function promoModeOf(step: Exclude<TPromoPending['step'], 'from'>): TPromoMode {
+  return step === 'flat' ? 'flat' : 'tier';
+}
+
+/**
+ * Дописать нижний порог в готовую настройку. Ноль — «порога нет»: ключ не
+ * пишется вовсе, потому что хранимый `from: 0` promoConfigsOf считает мусором и
+ * выкидывает запись целиком. То есть ноль обязан исчезнуть на пути записи, а не
+ * быть сохранён «как есть».
+ */
+export function promoWithFloor(config: TPromoConfig, from: number): TPromoConfig {
+  return from > 0 ? { ...config, from } : config;
 }
 
 // --- ввод порога -------------------------------------------------------------
@@ -339,14 +423,16 @@ export function validatePromoLimit(value: number): IPromoValidation {
 }
 
 /**
- * Нижний порог, в отличие от порога ступени, принимает и ноль: «0» — это
- * ответ «убрать порог», один вопрос обслуживает и установку, и снятие.
+ * Нижний порог, в отличие от границы ступени, принимает и ноль: «0» — это ответ
+ * «порога нет», один вопрос обслуживает и установку, и отказ от порога.
  */
 export function validatePromoFrom(value: number): IPromoValidation {
-  if (!Number.isFinite(value) || value < 0) {
+  if (!isFloor(value)) {
     return {
       ok: false,
-      error: 'Порог должен быть числом не меньше нуля — например 3000. 0 — убрать порог.',
+      error:
+        'Нижний порог должен быть числом не меньше нуля — например 3000. ' +
+        'Пришлите 0, если порога нет.',
     };
   }
   return { ok: true };

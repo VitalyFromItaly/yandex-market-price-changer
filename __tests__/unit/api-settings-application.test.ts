@@ -678,64 +678,153 @@ describe('ApiSettingsHandler: подача заявки', () => {
     expect(accessService.setPendingRate).not.toHaveBeenCalled();
   });
 
-  it('общий процент: кнопка открывает вопрос, ответ пишет плоскую настройку', async () => {
+  const CONFIGURED = { ...FULL, promoCommissions: { casio: { mode: 'flat', percent: 2 } } };
+
+  it('общий процент: сначала нижний порог, потом процент — запись одна', async () => {
     const { handler, yandexMarketService, accessService } = await build({
       status: 'approved',
       store: { ...FULL },
     });
-    await tap(handler, 'promo:flat:casio');
+    const opened = await tap(handler, 'promo:flat:casio');
 
+    // Порог — ПЕРВЫЙ вопрос: за отдельной кнопкой он не задавался никогда.
     expect(accessService.setPendingRate).toHaveBeenCalledWith(
       String(USER_ID),
       '999',
-      'promo:casio:flat',
+      'promo:casio:from:flat',
     );
+    expect(opened.allReplies()).toContain('Шаг 1 из 2');
+    expect(opened.allReplies()).toContain('0');
+    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
+
+    const step1 = await send(handler, '3 000 ₽');
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      '999',
+      'promo:casio:flat:3000',
+    );
+    expect(step1.allReplies()).toContain('Шаг 2 из 2');
     expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
 
     const { allReplies } = await send(handler, '2');
 
-    expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledWith(String(USER_ID), 'casio', {
+    expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledTimes(1);
+    expect(yandexMarketService.updatePromoCommission.mock.calls[0][2]).toStrictEqual({
       mode: 'flat',
       percent: 2,
+      from: 3000,
     });
     expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
     expect(allReplies()).toContain('2%');
   });
 
-  it('ступени: три ответа подряд, запись в магазин РОВНО одна — в конце', async () => {
+  it('ступени: четыре ответа подряд, запись в магазин РОВНО одна — в конце', async () => {
     const { handler, yandexMarketService, accessService } = await build({
       status: 'approved',
       store: { ...FULL },
     });
-    await tap(handler, 'promo:tier:casio');
+    const opened = await tap(handler, 'promo:tier:casio');
     expect(accessService.setPendingRate).toHaveBeenCalledWith(
       String(USER_ID),
       '999',
-      'promo:casio:limit',
+      'promo:casio:from:tier',
     );
+    expect(opened.allReplies()).toContain('Шаг 1 из 4');
 
-    // Порог принимается и с пробелами, и со знаком рубля.
-    const step1 = await send(handler, '10 000 ₽');
+    const step1 = await send(handler, '3000');
     expect(accessService.setPendingRate).toHaveBeenCalledWith(
       String(USER_ID),
       '999',
-      'promo:casio:below:10000',
+      'promo:casio:limit:3000',
     );
-    expect(step1.allReplies()).toContain('Шаг 2 из 3');
+    expect(step1.allReplies()).toContain('Шаг 2 из 4');
+
+    // Граница ступени принимается и с пробелами, и со знаком рубля.
+    const step2 = await send(handler, '10 000 ₽');
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      '999',
+      'promo:casio:below:3000:10000',
+    );
+    expect(step2.allReplies()).toContain('Шаг 3 из 4');
     expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
 
-    const step2 = await send(handler, '2');
+    const step3 = await send(handler, '2');
     expect(accessService.setPendingRate).toHaveBeenCalledWith(
       String(USER_ID),
       '999',
-      'promo:casio:above:10000:2',
+      'promo:casio:above:3000:10000:2',
     );
-    expect(step2.allReplies()).toContain('Шаг 3 из 3');
+    expect(step3.allReplies()).toContain('Шаг 4 из 4');
     expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
 
     await send(handler, '1');
     expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledTimes(1);
-    expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledWith(String(USER_ID), 'casio', {
+    expect(yandexMarketService.updatePromoCommission.mock.calls[0][2]).toStrictEqual({
+      mode: 'tiered',
+      limit: 10000,
+      below: 2,
+      above: 1,
+      from: 3000,
+    });
+  });
+
+  it('ноль на первом шаге: в записи нет ключа from', async () => {
+    // toStrictEqual, а не toEqual: только он поймает утёкший `from: undefined`,
+    // а хранимый `from: 0` promoConfigsOf считает мусором и роняет запись.
+    const { handler, yandexMarketService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    await tap(handler, 'promo:flat:casio');
+    await send(handler, '0');
+    await send(handler, '2');
+
+    expect(yandexMarketService.updatePromoCommission.mock.calls[0][2]).toStrictEqual({
+      mode: 'flat',
+      percent: 2,
+    });
+  });
+
+  it('ноль на первом шаге ступеней тоже не пишет from', async () => {
+    const { handler, yandexMarketService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+    });
+    await tap(handler, 'promo:tier:casio');
+    for (const answer of ['0', '10000', '2', '1']) await send(handler, answer);
+
+    expect(yandexMarketService.updatePromoCommission.mock.calls[0][2]).toStrictEqual({
+      mode: 'tiered',
+      limit: 10000,
+      below: 2,
+      above: 1,
+    });
+  });
+
+  it('первый вопрос показывает действующую настройку', async () => {
+    const { handler } = await build({ status: 'approved', store: { ...CONFIGURED } });
+    const { allReplies } = await tap(handler, 'promo:flat:casio');
+
+    expect(allReplies()).toContain('2%');
+  });
+
+  it('ЛЕГАСИ: вопрос, открытый до нижнего порога, доотвечивается без него', async () => {
+    // Форма на один сегмент короче — вопрос, заданный прошлой версией бота.
+    const { handler, yandexMarketService, accessService } = await build({
+      status: 'approved',
+      store: { ...FULL },
+      pendingRate: 'promo:casio:below:10000',
+    });
+    await send(handler, '2');
+    expect(accessService.setPendingRate).toHaveBeenCalledWith(
+      String(USER_ID),
+      '999',
+      'promo:casio:above:0:10000:2',
+    );
+
+    await send(handler, '1');
+    expect(yandexMarketService.updatePromoCommission.mock.calls[0][2]).toStrictEqual({
       mode: 'tiered',
       limit: 10000,
       below: 2,
@@ -747,7 +836,7 @@ describe('ApiSettingsHandler: подача заявки', () => {
     const { handler, yandexMarketService, accessService } = await build({
       status: 'approved',
       store: { ...FULL },
-      pendingRate: 'promo:casio:below:10000',
+      pendingRate: 'promo:casio:below:3000:10000',
     });
     const { allReplies } = await tap(handler, 'promo:cancel');
 
@@ -761,7 +850,7 @@ describe('ApiSettingsHandler: подача заявки', () => {
     const { handler, yandexMarketService, accessService } = await build({
       status: 'approved',
       store: { ...FULL },
-      pendingRate: 'promo:casio:limit',
+      pendingRate: 'promo:casio:from:tier',
     });
     await send(handler, 'привет');
 
@@ -769,11 +858,11 @@ describe('ApiSettingsHandler: подача заявки', () => {
     expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
   });
 
-  it('порог ноль не сохраняется, вопрос остаётся открытым', async () => {
+  it('граница ступени: ноль не принимается, вопрос остаётся открытым', async () => {
     const { handler, yandexMarketService, accessService } = await build({
       status: 'approved',
       store: { ...FULL },
-      pendingRate: 'promo:casio:limit',
+      pendingRate: 'promo:casio:limit:3000',
     });
     const { allReplies } = await send(handler, '0');
 
@@ -788,7 +877,7 @@ describe('ApiSettingsHandler: подача заявки', () => {
     const { handler, yandexMarketService, accessService } = await build({
       status: 'approved',
       store: { ...FULL },
-      pendingRate: 'promo:casio:flat',
+      pendingRate: 'promo:casio:from:flat',
       features: { promotion: false },
     });
     const { allReplies } = await send(handler, '2');
@@ -796,88 +885,6 @@ describe('ApiSettingsHandler: подача заявки', () => {
     expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
     expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
     expect(allReplies()).toContain('недоступн');
-  });
-
-  /**
-   * Нижний порог — поле поверх действующей настройки, а не отдельный режим:
-   * кнопка живёт на развилке настроенного бренда, ответ дописывает `from` в
-   * текущую конфигурацию одной записью, «0» его убирает.
-   */
-  const CONFIGURED = { ...FULL, promoCommissions: { casio: { mode: 'flat', percent: 2 } } };
-
-  it('кнопка порога есть только у настроенного бренда', async () => {
-    const configured = await build({ status: 'approved', store: { ...CONFIGURED } });
-    const withConfig = await tap(configured.handler, 'promo:pick:casio');
-    expect(withConfig.lastMarkup()).toContain('promo:floor:casio');
-
-    const empty = await build({ status: 'approved', store: { ...FULL } });
-    const withoutConfig = await tap(empty.handler, 'promo:pick:casio');
-    expect(withoutConfig.lastMarkup()).not.toContain('promo:floor:casio');
-  });
-
-  it('нижний порог: вопрос и ответ дописывают from в текущую настройку', async () => {
-    const { handler, yandexMarketService, accessService } = await build({
-      status: 'approved',
-      store: { ...CONFIGURED },
-    });
-    await tap(handler, 'promo:floor:casio');
-
-    expect(accessService.setPendingRate).toHaveBeenCalledWith(
-      String(USER_ID),
-      '999',
-      'promo:casio:from',
-    );
-    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
-
-    const { allReplies } = await send(handler, '3 000 ₽');
-
-    expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledTimes(1);
-    expect(yandexMarketService.updatePromoCommission).toHaveBeenCalledWith(String(USER_ID), 'casio', {
-      mode: 'flat',
-      percent: 2,
-      from: 3000,
-    });
-    expect(allReplies()).toContain('от 3');
-  });
-
-  it('ноль убирает порог: ключ from в записи не остаётся', async () => {
-    const { handler, yandexMarketService } = await build({
-      status: 'approved',
-      store: { ...FULL, promoCommissions: { casio: { mode: 'flat', percent: 2, from: 3000 } } },
-      pendingRate: 'promo:casio:from',
-    });
-    await send(handler, '0');
-
-    const written = yandexMarketService.updatePromoCommission.mock.calls[0][2];
-    expect(written).toStrictEqual({ mode: 'flat', percent: 2 });
-  });
-
-  it('порог у ненастроенного бренда: отказ, вопрос не открывается', async () => {
-    // Кнопка живёт в истории чата вечно — настройку могли отключить после неё.
-    const { handler, accessService, yandexMarketService } = await build({
-      status: 'approved',
-      store: { ...FULL },
-    });
-    const { allReplies } = await tap(handler, 'promo:floor:casio');
-
-    expect(accessService.setPendingRate).not.toHaveBeenCalled();
-    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
-    expect(allReplies()).toContain('Сначала задайте процент');
-  });
-
-  it('ответ на порог при снятой настройке ничего не пишет', async () => {
-    // Пока вопрос висел, бренд отключили: выдумывать настройку ради порога
-    // нельзя — иначе продвижение включится само.
-    const { handler, yandexMarketService, accessService } = await build({
-      status: 'approved',
-      store: { ...FULL },
-      pendingRate: 'promo:casio:from',
-    });
-    const { allReplies } = await send(handler, '3000');
-
-    expect(yandexMarketService.updatePromoCommission).not.toHaveBeenCalled();
-    expect(accessService.setPendingRate).toHaveBeenCalledWith(String(USER_ID), '999', null);
-    expect(allReplies()).toContain('не настроено');
   });
 
   it('«Отключить» снимает настройку бренда целиком', async () => {

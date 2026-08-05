@@ -988,9 +988,19 @@ sixth report key and its feature key, same string). Plus `schedule`, the two
 price-list halves `purchase_prices` / `stock_update`, `promotion` (the promo-commission editor on
 the settings screen — per brand, a flat percent or two price tiers, and on top of either an optional
 **нижний порог** `from`: the price from which promotion is charged at all, cheaper items give 0 %,
-the boundary inclusive like the tier's `limit`; entered by the same question, `0` removes it, and a
-junk `from` in Mongo drops the whole entry rather than being ignored — silently charging promo where
-the seller declared none would understate profit invisibly), and the two FBY-only screens
+the boundary inclusive like the tier's `limit`.
+It is **question 1 of 2** («💯 Общий процент») and **1 of 4** («🪜 Зависит от цены»), not a button of
+its own: behind a button that only appeared once a percent existed, the seller walked the whole
+setup and never learned the floor was there — that shipped and was rejected within the release, and
+`promo:floor:<brand>` survives only as a legacy action reopening the mode screen. `0` answers «порога
+нет» and is **never stored** (`promoWithFloor` omits the key, and `promoConfigsOf` treats a stored
+`from: 0` as junk). Intermediate answers ride the single `UserAccess.pendingRate` string
+(`promo:<key>:<step>:<F>[:<X>[:<A>]]`, table in `promo.ts`) with **one `$set` at the very end**; the
+pre-floor forms, one segment shorter, are still read — as `from: 0` — so a question open across the
+deploy resolves instead of dangling in Mongo. Step numbering comes from `promoStepTitle`, never from
+literals beside the text. A junk `from` in Mongo drops the whole entry rather than being ignored —
+silently charging promo where the seller declared none would understate profit invisibly), and the
+two FBY-only screens
 `warehouses` / `fby`. `/start`, «🏠 Главное
 меню», «⚙️ Настройки», «❓ Помощь», «📊 Мой профиль»,
 the whole wizard and every admin button are **not** gateable: closing them locks the seller out of
