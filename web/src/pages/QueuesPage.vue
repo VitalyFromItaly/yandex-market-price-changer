@@ -180,16 +180,30 @@ function formatMs(ms: number | null | undefined): string {
   return ms ? formatter.format(new Date(ms)) : '—';
 }
 
-/** Кто: ник, если есть; иначе имя; иначе только id — как в журнале. */
-function who(row: IDigestRow): string {
+/**
+ * Кто: ник, если есть; иначе имя; иначе только id — как в журнале.
+ *
+ * Тип структурный: одна и та же подпись нужна обеим таблицам экрана —
+ * рассылкам и задачам, — а строки у них разные.
+ */
+function who(row: {
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  telegramUserId?: string;
+}): string {
   if (row.username) return `@${row.username}`;
   const name = [row.firstName, row.lastName].filter(Boolean).join(' ');
   return name || `id ${row.telegramUserId}`;
 }
 
-/** Payload одной строкой: полей мало — сервер отдаёт только белый список. */
+/**
+ * Payload одной строкой: полей мало — сервер отдаёт только белый список.
+ * Пользователь из сводки исключён — у него своя колонка.
+ */
 function dataSummary(job: IQueueJobRow): string {
   return Object.entries(job.data)
+    .filter(([key]) => key !== 'telegramUserId' && key !== 'userId')
     .map(([key, value]) => `${key}: ${value}`)
     .join(', ');
 }
@@ -322,6 +336,7 @@ function dataSummary(job: IQueueJobRow): string {
             <th>Очередь</th>
             <th>Тип</th>
             <th>Состояние</th>
+            <th>Пользователь</th>
             <th>Данные</th>
             <th>Создана</th>
             <th>Завершена</th>
@@ -337,6 +352,13 @@ function dataSummary(job: IQueueJobRow): string {
             <td class="nowrap">{{ job.name }}</td>
             <td class="nowrap" :class="{ failed: job.state === 'failed' }">
               {{ STATE_ROW_LABEL[job.state] ?? job.state }}
+            </td>
+            <td>
+              <template v-if="job.telegramUserId">
+                <span class="name">{{ who(job) }}</span>
+                <span class="muted">{{ job.telegramUserId }}</span>
+              </template>
+              <span v-else class="muted">—</span>
             </td>
             <td>{{ dataSummary(job) || '—' }}</td>
             <td class="nowrap tnum">{{ formatMs(job.timestamp) }}</td>
@@ -357,7 +379,7 @@ function dataSummary(job: IQueueJobRow): string {
             </td>
           </tr>
           <tr v-if="!jobs.length">
-            <td colspan="10" class="empty">Задач нет</td>
+            <td colspan="11" class="empty">Задач нет</td>
           </tr>
         </tbody>
       </table>

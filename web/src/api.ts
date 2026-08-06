@@ -294,6 +294,11 @@ export interface IQueueJobRow {
   failedReason?: string;
   delay?: number;
   data: Record<string, string | number>;
+  /** Чья задача — сервер достаёт id из payload'а и подмешивает ник. */
+  telegramUserId?: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
 }
 
 export interface IQueueJobsResponse {

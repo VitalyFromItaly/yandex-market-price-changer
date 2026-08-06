@@ -74,6 +74,16 @@ export function safeJobData(data: unknown): Record<string, string | number> {
   return result;
 }
 
+/**
+ * Кому принадлежит задача. Очереди называют это поле по-разному
+ * (`telegramUserId` у отчётов и остатков, `userId` у старой цепочки), а в
+ * Redis число хранится числом — записи доступа ключуются строкой.
+ */
+export function userIdOf(data: Record<string, string | number>): string {
+  const value = data.telegramUserId ?? data.userId;
+  return value === undefined ? '' : String(value);
+}
+
 export interface IParsedReportJobId {
   botId: string;
   telegramUserId: string;

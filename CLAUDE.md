@@ -1085,6 +1085,25 @@ ts-node in dev (`src/` → `web/dist`).
   `:disabled` then work for free.
 - Labels shared by the list and the card (`STATUS_LABEL`, `displayName`) live in
   `web/src/users.domain.ts`. Two copies would name one state differently on the two screens.
+- **The log filters by seller from a dropdown, and the backend was not touched for it.**
+  `filterOf` already matches `telegramUserId` exactly and the picker submits exactly that id; a
+  `?who=` param with a regex over `username`/`name` would be a second filter — on an unindexed field
+  — for what the existing one already does. The options are built by `logUserOptions`
+  (`users.domain.ts`) from `/api/access/users` **plus every id present in the loaded rows**, and that
+  second half is not decoration: admins have no `UserAccess` row at all and HTTP/process failures are
+  recorded under `telegramUserId: 'system'`, so a picker limited to sellers could not select the two
+  groups whose entries are most often looked for. Log-derived options are labelled from the row
+  itself (`username`/`name` are stored per entry) and shown in their own `<optgroup>`. The selected
+  value is always kept as an option: a `<select>` holding an unknown value renders blank, which reads
+  as «все» while still filtering. `LogsPage` fetches the seller list **outside** `load()` — the 10 s
+  auto-refresh must not re-fetch it — and swallows its error: the journal has to open without labels.
+- **Queue jobs print who they belong to.** `QueuesController.jobs()` enriches rows the way
+  `digests()` already does — one `access.list()` per page, never per row — resolving
+  `data.telegramUserId ?? data.userId` (normalised with `String`: Redis keeps it a number, access
+  records key by string) against `botId:telegramUserId` with a fallback to the bare id, since not
+  every payload carries `botId`. The id itself moves out of the «Данные» summary into its own column,
+  the same `@ник` + muted id shape as the «Рассылки» table above it. The whitelist in
+  `queues.domain.ts` stays untouched — enrichment is the controller's job, as it is for digests.
 - **Navigation is a left sidebar, and it is the same colour as the canvas** — only a border divides
   them. A different background would cut the screen into "menu world" and "content world" when it is
   one surface of one tool. The active item gets a surface fill plus a 2px accent rule; that accent is

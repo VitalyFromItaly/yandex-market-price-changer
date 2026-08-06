@@ -172,6 +172,51 @@ describe('QueuesController', () => {
       expect(result.total).toBe(12);
     });
 
+    it('строка обогащается ником: в payload только числовой id', async () => {
+      const { items } = await controller.jobs(QUEUE_NAMES.FILE_PROCESSING, 'failed');
+
+      // У этой задачи пользователь лежит под старым ключом userId и без botId —
+      // ник находится по одному telegramUserId.
+      expect(items[0]).toMatchObject({ telegramUserId: '222', username: 'vasya' });
+      expect(list).toHaveBeenCalledTimes(1);
+    });
+
+    it('пара (botId, telegramUserId) точнее одного id', async () => {
+      list.mockResolvedValue([
+        { telegramUserId: '222', botId: '111', username: 'чужой-бот' },
+        { telegramUserId: '222', botId: '999', username: 'vasya' },
+      ]);
+      queues[QUEUE_NAMES.FILE_PROCESSING].getJobs.mockResolvedValue([
+        { ...FAILED_JOB, data: { telegramUserId: 222, botId: '999' } },
+      ]);
+
+      const { items } = await controller.jobs(QUEUE_NAMES.FILE_PROCESSING, 'failed');
+
+      // 222 приходит из Redis числом, а записи доступа ключуются строкой.
+      expect(items[0]).toMatchObject({ telegramUserId: '222', username: 'vasya' });
+    });
+
+    it('задача без пользователя отдаётся как раньше, без похода в Mongo', async () => {
+      queues[QUEUE_NAMES.FILE_PROCESSING].getJobs.mockResolvedValue([
+        { ...FAILED_JOB, data: { fileInfo: { fileName: 'stock.xlsx' } } },
+      ]);
+
+      const { items } = await controller.jobs(QUEUE_NAMES.FILE_PROCESSING, 'failed');
+
+      expect(items[0].telegramUserId).toBeUndefined();
+      expect(items[0].data).toEqual({ fileName: 'stock.xlsx' });
+      expect(list).not.toHaveBeenCalled();
+    });
+
+    it('незнакомый пользователь ника не получает, но строка остаётся', async () => {
+      list.mockResolvedValue([]);
+
+      const { items } = await controller.jobs(QUEUE_NAMES.FILE_PROCESSING, 'failed');
+
+      expect(items[0]).toMatchObject({ telegramUserId: '222', id: '42' });
+      expect(items[0].username).toBeUndefined();
+    });
+
     it('неизвестная очередь — 400: имя приходит из браузера', async () => {
       await expect(controller.jobs('__proto__', 'failed')).rejects.toBeInstanceOf(
         BadRequestException,

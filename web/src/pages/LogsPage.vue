@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
-import type { IActionLogRow, ILogsQuery } from '../api';
+import type { IActionLogRow, ILogsQuery, IUserRow } from '../api';
 
-import { fetchLogs } from '../api';
+import { fetchLogs, fetchUsers } from '../api';
 import { describeError, token } from '../auth';
 import FiltersPanel from '../components/FiltersPanel.vue';
 import LogTable from '../components/LogTable.vue';
 import MessageModal from '../components/MessageModal.vue';
+import { logUserOptions } from '../users.domain';
 
 /**
  * Один экран на две вкладки. `junk=true` — это «Мусор»: те же таблица и модалка,
@@ -24,6 +25,8 @@ const loading = ref(false);
 const autoRefresh = ref(false);
 
 const rows = ref<IActionLogRow[]>([]);
+/** Продавцы — только для подписей в фильтре; ошибка их загрузки журнал не ломает. */
+const users = ref<IUserRow[]>([]);
 /** Открытая запись; null — модалка закрыта. */
 const selected = ref<IActionLogRow | null>(null);
 const total = ref(0);
@@ -46,13 +49,20 @@ function emptyFilters(): ILogsQuery {
 
 const filters = reactive<ILogsQuery>(emptyFilters());
 
+const userOptions = computed(() =>
+  logUserOptions(users.value, rows.value, filters.telegramUserId ?? ''),
+);
+
 const pageEnd = computed(() => Math.min(skip.value + rows.value.length, total.value));
 const hasPrev = computed(() => skip.value > 0);
 const hasNext = computed(() => pageEnd.value < total.value);
 
 let timer: number | undefined;
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  void loadUsers();
+});
 // Таймер снимается при уходе со страницы: под роутером компонент размонтируется
 // при переходе в «Пользователи», и живой setInterval продолжал бы дёргать
 // /api/logs с чужого экрана.
@@ -66,6 +76,7 @@ watch(
     Object.assign(filters, emptyFilters());
     skip.value = 0;
     await load();
+    await loadUsers();
   },
 );
 
@@ -83,6 +94,24 @@ async function load(): Promise<void> {
     loadError.value = describeError(error);
   } finally {
     loading.value = false;
+  }
+}
+
+/**
+ * Список продавцов — отдельным запросом, а не внутри load(): автообновление раз
+ * в 10 секунд не должно тянуть его заново, состав продавцов за это время не
+ * меняется. На «Мусоре» фильтров нет вовсе — там запрос не нужен.
+ *
+ * Ошибка гасится: подписи в фильтре важны, но не настолько, чтобы из-за них не
+ * открылся журнал. Без списка варианты соберутся из самих записей.
+ */
+async function loadUsers(): Promise<void> {
+  if (!token.value || props.junk || users.value.length) return;
+
+  try {
+    users.value = await fetchUsers(token.value);
+  } catch {
+    users.value = [];
   }
 }
 
@@ -138,7 +167,13 @@ function stopTimer(): void {
     Держим отдельно, чтобы не засоряли журнал.
   </p>
 
-  <FiltersPanel v-if="!junk" v-model="filters" @apply="apply" @reset="reset" />
+  <FiltersPanel
+    v-if="!junk"
+    v-model="filters"
+    :users="userOptions"
+    @apply="apply"
+    @reset="reset"
+  />
 
   <p v-if="loadError" class="error">{{ loadError }}</p>
 

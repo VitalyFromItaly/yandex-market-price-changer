@@ -1,3 +1,5 @@
+import type { IQueueJobRow } from './queues.service';
+
 import {
   BadRequestException,
   Controller,
@@ -19,8 +21,17 @@ import {
   JOB_STATES,
   QUEUE_LIST,
   reportTitleOf,
+  userIdOf,
 } from './queues.domain';
 import { QueuesService } from './queues.service';
+
+/** Строка задачи для панели: безопасный payload плюс расшифровка «чья она». */
+interface IQueueJobWithUser extends IQueueJobRow {
+  telegramUserId?: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+}
 
 /** Потолок выдачи задач: списки короткие по построению (removeOnComplete). */
 const MAX_JOBS_PAGE = 100;
@@ -116,7 +127,39 @@ export class QueuesController {
     };
 
     const { total, items } = await this.queues.jobs(names, states, page);
-    return { total, limit: page.limit, skip: page.skip, items };
+    return { total, limit: page.limit, skip: page.skip, items: await this.withUsers(items) };
+  }
+
+  /**
+   * Ники к задачам — тем же батчем, что в digests(): один запрос записей
+   * доступа на всю страницу. Без этого в панели видно только числовой id из
+   * payload'а, и понять, чья это загрузка, нельзя.
+   */
+  private async withUsers(jobs: IQueueJobRow[]): Promise<IQueueJobWithUser[]> {
+    const withUser = jobs.map((job) => ({ job, telegramUserId: userIdOf(job.data) }));
+    // Задач без пользователя (например, служебных) хватает, а список задач
+    // панель опрашивает каждые 10 секунд — лишний запрос в Mongo не нужен.
+    if (!withUser.some((row) => row.telegramUserId)) return jobs;
+
+    const users = await this.access.list();
+    const byBot = new Map(users.map((user) => [`${user.botId}:${user.telegramUserId}`, user]));
+    // Запасная карта: часть payload'ов botId не несёт. Один и тот же
+    // telegramUserId у разных ботов — это один аккаунт Telegram, ник у него
+    // общий, поэтому годится любая запись.
+    const byUser = new Map(users.map((user) => [user.telegramUserId, user]));
+
+    return withUser.map(({ job, telegramUserId }) => {
+      if (!telegramUserId) return job;
+
+      const user = byBot.get(`${job.data.botId}:${telegramUserId}`) ?? byUser.get(telegramUserId);
+      return {
+        ...job,
+        telegramUserId,
+        username: user?.username,
+        firstName: user?.firstName,
+        lastName: user?.lastName,
+      };
+    });
   }
 
   @Post(':name/jobs/:id/retry')

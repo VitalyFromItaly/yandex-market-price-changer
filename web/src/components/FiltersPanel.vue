@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+
 import type { ILogsQuery } from '../api';
+import type { IUserOption } from '../users.domain';
 
 /** Источник ошибки. Пусто — записи любого происхождения. */
 const SOURCES = [
@@ -36,14 +39,37 @@ const KINDS = [
 ];
 
 const filters = defineModel<ILogsQuery>({ required: true });
+const props = defineProps<{ users: IUserOption[] }>();
 const emit = defineEmits<{ apply: []; reset: [] }>();
+
+/**
+ * Две группы, а не один список: продавцы — то, ради чего фильтр открывают, а
+ * администраторы и `system` попадают сюда только потому, что встретились в
+ * загруженных строках, и смешивать их с продавцами значило бы прятать первых
+ * среди вторых.
+ */
+const sellers = computed(() => props.users.filter((user) => !user.fromLog));
+const fromLog = computed(() => props.users.filter((user) => user.fromLog));
 </script>
 
 <template>
   <form class="filters" @submit.prevent="emit('apply')">
-    <label>
-      Telegram id
-      <input v-model="filters.telegramUserId" inputmode="numeric" placeholder="все" />
+    <!-- Выбор по имени, а не поле для id: id продавца администратор наизусть не
+         помнит, а в запрос всё равно уходит он же — бэкенд отбирает по точному
+         совпадению. -->
+    <label class="who">
+      Пользователь
+      <select v-model="filters.telegramUserId">
+        <option value="">все</option>
+        <option v-for="user in sellers" :key="user.value" :value="user.value">
+          {{ user.label }}
+        </option>
+        <optgroup v-if="fromLog.length" label="из журнала">
+          <option v-for="user in fromLog" :key="user.value" :value="user.value">
+            {{ user.label }}
+          </option>
+        </optgroup>
+      </select>
     </label>
 
     <!-- Главный вопрос разбора — «что сломалось», поэтому переключатель
@@ -121,6 +147,17 @@ const emit = defineEmits<{ apply: []; reset: [] }>();
 
 .filters label {
   flex: 1 1 140px;
+}
+
+/* Подпись продавца — имя, ник и магазин, поэтому поле шире остальных, но
+   ограничено шириной строки: длинный вариант не должен растягивать панель. */
+.who {
+  flex: 2 1 240px;
+  min-width: 0;
+}
+
+.who select {
+  width: 100%;
 }
 
 .actions {
