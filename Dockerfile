@@ -3,6 +3,13 @@
 FROM node:22.12.0-alpine AS builder
 WORKDIR /app
 
+# onnxruntime-node в postinstall докачивает CUDA EP с nuget.org — сотни мегабайт
+# ради модуля карточек товаров, который в образ вообще не собирается
+# (см. exclude в tsconfig.build.json). Именно на этой докачке 05-08-2026 упал
+# деплой с ENOSPC. Домен вдобавок внешний и с московского хоста недоступен
+# ничуть не лучше api.telegram.org. Флаг — штатный, из script/install.js пакета.
+ENV ONNXRUNTIME_NODE_INSTALL=skip
+
 COPY package*.json ./
 RUN npm ci
 

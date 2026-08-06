@@ -2,6 +2,12 @@
   "extends": "./tsconfig.json",
   "exclude": [
     "src/modules/yandex/api/**/*",
+    // Модуль карточек товаров живёт только в CLI-скриптах и недостижим из
+    // main.ts, а onnxruntime-node и sharp — теперь devDependencies. Без этой
+    // строки nest build кладёт в dist требования пакетов, которых в прод-образе
+    // нет: сейчас не падает лишь потому, что эти файлы никто не подключает.
+    // Типы модуля по-прежнему проверяет `npm run typecheck` — он на tsconfig.json.
+    "src/modules/imaging/**/*",
     "node_modules",
     "dist",
     "__tests__",
