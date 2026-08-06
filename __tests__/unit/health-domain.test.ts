@@ -13,6 +13,8 @@ import {
   problemText,
   recoveryText,
   shouldNotify,
+  shouldSendDailySummary,
+  summaryText,
 } from '../../src/modules/health/health.domain';
 
 /**
@@ -136,6 +138,51 @@ describe('Тексты', () => {
     for (const text of texts) {
       expect(text).not.toMatch(/[<>]/);
     }
+  });
+});
+
+describe('Сводка состояния', () => {
+  const RESULTS = [
+    { key: 'disk' as const, state: 'ok' as const, detail: 'свободно 34%' },
+    { key: 'mongo' as const, state: 'down' as const, detail: 'readyState=0' },
+    { key: 'yandex' as const, state: 'ok' as const, detail: 'отвечает (HTTP 401)' },
+  ];
+
+  it('перечисляет все проверки с их состоянием', () => {
+    const text = summaryText('📊 Состояние сейчас', RESULTS, '06-08-2026 09:00');
+
+    expect(text).toContain('06-08-2026 09:00 МСК');
+    expect(text).toContain('✅ Место на диске');
+    expect(text).toContain('🚨 MongoDB');
+    expect(text).toContain('✅ API Яндекс.Маркета');
+  });
+
+  it('не содержит HTML-разметки — экранирование на отправляющем слое', () => {
+    expect(summaryText('Заголовок', RESULTS, '06-08-2026 09:00')).not.toMatch(/[<>]/);
+  });
+});
+
+describe('Ежедневная сводка', () => {
+  const TODAY = '06-08-2026';
+
+  it('молчит до назначенного часа', () => {
+    expect(shouldSendDailySummary(null, TODAY, '08:59')).toBe(false);
+    expect(shouldSendDailySummary('05-08-2026', TODAY, '00:10')).toBe(false);
+  });
+
+  it('уходит один раз за московские сутки', () => {
+    expect(shouldSendDailySummary('05-08-2026', TODAY, '09:00')).toBe(true);
+    expect(shouldSendDailySummary(TODAY, TODAY, '09:05')).toBe(false);
+    expect(shouldSendDailySummary(TODAY, TODAY, '23:59')).toBe(false);
+  });
+
+  /**
+   * Проверка идёт раз в пять минут, ровно в 09:00 попасть неоткуда — условие
+   * обязано срабатывать и позже назначенного времени, иначе сводка не придёт
+   * вообще ни разу.
+   */
+  it('срабатывает и позже назначенного времени, а не только ровно в него', () => {
+    expect(shouldSendDailySummary('05-08-2026', TODAY, '14:37')).toBe(true);
   });
 });
 

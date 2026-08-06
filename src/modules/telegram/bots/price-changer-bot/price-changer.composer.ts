@@ -10,6 +10,7 @@ import { ApiSettingsHandler } from './handlers/api-settings.handler';
 import { CallbackQueryHandler } from './handlers/callback-query.handler';
 import { FallbackHandler } from './handlers/fallback.handler';
 import { FeatureGateHandler } from './handlers/feature-gate.handler';
+import { HealthCommandHandler } from './handlers/health-command.handler';
 import { MenuCommandsHandler } from './handlers/menu-commands.handler';
 import { ReportsHandler } from './handlers/reports.handler';
 import { ScheduleHandler } from './handlers/schedule.handler';
@@ -60,6 +61,9 @@ export class PriceChangerComposer {
       // тот разбирает данные точным switch и на неизвестной строке затирает
       // сообщение «Неизвестная команда».
       { name: 'adminUsers', register: (b) => this.adminUsers.register(b) },
+      // /health — обычная команда, порядок среди колбэков ей безразличен,
+      // важно лишь быть раньше fallback. Стоит рядом с остальным админским.
+      { name: 'healthCommand', register: (b) => this.healthCommand.register(b) },
       { name: 'scheduleCallbacks', register: (b) => this.scheduleCallbacks.register(b) },
       // Выбор периода отчёта — тоже ДО общего callback_query.
       { name: 'reportCallbacks', register: (b) => this.reports.registerCallbacks(b) },
@@ -93,6 +97,7 @@ export class PriceChangerComposer {
     private readonly slash: SlashCommandsHandler,
     private readonly adminCallbacks: AdminApprovalHandler,
     private readonly adminUsers: AdminUsersHandler,
+    private readonly healthCommand: HealthCommandHandler,
     private readonly scheduleCallbacks: ScheduleHandler,
     private readonly reports: ReportsHandler,
     private readonly callbacks: CallbackQueryHandler,

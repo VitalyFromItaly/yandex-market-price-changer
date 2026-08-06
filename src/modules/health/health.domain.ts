@@ -163,6 +163,54 @@ export function diskDetail(available: number, total: number): string {
   return `свободно ${percent}% (${formatBytes(available)} из ${formatBytes(total)})`;
 }
 
+/**
+ * Во сколько по Москве присылать ежедневную сводку.
+ *
+ * Сводка «всё в норме» существует ради одной вещи: пока её не было, отличить
+ * «аварий нет» от «уведомления сломаны» было нельзя, и выяснилось бы это в
+ * худший момент. Раз она приходит каждый день, её отсутствие — само по себе
+ * сигнал.
+ */
+export const DAILY_SUMMARY_AT = '09:00';
+
+/**
+ * Пора ли слать ежедневную сводку. Сравнение строк «ЧЧ:ММ» лексикографическое —
+ * для нуль-дополненного времени это то же, что сравнение моментов, и не тянет
+ * арифметику по датам, которой moscow-day.ts сознательно избегает.
+ *
+ * День передаётся строкой, потому что «сегодня» здесь московское: в контейнере
+ * UTC, и по его календарю сводка уезжала бы на три часа.
+ */
+export function shouldSendDailySummary(
+  lastSentDay: string | null,
+  today: string,
+  clock: string,
+): boolean {
+  if (clock < DAILY_SUMMARY_AT) return false;
+  return lastSentDay !== today;
+}
+
+const STATE_MARK: Record<TCheckState, string> = {
+  ok: '✅',
+  warn: '⚠️',
+  down: '🚨',
+};
+
+/**
+ * Сводка по всем проверкам разом — для команды /health, сообщения при старте и
+ * ежедневной рассылки.
+ *
+ * Один вид на три случая намеренно: три копии одного экрана в этом проекте уже
+ * расходились (экраны помощи), и «одна причина — один текст» здесь то же
+ * правило.
+ */
+export function summaryText(title: string, results: ICheckResult[], stamp: string): string {
+  const lines = results.map(
+    (result) => `${STATE_MARK[result.state]} ${checkTitle(result.key)} — ${result.detail}`,
+  );
+  return [`${title} · ${stamp} МСК`, '', ...lines].join('\n');
+}
+
 /** Сообщение о проблеме. Без разметки — экранирование на отправляющем слое. */
 export function problemText(result: ICheckResult): string {
   const mark = result.state === 'down' ? '🚨' : '⚠️';

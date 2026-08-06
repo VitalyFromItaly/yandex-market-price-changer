@@ -1,7 +1,8 @@
 import { BullModule } from '@nestjs/bull';
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
+import { HealthModule } from '../health/health.module';
 import { YandexModule } from '../yandex/yandex.module';
 
 import { BotRegistry } from './bots/bot-registry.service';
@@ -15,6 +16,7 @@ import { CallbackQueryHandler } from './bots/price-changer-bot/handlers/callback
 import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.handler';
 import { FbyHandler } from './bots/price-changer-bot/handlers/fby.handler';
 import { FeatureGateHandler } from './bots/price-changer-bot/handlers/feature-gate.handler';
+import { HealthCommandHandler } from './bots/price-changer-bot/handlers/health-command.handler';
 import { MenuCommandsHandler } from './bots/price-changer-bot/handlers/menu-commands.handler';
 import { ReportsHandler } from './bots/price-changer-bot/handlers/reports.handler';
 import { ScheduleHandler } from './bots/price-changer-bot/handlers/schedule.handler';
@@ -49,6 +51,10 @@ import { QUEUE_NAMES } from './index';
   imports: [
     DatabaseModule,
     YandexModule,
+    // Цикл настоящий и обоюдный: HealthModule берёт отсюда очередь reports (ради
+    // клиента Redis) и BotRegistry, а команда /health смотрит обратно, в
+    // HealthMonitorService. forwardRef с обеих сторон — единственный способ.
+    forwardRef(() => HealthModule),
     BullModule.registerQueue(
       {
         name: QUEUE_NAMES.FILE_PROCESSING,
@@ -113,6 +119,7 @@ import { QUEUE_NAMES } from './index';
     ActionLogHandler,
     AdminApprovalHandler,
     AdminUsersHandler,
+    HealthCommandHandler,
     ReportsHandler,
     ScheduleHandler,
     WarehousesHandler,

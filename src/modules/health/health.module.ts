@@ -25,5 +25,8 @@ import { HealthMonitorService } from './health-monitor.service';
 @Module({
   imports: [DatabaseModule, forwardRef(() => TelegramModule)],
   providers: [HealthMonitorService],
+  // Наружу — ради команды /health: она показывает ровно то, по чему монитор
+  // принимает решения, а не считает состояние вторым способом.
+  exports: [HealthMonitorService],
 })
 export class HealthModule {}

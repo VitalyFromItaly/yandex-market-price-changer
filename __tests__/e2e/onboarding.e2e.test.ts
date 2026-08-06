@@ -34,7 +34,9 @@ import { PERIOD } from '../../src/modules/yandex/reports/report-period';
 import { REPORT } from '../../src/modules/yandex/reports/report-status-map';
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
 import { StockUploadHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
+import { HealthMonitorService } from '../../src/modules/health/health-monitor.service';
 import { AdminUsersHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-users.handler';
+import { HealthCommandHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/health-command.handler';
 import { StockSyncService } from '../../src/modules/yandex/stocks/stock-sync.service';
 import { FallbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/fallback.handler';
 import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
@@ -238,6 +240,11 @@ describe('Онбординг: от /start до отчёта', () => {
         ApiSettingsHandler,
         StockUploadHandler,
         AdminUsersHandler,
+        HealthCommandHandler,
+        // /health — тоже часть пайплайна. Монитор заглушён: настоящий полез бы
+        // за statfs, соединением mongoose и клиентом Redis, а онбординг про
+        // другое.
+        { provide: HealthMonitorService, useValue: { collect: async () => [] } },
         // Загрузка остатков в этом сценарии не участвует, но обработчик —
         // часть пайплайна, и без заглушек его зависимости не резолвятся.
         { provide: StockSyncService, useValue: { sync: async () => ({}) } },

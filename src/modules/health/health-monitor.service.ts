@@ -1,7 +1,14 @@
 import type { ICheckResult, TCheckKey, TCheckState } from './health.domain';
 
 import { InjectQueue } from '@nestjs/bull';
-import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+  OnApplicationShutdown,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Queue } from 'bull';
 import { Connection } from 'mongoose';
@@ -12,6 +19,7 @@ import { ActionLogService } from '../../database/services/action-log.service';
 import { ErrorReporter, SYSTEM_USER } from '../errors/error-reporter.service';
 import { QUEUE_NAMES } from '../telegram';
 import { BotRegistry } from '../telegram/bots/bot-registry.service';
+import { moscowClock, moscowDateParam, moscowStamp } from '../yandex/reports/moscow-day';
 
 import {
   CHECK_INTERVAL_MS,
@@ -25,6 +33,8 @@ import {
   problemText,
   recoveryText,
   shouldNotify,
+  shouldSendDailySummary,
+  summaryText,
 } from './health.domain';
 
 /** Раздел, который меряем: rootfs контейнера лежит там же, где /var/lib/docker. */
@@ -67,6 +77,8 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
   private timer?: NodeJS.Timeout;
   /** Предыдущее состояние каждой проверки: алерт шлётся по СМЕНЕ, а не по факту. */
   private readonly memory = new Map<TCheckKey, ICheckMemory>();
+  /** Московский день последней сводки. null — сводки ещё не было ни одной. */
+  private lastSummaryDay: string | null = null;
 
   constructor(
     @InjectConnection() private readonly connection: Connection,
@@ -74,6 +86,10 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
     private readonly errors: ErrorReporter,
     private readonly logs: ActionLogService,
     private readonly config: AppConfigService,
+    // forwardRef и на провайдере, не только на импорте модуля: при обоюдном
+    // цикле (TelegramModule ↔ HealthModule) Nest иначе подставляет undefined и
+    // падает с UndefinedDependencyException.
+    @Inject(forwardRef(() => BotRegistry))
     private readonly registry: BotRegistry,
   ) {}
 
@@ -98,21 +114,60 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
     this.timer = undefined;
   }
 
-  /** Один проход. Публичный — им же пользуется тест и ручная проверка. */
-  public async run(): Promise<void> {
+  /**
+   * Снять состояние, ничего не отправляя. Отсюда же берёт данные команда
+   * /health: показывать администратору нужно ровно то, по чему монитор принимает
+   * решения, а не отдельно посчитанное второе мнение.
+   */
+  public async collect(): Promise<ICheckResult[]> {
     // Параллельно: две внешние проверки ходят по сети, и последовательный обход
     // растянул бы проход на сумму таймаутов вместо самого долгого из них.
-    const results = await Promise.all([
+    return await Promise.all([
       this.checkDisk(),
       Promise.resolve(this.checkMongo()),
       this.checkRedis(),
       this.checkTelegram(),
       this.checkYandex(),
     ]);
+  }
+
+  /** Один проход. Публичный — им же пользуется тест и ручная проверка. */
+  public async run(): Promise<void> {
+    const results = await this.collect();
 
     const now = Date.now();
     for (const result of results) {
       this.handle(result, now);
+    }
+
+    this.reportPeriodically(results, new Date());
+  }
+
+  /**
+   * Сообщение при старте и ежедневная сводка.
+   *
+   * Обе существуют ради одного: пока приходят только аварии, «всё тихо» и
+   * «уведомления сломаны» выглядят одинаково, и разница вскроется ровно тогда,
+   * когда сообщение не придёт. Раз сводка приходит каждый день, её отсутствие —
+   * само по себе сигнал.
+   *
+   * Стартовое сообщение заодно засчитывается за сегодняшнюю сводку: иначе
+   * поднятый днём контейнер прислал бы два одинаковых письма подряд. Побочно оно
+   * же показывает незапланированные рестарты контейнера.
+   */
+  private reportPeriodically(results: ICheckResult[], now: Date): void {
+    const day = moscowDateParam(now);
+    const stamp = moscowStamp(now);
+
+    if (this.lastSummaryDay === null) {
+      this.lastSummaryDay = day;
+      this.errors.notifyAdmins(summaryText('🚀 Бот запущен', results, stamp));
+      return;
+    }
+
+    if (shouldSendDailySummary(this.lastSummaryDay, day, moscowClock(now))) {
+      this.lastSummaryDay = day;
+      this.errors.notifyAdmins(summaryText('📊 Сводка за сутки', results, stamp));
     }
   }
 

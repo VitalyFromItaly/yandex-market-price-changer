@@ -28,6 +28,17 @@ import { YandexMarketService } from './services/yandex-market.service';
       inject: [AppConfigService],
       useFactory: (config: AppConfigService) => ({
         uri: config.mongoUrl,
+        // Не ждать соединения на старте. Без этого @nestjs/mongoose делает
+        // connection.asPromise() прямо в инициализации модуля и ретраит его
+        // десять раз, то есть при лежащей базе приложение НЕ поднимается вовсе:
+        // ни бота, ни самопроверки, ни алертов — молчание вместо крика. Именно
+        // это и делало фолбэк BotRegistry на TELEGRAM_TOKEN мёртвым кодом.
+        //
+        // Запросы до установки соединения mongoose буферизует сам и роняет по
+        // bufferTimeoutMS (10 с) — быстрее, чем 30-секундный подбор сервера, так
+        // что loadOrSeedBots доходит до своего catch и поднимает бота из
+        // конфигурации. Переподключение mongoose тоже берёт на себя.
+        lazyConnection: true,
         serverSelectionTimeoutMS: 30000, // 30 seconds
         socketTimeoutMS: 45000, // 45 seconds
         maxPoolSize: 10, // Maintain up to 10 socket connections

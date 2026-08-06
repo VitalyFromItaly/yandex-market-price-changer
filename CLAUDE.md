@@ -995,6 +995,16 @@ not repeated until the state changes.
   be swallowed. Problems are recorded with `report({alert: false})` (so the outage is still visible
   in the panel) and sent through the new `ErrorReporter.notifyAdmins`, which has no throttle of its
   own precisely because timing is the caller's decision here.
+- **Silence needed a meaning, so there are three ways to see "all fine".** Alerts only fire on
+  change, which is right — but then "no outages" and "notifications are broken" look identical, and
+  the difference would surface exactly when a message fails to arrive. Hence: **`/health`**
+  (`health-command.handler.ts`, admins only, silent for everyone else and absent from
+  `setMyCommands` — the `/users` argument), a **summary on startup**, and a **daily summary** at
+  `DAILY_SUMMARY_AT` (09:00 MSK). All three render through one `summaryText` — three copies of one
+  screen is the drift the help screens already paid for. The startup message counts as that day's
+  summary, or a container brought up in the afternoon would send two identical messages in a row;
+  as a side effect it also surfaces unplanned restarts. `/health` reads `HealthMonitorService.collect()`
+  rather than computing its own view: the admin must see exactly what the monitor decides on.
 - **Recovery gets its own message _and_ its own journal row.** Silence after an alert is
   indistinguishable from "the monitor died too", which sends the admin to check by hand — the very
   thing the monitor was written to avoid. The row goes through `ActionLogService.record` with
@@ -1014,6 +1024,17 @@ not repeated until the state changes.
 - `HealthModule` imports `DatabaseModule` (for the connection) and `forwardRef(() => TelegramModule)`
   for the `reports` queue. A local `BullModule.registerQueue` is **forbidden** for the reason
   `QueuesModule` already records: second Redis connections and a second place holding queue options.
+
+**`lazyConnection: true` on `MongooseModule.forRootAsync` is what makes any of the above possible
+with the database down.** By default `@nestjs/mongoose` calls `connection.asPromise()` inside module
+initialisation and retries it ten times, so an unreachable Mongo means the app **never boots at
+all** — no bot, no monitor, no alerts, silence instead of a shout. That single default is what made
+the `BotRegistry` fallback below dead code, and it was found by booting the image against a dead
+address, not by reading. Queries issued before the connection is up are buffered by mongoose and
+fail on `bufferTimeoutMS` (10 s) — faster than the 30 s server selection — so `loadOrSeedBots`
+reaches its `catch` and raises the bot from configuration. Reconnection is mongoose's own job.
+Verified both ways: with Mongo dead the log shows «База недоступна — поднимаю бота из
+TELEGRAM_TOKEN» after 10 s; with Mongo alive the normal branch runs and the fallback never fires.
 
 **`BotRegistry` now starts even with Mongo down** (`loadOrSeedBots` catches the read and falls back
 to a bot built from `AppConfigService.telegramToken`, id `no-database`, **not written to Mongo**).
