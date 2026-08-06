@@ -60,7 +60,9 @@ and `docker-compose.yml`.
 
 `AppModule` → `AppConfigModule` (first, and deliberately so — Bull's factory needs config resolved),
 `CqrsModule.forRoot()` (imported but **no commands/queries exist**), `BullModule.forRootAsync`,
-`DatabaseModule`, `AdminAuthModule`, `LogsModule`, `YandexModule`, `TelegramModule`.
+`DatabaseModule`, `AdminAuthModule`, `LogsModule`, `YandexModule`, `TelegramModule`, `HealthModule`
+(last — the monitor takes the `reports` queue from TelegramModule and alerts through its bots; see
+"Self-checks" below).
 
 ### Bots are wired by Nest DI
 
@@ -940,6 +942,94 @@ the text).
 rejected by Express _before_ Nest, so no filter sees it and nothing is journalled. A properly
 percent-encoded request with the same bad value is caught normally.
 
+### Self-checks: the bot reports its own outages
+
+`ErrorReporter` only fires when something already broke **under a user**. On 05-08-2026 the host ran
+out of disk, Mongo went into a `WT_PANIC` crash-loop and the deploy stopped building — and the first
+report came from a seller, because at night nobody presses a button and `telegraf.catch` never runs.
+`HealthMonitorService` (`src/modules/health/`) closes that: every `CHECK_INTERVAL_MS` (5 min) it
+looks at **five** things — free disk space, Mongo, Redis, the Telegram Bot API and the Yandex Market
+API — and messages the admins itself. The message goes out **the moment a problem is found** and is
+not repeated until the state changes.
+
+- **Disk is the point of the whole thing.** It fills up gradually, so the warning arrives _long
+  before_ the database dies and the image stops building — the other two checks only confirm an
+  outage already under way. `statfs('/')` is read from inside the container: the rootfs sits on the
+  same partition as `/var/lib/docker`, so the host filling up is visible. `bavail`, not `bfree` —
+  part of the blocks is reserved for root and an ordinary process stops writing before `bfree`
+  reaches zero. Thresholds are **ratios**, not gigabytes (`0.15` warn / `0.07` down): an absolute
+  figure would need fitting to one server and would silently rot on the next tariff change.
+- **`setInterval`, not a Bull repeatable job** — the mechanism the daily digest uses. A repeatable
+  job lives in Redis, so a Redis outage means it simply does not run, i.e. that exact failure could
+  never be detected. The monitor has to work when everything else is broken, so it depends on
+  neither Mongo nor Redis. `clearInterval` in `OnApplicationShutdown` for the same reason
+  `BotRegistry` stops polling there: a live timer keeps the event loop and a container that got
+  SIGTERM never exits. The first run is delayed `FIRST_CHECK_DELAY_MS` (30 s) — connections are not
+  up instantly, and without it every start would report an outage that isn't there.
+- **The two external APIs are checked differently, and both choices are load-bearing.**
+  - **Telegram goes through `getMe()` on an already registered bot** (`BotRegistry.first()`), not
+    through a request of our own: that exercises the exact path every reply to a seller takes,
+    **including the `TELEGRAM_API_URL` mirror**. Prod sits in Russia where `api.telegram.org` is
+    unreachable directly, so a dead mirror is precisely the class of outage this exists for. `getMe`
+    is not in `OUTGOING_METHODS`, so it does not pollute the outgoing journal. A bad token answers
+    401 and counts as down too — different cause, same consequence: the bot is mute. **The circular
+    problem is admitted rather than hidden:** when it is Telegram that is down, there is nothing to
+    send the alert with; the console line and the journal row remain, and «снова в норме» arrives
+    once the link is back.
+  - **Yandex is probed with no `Api-Key` at all, and 401/403 counts as success.** What is being
+    tested is reachability, not authorisation: Partner API keys are per-seller, and burning
+    somebody's quota every five minutes for a self-check is not acceptable. Any HTTP answer proves
+    DNS, network and the service are alive; a timeout or a network error proves they are not. This
+    is the one hand-built Yandex URL in `src` and it is deliberate — `PriceChanger` is built around
+    a specific seller's key, and here there is no key by design.
+- **Mongo is checked by `connection.readyState`, deliberately not by a ping.**
+  `serverSelectionTimeoutMS` is 30 s, so a ping would hang each check for half a minute exactly
+  during the outage — the moment the monitor exists for. Redis _is_ pinged (`queue.client.ping()`,
+  ioredis under Bull) but inside a `Promise.race` with `PING_TIMEOUT_MS`: ioredis has its own
+  retries and without the race the call may never return at all.
+- **Alerts go out on a state _change_, plus one reminder per hour while it lasts** — `shouldNotify`
+  in `health.domain.ts`. Sending on every check would be 288 identical messages per day of outage,
+  after which alerts stop being read; that is the `AlertThrottle` argument again. And **that
+  throttle is bypassed on purpose**: its window is 15 min per `errorType + context`, so a
+  `warn → down` transition five minutes after the warning — the single most important alert — would
+  be swallowed. Problems are recorded with `report({alert: false})` (so the outage is still visible
+  in the panel) and sent through the new `ErrorReporter.notifyAdmins`, which has no throttle of its
+  own precisely because timing is the caller's decision here.
+- **Recovery gets its own message _and_ its own journal row.** Silence after an alert is
+  indistinguishable from "the monitor died too", which sends the admin to check by hand — the very
+  thing the monitor was written to avoid. The row goes through `ActionLogService.record` with
+  `kind: 'health'`, **not** through `report`: a recovery is not an error and has no business in the
+  panel's error counter, while the shared `context` (`health:<key>`) puts it next to the outage it
+  ended. Its `error` field stays empty for the same reason — filling it would lie to the "show me
+  only what broke" filter.
+- **The console only prints "ok" once an hour** (`LOG_OK_INTERVAL_MS`), plus whenever a check
+  returns to normal; problems print **every** cycle. Five checks every five minutes is 1440 lines a
+  day, and `docker logs` then becomes a feed you have to search an outage in — which is exactly the
+  state the journal was built to escape. Alerts are unaffected: they are governed by `shouldNotify`,
+  not by the log.
+- `health.domain.ts` is a **leaf module with zero imports** (the `telegram-html.ts` pattern) and
+  returns text with **no markup**: `notifyAdmins` escapes, because an ioredis or mongoose message
+  easily contains `<`. `now` is a parameter, not `Date.now()`, so `shouldNotify` is testable without
+  timers — same as `LoginThrottle`.
+- `HealthModule` imports `DatabaseModule` (for the connection) and `forwardRef(() => TelegramModule)`
+  for the `reports` queue. A local `BullModule.registerQueue` is **forbidden** for the reason
+  `QueuesModule` already records: second Redis connections and a second place holding queue options.
+
+**`BotRegistry` now starts even with Mongo down** (`loadOrSeedBots` catches the read and falls back
+to a bot built from `AppConfigService.telegramToken`, id `no-database`, **not written to Mongo**).
+Without it an unreachable database killed the whole bootstrap: no bot registered, so
+`ErrorAlertBridge.anyBot()` returned null and the app lost its voice exactly when it had to speak.
+The 05-08-2026 alerts arrived only because the container happened not to restart — one redeploy
+would have made the monitoring mute. Such a bot can **only shout**: any seller update still hits
+`accessGate` reading `UserAccess` and gets «Произошла ошибка». There is no re-read of the `Bot`
+collection once Mongo returns — that takes a restart, and the monitor's «MongoDB снова в норме» is
+what tells a human to do it. The fallback triggers on a **read error**, never on an empty
+collection: seeding from `TELEGRAM_TOKEN` stays the branch it always was.
+
+**What this still does not cover:** a build that fails so the app never starts — the bot lives in
+that same container. Partly mitigated by the disk check, which warns long before the image stops
+building; full coverage needs external uptime monitoring.
+
 ### The admin panel is served by Nest itself
 
 `web/` is a Vue 3 + Vite SPA; `npm run build` is `nest build && vite build`, and
@@ -1217,6 +1307,24 @@ the next step — wrapping in `@Injectable()` must not mean rewriting.
 - **The model must not be downloaded at runtime once this moves into the bot.** Prod is on a Russian
   host where external domains are as unreachable as `api.telegram.org` — the file goes into the image
   via `COPY`.
+- **`onnxruntime-node` and `sharp` are `devDependencies`, and the module is excluded from
+  `tsconfig.build.json`** — the prod image contains neither the packages nor `dist/modules/imaging`.
+  This is not tidying: `onnxruntime-node` ships **258 MB of binaries inside the npm package** and its
+  postinstall downloads the CUDA EP nupkg on top, and on 05-08-2026 that download is what failed the
+  deploy with `ENOSPC` while the host was already full. The builder stage sets
+  `ONNXRUNTIME_NODE_INSTALL=skip` (the package's own flag, `script/install.js`) so the GPU fetch never
+  runs — nuget.org is an external domain and no more reachable from Moscow than `api.telegram.org`.
+  - Nothing was lost in prod, because nothing worked there: `assets/` is not copied into the image at
+    all and `assets/models` (170 MB) is gitignored, so the module had neither weights nor scenes.
+  - Before the exclude, `nest build` emitted `dist/modules/imaging/*.js` with live
+    `require('onnxruntime-node')` — resolvable nowhere in the runner, and harmless only because no
+    file requires them. The first accidental import would have been a runtime crash in prod.
+  - `tsconfig.json` still includes the module, so `npm run typecheck` keeps checking its types; CI
+    installs devDependencies. Only `imaging-scene.test.ts` needs `sharp`; no test touches
+    `onnxruntime-node`.
+  - **Moving this into the bot means moving both packages back into `dependencies`** and copying
+    `assets/` into the image — say it out loud here, because the exclude above will otherwise look
+    like a decision to keep the module out of prod forever rather than until it is wired in.
 
 ## Conventions
 

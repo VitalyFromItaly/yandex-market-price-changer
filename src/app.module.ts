@@ -10,6 +10,7 @@ import { DatabaseModule } from './database/database.module';
 import { AccessModule } from './modules/access/access.module';
 import { AdminAuthModule } from './modules/admin/admin-auth.module';
 import { ErrorsModule } from './modules/errors/errors.module';
+import { HealthModule } from './modules/health/health.module';
 import { LogsModule } from './modules/logs/logs.module';
 import { QueuesModule } from './modules/queues/queues.module';
 import { TelegramModule } from './modules/telegram/telegram.module';
@@ -42,6 +43,9 @@ import { YandexModule } from './modules/yandex/yandex.module';
     QueuesModule,
     YandexModule,
     TelegramModule,
+    // После TelegramModule: монитор тянет из него очередь reports ради клиента
+    // Redis, а алерты уходят через ErrorAlertBridge, которому нужны боты.
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

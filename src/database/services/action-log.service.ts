@@ -18,7 +18,7 @@ export interface IActionLogEntry {
   status?: string;
   durationMs?: number;
   error?: string;
-  /** Поля ниже заполняет только ErrorReporter. */
+  /** Поля ниже заполняют ErrorReporter и самопроверка (HealthMonitorService). */
   source?: string;
   errorType?: string;
   stack?: string;

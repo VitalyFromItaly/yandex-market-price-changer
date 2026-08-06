@@ -12,6 +12,21 @@ import { EBotType, THandleUpdatePayload, TTelegrafBot, TWebHookResponse } from '
 import { PriceChangerComposer } from './price-changer-bot/price-changer.composer';
 import { OUTGOING_METHODS, describeOutgoing, outgoingSourceOf } from './shared/action-log.domain';
 
+/**
+ * То немногое, что реестру нужно от записи бота.
+ *
+ * Узкий тип вместо BotDocument потому, что при недоступной Mongo бот собирается
+ * из конфигурации и никакого документа не существует, — см. loadOrSeedBots.
+ */
+type TBotSource = Pick<BotDocument, 'id' | 'type' | 'name' | 'token'>;
+
+/**
+ * Идентификатор бота, поднятого в обход базы. Не ObjectId и не похож на него
+ * намеренно: если такая строка всплывёт в журнале или в адресе вебхука, сразу
+ * видно, что приложение работало без Mongo.
+ */
+const FALLBACK_BOT_ID = 'no-database';
+
 export interface RegisteredBot {
   /** _id документа Bot в Mongo — по нему приходит вебхук. */
   id: string;
@@ -89,21 +104,61 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
     }
   }
 
-  private async loadOrSeedBots(): Promise<BotDocument[]> {
-    const bots = await this.botModel.find();
-    if (bots.length) return bots;
+  private async loadOrSeedBots(): Promise<TBotSource[]> {
+    try {
+      const bots = await this.botModel.find();
+      if (bots.length) return bots;
 
-    this.logger.warn('В базе нет ботов — создаю бота из TELEGRAM_TOKEN');
-    const seeded = await this.botModel.create({
-      type: EBotType.PRICE_CHANGER_BOT,
-      token: this.config.telegramToken,
-      name: 'Yandex Market reports bot',
-      description: 'Отчёты по заказам Яндекс.Маркета',
-    });
-    return [seeded];
+      this.logger.warn('В базе нет ботов — создаю бота из TELEGRAM_TOKEN');
+      const seeded = await this.botModel.create({
+        type: EBotType.PRICE_CHANGER_BOT,
+        token: this.config.telegramToken,
+        name: 'Yandex Market reports bot',
+        description: 'Отчёты по заказам Яндекс.Маркета',
+      });
+      return [seeded];
+    } catch (error) {
+      return [this.fallbackBot(error)];
+    }
   }
 
-  private async registerBot(doc: BotDocument): Promise<void> {
+  /**
+   * Бот из конфигурации, когда база недоступна.
+   *
+   * Без этого недоступная Mongo роняла весь bootstrap: ни один бот не
+   * регистрировался, ErrorAlertBridge не находил, через кого слать, и приложение
+   * теряло голос ровно в тот момент, когда об аварии нужно сообщить. 05-08-2026
+   * авария пережила это только потому, что контейнер не перезапускался, — один
+   * редеплой сделал бы мониторинг немым.
+   *
+   * Такой бот умеет ТОЛЬКО кричать администраторам. Любой апдейт от продавца
+   * упрётся в accessGate, читающий UserAccess, и получит «Произошла ошибка».
+   * Перечитывания коллекции Bot после восстановления базы нет: это лечится
+   * рестартом, о необходимости которого сообщит HealthMonitorService своим
+   * «MongoDB снова в норме».
+   *
+   * Ошибка чтения, а не пустая коллекция: пустую по-прежнему засевает ветка выше.
+   */
+  private fallbackBot(error: unknown): TBotSource {
+    this.logger.error(
+      `База недоступна — поднимаю бота из TELEGRAM_TOKEN: ${(error as Error).message}`,
+    );
+    void this.errors.report({
+      error,
+      source: 'process',
+      context: 'bot-registry:fallback',
+      action: 'bootstrap',
+    });
+
+    return {
+      id: FALLBACK_BOT_ID,
+      type: EBotType.PRICE_CHANGER_BOT,
+      name: 'Yandex Market reports bot (без базы)',
+      token: this.config.telegramToken,
+    };
+  }
+
+  private async registerBot(doc: TBotSource): Promise<void> {
     // apiRoot — единственная точка, где задаётся адрес Bot API для ВСЕХ
     // исходящих вызовов этого бота: и методы (sendMessage, setWebhook, getMe),
     // и ссылки на файлы из getFileLink строятся telegraf'ом от него.
@@ -255,7 +310,7 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
    * это не синглтон. Их ловит loggingContextType. Раньше обёртки не было, и в
    * журнал попадали только фоновые отправки — отсюда «ответа бота нет».
    */
-  private logOutgoing(telegraf: TTelegrafBot, doc: BotDocument): void {
+  private logOutgoing(telegraf: TTelegrafBot, doc: TBotSource): void {
     this.installOutgoingLog(telegraf.telegram, () => telegraf.botInfo?.id?.toString() ?? doc.id);
   }
 
@@ -269,7 +324,7 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
    * telegraf.botInfo.id), с откатом на _id документа.
    */
   private loggingContextType(
-    doc: BotDocument,
+    doc: TBotSource,
   ): new (...args: ConstructorParameters<typeof Context>) => Context {
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- нужен в теле класса
     const self = this;
@@ -293,7 +348,7 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
    * само (launch() снимает вебхук, setWebhook перебивает его обратно), поэтому
    * менять режим можно одной переменной окружения, без ручной чистки.
    */
-  private async startReceiving(telegraf: TTelegrafBot, doc: BotDocument): Promise<void> {
+  private async startReceiving(telegraf: TTelegrafBot, doc: TBotSource): Promise<void> {
     if (this.config.telegramUpdateMode === 'polling') {
       this.startPolling(telegraf, doc);
       return;
@@ -314,7 +369,7 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
    * снимает сам (deleteWebhook), накопившиеся апдейты не сбрасывает: пропущенное
    * за время недоступности доедет.
    */
-  private startPolling(telegraf: TTelegrafBot, doc: BotDocument): void {
+  private startPolling(telegraf: TTelegrafBot, doc: TBotSource): void {
     void telegraf
       .launch(() => {
         this.logger.log(
@@ -340,7 +395,7 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
    * К режиму polling это не относится: launch() БЕЗ опции webhook никакого
    * сервера не поднимает, только опрашивает Bot API.
    */
-  private async setWebhook(telegraf: TTelegrafBot, doc: BotDocument): Promise<void> {
+  private async setWebhook(telegraf: TTelegrafBot, doc: TBotSource): Promise<void> {
     const url = `${this.config.telegramWebhookUrl}${this.webhookPath(doc.type, doc.id)}`;
     await telegraf.telegram.setWebhook(url);
     this.logger.log(`Вебхук установлен: ${url}`);
