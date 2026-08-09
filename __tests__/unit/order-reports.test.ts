@@ -16,11 +16,29 @@ const NOW = new Date('2026-07-29T10:00:00Z');
  */
 const RETURN_DATE = '2026-07-29T12:00:00+03:00';
 const STORE = { token: 'ACMA:x', campaign_id: '1', business_id: '2' } as never;
+/** Тот же магазин с кэшем моделей размещения: кампания 1 — на FBY. */
+const STORE_FBY = {
+  ...(STORE as object),
+  stores: [{ campaignId: '1', placementType: 'FBY' }],
+} as never;
 
 /** Клиент-заглушка: отдаёт заранее заданные заказы и возвраты. */
-function buildService(opts: { orders?: unknown[]; returns?: unknown[] } = {}) {
+function buildService(
+  opts: {
+    orders?: unknown[];
+    returns?: unknown[];
+    /** Ответ живого listStores — нужен только при промахе кэша `stores`. */
+    stores?: unknown[];
+    /** listStores падает: «модель не определена» обязана означать «не FBY». */
+    storesFail?: boolean;
+  } = {},
+) {
   const queries: Record<string, unknown>[] = [];
   const returnQueries: Record<string, unknown>[] = [];
+  const listStores = vi.fn(async () => {
+    if (opts.storesFail) throw new Error('сеть отвалилась');
+    return opts.stores ?? [];
+  });
 
   const client = {
     async *iterateOrders(query: Record<string, unknown>) {
@@ -31,15 +49,16 @@ function buildService(opts: { orders?: unknown[]; returns?: unknown[] } = {}) {
       returnQueries.push(query);
       if (opts.returns?.length) yield opts.returns;
     },
+    listStores,
   };
 
   const factory = { forStore: vi.fn(() => client) };
 
-  return { factory, queries, returnQueries };
+  return { factory, queries, returnQueries, listStores };
 }
 
 async function service(opts: Parameters<typeof buildService>[0] = {}) {
-  const { factory, queries, returnQueries } = buildService(opts);
+  const { factory, queries, returnQueries, listStores } = buildService(opts);
   const moduleRef = await Test.createTestingModule({
     providers: [OrderReportsService, { provide: YandexClientFactory, useValue: factory }],
   }).compile();
@@ -47,6 +66,7 @@ async function service(opts: Parameters<typeof buildService>[0] = {}) {
     reports: moduleRef.get(OrderReportsService),
     queries,
     returnQueries,
+    listStores,
     factory,
   };
 }
@@ -263,6 +283,79 @@ describe('Отчёт «едет до клиента» (TASK-026)', () => {
     await reports.build(STORE, REPORT.IN_TRANSIT, NOW);
 
     expect(returnQueries).toHaveLength(0);
+  });
+});
+
+describe('Едет до клиента на FBY: сборку ведёт Маркет', () => {
+  const ORDERS = [
+    { id: 1, status: 'DELIVERY', itemsTotal: 1000 },
+    { id: 2, status: 'PICKUP', itemsTotal: 500 },
+    { id: 3, status: 'PROCESSING', itemsTotal: 700 },
+    { id: 4, status: 'PROCESSING', itemsTotal: 300 },
+  ];
+
+  it('PROCESSING уходит в запрос, попадает в отчёт и печатается отдельной строкой', async () => {
+    const { reports, queries, listStores } = await service({ orders: ORDERS });
+    const result = await reports.build(STORE_FBY, REPORT.IN_TRANSIT, NOW);
+
+    // Модель взята из кэша `stores` — обычный случай стоит НОЛЬ запросов.
+    expect(listStores).not.toHaveBeenCalled();
+    expect(queries[0].status).toEqual(['DELIVERY', 'PICKUP', 'PROCESSING']);
+    expect(result.count).toBe(4);
+    // Разбивка считается по тем же заказам, что и count.
+    expect(result.assembling).toBe(2);
+    expect(formatReport(result, NOW)).toContain('собирается на складе Маркета');
+  });
+
+  it('на FBS всё как прежде: PROCESSING отсеян и строки разбивки нет', async () => {
+    const { reports, queries } = await service({
+      orders: ORDERS,
+      stores: [{ campaignId: '1', placementType: 'FBS' }],
+    });
+    const result = await reports.build(STORE, REPORT.IN_TRANSIT, NOW);
+
+    expect(queries[0].status).toEqual(['DELIVERY', 'PICKUP']);
+    expect(result.count).toBe(2);
+    expect(result.assembling).toBeUndefined();
+    expect(formatReport(result, NOW)).not.toContain('собирается на складе Маркета');
+  });
+
+  it('пустой кэш — модель спрашивается живьём', async () => {
+    const { reports, queries, listStores } = await service({
+      orders: ORDERS,
+      stores: [{ campaignId: '1', placementType: 'FBY' }],
+    });
+    await reports.build(STORE, REPORT.IN_TRANSIT, NOW);
+
+    expect(listStores).toHaveBeenCalledTimes(1);
+    expect(queries[0].status).toContain('PROCESSING');
+  });
+
+  it('модель не определилась — считаем НЕ FBY, отчёт всё равно уходит', async () => {
+    // Расширить отчёт по догадке нельзя; сузить — это прежнее, сверенное с
+    // кабинетом поведение.
+    const { reports, queries } = await service({ orders: ORDERS, storesFail: true });
+    const result = await reports.build(STORE, REPORT.IN_TRANSIT, NOW);
+
+    expect(queries[0].status).toEqual(['DELIVERY', 'PICKUP']);
+    expect(result.count).toBe(2);
+  });
+
+  it('остальные отчёты за моделью не ходят вовсе', async () => {
+    // Лишний запрос на ровном месте: набор статусов там от модели не зависит.
+    const { reports, listStores } = await service();
+    await reports.build(STORE, REPORT.REDEEMED, NOW);
+    await reports.build(STORE, REPORT.SHIPPED_TODAY, NOW);
+
+    expect(listStores).not.toHaveBeenCalled();
+  });
+
+  it('выгрузка на FBY объясняет разницу прямо в подписи к файлу', async () => {
+    const { reports } = await service({ orders: ORDERS });
+    const result = await reports.exportInTransit(STORE_FBY, NOW);
+
+    expect(result.empty).toBe(false);
+    if (!result.empty) expect(result.caption).toContain('собирается на складе Маркета');
   });
 });
 
@@ -585,17 +678,19 @@ describe('Возвраты: период и разбивка', () => {
   });
 
   it('на «Всего» спрашиваются только АКТИВНЫЕ стадии', async () => {
-    // «Все возвраты за всё время» — это 1979 записей, из которых 1928 уже
-    // выданы магазину: число, которое ни о чём не говорит. Плюс двадцать
-    // страниц запросов вместо одной.
+    // «Все возвраты за всё время» — это 2137 записей, из которых 2011 уже
+    // выданы магазину: число, которое ни о чём не говорит. Плюс двадцать две
+    // страницы запросов вместо одной.
     const { reports, returnQueries } = await service();
     await reports.build(STORE, REPORT.RETURNING, AUG, ALL);
 
     expect(returnQueries[0].shipmentStatuses).toEqual([
+      'CREATED',
       'RECEIVED',
       'IN_TRANSIT',
       'READY_FOR_PICKUP',
     ]);
+    expect(returnQueries[0].shipmentStatuses).not.toContain('PICKED');
   });
 
   it('за период стадии спрашиваются ВСЕ — нужна полная картина месяца', async () => {
@@ -617,22 +712,47 @@ describe('Возвраты: период и разбивка', () => {
     expect(result.count).toBe(0);
   });
 
-  it('разбивка «едет / выдано» считается по стадиям', async () => {
+  it('разбивка «едет / выдано» считается по стадиям и сходится с итогом', async () => {
     const { reports } = await service({
       returns: [
         ret(1, '2026-08-02T12:00:00+03:00', 'IN_TRANSIT'),
         ret(2, '2026-08-02T12:00:00+03:00', 'RECEIVED'),
         ret(3, '2026-08-02T12:00:00+03:00', 'READY_FOR_PICKUP'),
         ret(4, '2026-08-02T12:00:00+03:00', 'PICKED'),
-        // «Создан» не едет и не доехал: покупатель товар ещё не сдал.
+        // «Создан» тоже едет: заказ не выкуплен, кабинет его считает.
         ret(5, '2026-08-02T12:00:00+03:00', 'CREATED'),
       ],
     });
     const result = await reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
 
     expect(result.count).toBe(5);
-    expect(result.returns?.inFlight).toBe(3);
+    expect(result.returns?.inFlight).toBe(4);
     expect(result.returns?.settled).toBe(1);
+    // «Возвраты: N — едет X, выдано Y» обязано сходиться: N = X + Y.
+    expect(result.returns.inFlight + result.returns.settled).toBe(result.returns.count);
+  });
+
+  it('отменённая заявка CREATED не считается и не съедает живой возврат заказа', async () => {
+    // Мёртвая заявка лежит в ответе годами (на боевых — с 19-03-2026). Проверка
+    // стоит ДО дедупа: иначе она заняла бы orderId и выбросила живую запись.
+    const { reports } = await service({
+      returns: [
+        { ...ret(1, '2026-08-02T12:00:00+03:00', 'CREATED'), refundStatus: 'CANCELLED' },
+        { ...ret(2, '2026-08-02T12:00:00+03:00', 'CREATED'), refundStatus: 'REJECTED' },
+        { ...ret(3, '2026-08-02T12:00:00+03:00', 'CREATED'), refundStatus: 'STARTED_BY_USER' },
+        // Тот же заказ, что у мёртвой заявки, но посылка уже едет.
+        {
+          ...ret(4, '2026-08-02T12:00:00+03:00', 'IN_TRANSIT'),
+          orderId: 1001,
+          refundStatus: 'CANCELLED',
+        },
+      ],
+    });
+    const result = await reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
+
+    expect(result.count).toBe(2);
+    expect(result.returns?.inFlight).toBe(2);
+    expect(result.totals.items).toBe(200);
   });
 
   it('текст печатает разбивку, а на «Всего» — оговорку про 30 дней', async () => {

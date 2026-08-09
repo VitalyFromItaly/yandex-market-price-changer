@@ -62,19 +62,22 @@ describe('Определения отчётов', () => {
     const shipped = reportDefinition(REPORT.SHIPPED_TODAY);
     const redeemed = reportDefinition(REPORT.REDEEMED);
 
-    expect(effectiveDefinition(shipped, true).statuses).toEqual([
+    expect(effectiveDefinition(shipped, { unbounded: true }).statuses).toEqual([
       ORDER_STATUS.DELIVERY,
       ORDER_STATUS.PICKUP,
     ]);
     // Ограниченный период и определения без поля возвращаются как есть.
-    expect(effectiveDefinition(shipped, false)).toBe(shipped);
-    expect(effectiveDefinition(redeemed, true)).toBe(redeemed);
+    expect(effectiveDefinition(shipped, { unbounded: false })).toBe(shipped);
+    expect(effectiveDefinition(redeemed, { unbounded: true })).toBe(redeemed);
+    expect(effectiveDefinition(redeemed, {})).toBe(redeemed);
   });
 
   it('DELIVERED не проходит отбор среза «Всего»', () => {
     // Эффективный набор идёт и в запрос, и в отбор ответа: заказ с края окна
     // или сменивший статус в гонке не должен пролезть в снимок «в пути».
-    const snapshot = effectiveDefinition(reportDefinition(REPORT.SHIPPED_TODAY), true);
+    const snapshot = effectiveDefinition(reportDefinition(REPORT.SHIPPED_TODAY), {
+      unbounded: true,
+    });
     expect(matchesDefinition(snapshot, { status: 'DELIVERED' })).toBe(false);
     expect(matchesDefinition(snapshot, { status: 'PICKUP' })).toBe(true);
   });
@@ -92,12 +95,40 @@ describe('Определения отчётов', () => {
     expect(def.dateFilter).toBe('none');
   });
 
-  it('«едет до клиента» НЕ включает PROCESSING — иначе цифра расходится с кабинетом', () => {
+  it('«едет до клиента» НЕ включает PROCESSING на FBS — иначе цифра расходится с кабинетом', () => {
     // Сверка 31-07-2026: кабинет «в доставке» = 192, API = DELIVERY 138 +
     // PICKUP 54. PROCESSING (38) — заказы, ещё не переданные в доставку.
     const def = reportDefinition(REPORT.IN_TRANSIT);
     expect(def.statuses).not.toContain(ORDER_STATUS.PROCESSING);
     expect(matchesReport(REPORT.IN_TRANSIT, { status: ORDER_STATUS.PROCESSING })).toBe(false);
+    // По КЛЮЧУ, без контекста, поведение обязано остаться прежним: контекст
+    // знает только сборка отчёта.
+    expect(effectiveDefinition(def, {}).statuses).not.toContain(ORDER_STATUS.PROCESSING);
+  });
+
+  it('на FBY «едет до клиента» включает PROCESSING — сборку ведёт сам Маркет', () => {
+    const fby = effectiveDefinition(reportDefinition(REPORT.IN_TRANSIT), { fby: true });
+
+    expect(fby.statuses).toEqual([
+      ORDER_STATUS.DELIVERY,
+      ORDER_STATUS.PICKUP,
+      ORDER_STATUS.PROCESSING,
+    ]);
+    // Один и тот же эффективный набор идёт и в запрос, и в отбор ответа —
+    // разойтись они не могут по построению.
+    expect(queryStatuses(fby)).toContain(ORDER_STATUS.PROCESSING);
+    expect(matchesDefinition(fby, { status: ORDER_STATUS.PROCESSING })).toBe(true);
+  });
+
+  it('«уехало клиенту» добавки FBY не имеет — решение осознанное', () => {
+    // «Уехало» — события ОТГРУЗКИ по supplierShipmentDate, а собираемый заказ
+    // не отгружен ни на какой модели. Срез «Всего» там тоже остаётся прежним.
+    const shipped = reportDefinition(REPORT.SHIPPED_TODAY);
+    expect(shipped.fbyExtraStatuses).toBeUndefined();
+    expect(effectiveDefinition(shipped, { unbounded: true, fby: true }).statuses).toEqual([
+      ORDER_STATUS.DELIVERY,
+      ORDER_STATUS.PICKUP,
+    ]);
   });
 
   it('«едет обратно» содержит все пять подстатусов и требует метод возвратов', () => {
@@ -317,18 +348,30 @@ describe('Стадии возврата', () => {
     ]);
   });
 
-  it('«едет» — это RECEIVED, IN_TRANSIT и READY_FOR_PICKUP', () => {
-    // Их сумма и есть число «в пути» из кабинета: на боевых данных
-    // RECEIVED (12) + IN_TRANSIT (38) = 50.
+  it('«едет» — это CREATED, RECEIVED, IN_TRANSIT и READY_FOR_PICKUP', () => {
+    // Их сумма и есть число «в пути» из кабинета: сверка 09-08-2026 дала
+    // 68 заказов при кабинетных 68, из них три — живые CREATED.
     expect(returnStage('RECEIVED')).toBe('inFlight');
     expect(returnStage('IN_TRANSIT')).toBe('inFlight');
     expect(returnStage('READY_FOR_PICKUP')).toBe('inFlight');
+    expect(returnStage('CREATED')).toBe('inFlight');
   });
 
-  it('CREATED НЕ едет: покупатель товар ещё не сдал', () => {
-    // С ним получалось 52 против 50 в кабинете. И такой возврат может висеть
-    // месяцами — на боевых данных один создан 19-03-2026 и не двигался.
-    expect(returnStage('CREATED')).toBe('declared');
+  it('отменённая или отклонённая заявка CREATED не считается вовсе', () => {
+    // Именно из-за них когда-то получалось 52 против 50 в кабинете, и вывод
+    // сделали про стадию вместо статуса денег. Такая запись висит годами — на
+    // боевых данных одна создана 19-03-2026 и с апреля не двигалась.
+    expect(returnStage('CREATED', 'CANCELLED')).toBe('dead');
+    expect(returnStage('CREATED', 'REJECTED')).toBe('dead');
+    expect(returnStage('CREATED', 'STARTED_BY_USER')).toBe('inFlight');
+    expect(returnStage('CREATED', undefined)).toBe('inFlight');
+  });
+
+  it('на прочих стадиях статус денег движения посылки не отменяет', () => {
+    // Товар уже едет к продавцу и приедет независимо от решения по деньгам.
+    expect(returnStage('IN_TRANSIT', 'CANCELLED')).toBe('inFlight');
+    expect(returnStage('RECEIVED', 'REJECTED')).toBe('inFlight');
+    expect(returnStage('PICKED', 'CANCELLED')).toBe('settled');
   });
 
   it('PICKED — путь закончен', () => {
@@ -340,11 +383,14 @@ describe('Стадии возврата', () => {
     expect(returnStage(undefined)).toBe('declared');
   });
 
-  it('активные — только три транзитные стадии', () => {
-    // Их сумма и есть число из кабинета. CREATED сюда не входит: покупатель
-    // товар ещё не сдал, а такая запись может висеть месяцами.
-    expect(RETURN_ACTIVE_STATUSES).toEqual(['RECEIVED', 'IN_TRANSIT', 'READY_FOR_PICKUP']);
-    expect(RETURN_ACTIVE_STATUSES).not.toContain('CREATED');
+  it('активные — четыре стадии до выдачи магазину', () => {
+    // Их сумма и есть число из кабинета. PICKED сюда не входит: путь закончен.
+    expect(RETURN_ACTIVE_STATUSES).toEqual([
+      'CREATED',
+      'RECEIVED',
+      'IN_TRANSIT',
+      'READY_FOR_PICKUP',
+    ]);
     expect(RETURN_ACTIVE_STATUSES).not.toContain('PICKED');
   });
 

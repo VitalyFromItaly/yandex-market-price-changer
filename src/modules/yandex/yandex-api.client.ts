@@ -131,6 +131,16 @@ export interface IReturnRecord {
   orderId?: number;
   shipmentStatus?: string;
   /**
+   * Статус возврата ДЕНЕГ (`RefundStatusType`) — не путать с `shipmentStatus`,
+   * который про путь посылки.
+   *
+   * Нужен ровно в одном месте: отличить живую заявку покупателя от отменённой.
+   * Возврат в статусе `CREATED` — это заявка, товар ещё не сдан, и такая запись
+   * с `refundStatus: CANCELLED` висит месяцами (на боевом магазине одна лежит
+   * с 19-03-2026). См. `returnStage` в report-status-map.
+   */
+  refundStatus?: string;
+  /**
    * Когда возврат оформлен, ISO 8601 со смещением.
    *
    * Единственный способ показать «возвраты за месяц»: сам метод дат не
@@ -1291,11 +1301,15 @@ export class YandexApiClient {
  * поля, а перечислять их все здесь смысла нет.
  */
 function toReturnRecord(raw: unknown): IReturnRecord {
-  const item = (raw ?? {}) as IReturnRecord & { items?: TRawReturnItem[] };
+  const item = (raw ?? {}) as IReturnRecord & { id?: number; items?: TRawReturnItem[] };
   return {
-    returnId: item.returnId,
+    // В ответе поле называется `id` (ReturnDTO), а не `returnId`: пока читали
+    // только второе, оно было `undefined` всегда. Читаем оба — форму ответа
+    // Яндекс между методами уже разводил.
+    returnId: item.id ?? item.returnId,
     orderId: item.orderId,
     shipmentStatus: item.shipmentStatus,
+    refundStatus: item.refundStatus,
     creationDate: item.creationDate,
     amount: item.amount,
     partnerCompensationAmount: item.partnerCompensationAmount,

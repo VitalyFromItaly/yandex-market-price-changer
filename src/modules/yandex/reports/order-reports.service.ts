@@ -13,14 +13,17 @@ import {
   RETURN_ACTIVE_STATUSES,
   RETURN_SHIPMENT_STATUSES,
   effectiveDefinition,
+  isAssembling,
   isCancelled,
   matchesDefinition,
   queryStatuses,
   reportDefinition,
   returnStage,
+  type IReportContext,
   type IReportDefinition,
   type TReportKey,
 } from './report-status-map';
+import { isFby, placementOfCampaign } from '../stocks/placement';
 import {
   addTotals,
   amountValue,
@@ -156,6 +159,15 @@ export interface IReportResult {
    * «не старше 30 дней» на объяснение, что срез полный.
    */
   viaArchive?: boolean;
+  /**
+   * Сколько из `count` собирается на складе Маркета (FBY). Есть только там, где
+   * такие заказы вообще попали в отчёт, то есть при `options.fby`.
+   *
+   * Считается из ТОГО ЖЕ массива, что дал `count` (довод IReturnsSummary.records):
+   * две независимые выборки однажды разойдутся, и продавец увидит разбивку, не
+   * сходящуюся с итогом.
+   */
+  assembling?: number;
 }
 
 /**
@@ -168,6 +180,19 @@ export interface IReportResult {
  */
 export interface IReportBuildOptions {
   deepHistory?: boolean;
+  /**
+   * Модель размещения, если вызывающий её уже знает. Иначе сервис определяет
+   * сам — кэш `stores`, при промахе живой `listStores`.
+   *
+   * Определяет ИМЕННО сервис, а не вызывающий (в отличие от deepHistory):
+   * deepHistory — фича из UserAccess, куда сервису ходить нельзя, а модель
+   * размещения — свойство того самого магазина, который уже передан первым
+   * аргументом, и клиент к нему уже построен. Вызывающих же три — кнопка,
+   * рассылка и сводка «📦 FBY» (FbyService.safeCount), — и четвёртый забыл бы
+   * флаг молча: получилось бы то самое расхождение «в боте одно, в сводке
+   * другое».
+   */
+  placement?: string;
 }
 
 /**
@@ -193,7 +218,16 @@ export class OrderReportsService {
     const client = this.clients.forStore(store);
     const definition = reportDefinition(key);
 
-    const orders = await this.collectOrders(client, definition, now, period, options);
+    const context: IReportContext = {
+      unbounded: isUnbounded(period),
+      // За моделью размещения идём ТОЛЬКО там, где она вообще меняет набор:
+      // на остальных пяти отчётах это был бы лишний запрос на ровном месте.
+      fby: definition.fbyExtraStatuses
+        ? isFby(await this.placementOf(store, client, options))
+        : false,
+    };
+
+    const orders = await this.collectOrders(client, definition, now, period, options, context);
     let totals = orders.reduce<IMoneyTotals>(
       (acc, order) => addTotals(acc, orderTotals(order)),
       ZERO_TOTALS,
@@ -210,7 +244,51 @@ export class OrderReportsService {
 
     const viaArchive = this.usesArchive(definition, period, now, options);
 
-    return { key, title: definition.title, count, totals, orders, period, returns, viaArchive };
+    // Разбивка по ТЕМ ЖЕ заказам, что дали count: отдельный фильтр или второй
+    // запрос однажды разойдётся с итогом, и продавец увидит разбивку, которая
+    // не складывается (довод IReturnsSummary.records).
+    const assembling = context.fby ? orders.filter(isAssembling).length : undefined;
+
+    return {
+      key,
+      title: definition.title,
+      count,
+      totals,
+      orders,
+      period,
+      returns,
+      viaArchive,
+      assembling,
+    };
+  }
+
+  /**
+   * Модель размещения магазина. Сначала кэш `stores` (обычный случай — без
+   * единого запроса), при промахе — живой listStores тем же клиентом.
+   *
+   * Сбой сети = «не знаем» = НЕ FBY: расширить отчёт по догадке нельзя, а
+   * сузить — это текущее, сверенное с кабинетом поведение. Та же политика,
+   * что в placement.ts и StockSyncService.resolvePlacement, только там она
+   * защищает ЗАПИСЬ остатков, а здесь — число в отчёте.
+   */
+  private async placementOf(
+    store: YandexMarketDocument,
+    client: YandexApiClient,
+    options: IReportBuildOptions,
+  ): Promise<string | undefined> {
+    if (options.placement) return options.placement;
+
+    const cached = placementOfCampaign(store.stores, store.campaign_id);
+    if (cached) return cached;
+
+    try {
+      return placementOfCampaign(await client.listStores(), store.campaign_id);
+    } catch (error) {
+      this.logger.warn(
+        `Модель размещения не определена, отчёт собран как не-FBY: ${String(error)}`,
+      );
+      return undefined;
+    }
   }
 
   /**
@@ -230,7 +308,9 @@ export class OrderReportsService {
     options: IReportBuildOptions = {},
   ): Promise<{ orders: IReportOrder[]; cancelled: IReportOrder[] }> {
     const client = this.clients.forStore(store);
-    const all = await this.collectOrders(client, PLACED_DEFINITION, now, period, options);
+    const all = await this.collectOrders(client, PLACED_DEFINITION, now, period, options, {
+      unbounded: isUnbounded(period),
+    });
 
     return {
       orders: all.filter((order) => !isCancelled(order)),
@@ -257,11 +337,12 @@ export class OrderReportsService {
     now: Date,
     period: IReportPeriod,
     options: IReportBuildOptions = {},
+    context: IReportContext = {},
   ): Promise<IReportOrder[]> {
-    // «Всего» может иметь собственный срезовый набор статусов — эффективное
-    // определение подставляется ОДИН раз и дальше идёт и в запрос, и в отбор
-    // ответа, чтобы они не могли разойтись.
-    const effective = effectiveDefinition(definition, isUnbounded(period));
+    // «Всего» может иметь собственный срезовый набор статусов, FBY — добавку.
+    // Эффективное определение подставляется ОДИН раз и дальше идёт и в запрос,
+    // и в отбор ответа, чтобы они не могли разойтись.
+    const effective = effectiveDefinition(definition, context);
     const useStats = this.usesArchive(effective, period, now, options);
 
     // Период проверяем ДО сети — но только там, где он вообще применяется.
@@ -431,13 +512,19 @@ export class OrderReportsService {
    * - ЗА ПЕРИОД спрашиваем все пять — продавцу нужна полная картина месяца,
    *   включая уже выданные. С единственным IN_TRANSIT отчёт показывал 38
    *   возвратов там, где в кабинете 50;
-   * - на «ВСЕГО» — только активные. «Все возвраты за всё время» это 1979 записей,
-   *   из которых 1928 уже закрыты: число, которое ни о чём не говорит. Полезен
+   * - на «ВСЕГО» — только активные. «Все возвраты за всё время» это 2137 записей,
+   *   из которых 2011 уже закрыты: число, которое ни о чём не говорит. Полезен
    *   один вопрос — что едет ко мне сейчас, и он же сверяется с кабинетом.
-   *   Заодно это одна страница вместо двадцати.
+   *   Заодно это одна страница вместо двадцати двух.
+   *
+   * Мёртвые заявки (`stage === 'dead'`) не считаются НИГДЕ — ни за период, ни в
+   * «Всего»: отменённый или отклонённый `CREATED` возвратом не стал, а лежать в
+   * ответе может годами. Проверка стоит ДО дедупликации намеренно: иначе такая
+   * запись заняла бы orderId и выбросила из отчёта живой возврат того же заказа.
    *
    * Один и тот же заказ приходит и сюда, и в список заказов с возвратным
-   * подстатусом — считать его дважды нельзя. Дедупликация по orderId.
+   * подстатусом — считать его дважды нельзя. Дедупликация по orderId; кабинет
+   * тоже считает заказами, а не записями (у одного заказа их бывает две).
    */
   private async collectReturns(
     client: YandexApiClient,
@@ -461,6 +548,9 @@ export class OrderReportsService {
       for (const record of page) {
         if (bounds && !withinPeriod(bounds, record.creationDate)) continue;
 
+        const stage = returnStage(record.shipmentStatus, record.refundStatus);
+        if (stage === 'dead') continue;
+
         // Возврат, чей заказ уже посчитан по подстатусу, пропускаем целиком:
         // иначе один невыкуп попадёт в отчёт дважды — и штукой, и суммой.
         if (record.orderId != null && seen.has(record.orderId)) continue;
@@ -473,7 +563,6 @@ export class OrderReportsService {
         count += 1;
         records.push(record);
 
-        const stage = returnStage(record.shipmentStatus);
         if (stage === 'inFlight') inFlight += 1;
         if (stage === 'settled') settled += 1;
       }

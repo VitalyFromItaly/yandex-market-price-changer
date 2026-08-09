@@ -25,6 +25,8 @@ npm run tunnel         # vk-tunnel on :3004; tunnel:ngrok for ngrok. Webhook mod
 
 # read-only diagnostics against a live seller's data (see "Profit")
 npx ts-node scripts/diagnose-orders.ts --user=<telegramUserId> [--date=DD-MM-YYYY|--report|--unknown]
+# сверка «Едет обратно» с кабинетом: раскладка возвратов и числа-кандидаты
+npx ts-node scripts/diagnose-returns.ts --user=<telegramUserId> [--list]
 # refresh purchase prices from a price list without Telegram; writes Mongo only, never Partner API
 npx ts-node scripts/load-purchase-prices.ts --user=<telegramUserId> --file=stock.xlsx
 docker compose up -d mongodb redis   # mongo on :27018, redis on :6379, mongo-express on :8083
@@ -406,10 +408,36 @@ each failure was silent.
   place". `getReturns` now reads **both** levels, and a test pins the live shape.
 - **Only one stage out of five was queried.** `shipmentStatuses` was `['IN_TRANSIT']`, which showed
   38 returns where the cabinet showed 50. `RETURN_STAGE` splits the five stages into `inFlight`
-  (`RECEIVED`, `IN_TRANSIT`, `READY_FOR_PICKUP` — **this sum is the cabinet's number**), `declared`
-  (`CREATED`) and `settled` (`PICKED`). `CREATED` is out of "in flight" **because of the data**:
-  `RECEIVED + IN_TRANSIT` is exactly 50, adding `CREATED` gave 52 — and such a return can hang for
-  months (one on the live account was created 19-03-2026 and had not moved since April).
+  (`CREATED`, `RECEIVED`, `IN_TRANSIT`, `READY_FOR_PICKUP` — **this sum is the cabinet's number**)
+  and `settled` (`PICKED`); `declared` is left for an unknown status only.
+- **What kills a return is its `refundStatus`, not its stage — and getting that backwards cost a
+  second complaint.** `CREATED` used to be `declared`, i.e. out of "in flight", from a correct
+  reconciliation with the wrong conclusion: `RECEIVED + IN_TRANSIT` was exactly the cabinet's 50 and
+  adding `CREATED` gave 52. The two extra were not "declared but not handed over" — they were
+  **dead**: a buyer's request that was cancelled or rejected and then lies in the response for
+  years (one on the live account was created 19-03-2026, `refundStatus: CANCELLED`, and has not
+  moved since). Live check 09-08-2026, FBS `148655119`: the three transit stages give 66 records /
+  **65 orders** against the cabinet's **68**, and adding the live `CREATED` entries (three, all
+  filed within two days) gives exactly 68. So `returnStage(shipmentStatus, refundStatus)` returns a
+  fourth stage `'dead'` for a `CREATED` whose `refundStatus` is in `RETURN_DEAD_REFUND_STATUSES`
+  (`CANCELLED`, `REJECTED`), and `collectReturns` skips those entirely — **before** the dedup, or a
+  dead request would claim the `orderId` and evict the live return of the same order.
+  - The refund check is deliberately **narrow: `CREATED` only.** That stage is one request by the
+    buyer, and a cancelled request never became a return. On every other stage the parcel is
+    physically moving to the seller and a money decision does not stop it — a cancelled refund in
+    `IN_TRANSIT` still lands on the seller's warehouse.
+  - **The `orderId` dedup is correct and must stay**: the cabinet counts orders too. On the live
+    account one order carries **two** IN_TRANSIT returns, and 68 only reconciles when counting
+    distinct orders (69 records → 68 orders).
+  - `RETURN_ACTIVE_STATUSES` is not written by hand — it is `RETURN_STAGE` filtered by `inFlight`,
+    so a new status gets its decision in one place and reaches (or doesn't reach) the query for free.
+  - `npx ts-node scripts/diagnose-returns.ts --user=<id> [--list]` is the read-only сверка that
+    settled this: a full unfiltered walk of `/returns`, the breakdown by `shipmentStatus` and by
+    `refundStatus`, and the candidate numbers (old rule / current rule / current rule without the
+    dead filter) side by side, in records **and** orders. This class of bug raises no error and
+    fails no test — the report just shows a different number, and the seller is the one who notices.
+  - `IReturnRecord.returnId` reads `id` first: the field is called `id` in `ReturnDTO`, so while the
+    mapper read only `returnId` it was `undefined` on every record.
 - **The period was not applied at all.** The returns method takes no dates — only `pageToken`,
   `limit`, `shipmentStatuses` — so half the report was cut by `updatedAt` and half was not, and «за
   сегодня» and «с 1 числа месяца» returned the same set. That is precisely what the seller reported
@@ -451,6 +479,35 @@ each failure was silent.
   `effectiveDefinition` — одна точка и для запроса, и для отбора ответа), под флагом `deep_history`
   он идёт через архив `stats/orders` **без дат** (у getOrders неявный `fromDate` = 30 дней назад),
   и оговорка «не старше 30 дней» заменяется на «по архиву Маркета» (`viaArchive` в результате).
+- **На FBY «Едет до клиента» включает `PROCESSING`, и это не отмена сверки 31-07-2026, а её
+  сужение до FBS.** Там кабинет показывал 192 = DELIVERY 138 + PICKUP 54, а 38 заказов в
+  `PROCESSING` (все с подстатусом `STARTED`) действительно лежали у продавца. На FBY товар лежит на
+  складе **Маркета**, заказ собирает Маркет, собственной необработанной очереди у продавца нет
+  вовсе — сборка там и есть начало доставки. Выражено полем `fbyExtraStatuses` в определении:
+  **добавка, а не подмена** — `unboundedStatuses` отвечает на ДРУГОЙ вопрос и заменяет набор
+  целиком, а эти два поля композируются в `effectiveDefinition(definition, context)` без правил
+  приоритета (контекст — объект, иначе через полгода это вызов вида `(def, true, false, true)`).
+  - **Модель размещения выясняет сам `OrderReportsService`, а не вызывающий** — в отличие от
+    `deepHistory`/`tariffEstimate`. Тот паттерн существует потому, что фича живёт в `UserAccess`,
+    куда сервису ходить нельзя; модель же — свойство магазина, который УЖЕ передан первым
+    аргументом, и клиент к нему уже построен. А вызывающих у этого отчёта **три**: кнопка, рассылка
+    и сводка «📦 FBY» (`FbyService.safeCount`) — экран, открытый только FBY-магазинам. Флаг,
+    который каждый обязан не забыть, они забыли бы по-разному, и «в боте одно, в сводке другое» —
+    известный тут паттерн жалоб. Запрос идёт **только** у определений с добавкой (кэш
+    `YandexMarket.stores` → живой `listStores`), то есть на остальных пяти отчётах его нет.
+  - **Модель не определилась = не FBY.** Расширить отчёт по догадке нельзя, сузить — это прежнее,
+    сверенное с кабинетом поведение; та же политика, что у записи остатков, только там она
+    защищает чужой склад, а здесь число в отчёте.
+  - **Изменившееся число объясняется в самом отчёте** — строка «🏭 Из них собирается на складе
+    Маркета» из `IReportResult.assembling`, посчитанного по ТЕМ ЖЕ заказам, что дали `count` (довод
+    `IReturnsSummary.records`). Срез, который нечем разложить, невозможно ни проверить, ни
+    оспорить — тот же довод, по которому в заголовке печатается момент съёмки.
+  - **У «Уехало клиенту» добавки нет намеренно**, хотя его «Всего» — тот же срез «в пути»: это
+    события **отгрузки** по `supplierShipmentDate`, а собираемый заказ не отгружен ни на какой
+    модели. Решение пиннится тестом, чтобы не выглядеть забытой строкой.
+  - Оговорка на будущее: добавка работает по статусу целиком — подстатус ею не сузить
+    (`substatuses` типизирован подстатусами возврата). Если сверка на боевом FBY покажет, что часть
+    `PROCESSING` кабинет «в доставке» не считает, нужно отдельное поле, а не правка этого.
 
 ### Profit
 

@@ -109,29 +109,40 @@ export type TReturnShipmentStatus =
   (typeof RETURN_SHIPMENT_STATUS)[keyof typeof RETURN_SHIPMENT_STATUS];
 
 /**
- * Три группы, потому что у статусов три разных смысла для продавца.
+ * Четыре группы, потому что у статусов четыре разных смысла для продавца.
+ *
+ * `'dead'` — «не считать вовсе»; остальные три отвечают на вопрос «где возврат».
  *
  * `Record<TReturnShipmentStatus, ...>` вместо массивов-литералов — как
  * `FEATURE_KEY_SET` и `DRAFT_FIELDS`: массив не заставляет компилятор потребовать
  * решения для нового статуса, а «куда его отнести» умолчанием не принимается.
  */
-type TReturnStage = 'declared' | 'inFlight' | 'settled';
+type TReturnStage = 'dead' | 'declared' | 'inFlight' | 'settled';
 
 const RETURN_STAGE: Record<TReturnShipmentStatus, TReturnStage> = {
   /**
-   * «Создан» — НЕ «едет», и это проверено на боевых данных: RECEIVED + IN_TRANSIT
-   * дают ровно 50, то самое число, что видит продавец в кабинете, а вместе с
-   * CREATED получалось 52 и не сходилось. Покупатель заявил возврат, но товар не
-   * сдал: из двух таких записей одна создана минуту назад, а вторая висит с
-   * 19-03-2026 без движения с апреля. Сложить их с «едет» значит навсегда
-   * завысить именно то число, по которому продавец сверяется с кабинетом.
+   * «Создан» — тоже «едет»: покупатель заявил возврат, и заказ уже не выкуплен.
+   *
+   * Здесь раньше стояло `declared`, и вывод был сделан из верной сверки с
+   * неверной причиной: RECEIVED + IN_TRANSIT давали ровно кабинетные 50, а с
+   * CREATED получалось 52. Мешала не стадия, а МЁРТВЫЕ заявки — одна из тех
+   * двух создана 19-03-2026 и лежит с `refundStatus: CANCELLED` до сих пор.
+   * Сверка 09-08-2026 на том же магазине: без CREATED выходит 65 заказов при
+   * кабинетных 68, а с живыми CREATED (их ровно три, все оформлены за два дня
+   * до сверки) — 68. Отсекать надо по статусу возврата денег, см. `returnStage`.
    */
-  [RETURN_SHIPMENT_STATUS.CREATED]: 'declared',
+  [RETURN_SHIPMENT_STATUS.CREATED]: 'inFlight',
   [RETURN_SHIPMENT_STATUS.RECEIVED]: 'inFlight',
   [RETURN_SHIPMENT_STATUS.IN_TRANSIT]: 'inFlight',
   [RETURN_SHIPMENT_STATUS.READY_FOR_PICKUP]: 'inFlight',
   [RETURN_SHIPMENT_STATUS.PICKED]: 'settled',
 };
+
+/**
+ * Статусы возврата денег (`RefundStatusType`), означающие, что возврата не
+ * будет: покупатель передумал либо заявку отклонили на модерации или в ПВЗ.
+ */
+export const RETURN_DEAD_REFUND_STATUSES: readonly string[] = ['CANCELLED', 'REJECTED'];
 
 /** Все статусы — для отчёта ЗА ПЕРИОД: там нужна полная картина, включая закрытые. */
 export const RETURN_SHIPMENT_STATUSES = Object.keys(RETURN_STAGE) as TReturnShipmentStatus[];
@@ -139,23 +150,41 @@ export const RETURN_SHIPMENT_STATUSES = Object.keys(RETURN_STAGE) as TReturnShip
 /**
  * АКТИВНЫЕ возвраты — для среза «Всего», где периода нет.
  *
- * Без периода «все возвраты» бесполезны: у боевого продавца это 1979 записей,
- * из которых 1928 уже выданы магазину. Полезен ровно один вопрос — что едет ко
- * мне прямо сейчас, и ответ на него сверяется с кабинетом (там 50).
+ * Без периода «все возвраты» бесполезны: у боевого продавца это 2137 записей,
+ * из которых 2011 уже выданы магазину. Полезен ровно один вопрос — что едет ко
+ * мне прямо сейчас, и ответ на него сверяется с кабинетом.
  *
- * `CREATED` сюда НЕ входит по той же причине, по которой он не входит в «едет»:
- * покупатель заявил возврат, но товар не сдал, и такая запись может висеть
- * месяцами — на боевых данных одна создана 19-03-2026 и не двигалась с апреля.
- * Считать её активной значило бы снова разойтись с кабинетом на эти две штуки.
+ * Список не пишется руками, а выводится из `RETURN_STAGE`: новый статус получает
+ * стадию в одном месте и попадает (или не попадает) в запрос автоматически.
+ * Мёртвые заявки отсекаются не здесь, а `returnStage` — по `refundStatus`,
+ * которого в фильтре запроса всё равно нет.
  *
- * Побочная выгода крупная: активных — одна страница вместо двадцати.
+ * Побочная выгода крупная: активных — одна страница вместо двадцати двух.
  */
 export const RETURN_ACTIVE_STATUSES = RETURN_SHIPMENT_STATUSES.filter(
   (status) => RETURN_STAGE[status] === 'inFlight',
 );
 
-/** На каком шаге возврат. Неизвестный статус считаем «оформлен»: не едет и не доехал. */
-export function returnStage(shipmentStatus: string | undefined): TReturnStage {
+/**
+ * На каком шаге возврат. Неизвестный статус считаем «оформлен»: не едет и не доехал.
+ *
+ * `refundStatus` смотрим ТОЛЬКО у `CREATED`, и это намеренно узко. `CREATED` —
+ * это одна заявка покупателя; отменённая или отклонённая заявка возвратом так и
+ * не стала, и висит в базе годами. На всех прочих стадиях посылка физически
+ * едет к продавцу, и решение по деньгам её движения не отменяет — отменённый
+ * возврат в `IN_TRANSIT` продавец всё равно получит на склад.
+ */
+export function returnStage(
+  shipmentStatus: string | undefined,
+  refundStatus?: string | undefined,
+): TReturnStage {
+  if (
+    shipmentStatus === RETURN_SHIPMENT_STATUS.CREATED &&
+    RETURN_DEAD_REFUND_STATUSES.includes(refundStatus)
+  ) {
+    return 'dead';
+  }
+
   return RETURN_STAGE[shipmentStatus as TReturnShipmentStatus] ?? 'declared';
 }
 
@@ -228,6 +257,20 @@ export interface IReportDefinition {
    * на все периоды.
    */
   readonly unboundedStatuses?: readonly TOrderStatus[];
+  /**
+   * Статусы, ДОБАВЛЯЕМЫЕ на модели размещения FBY, когда размещение меняет
+   * СМЫСЛ статуса, а не только адрес склада. Отсутствие поля = набор один на
+   * все модели.
+   *
+   * Добавка, а не замена (в отличие от `unboundedStatuses`): «Всего» — другой
+   * вопрос, поэтому там набор подменяется целиком, а FBY — тот же вопрос плюс
+   * ещё одно состояние. Так два поля композируются без правил приоритета.
+   *
+   * Пока такой случай ровно один — `PROCESSING` в срезе «едет до клиента»:
+   * на FBS это заказ, лежащий у продавца, на FBY — заказ, который уже собирает
+   * Маркет на своём складе.
+   */
+  readonly fbyExtraStatuses?: readonly TOrderStatus[];
 }
 
 export const REPORT = {
@@ -326,6 +369,17 @@ export const REPORT_DEFINITIONS: Readonly<Record<TReportKey, IReportDefinition>>
     // расходилась с кабинетом на размер собственной необработанной очереди —
     // то есть отчёт выглядел сломанным ровно тогда, когда работы было много.
     statuses: [ORDER_STATUS.DELIVERY, ORDER_STATUS.PICKUP],
+    // На FBY тот довод не работает, и сверка его не отменяет, а сужает до FBS:
+    // товар лежит на складе МАРКЕТА, заказ собирает Маркет, и собственной
+    // необработанной очереди у продавца нет вовсе. PROCESSING там означает
+    // «Маркет уже взял заказ в работу» — то есть ровно «едет до клиента».
+    //
+    // Оговорка на будущее: добавка работает по СТАТУСУ целиком, подстатус ею
+    // не сузить (`substatuses` типизирован подстатусами возврата и применяется
+    // ко всему набору). Если сверка на боевом FBY покажет, что часть
+    // PROCESSING кабинет «в доставке» не считает, нужно отдельное поле, а не
+    // правка этого.
+    fbyExtraStatuses: [ORDER_STATUS.PROCESSING],
     substatuses: [],
     // Это срез «что сейчас в пути», а не события за период — фильтра даты нет.
     dateFilter: 'none',
@@ -382,20 +436,42 @@ export function queryStatuses(definition: IReportDefinition): TOrderStatus[] {
 }
 
 /**
- * Определение с учётом периода: у «Всего» может быть собственный набор статусов
- * (`unboundedStatuses`).
+ * Обстоятельства сборки, от которых зависит НАБОР статусов отчёта.
  *
- * Возвращает НОВОЕ определение, а не флаг вторым параметром: так
- * `queryStatuses`, `toStatsStatuses` и `matchesDefinition` получают эффективный
- * набор из ОДНОГО места и не могут разойтись между запросом и отбором ответа —
- * иначе DELIVERED с краёв окон просочился бы в снимок «сейчас в пути».
+ * Объект, а не позиционные булевы: через полгода это был бы вызов вида
+ * `effectiveDefinition(def, true, false, true)`, где перепутанные местами
+ * аргументы не заметит ни компилятор, ни читатель.
+ */
+export interface IReportContext {
+  /** Период без границ (PERIOD.ALL). */
+  unbounded?: boolean;
+  /** Магазин размещён по модели FBY. */
+  fby?: boolean;
+}
+
+/**
+ * Определение с учётом обстоятельств: у «Всего» может быть собственный набор
+ * статусов (`unboundedStatuses`), у FBY — добавка (`fbyExtraStatuses`).
+ *
+ * Возвращает НОВОЕ определение, а не флаги россыпью: так `queryStatuses`,
+ * `toStatsStatuses` и `matchesDefinition` получают эффективный набор из ОДНОГО
+ * места и не могут разойтись между запросом и отбором ответа — иначе DELIVERED
+ * с краёв окон просочился бы в снимок «сейчас в пути».
+ *
+ * Замена и добавка композируются: правил приоритета нет, и не понадобится.
  */
 export function effectiveDefinition(
   definition: IReportDefinition,
-  unbounded: boolean,
+  context: IReportContext,
 ): IReportDefinition {
-  if (!unbounded || !definition.unboundedStatuses) return definition;
-  return { ...definition, statuses: definition.unboundedStatuses };
+  const base =
+    context.unbounded && definition.unboundedStatuses
+      ? definition.unboundedStatuses
+      : definition.statuses;
+  const extra = context.fby ? (definition.fbyExtraStatuses ?? []) : [];
+
+  if (base === definition.statuses && extra.length === 0) return definition;
+  return { ...definition, statuses: [...new Set([...base, ...extra])] };
 }
 
 /**
@@ -428,6 +504,18 @@ export const PLACED_DEFINITION: IReportDefinition = {
 /** Отменён ли заказ. Одна проверка на всех, а не сравнение строк по коду. */
 export function isCancelled(order: { status?: string }): boolean {
   return order?.status === ORDER_STATUS.CANCELLED;
+}
+
+/**
+ * Собирается ли заказ прямо сейчас (статус сборки).
+ *
+ * Нужна разбивке среза «едет до клиента» на FBY: там такие заказы в отчёт
+ * входят, и без отдельной строки число молча разъехалось бы с привычным.
+ * Живёт здесь, а не в тексте отчёта, по общему правилу модуля: литерал статуса
+ * вне этого файла ловит тест «статусы не размазаны по коду».
+ */
+export function isAssembling(order: { status?: string }): boolean {
+  return order?.status === ORDER_STATUS.PROCESSING;
 }
 
 /**

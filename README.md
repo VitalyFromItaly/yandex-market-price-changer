@@ -259,6 +259,8 @@ npm run db:clean           # очистка базы; по умолчанию с
 
 # диагностика по боевому магазину, только чтение
 npx ts-node scripts/diagnose-orders.ts --user=<telegramUserId> [--report|--unknown]
+# сверка «Едет обратно» с кабинетом: раскладка возвратов по обоим статусам
+npx ts-node scripts/diagnose-returns.ts --user=<telegramUserId> [--list]
 # закупочные цены из прайса минуя Telegram: пишет только нашу Mongo
 npx ts-node scripts/load-purchase-prices.ts --user=<telegramUserId> --file=stock.xlsx
 ```

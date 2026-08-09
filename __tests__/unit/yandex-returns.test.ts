@@ -96,6 +96,30 @@ describe('Метод возвратов', () => {
     expect(page.items[0]).not.toHaveProperty('partnerCompensation');
   });
 
+  it('идентификатор читается из поля id — так он называется в ответе', async () => {
+    // В ReturnDTO поле называется `id`; пока читали только `returnId`, оно было
+    // undefined всегда. Оба варианта — форму ответа Яндекс уже разводил.
+    stubAxios([{ result: { returns: [{ id: 27349116, orderId: 59731954688 }] } }]);
+
+    const page = await client().getReturns();
+    expect(page.items[0].returnId).toBe(27349116);
+  });
+
+  it('refundStatus доезжает до отчёта — по нему отсеиваются мёртвые заявки', async () => {
+    // Отменённый возврат в статусе CREATED висит в ответе годами, и без этого
+    // поля отличить его от вчерашней живой заявки нечем.
+    stubAxios([
+      {
+        result: {
+          returns: [{ id: 1, shipmentStatus: 'CREATED', refundStatus: 'CANCELLED' }],
+        },
+      },
+    ]);
+
+    const page = await client().getReturns();
+    expect(page.items[0].refundStatus).toBe('CANCELLED');
+  });
+
   it('сырой ответ сохраняется — отчётам нужны и другие поля', async () => {
     stubAxios([{ result: { returns: [{ returnId: 3, someOtherField: 'x' }] } }]);
 
