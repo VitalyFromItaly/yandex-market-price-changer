@@ -7,7 +7,9 @@ import {
   REPORT,
   REPORT_DEFINITIONS,
   RETURN_SUBSTATUS,
+  effectiveDefinition,
   isCancelled,
+  matchesDefinition,
   matchesReport,
   queryStatuses,
   reportDefinition,
@@ -40,12 +42,41 @@ describe('Определения отчётов', () => {
     expect(profit.usesReturnsApi).toBe(false);
   });
 
-  it('«уехало клиенту» — DELIVERY по дате ОТГРУЗКИ', () => {
+  it('«уехало клиенту» — DELIVERY+PICKUP+DELIVERED по дате ОТГРУЗКИ', () => {
     // Заказ мог быть создан неделю назад, а уехать сегодня: фильтр по дате
-    // создания дал бы совсем другой список.
+    // создания дал бы совсем другой список. PICKUP — посылки в ПВЗ: один
+    // DELIVERY давал 257 при кабинетных 381 (сверка 09-08-2026, FBS
+    // 148655119). DELIVERED — уже выкупленное всё равно уезжало в свой день.
     const def = reportDefinition(REPORT.SHIPPED_TODAY);
-    expect(def.statuses).toEqual([ORDER_STATUS.DELIVERY]);
+    expect(def.statuses).toEqual([
+      ORDER_STATUS.DELIVERY,
+      ORDER_STATUS.PICKUP,
+      ORDER_STATUS.DELIVERED,
+    ]);
     expect(def.dateFilter).toBe('supplierShipmentDate');
+    // «Всего» — снимок «сейчас в пути», DELIVERED разъехал бы его с кабинетом.
+    expect(def.unboundedStatuses).toEqual([ORDER_STATUS.DELIVERY, ORDER_STATUS.PICKUP]);
+  });
+
+  it('effectiveDefinition подменяет статусы только на «Всего» и только где есть срезовый набор', () => {
+    const shipped = reportDefinition(REPORT.SHIPPED_TODAY);
+    const redeemed = reportDefinition(REPORT.REDEEMED);
+
+    expect(effectiveDefinition(shipped, true).statuses).toEqual([
+      ORDER_STATUS.DELIVERY,
+      ORDER_STATUS.PICKUP,
+    ]);
+    // Ограниченный период и определения без поля возвращаются как есть.
+    expect(effectiveDefinition(shipped, false)).toBe(shipped);
+    expect(effectiveDefinition(redeemed, true)).toBe(redeemed);
+  });
+
+  it('DELIVERED не проходит отбор среза «Всего»', () => {
+    // Эффективный набор идёт и в запрос, и в отбор ответа: заказ с края окна
+    // или сменивший статус в гонке не должен пролезть в снимок «в пути».
+    const snapshot = effectiveDefinition(reportDefinition(REPORT.SHIPPED_TODAY), true);
+    expect(matchesDefinition(snapshot, { status: 'DELIVERED' })).toBe(false);
+    expect(matchesDefinition(snapshot, { status: 'PICKUP' })).toBe(true);
   });
 
   it('«выкуплено» — DELIVERED по updatedAt', () => {

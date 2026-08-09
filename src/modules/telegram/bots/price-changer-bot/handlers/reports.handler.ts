@@ -301,6 +301,18 @@ export class ReportsHandler {
         return;
       }
 
+      // «Уехало клиенту» тоже файлом: продавец сверяет список с кабинетом, а
+      // список в текст не помещается. options нужны срезу «Всего» — под
+      // deep_history он идёт через архив. «Другой день» приходит сюда же
+      // через handlePendingDay — отдельной ветки ему не нужно.
+      if (key === REPORT.SHIPPED_TODAY) {
+        await this.sendExport(
+          ctx,
+          await this.reports.exportShipped(store, period, new Date(), { deepHistory }),
+        );
+        return;
+      }
+
       const result = await this.reports.build(store, key, new Date(), period, { deepHistory });
       await ctx.reply(formatReport(result), htmlOptions());
     } catch (error) {

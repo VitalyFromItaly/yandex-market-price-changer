@@ -1,3 +1,4 @@
+import type { YandexMarketDocument } from '../../../../database/schemas/yandex-market.schema';
 import type { IScheduledReportJob } from '../services/report-scheduler.service';
 
 import { OnQueueError, OnQueueFailed, Process, Processor } from '@nestjs/bull';
@@ -8,7 +9,10 @@ import { ReportScheduleService } from '../../../../database/services/report-sche
 import { UserAccessService } from '../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../../errors/error-reporter.service';
-import { OrderReportsService } from '../../../yandex/reports/order-reports.service';
+import {
+  OrderReportsService,
+  type IReportExport,
+} from '../../../yandex/reports/order-reports.service';
 import { formatProfitReport } from '../../../yandex/reports/profit-message';
 import { ProfitService } from '../../../yandex/reports/profit.service';
 import { formatReport } from '../../../yandex/reports/report-message';
@@ -124,12 +128,9 @@ export class ReportsProcessor {
       const saved = await this.schedules.findOne({ telegramUserId, botId, reportKey });
       const period: IReportPeriod = { key: schedulePeriod(saved?.period) };
 
-      // Две выгрузки уходят файлом, ровно как по кнопке: пустая — текстом.
-      if (key === REPORT.IN_TRANSIT || key === REPORT.RETURNING) {
-        const exported =
-          key === REPORT.IN_TRANSIT
-            ? await this.reports.exportInTransit(store)
-            : await this.reports.exportReturning(store, period);
+      // Три выгрузки уходят файлом, ровно как по кнопке: пустая — текстом.
+      if (key === REPORT.IN_TRANSIT || key === REPORT.RETURNING || key === REPORT.SHIPPED_TODAY) {
+        const exported = await this.exportFor(key, store, period);
         if (exported.empty) {
           await bot.telegraf.telegram.sendMessage(
             account.telegramChatId,
@@ -188,5 +189,20 @@ export class ReportsProcessor {
         action: `рассылка отчёта ${reportKey}`,
       });
     }
+  }
+
+  /**
+   * Какой выгрузкой уходит отчёт. deep_history сюда не едет намеренно:
+   * SCHEDULE_PERIODS не содержит «Всего», архивный путь из рассылки
+   * недостижим по построению.
+   */
+  private exportFor(
+    key: TReportKey,
+    store: YandexMarketDocument,
+    period: IReportPeriod,
+  ): Promise<IReportExport> {
+    if (key === REPORT.IN_TRANSIT) return this.reports.exportInTransit(store);
+    if (key === REPORT.RETURNING) return this.reports.exportReturning(store, period);
+    return this.reports.exportShipped(store, period);
   }
 }

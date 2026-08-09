@@ -8,6 +8,7 @@ import {
   buildReturningWorkbook,
   formatItems,
   returningFileName,
+  shippedFileName,
   workbookFileName,
 } from '../../src/modules/yandex/reports/report-workbook';
 import type { IReportOrder } from '../../src/modules/yandex/reports/order-reports.service';
@@ -159,6 +160,7 @@ describe('Временных файлов не существует', () => {
     // неразличимы, а Telegram при совпадении содержимого отдаёт ранее
     // загруженный документ вместе с его старым именем.
     expect(workbookFileName('29-07-2026', '13:00')).toBe('edet-do-klienta-29-07-2026-1300.xlsx');
+    expect(shippedFileName('29-07-2026', '13:00')).toBe('uehalo-klientu-29-07-2026-1300.xlsx');
   });
 });
 

@@ -12,6 +12,7 @@ import {
   REPORT,
   RETURN_ACTIVE_STATUSES,
   RETURN_SHIPMENT_STATUSES,
+  effectiveDefinition,
   isCancelled,
   matchesDefinition,
   queryStatuses,
@@ -55,6 +56,7 @@ import {
   buildOrdersWorkbook,
   buildReturningWorkbook,
   returningFileName,
+  shippedFileName,
   workbookFileName,
 } from './report-workbook';
 import { formatReport } from './report-message';
@@ -149,6 +151,11 @@ export interface IReportResult {
   period: IReportPeriod;
   /** Есть только у отчётов с `usesReturnsApi`. */
   returns?: IReturnsSummary;
+  /**
+   * Заказы собраны через архив stats/orders — текст «Всего» меняет оговорку
+   * «не старше 30 дней» на объяснение, что срез полный.
+   */
+  viaArchive?: boolean;
 }
 
 /**
@@ -201,7 +208,9 @@ export class OrderReportsService {
       count += returns.count;
     }
 
-    return { key, title: definition.title, count, totals, orders, period, returns };
+    const viaArchive = this.usesArchive(definition, period, now, options);
+
+    return { key, title: definition.title, count, totals, orders, period, returns, viaArchive };
   }
 
   /**
@@ -249,30 +258,17 @@ export class OrderReportsService {
     period: IReportPeriod,
     options: IReportBuildOptions = {},
   ): Promise<IReportOrder[]> {
-    /**
-     * Архивный путь (stats/orders) — когда включена фича deep_history, период
-     * начинается ГЛУБЖЕ 30-дневного окна getOrders и фильтр даты определения
-     * архиву по силам. Ему по силам не всё: у stats нет фильтра по дате
-     * ОТГРУЗКИ (shipped_today) и нет подстатусов (returning) — эти отчёты
-     * честно остаются в 30-дневном окне и под флагом.
-     *
-     * Период идёт через ОДИН источник целиком: свежий — getOrders, глубокий —
-     * архив. Сшивать источники внутри одного периода нельзя — формы заказов
-     * различаются системно, и дедуп по id не спас бы от расхождения денег.
-     */
-    const deepCapable =
-      definition.dateFilter === 'creationDate' || definition.dateFilter === 'updatedAt';
-    const useStats =
-      !!options.deepHistory &&
-      deepCapable &&
-      !isUnbounded(period) &&
-      periodAgeDays(period, now) > HISTORY_WINDOW_DAYS;
+    // «Всего» может иметь собственный срезовый набор статусов — эффективное
+    // определение подставляется ОДИН раз и дальше идёт и в запрос, и в отбор
+    // ответа, чтобы они не могли разойтись.
+    const effective = effectiveDefinition(definition, isUnbounded(period));
+    const useStats = this.usesArchive(effective, period, now, options);
 
     // Период проверяем ДО сети — но только там, где он вообще применяется.
     // У среза «что сейчас в пути» фильтра даты нет, и отклонять его из-за
     // слишком старой даты было бы отказом на ровном месте. На архивном пути
     // возраст не ограничен — остаётся только упорядоченность границ.
-    if (definition.dateFilter !== 'none' && !isUnbounded(period)) {
+    if (effective.dateFilter !== 'none' && !isUnbounded(period)) {
       if (useStats) assertPeriodOrdered(period, now);
       else assertPeriodSupported(period, now);
     }
@@ -283,28 +279,29 @@ export class OrderReportsService {
      * `dateFilter: 'none'` — срез «что сейчас в пути», у него периода нет по
      * определению. `PERIOD.ALL` — продавец сам попросил без ограничения; для
      * заказов это не «за всё время», а «сколько отдаст Partner API» (он хранит
-     * около 30 дней), и текст отчёта обязан это проговорить.
+     * около 30 дней — если срез не ушёл в архив), и текст отчёта обязан это
+     * проговорить.
      */
-    const unbounded = definition.dateFilter === 'none' || isUnbounded(period);
+    const noDates = effective.dateFilter === 'none' || isUnbounded(period);
     // Архив тоже режется теми же 30-дневными окнами: лимит длины интервала в
     // спеке stats не заявлен, но резать безопасно и бесплатно — дедуп по id
     // уже есть (диагностический скрипт пробует и длинный интервал).
-    const windows = unbounded ? [null] : periodWindows(period, now);
+    const windows = noDates ? [null] : periodWindows(period, now);
 
     const collected: IReportOrder[] = [];
     const seen = new Set<number>();
 
     for (const window of windows) {
       const pages = useStats
-        ? client.iterateOrdersStats(this.statsQuery(definition, window))
-        : client.iterateOrders(this.ordersQuery(definition, window, now));
+        ? client.iterateOrdersStats(this.statsQuery(effective, window))
+        : client.iterateOrders(this.ordersQuery(effective, window, now));
 
       for await (const page of pages) {
         for (const raw of page) {
           // Архивная форма заказа другая — в отчётную её переводит маппер;
           // дальше оба пути неразличимы (matchesDefinition, дедуп, деньги).
           const order = useStats ? statsOrderToReportOrder(raw) : (raw as IReportOrder);
-          if (!matchesDefinition(definition, order)) continue;
+          if (!matchesDefinition(effective, order)) continue;
 
           // Дедупликация обязательна: границы соседних окон Яндекс трактует
           // сам (диапазон короче суток он растягивает до суток), и заказ с
@@ -320,6 +317,42 @@ export class OrderReportsService {
     }
 
     return collected;
+  }
+
+  /**
+   * Идёт ли сбор через архив stats/orders. ОДНО место решения: то же условие
+   * нужно и collectOrders (выбор метода), и build (оговорка в тексте отчёта) —
+   * два независимых вычисления однажды разойдутся.
+   *
+   * Два случая:
+   * - ограниченный период глубже 30 дней — прежний путь deep_history; архиву
+   *   по силам не всё: у stats нет фильтра по дате ОТГРУЗКИ (конкретные дни
+   *   shipped_today) и нет подстатусов (returning) — те остаются в 30-дневном
+   *   окне даже под флагом;
+   * - «Всего» у определения с собственным срезовым набором (unboundedStatuses):
+   *   это снимок «сейчас», getOrders без дат отдаёт ~30 дней, архив — всё.
+   *   Дат в запрос архива не уходит, поэтому отсутствие у stats фильтра даты
+   *   отгрузки здесь не мешает. Дискриминатор — наличие unboundedStatuses, не
+   *   отдельный флаг: «у Всего свой срезовый набор» и «Всего — снимок, которому
+   *   нужна глубина» — одно продуктовое решение (у REDEEMED «всё выкупленное за
+   *   всю историю» не нужно никому — довод 1979 возвратов).
+   *
+   * Период идёт через ОДИН источник целиком: сшивать источники внутри одного
+   * периода нельзя — формы заказов различаются системно, и дедуп по id не спас
+   * бы от расхождения денег.
+   */
+  private usesArchive(
+    definition: IReportDefinition,
+    period: IReportPeriod,
+    now: Date,
+    options: IReportBuildOptions,
+  ): boolean {
+    if (!options.deepHistory) return false;
+    if (isUnbounded(period)) return !!definition.unboundedStatuses;
+
+    const deepCapable =
+      definition.dateFilter === 'creationDate' || definition.dateFilter === 'updatedAt';
+    return deepCapable && periodAgeDays(period, now) > HISTORY_WINDOW_DAYS;
   }
 
   /**
@@ -478,6 +511,36 @@ export class OrderReportsService {
       empty: false,
       buffer: workbook.buffer,
       filename: workbookFileName(moscowDateParam(now), moscowClock(now)),
+      caption: formatReport(result, now) + truncated,
+    };
+  }
+
+  /**
+   * Выгрузка «уехало клиенту» файлом: периодная, как exportReturning, книга
+   * заказов — как exportInTransit. `options` нужны срезу «Всего»: под флагом
+   * deep_history он идёт через архив.
+   */
+  public async exportShipped(
+    store: YandexMarketDocument,
+    period: IReportPeriod = DEFAULT_PERIOD,
+    now: Date = new Date(),
+    options: IReportBuildOptions = {},
+  ): Promise<IReportExport> {
+    const result = await this.build(store, REPORT.SHIPPED_TODAY, now, period, options);
+
+    if (!result.count) {
+      return { empty: true, message: formatReport(result, now) };
+    }
+
+    const workbook = buildOrdersWorkbook(result.orders);
+    const truncated = workbook.truncated
+      ? `\n\n⚠️ В файл попали первые ${workbook.rows} заказов из ${result.count}: остальные не поместились.`
+      : '';
+
+    return {
+      empty: false,
+      buffer: workbook.buffer,
+      filename: shippedFileName(moscowDateParam(now), moscowClock(now)),
       caption: formatReport(result, now) + truncated,
     };
   }

@@ -58,6 +58,12 @@ async function build(
       filename: 'edet-obratno-03-08-2026-1000.xlsx',
       caption: 'Едет обратно',
     })),
+    exportShipped: vi.fn(async () => ({
+      empty: false,
+      buffer: Buffer.from('xlsx'),
+      filename: 'uehalo-klientu-03-08-2026-1000.xlsx',
+      caption: 'Уехало клиенту',
+    })),
   };
   const yandexMarketService = {
     findByTelegramUser: vi.fn(async () => ('store' in opts ? opts.store : STORE)),
@@ -371,6 +377,57 @@ describe('«Едет обратно» файлом', () => {
 
     expect(reports.exportReturning).not.toHaveBeenCalled();
     expect(ctx.texts().at(-1)).toContain('за какой период');
+  });
+});
+
+describe('«Уехало клиенту» файлом', () => {
+  it('уходит документом через exportShipped с периодом и флагом глубокой истории', async () => {
+    const { handler, reports } = await build();
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.SHIPPED_TODAY, { key: 'month' } as never);
+
+    // Записи доступа нет (администратор) → deep_history открыт умолчанием.
+    expect(reports.exportShipped).toHaveBeenCalledWith(
+      expect.anything(),
+      { key: 'month' },
+      expect.any(Date),
+      { deepHistory: true },
+    );
+    // Отчёт строится ВНУТРИ выгрузки — прямой build() означал бы второй обход
+    // страниц Partner API на одно нажатие.
+    expect(reports.build).not.toHaveBeenCalled();
+    expect(ctx.replyWithDocument).toHaveBeenCalledTimes(1);
+    const [doc] = ctx.replyWithDocument.mock.calls[0] as never[];
+    expect((doc as { filename: string }).filename).toContain('uehalo-klientu');
+  });
+
+  it('пустая выгрузка отвечает текстом, а не пустым файлом', async () => {
+    const { handler, reports } = await build();
+    reports.exportShipped.mockResolvedValueOnce({
+      empty: true,
+      message: 'За этот период данных нет',
+    } as never);
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.SHIPPED_TODAY, DEFAULT_PERIOD);
+
+    expect(ctx.replyWithDocument).not.toHaveBeenCalled();
+    expect(ctx.texts().at(-1)).toContain('данных нет');
+  });
+
+  it('закрытая фича deep_history выключает архив, но не выгрузку', async () => {
+    const { handler, reports } = await build({ features: { deep_history: false } });
+    const ctx = fakeCtx();
+
+    await handler.run(ctx as never, REPORT.SHIPPED_TODAY, DEFAULT_PERIOD);
+
+    expect(reports.exportShipped).toHaveBeenCalledWith(
+      expect.anything(),
+      DEFAULT_PERIOD,
+      expect.any(Date),
+      { deepHistory: false },
+    );
   });
 });
 

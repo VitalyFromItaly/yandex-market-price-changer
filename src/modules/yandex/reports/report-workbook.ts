@@ -111,6 +111,11 @@ export function workbookFileName(dateParam: string, timeParam: string): string {
   return `edet-do-klienta-${dateParam}-${timeParam.replace(':', '')}.xlsx`;
 }
 
+/** Имя файла «уехало клиенту» — дата и время по той же причине, что выше. */
+export function shippedFileName(dateParam: string, timeParam: string): string {
+  return `uehalo-klientu-${dateParam}-${timeParam.replace(':', '')}.xlsx`;
+}
+
 const RETURNING_HEADERS = [
   'Номер заказа',
   'Тип',

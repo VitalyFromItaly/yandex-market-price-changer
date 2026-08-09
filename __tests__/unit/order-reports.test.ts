@@ -60,7 +60,43 @@ describe('Отчёт «уехало клиенту» (TASK-023)', () => {
     expect(queries[0].supplierShipmentDateFrom).toBe('29-07-2026');
     expect(queries[0].supplierShipmentDateTo).toBe('29-07-2026');
     expect(queries[0]).not.toHaveProperty('fromDate');
-    expect(queries[0].status).toEqual(['DELIVERY']);
+    // DELIVERED — намеренно: заказ, отгруженный во вторник и уже выкупленный,
+    // всё равно уехал в тот вторник. PICKUP — посылки в ПВЗ (кабинетная
+    // сверка 09-08-2026: DELIVERY 257 + PICKUP 122 при 381 в кабинете).
+    expect(queries[0].status).toEqual(['DELIVERY', 'PICKUP', 'DELIVERED']);
+  });
+
+  it('за период считает и уже доставленные отгрузки', async () => {
+    const { reports } = await service({
+      orders: [
+        { id: 1, status: 'DELIVERY', itemsTotal: 1000 },
+        { id: 2, status: 'PICKUP', itemsTotal: 500 },
+        { id: 3, status: 'DELIVERED', itemsTotal: 700 },
+      ],
+    });
+
+    const result = await reports.build(STORE, REPORT.SHIPPED_TODAY, NOW);
+    expect(result.count).toBe(3);
+  });
+
+  it('«Всего» — срез «в пути»: без дат, DELIVERY+PICKUP, DELIVERED отсеян', async () => {
+    // Снимок сверяется с кабинетным «в доставке», и DELIVERED разъехал бы его.
+    // DELIVERED в ответе (край окна, гонка статуса) тоже не должен пролезть:
+    // эффективный набор идёт и в запрос, и в отбор ответа из одного места.
+    const { reports, queries } = await service({
+      orders: [
+        { id: 1, status: 'DELIVERY', itemsTotal: 1000 },
+        { id: 2, status: 'PICKUP', itemsTotal: 500 },
+        { id: 3, status: 'DELIVERED', itemsTotal: 700 },
+      ],
+    });
+
+    const result = await reports.build(STORE, REPORT.SHIPPED_TODAY, NOW, { key: PERIOD.ALL });
+
+    expect(queries[0].status).toEqual(['DELIVERY', 'PICKUP']);
+    expect(queries[0]).not.toHaveProperty('supplierShipmentDateFrom');
+    expect(result.count).toBe(2);
+    expect(result.viaArchive).toBeFalsy();
   });
 
   it('считает количество и обе суммы', async () => {
@@ -366,6 +402,62 @@ describe('Выгрузка «едет до клиента» файлом (TASK-0
       expect(result.caption).toContain('Заказов');
       expect(result.caption).toContain('на 29-07-2026 13:00 МСК');
       expect(result.caption).not.toContain('не поместились');
+    }
+  });
+});
+
+describe('Выгрузка «уехало клиенту» файлом', () => {
+  it('пустой результат отдаёт сообщение, а не пустой файл', async () => {
+    const { reports } = await service();
+    const result = await reports.exportShipped(STORE, { key: PERIOD.TODAY }, NOW);
+
+    expect(result.empty).toBe(true);
+    if (result.empty) expect(result.message).toContain('данных нет');
+  });
+
+  it('непустой результат отдаёт буфер, имя файла и подпись; период доезжает до запроса', async () => {
+    const { reports, queries } = await service({
+      orders: [{ id: 1, status: 'DELIVERY', itemsTotal: 1000, deliveryTotal: 100 }],
+    });
+    const result = await reports.exportShipped(STORE, { key: PERIOD.TODAY }, NOW);
+
+    expect(queries[0].supplierShipmentDateFrom).toBe('29-07-2026');
+    expect(result.empty).toBe(false);
+    if (!result.empty) {
+      expect(Buffer.isBuffer(result.buffer)).toBe(true);
+      expect(result.filename).toBe('uehalo-klientu-29-07-2026-1300.xlsx');
+      expect(result.caption).toContain('Уехало клиенту');
+    }
+  });
+
+  it('на «Всего» подпись объясняет источник: архив или окно в 30 дней', async () => {
+    const orders = [{ id: 1, status: 'DELIVERY', itemsTotal: 1000 }];
+
+    const plain = await (await service({ orders })).reports.exportShipped(
+      STORE,
+      { key: PERIOD.ALL },
+      NOW,
+    );
+    if (!plain.empty) expect(plain.caption).toContain('не старше');
+
+    // Архивный путь мокается через iterateOrdersStats — заглушка iterateOrders
+    // не должна вызываться вовсе.
+    const { factory, queries } = buildService({ orders: [] });
+    const client = factory.forStore(STORE) as unknown as Record<string, unknown>;
+    client.iterateOrdersStats = async function* () {
+      yield [{ id: 1, status: 'DELIVERY', items: [] }];
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [OrderReportsService, { provide: YandexClientFactory, useValue: factory }],
+    }).compile();
+    const viaArchive = await moduleRef
+      .get(OrderReportsService)
+      .exportShipped(STORE, { key: PERIOD.ALL }, NOW, { deepHistory: true });
+
+    expect(queries).toHaveLength(0);
+    if (!viaArchive.empty) {
+      expect(viaArchive.caption).toContain('по архиву Маркета');
+      expect(viaArchive.caption).not.toContain('не старше');
     }
   });
 });

@@ -220,6 +220,14 @@ export interface IReportDefinition {
   readonly dateFilter: TDateFilter;
   /** Нужно ли дополнительно опрашивать метод возвратов. */
   readonly usesReturnsApi: boolean;
+  /**
+   * Статусы для «Всего» (PERIOD.ALL), когда «Всего» — не «те же события без
+   * дат», а ДРУГОЙ вопрос. У «Уехало клиенту» за период — события отгрузки,
+   * включая уже доставленные; «Всего» — снимок «сейчас в пути», и DELIVERED в
+   * нём разъехался бы с кабинетным «в доставке». Отсутствие поля = набор один
+   * на все периоды.
+   */
+  readonly unboundedStatuses?: readonly TOrderStatus[];
 }
 
 export const REPORT = {
@@ -265,7 +273,15 @@ export const PLACED_STATUSES: readonly TOrderStatus[] = [
 export const REPORT_DEFINITIONS: Readonly<Record<TReportKey, IReportDefinition>> = {
   [REPORT.SHIPPED_TODAY]: {
     title: 'Уехало клиенту',
-    statuses: [ORDER_STATUS.DELIVERY],
+    // «Уехало за период» — события ОТГРУЗКИ: заказ, отгруженный во вторник и
+    // уже выкупленный, всё равно уехал в тот вторник — поэтому DELIVERED
+    // здесь есть, иначе отчёты за прошлые дни худели по мере доставки.
+    // PICKUP — посылки в ПВЗ: один DELIVERY давал 257 при кабинетных 381
+    // (сверка 09-08-2026, FBS 148655119: DELIVERY 257 + PICKUP 122 = 379).
+    statuses: [ORDER_STATUS.DELIVERY, ORDER_STATUS.PICKUP, ORDER_STATUS.DELIVERED],
+    // «Всего» — снимок «сейчас в пути», он и сверяется с кабинетным
+    // «в доставке». DELIVERED сюда нельзя: снимок перестал бы сходиться.
+    unboundedStatuses: [ORDER_STATUS.DELIVERY, ORDER_STATUS.PICKUP],
     substatuses: [],
     // Именно дата отгрузки: заказ мог быть создан неделю назад, а уехать
     // сегодня — фильтр по дате создания дал бы совсем другой список.
@@ -363,6 +379,23 @@ export function reportDefinition(key: TReportKey): IReportDefinition {
  */
 export function queryStatuses(definition: IReportDefinition): TOrderStatus[] {
   return definition.statuses.filter((status) => QUERYABLE_STATUSES.includes(status));
+}
+
+/**
+ * Определение с учётом периода: у «Всего» может быть собственный набор статусов
+ * (`unboundedStatuses`).
+ *
+ * Возвращает НОВОЕ определение, а не флаг вторым параметром: так
+ * `queryStatuses`, `toStatsStatuses` и `matchesDefinition` получают эффективный
+ * набор из ОДНОГО места и не могут разойтись между запросом и отбором ответа —
+ * иначе DELIVERED с краёв окон просочился бы в снимок «сейчас в пути».
+ */
+export function effectiveDefinition(
+  definition: IReportDefinition,
+  unbounded: boolean,
+): IReportDefinition {
+  if (!unbounded || !definition.unboundedStatuses) return definition;
+  return { ...definition, statuses: definition.unboundedStatuses };
 }
 
 /**

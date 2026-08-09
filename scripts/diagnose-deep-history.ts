@@ -36,22 +36,31 @@ import { ORDER_STATUS } from '../src/modules/yandex/reports/report-status-map';
  * Скрипт ТОЛЬКО ЧИТАЕТ. Запуск:
  *   npx ts-node scripts/diagnose-deep-history.ts --user=<telegramUserId>
  *   npx ts-node scripts/diagnose-deep-history.ts --user=<id> --from=01-07-2026 --to=30-07-2026
+ *   npx ts-node scripts/diagnose-deep-history.ts --user=<id> --snapshot
+ *
+ * `--snapshot` — сверка среза «сейчас в пути» (DELIVERY+PICKUP БЕЗ дат) между
+ * getOrders и архивом: условие включения архивного маршрута «Уехало клиенту»
+ * на «Всего». Периодные аргументы в этом режиме не участвуют.
  */
 
 const DEFAULT_BASE_URL = 'https://api.partner.market.yandex.ru';
 
-function parseArgs(argv: string[], now: Date): { user: string; from: ICalendarDate; to: ICalendarDate } {
+function parseArgs(
+  argv: string[],
+  now: Date,
+): { user: string; from: ICalendarDate; to: ICalendarDate; snapshot: boolean } {
   const user = argv.find((a) => a.startsWith('--user='))?.split('=')[1];
   if (!user) throw new Error('Нужен --user=<telegramUserId>.');
 
   const fromArg = argv.find((a) => a.startsWith('--from='))?.split('=')[1];
   const toArg = argv.find((a) => a.startsWith('--to='))?.split('=')[1];
+  const snapshot = argv.includes('--snapshot');
 
   const to = toArg ? parseDayInput(toArg) : moscowDay(now);
   const from = fromArg ? parseDayInput(fromArg) : shiftDays(moscowDay(now), -29);
   if (!from || !to) throw new Error('Не разобрал --from/--to. Формат: ДД-ММ-ГГГГ.');
 
-  return { user, from, to };
+  return { user, from, to, snapshot };
 }
 
 interface ISetSummary {
@@ -204,9 +213,79 @@ async function compareSet(
   console.log();
 }
 
+/**
+ * Срез «сейчас в пути» БЕЗ дат обоими методами — гейт архивного маршрута
+ * «Уехало клиенту» на «Всего». У getOrders без дат действует неявный
+ * `fromDate = 30 дней назад`, у архива окна нет вовсе, поэтому «только в
+ * архиве» здесь не обязательно дефект — это могут быть заказы в пути старше
+ * 30 дней, ради которых маршрут и существует. А вот деньги по ПЕРЕСЕЧЕНИЮ
+ * составов обязаны сойтись до рубля.
+ */
+async function compareSnapshot(client: YandexApiClient): Promise<void> {
+  console.log('═'.repeat(72));
+  console.log('  СРЕЗ «СЕЙЧАС В ПУТИ» (DELIVERY+PICKUP, без дат)');
+  console.log('═'.repeat(72));
+
+  const statuses = [ORDER_STATUS.DELIVERY, ORDER_STATUS.PICKUP];
+
+  const viaGet: IReportOrder[] = [];
+  for await (const page of client.iterateOrders({ status: statuses })) {
+    viaGet.push(...(page as IReportOrder[]));
+  }
+
+  const viaStats: IReportOrder[] = [];
+  for await (const page of client.iterateOrdersStats({ statuses: toStatsStatuses(statuses) })) {
+    viaStats.push(...page.map(statsOrderToReportOrder));
+  }
+
+  const a = summarize(viaGet);
+  const b = summarize(viaStats);
+  printSummary('getOrders  ', a);
+  printSummary('statsOrders', b);
+
+  const missingInStats = diffIds(a.ids, b.ids);
+  const olderThanWindow = diffIds(b.ids, a.ids);
+  if (missingInStats.length) {
+    console.log(`⚠️ Нет в архиве (${missingInStats.length}+): ${missingInStats.join(', ')}`);
+  }
+  if (olderThanWindow.length) {
+    console.log(
+      `ℹ️ Только в архиве — вероятно, в пути старше 30 дней (${olderThanWindow.length}+): ` +
+        olderThanWindow.join(', '),
+    );
+  }
+
+  // Деньги сверяются по пересечению: хвост старше 30 дней архиву законен.
+  const common = new Set([...a.ids].filter((id) => b.ids.has(id)));
+  const sumBy = (orders: IReportOrder[]) =>
+    orders
+      .filter((order) => order.id != null && common.has(order.id))
+      .reduce(
+        (acc, order) => {
+          const totals = orderTotals(order);
+          return { items: acc.items + totals.items, withDelivery: acc.withDelivery + totals.withDelivery };
+        },
+        { items: 0, withDelivery: 0 },
+      );
+  const moneyGet = sumBy(viaGet);
+  const moneyStats = sumBy(viaStats);
+  console.log(`Пересечение: ${common.size} заказов`);
+  console.log(`   getOrders:   товары ${rub(moneyGet.items)}, с доставкой ${rub(moneyGet.withDelivery)}`);
+  console.log(`   statsOrders: товары ${rub(moneyStats.items)}, с доставкой ${rub(moneyStats.withDelivery)}`);
+
+  const moneyMatch =
+    Math.round(moneyGet.items) === Math.round(moneyStats.items) &&
+    Math.round(moneyGet.withDelivery) === Math.round(moneyStats.withDelivery);
+  console.log(
+    moneyMatch && !missingInStats.length
+      ? '✅ СОШЛОСЬ: деньги по пересечению совпадают до рубля, в архиве есть всё, что видит getOrders.'
+      : '❌ РАСХОЖДЕНИЕ: архивный маршрут «Всего» включать НЕЛЬЗЯ.',
+  );
+}
+
 async function main(): Promise<void> {
   const now = new Date();
-  const { user, from, to } = parseArgs(process.argv.slice(2), now);
+  const { user, from, to, snapshot } = parseArgs(process.argv.slice(2), now);
 
   const url = process.env.MONGODB_URL;
   const dbName = process.env.MONGODB_DATABASE;
@@ -228,6 +307,15 @@ async function main(): Promise<void> {
     { token: store.token, campaignId: store.campaign_id, businessId: store.business_id },
     process.env.YANDEX_MARKET_BASE_URL ?? DEFAULT_BASE_URL,
   );
+
+  if (snapshot) {
+    console.log('─'.repeat(72));
+    console.log(`  МАГАЗИН: ${store.name ?? '(без названия)'}`);
+    console.log('─'.repeat(72));
+    console.log();
+    await compareSnapshot(client);
+    return;
+  }
 
   console.log('─'.repeat(72));
   console.log(`  ПЕРИОД:  ${calendarDateParam(from)} — ${calendarDateParam(to)} (МСК)`);

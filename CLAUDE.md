@@ -442,6 +442,15 @@ each failure was silent.
   Both send paths branch on `REPORT.RETURNING` (handler and `reports.processor.ts`); the digest reads
   the saved period **before** the export branch now, since this export, unlike IN_TRANSIT, is
   period-aware.
+- **«Уехало клиенту» тоже уходит файлом** (`exportShipped` → `buildOrdersWorkbook`,
+  `uehalo-klientu-…xlsx`) — обе ветки, кнопка и рассылка (`exportFor` в `reports.processor.ts`).
+  Его определение — `DELIVERY+PICKUP+DELIVERED` по дате отгрузки: `DELIVERED` намеренно, иначе
+  отчёт за прошлый день худел по мере доставки; один `DELIVERY` давал 257 при кабинетных 381
+  (сверка 09-08-2026, FBS 148655119: DELIVERY 257 + PICKUP 122). «Всего» — ДРУГОЙ вопрос: снимок
+  «сейчас в пути» без `DELIVERED` (`unboundedStatuses` в определении, подставляется через
+  `effectiveDefinition` — одна точка и для запроса, и для отбора ответа), под флагом `deep_history`
+  он идёт через архив `stats/orders` **без дат** (у getOrders неявный `fromDate` = 30 дней назад),
+  и оговорка «не старше 30 дней» заменяется на «по архиву Маркета» (`viaArchive` в результате).
 
 ### Profit
 
@@ -1379,8 +1388,11 @@ Inline-кодеки (`pq:`, `fb:`, `pay:`) — чистые модули ряд�
 - **`deep_history`: архив `POST /v2/campaigns/{id}/stats/orders`, а НЕ мифический
   `/v1/businesses/{id}/orders`** — того эндпоинта в спеке НЕ существует, декларация
   `businessOrdersPath` удалена. Скоуп: ✅ `redeemed`/`profit` (updatedAt → `updateFrom/To`),
-  ✅ `tariff_calc` (creationDate → `dateFrom/To`); ❌ `shipped_today` (у stats нет фильтра даты
-  отгрузки) и ❌ `returning` (нет подстатусов) — честно остаются в 30 днях и под флагом.
+  ✅ `tariff_calc` (creationDate → `dateFrom/To`); `shipped_today` — частично: конкретные периоды
+  ❌ остаются в 30-дневном окне (у stats нет фильтра даты отгрузки), но «Всего» — срез «в пути»
+  `DELIVERY+PICKUP` — идёт через архив **без дат вовсе**, так что ограничение его не касается
+  (маршрут `usesArchive` в `order-reports.service.ts`, дискриминатор — `unboundedStatuses` в
+  определении); ❌ `returning` (нет подстатусов) — честно остаётся в 30 днях и под флагом.
   - **Форма заказа другая** (`OrdersStatsOrderDTO`) — маппер `reports/stats-orders.ts`:
     статусы через `Record` по полному enum (`CANCELLED_*` → CANCELLED, `LOST` → UNKNOWN,
     **`PARTIALLY_DELIVERED` → PARTIALLY_RETURNED** — денежно-безопасное направление, не завышать

@@ -205,12 +205,49 @@ describe('Глубокая история: выбор источника', () =>
     );
   });
 
-  it('«Уехало клиенту» (дата отгрузки) не имеет архива и под флагом', async () => {
+  it('«Уехало клиенту»: глубокий ДЕНЬ не имеет архива и под флагом', async () => {
     // У stats/orders нет фильтра по дате отгрузки — честный отказ лучше
-    // правдоподобно неверного отчёта по другому фильтру.
+    // правдоподобно неверного отчёта по другому фильтру. Архив открыт этому
+    // отчёту только на «Всего», где дат в запросе нет вовсе.
     const { reports } = await service();
     await expect(
       reports.build(STORE, REPORT.SHIPPED_TODAY, NOW, DEEP_DAY, { deepHistory: true }),
     ).rejects.toThrow(/не старше 30 дней/);
+  });
+
+  it('«Уехало клиенту» на «Всего» + флаг → архив без дат, срезовые статусы', async () => {
+    // Снимок «сейчас в пути»: getOrders без дат отдаёт ~30 дней, архив — всё.
+    const { reports, statsQueries, orderQueries } = await service({
+      stats: [
+        { ...STATS_ORDER, status: 'DELIVERY' },
+        { ...STATS_ORDER, id: 99, status: 'DELIVERED' },
+      ],
+    });
+    const result = await reports.build(
+      STORE,
+      REPORT.SHIPPED_TODAY,
+      NOW,
+      { key: PERIOD.ALL },
+      { deepHistory: true },
+    );
+
+    expect(orderQueries).toHaveLength(0);
+    expect(statsQueries).toHaveLength(1);
+    expect(statsQueries[0].statuses).toEqual(['DELIVERY', 'PICKUP']);
+    expect(statsQueries[0]).not.toHaveProperty('dateFrom');
+    expect(statsQueries[0]).not.toHaveProperty('updateFrom');
+    // DELIVERED из архива в снимок не пролезает: эффективный набор один и в
+    // запросе, и в отборе ответа.
+    expect(result.count).toBe(1);
+    expect(result.viaArchive).toBe(true);
+  });
+
+  it('«Уехало клиенту» на «Всего» без флага остаётся на getOrders', async () => {
+    const { reports, statsQueries, orderQueries } = await service({ orders: [] });
+    const result = await reports.build(STORE, REPORT.SHIPPED_TODAY, NOW, { key: PERIOD.ALL });
+
+    expect(statsQueries).toHaveLength(0);
+    expect(orderQueries).toHaveLength(1);
+    expect(result.viaArchive).toBeFalsy();
   });
 });
