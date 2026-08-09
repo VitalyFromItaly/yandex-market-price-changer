@@ -77,7 +77,7 @@ describe('ProfitReportProcessor', () => {
       await findByTelegramUser.mock.results[0].value,
       DEFAULT_PERIOD,
       expect.any(Date),
-      { tariffEstimate: false },
+      { tariffEstimate: false, deepHistory: false },
     );
 
     const [chatId, text] = sendMessage.mock.calls[0];
@@ -91,6 +91,7 @@ describe('ProfitReportProcessor', () => {
 
     expect(build).toHaveBeenCalledWith(expect.anything(), { key: 'month' }, expect.any(Date), {
       tariffEstimate: true,
+      deepHistory: false,
     });
   });
 

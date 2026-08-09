@@ -523,6 +523,8 @@ describe('Выбор периода', () => {
       REPORT.REDEEMED,
       expect.any(Date),
       { key: 'month' },
+      // Пятым аргументом едет флаг глубокой истории (deep_history).
+      { deepHistory: expect.any(Boolean) },
     );
   });
 

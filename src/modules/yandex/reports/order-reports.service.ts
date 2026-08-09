@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { YandexClientFactory } from '../yandex-client.factory';
 import type { YandexMarketDocument } from '../../../database/schemas/yandex-market.schema';
-import type { IOrdersQuery, IReturnRecord, YandexApiClient } from '../yandex-api.client';
+import type {
+  IOrdersQuery,
+  IOrdersStatsQuery,
+  IReturnRecord,
+  YandexApiClient,
+} from '../yandex-api.client';
 import {
   PLACED_DEFINITION,
   REPORT,
@@ -26,9 +31,11 @@ import {
 import { moscowClock, moscowDateParam } from './moscow-day';
 import {
   DEFAULT_PERIOD,
+  assertPeriodOrdered,
   assertPeriodSupported,
   creationDateParams,
   isUnbounded,
+  periodAgeDays,
   periodBounds,
   periodWindows,
   shipmentDateParams,
@@ -37,6 +44,13 @@ import {
   type IPeriodBounds,
   type IReportPeriod,
 } from './report-period';
+import {
+  statsCreationParams,
+  statsOrderToReportOrder,
+  statsUpdateParams,
+  toStatsStatuses,
+} from './stats-orders';
+import { HISTORY_WINDOW_DAYS } from '../yandex-api.paths';
 import {
   buildOrdersWorkbook,
   buildReturningWorkbook,
@@ -138,6 +152,18 @@ export interface IReportResult {
 }
 
 /**
+ * Что сборке разрешено сверх умолчаний.
+ *
+ * `deepHistory` — фича deep_history: период, начинающийся глубже 30-дневного
+ * окна getOrders, идёт через АРХИВНЫЙ метод stats/orders. Решение о флаге
+ * принято до вызова (хендлер/payload — паттерн tariffEstimate), сервис
+ * UserAccess не читает.
+ */
+export interface IReportBuildOptions {
+  deepHistory?: boolean;
+}
+
+/**
  * Четыре отчёта поверх Partner API.
  *
  * Статусы и фильтры даты сюда НЕ зашиты — они читаются из report-status-map.
@@ -155,11 +181,12 @@ export class OrderReportsService {
     key: TReportKey,
     now: Date = new Date(),
     period: IReportPeriod = DEFAULT_PERIOD,
+    options: IReportBuildOptions = {},
   ): Promise<IReportResult> {
     const client = this.clients.forStore(store);
     const definition = reportDefinition(key);
 
-    const orders = await this.collectOrders(client, definition, now, period);
+    const orders = await this.collectOrders(client, definition, now, period, options);
     let totals = orders.reduce<IMoneyTotals>(
       (acc, order) => addTotals(acc, orderTotals(order)),
       ZERO_TOTALS,
@@ -191,9 +218,10 @@ export class OrderReportsService {
     store: YandexMarketDocument,
     period: IReportPeriod = DEFAULT_PERIOD,
     now: Date = new Date(),
+    options: IReportBuildOptions = {},
   ): Promise<{ orders: IReportOrder[]; cancelled: IReportOrder[] }> {
     const client = this.clients.forStore(store);
-    const all = await this.collectOrders(client, PLACED_DEFINITION, now, period);
+    const all = await this.collectOrders(client, PLACED_DEFINITION, now, period, options);
 
     return {
       orders: all.filter((order) => !isCancelled(order)),
@@ -219,12 +247,34 @@ export class OrderReportsService {
     definition: IReportDefinition,
     now: Date,
     period: IReportPeriod,
+    options: IReportBuildOptions = {},
   ): Promise<IReportOrder[]> {
+    /**
+     * Архивный путь (stats/orders) — когда включена фича deep_history, период
+     * начинается ГЛУБЖЕ 30-дневного окна getOrders и фильтр даты определения
+     * архиву по силам. Ему по силам не всё: у stats нет фильтра по дате
+     * ОТГРУЗКИ (shipped_today) и нет подстатусов (returning) — эти отчёты
+     * честно остаются в 30-дневном окне и под флагом.
+     *
+     * Период идёт через ОДИН источник целиком: свежий — getOrders, глубокий —
+     * архив. Сшивать источники внутри одного периода нельзя — формы заказов
+     * различаются системно, и дедуп по id не спас бы от расхождения денег.
+     */
+    const deepCapable =
+      definition.dateFilter === 'creationDate' || definition.dateFilter === 'updatedAt';
+    const useStats =
+      !!options.deepHistory &&
+      deepCapable &&
+      !isUnbounded(period) &&
+      periodAgeDays(period, now) > HISTORY_WINDOW_DAYS;
+
     // Период проверяем ДО сети — но только там, где он вообще применяется.
     // У среза «что сейчас в пути» фильтра даты нет, и отклонять его из-за
-    // слишком старой даты было бы отказом на ровном месте.
+    // слишком старой даты было бы отказом на ровном месте. На архивном пути
+    // возраст не ограничен — остаётся только упорядоченность границ.
     if (definition.dateFilter !== 'none' && !isUnbounded(period)) {
-      assertPeriodSupported(period, now);
+      if (useStats) assertPeriodOrdered(period, now);
+      else assertPeriodSupported(period, now);
     }
 
     /**
@@ -236,15 +286,24 @@ export class OrderReportsService {
      * около 30 дней), и текст отчёта обязан это проговорить.
      */
     const unbounded = definition.dateFilter === 'none' || isUnbounded(period);
+    // Архив тоже режется теми же 30-дневными окнами: лимит длины интервала в
+    // спеке stats не заявлен, но резать безопасно и бесплатно — дедуп по id
+    // уже есть (диагностический скрипт пробует и длинный интервал).
     const windows = unbounded ? [null] : periodWindows(period, now);
 
     const collected: IReportOrder[] = [];
     const seen = new Set<number>();
 
     for (const window of windows) {
-      for await (const page of client.iterateOrders(this.ordersQuery(definition, window, now))) {
+      const pages = useStats
+        ? client.iterateOrdersStats(this.statsQuery(definition, window))
+        : client.iterateOrders(this.ordersQuery(definition, window, now));
+
+      for await (const page of pages) {
         for (const raw of page) {
-          const order = raw as IReportOrder;
+          // Архивная форма заказа другая — в отчётную её переводит маппер;
+          // дальше оба пути неразличимы (matchesDefinition, дедуп, деньги).
+          const order = useStats ? statsOrderToReportOrder(raw) : (raw as IReportOrder);
           if (!matchesDefinition(definition, order)) continue;
 
           // Дедупликация обязательна: границы соседних окон Яндекс трактует
@@ -261,6 +320,24 @@ export class OrderReportsService {
     }
 
     return collected;
+  }
+
+  /**
+   * Запрос к архиву за одним окном. Статусы — из ПОЛНОГО определения через
+   * `toStatsStatuses`: у архива свой enum фильтра, шире getOrders
+   * (QUERYABLE_STATUSES тут ни при чём).
+   */
+  private statsQuery(
+    definition: IReportDefinition,
+    window: IPeriodBounds | null,
+  ): IOrdersStatsQuery {
+    const query: IOrdersStatsQuery = { statuses: toStatsStatuses(definition.statuses) };
+    if (!window) return query;
+
+    if (definition.dateFilter === 'updatedAt') {
+      return { ...query, ...statsUpdateParams(window) };
+    }
+    return { ...query, ...statsCreationParams(window) };
   }
 
   /** Запрос за одним окном периода. */

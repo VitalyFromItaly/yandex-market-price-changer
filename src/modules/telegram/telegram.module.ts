@@ -16,8 +16,14 @@ import { CallbackQueryHandler } from './bots/price-changer-bot/handlers/callback
 import { FallbackHandler } from './bots/price-changer-bot/handlers/fallback.handler';
 import { FbyHandler } from './bots/price-changer-bot/handlers/fby.handler';
 import { FeatureGateHandler } from './bots/price-changer-bot/handlers/feature-gate.handler';
+import { FeedbackHandler } from './bots/price-changer-bot/handlers/feedback.handler';
 import { HealthCommandHandler } from './bots/price-changer-bot/handlers/health-command.handler';
+import { MarketReportsHandler } from './bots/price-changer-bot/handlers/market-reports.handler';
 import { MenuCommandsHandler } from './bots/price-changer-bot/handlers/menu-commands.handler';
+import { OfferCardsHandler } from './bots/price-changer-bot/handlers/offer-cards.handler';
+import { PaymentsHandler } from './bots/price-changer-bot/handlers/payments.handler';
+import { PriceRecommendationsHandler } from './bots/price-changer-bot/handlers/price-recommendations.handler';
+import { QuarantineHandler } from './bots/price-changer-bot/handlers/quarantine.handler';
 import { ReportsHandler } from './bots/price-changer-bot/handlers/reports.handler';
 import { ScheduleHandler } from './bots/price-changer-bot/handlers/schedule.handler';
 import { SharedCommandsHandler } from './bots/price-changer-bot/handlers/shared-commands.handler';
@@ -31,7 +37,11 @@ import { AdminNotifierService } from './bots/shared/services/admin-notifier.serv
 import { StorePromptService } from './bots/shared/services/store-prompt.service';
 import { FbyOverviewProcessor } from './queue/processors/fby-overview.processor';
 import { FileProcessingProcessor } from './queue/processors/file-processing.processor';
+import { MarketReportProcessor } from './queue/processors/market-report.processor';
 import { NotificationsProcessor } from './queue/processors/notifications.processor';
+import { OfferCardsProcessor } from './queue/processors/offer-cards.processor';
+import { PaymentsReportProcessor } from './queue/processors/payments-report.processor';
+import { PriceRecommendationsProcessor } from './queue/processors/price-recommendations.processor';
 import { ProfitReportProcessor } from './queue/processors/profit-report.processor';
 import { ReportsProcessor } from './queue/processors/reports.processor';
 import { StockSyncProcessor } from './queue/processors/stock-sync.processor';
@@ -124,6 +134,12 @@ import { QUEUE_NAMES } from './index';
     ScheduleHandler,
     WarehousesHandler,
     FbyHandler,
+    QuarantineHandler,
+    FeedbackHandler,
+    PaymentsHandler,
+    PriceRecommendationsHandler,
+    MarketReportsHandler,
+    OfferCardsHandler,
     StartHandler,
     MenuCommandsHandler,
     SlashCommandsHandler,
@@ -144,6 +160,10 @@ import { QUEUE_NAMES } from './index';
     WarehousesOverviewProcessor,
     ProfitReportProcessor,
     TariffReportProcessor,
+    PaymentsReportProcessor,
+    PriceRecommendationsProcessor,
+    OfferCardsProcessor,
+    MarketReportProcessor,
     ReportSchedulerService,
   ],
   // PriceChangerKeyboard наружу — веб-панель, открывая доступ, шлёт продавцу

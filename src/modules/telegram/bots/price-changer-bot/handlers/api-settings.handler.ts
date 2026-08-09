@@ -106,6 +106,7 @@ import {
   type IBusinessGroup,
 } from '../store-picker';
 
+import { FeedbackHandler } from './feedback.handler';
 import { ReportsHandler } from './reports.handler';
 import { ScheduleHandler } from './schedule.handler';
 
@@ -156,6 +157,10 @@ export class ApiSettingsHandler {
     '⚠️ Сначала подключите магазин — пришлите API-токен одним сообщением. ' +
     'Ставки настраиваются после этого.';
 
+  // Обработчик текста — и роутер pending-вопросов заодно: он держит все их
+  // источники. Прятать зависимости в контейнер значило бы скрыть состав
+  // цепочки (довод PriceChangerComposer).
+  // eslint-disable-next-line max-params
   constructor(
     private keyboard: PriceChangerKeyboard,
     private yandexMarketService: YandexMarketService,
@@ -165,6 +170,8 @@ export class ApiSettingsHandler {
     private scheduleHandler: ScheduleHandler,
     private readonly clients: YandexClientFactory,
     private readonly reportsHandler: ReportsHandler,
+    // Четвёртый pending-вопрос цепочки — черновик ответа на отзыв.
+    private readonly feedbackHandler: FeedbackHandler,
     private readonly errors: ErrorReporter,
     // Закупочные цены — источник списка брендов для экрана «Скидки по брендам».
     private readonly purchasePrices: PurchasePriceService,
@@ -1002,6 +1009,12 @@ export class ApiSettingsHandler {
         return { message: '' }; // ответ уже отправлен внутри
       }
       if (await this.scheduleHandler.handlePendingTime(ctx, text)) {
+        return { message: '' }; // ответ уже отправлен внутри
+      }
+      // Ответ на отзыв — строго ПОСЛЕДНИМ из pending: три вопроса выше
+      // принимают только числа/дату/время, а этот — ЛЮБОЙ текст, и,
+      // поставленный раньше, он глотал бы их ответы.
+      if (await this.feedbackHandler.handlePendingReply(ctx, text)) {
         return { message: '' }; // ответ уже отправлен внутри
       }
 

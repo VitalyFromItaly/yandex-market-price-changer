@@ -242,6 +242,69 @@ export class UserAccessService {
   }
 
   /**
+   * Запомнить артикулы показанного экрана карантина (кнопки несут индексы в
+   * этом списке) либо стереть его после «подтвердить все».
+   */
+  async setQuarantineOffers(
+    telegramUserId: string,
+    botId: string,
+    offerIds: string[] | null,
+  ): Promise<UserAccessDocument | null> {
+    const update = offerIds
+      ? { $set: { quarantineOfferIds: offerIds } }
+      : { $unset: { quarantineOfferIds: '' } };
+
+    return await this.model
+      .findOneAndUpdate({ telegramUserId, botId }, update, { new: true })
+      .exec();
+  }
+
+  /**
+   * Открыть вопрос «пришлите текст ответа на отзыв» — либо закрыть его.
+   *
+   * Открытие СБРАСЫВАЕТ остальные незакрытые вопросы и старый черновик одним
+   * запросом: ответ на отзыв принимает ЛЮБОЙ текст (в отличие от числовых
+   * ставок и дат), и параллельно открытый вопрос делал бы маршрут ответа
+   * лотереей.
+   */
+  async setPendingFeedbackReply(
+    telegramUserId: string,
+    botId: string,
+    feedbackId: string | null,
+  ): Promise<UserAccessDocument | null> {
+    const update = feedbackId
+      ? {
+          $set: { pendingFeedbackReply: feedbackId },
+          $unset: {
+            feedbackDraft: '',
+            pendingRate: '',
+            pendingReportDay: '',
+            pendingScheduleReport: '',
+          },
+        }
+      : { $unset: { pendingFeedbackReply: '', feedbackDraft: '' } };
+
+    return await this.model
+      .findOneAndUpdate({ telegramUserId, botId }, update, { new: true })
+      .exec();
+  }
+
+  /** Сохранить черновик ответа на отзыв — до подтверждения кнопкой. */
+  async setFeedbackDraft(
+    telegramUserId: string,
+    botId: string,
+    draft: string,
+  ): Promise<UserAccessDocument | null> {
+    return await this.model
+      .findOneAndUpdate(
+        { telegramUserId, botId },
+        { $set: { feedbackDraft: draft } },
+        { new: true },
+      )
+      .exec();
+  }
+
+  /**
    * Подать заявку: new → pending.
    *
    * Возвращает null, если заявка уже подана. На этом и держится идемпотентность

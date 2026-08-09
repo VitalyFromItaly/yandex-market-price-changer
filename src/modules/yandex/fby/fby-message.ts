@@ -47,6 +47,12 @@ export interface IFbyOverviewData {
   inTransit: number | null;
   /** «Едет обратно» — количество, либо null при сбое. */
   returning: number | null;
+  /**
+   * Входящие поставки — ТРОЙНАЯ семантика: undefined — фича `fby_supply`
+   * выключена, секция не печатается вовсе; null — источник упал, заглушка;
+   * массив — секция. undefined и null здесь разные ответы на разные вопросы.
+   */
+  supplies?: IFbySupplyRequest[] | null;
 }
 
 const STOCK_LABEL: Readonly<Record<TFbyStockType, string>> = {
@@ -131,12 +137,15 @@ const REQUEST_STATUS_LABEL: Readonly<Record<string, string>> = {
 
 export function formatFbyOverview(data: IFbyOverviewData, now: Date = new Date()): string {
   const header = `📦 ${b('FBY')} ${esc(`на ${moscowStamp(now)} МСК`)}`;
+  // Секция поставок — только при включённой фиче (undefined = секции нет).
+  const supplies = data.supplies === undefined ? [] : ['', ...suppliesSection(data.supplies)];
   return [
     header,
     '',
     ...stockSection(data),
     '',
     ...requestsSection(data.requests),
+    ...supplies,
     '',
     countsLine(data),
   ].join('\n');
@@ -283,6 +292,113 @@ function requestsSection(requests: IFbySupplyRequest[] | null): string[] {
   const lines = [`${title}: ${b(requests.length)}`, ...rows];
   if (requests.length > shown.length) lines.push(`…и ещё ${requests.length - shown.length}`);
   return lines;
+}
+
+/** Сколько поставок показывать списком (дальше — «…и ещё N»). */
+const SUPPLIES_INLINE_LIMIT = 10;
+
+/**
+ * Статус поставки → русская подпись. Своя таблица, не REQUEST_STATUS_LABEL:
+ * у входящей поставки другой жизненный цикл (READY_TO_WITHDRAW к ней не
+ * относится), а общая таблица смешала бы подписи двух разных процессов.
+ * Неизвестный код — как есть (боевой набор шире enum спеки).
+ */
+const SUPPLY_INBOUND_STATUS_LABEL: Readonly<Record<string, string>> = {
+  CREATED: 'создана',
+  VALIDATED: 'проверена',
+  PUBLISHED: 'опубликована',
+  ACCEPTED_BY_WAREHOUSE_SYSTEM: 'принята складом',
+  REGISTERED_IN_ELECTRONIC_QUEUE: 'в электронной очереди',
+  ARRIVED_TO_XDOC_SERVICE: 'на транзитном складе',
+  SHIPPED_TO_SERVICE: 'отгружена на склад',
+  ARRIVED_TO_SERVICE: 'прибыла на склад',
+  WAREHOUSE_HANDLING: 'приёмка на складе',
+  CANCELLATION_REQUESTED: 'запрошена отмена',
+  CANCELLATION_REJECTED: 'отмена отклонена',
+  [SUPPLY_STATUS.CANCELLED]: 'отменена',
+  [SUPPLY_STATUS.FINISHED]: 'принята',
+};
+
+/** Терминальные статусы поставки — история, а не действие. */
+function isSupplyTerminal(status: string): boolean {
+  return status === SUPPLY_STATUS.FINISHED || status === SUPPLY_STATUS.CANCELLED;
+}
+
+/**
+ * Приоритет: чем ближе к приёмке, тем выше — свежепринятое складом интереснее
+ * черновика, а заявок бывают десятки при лимите списка.
+ */
+function supplyRank(status: string): number {
+  const order = [
+    'WAREHOUSE_HANDLING',
+    'ARRIVED_TO_SERVICE',
+    'SHIPPED_TO_SERVICE',
+    'ARRIVED_TO_XDOC_SERVICE',
+    'REGISTERED_IN_ELECTRONIC_QUEUE',
+    'ACCEPTED_BY_WAREHOUSE_SYSTEM',
+    'PUBLISHED',
+    'VALIDATED',
+    'CREATED',
+  ];
+  const index = order.indexOf(status);
+  return index === -1 ? order.length : index;
+}
+
+/**
+ * Секция входящих поставок. Терминальные (принята/отменена) в список не идут —
+ * это история, не действие, — но и не прячутся молча: хвост называет их число.
+ */
+function suppliesSection(supplies: IFbySupplyRequest[] | null): string[] {
+  const title = b('📥 Поставки на склад Маркета');
+
+  if (!supplies) return [title, '⚠️ Поставки временно недоступны.'];
+
+  const active = supplies.filter((s) => !isSupplyTerminal(s.status));
+  const terminal = supplies.length - active.length;
+
+  if (!active.length) {
+    const tail = terminal ? ` Завершённых/отменённых: ${terminal}.` : '';
+    return [`${title}: ${b(0)}`, `Активных поставок нет.${tail}`];
+  }
+
+  const ordered = [...active].sort((a, b2) => supplyRank(a.status) - supplyRank(b2.status));
+  const shown = ordered.slice(0, SUPPLIES_INLINE_LIMIT);
+  const rows = shown.map((s) => {
+    const status = SUPPLY_INBOUND_STATUS_LABEL[s.status] ?? esc(s.status);
+    const date = s.requestedDate ? formatSupplyDate(s.requestedDate) : '';
+    const tail = [
+      date ? `к ${esc(date)}` : '',
+      s.targetName ? `склад «${esc(s.targetName)}»` : '',
+      s.transitName ? `через «${esc(s.transitName)}»` : '',
+      supplyCounts(s),
+    ].filter(Boolean);
+    return `• №${b(s.id)} — ${status}${tail.length ? ', ' + tail.join(', ') : ''}`;
+  });
+
+  const lines = [`${title}: ${b(active.length)}`, ...rows];
+  if (active.length > shown.length) lines.push(`…и ещё ${active.length - shown.length}`);
+  if (terminal) lines.push(`Завершённых/отменённых: ${terminal}`);
+  return lines;
+}
+
+/** «план N / факт M» — факт печатается, только когда склад что-то принял. */
+function supplyCounts(s: IFbySupplyRequest): string {
+  if (!s.planCount) return '';
+  return s.factCount ? `план ${s.planCount} / факт ${s.factCount}` : `план ${s.planCount}`;
+}
+
+/** Дата поставки DD-MM-YYYY; битую печатать нечем — пропускаем. */
+function formatSupplyDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Moscow',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+    .format(date)
+    .replace(/\./g, '-');
 }
 
 function countsLine(data: IFbyOverviewData): string {

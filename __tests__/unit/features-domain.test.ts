@@ -57,7 +57,19 @@ describe('Реестр возможностей', () => {
     // все прежние фичи остаются default-on. Новые, ещё не обкатанные («Склады»,
     // «FBY», строка калькулятора тарифов), вводятся с default-off и включаются
     // точечно из панели.
-    const DEFAULT_OFF: string[] = [FEATURE.WAREHOUSES, FEATURE.FBY, FEATURE.TARIFF_CALC];
+    const DEFAULT_OFF: string[] = [
+      FEATURE.WAREHOUSES,
+      FEATURE.FBY,
+      FEATURE.TARIFF_CALC,
+      FEATURE.PRICE_QUARANTINE,
+      FEATURE.GOODS_FEEDBACK,
+      FEATURE.PAYMENTS_REPORT,
+      FEATURE.PRICE_RECOMMENDATIONS,
+      FEATURE.MARKET_REPORTS,
+      FEATURE.OFFER_CARDS,
+      FEATURE.DEEP_HISTORY,
+      FEATURE.FBY_SUPPLY,
+    ];
     for (const key of FEATURE_KEYS) {
       expect(FEATURE_META[key].defaultEnabled, key).toBe(!DEFAULT_OFF.includes(key));
     }
@@ -201,6 +213,51 @@ describe('Какие возможности нужны апдейту', () => {
     expect(requiredFeatures({ callbackData: 'promo:pick:rolex' })).toEqual([]);
   });
 
+  it('кнопки новых экранов требуют свои фичи', () => {
+    // Кнопки карантина и отзывов живут в истории чата вечно, кнопка периода
+    // платежей — тоже: раскладка меню от них не защищает, гейтит только это.
+    for (const data of ['pq:ok:0', 'pq:all']) {
+      expect(requiredFeatures({ callbackData: data })).toEqual([FEATURE.PRICE_QUARANTINE]);
+    }
+    for (const data of ['fb:re:123', 'fb:skip:123', 'fb:send:123', 'fb:cancel']) {
+      expect(requiredFeatures({ callbackData: data })).toEqual([FEATURE.GOODS_FEEDBACK]);
+    }
+    for (const data of ['pay:week', 'pay:month', 'pay:prevmonth']) {
+      expect(requiredFeatures({ callbackData: data })).toEqual([FEATURE.PAYMENTS_REPORT]);
+    }
+  });
+
+  it('мусор с новыми префиксами не гейтится — он и не обрабатывается', () => {
+    for (const data of ['pq:xxx', 'fb:re:abc', 'pay:year']) {
+      expect(requiredFeatures({ callbackData: data })).toEqual([]);
+    }
+  });
+
+  it('кнопки новых экранов меню требуют свои фичи', () => {
+    expect(requiredFeatures({ text: MENU.QUARANTINE })).toEqual([FEATURE.PRICE_QUARANTINE]);
+    expect(requiredFeatures({ text: MENU.FEEDBACK })).toEqual([FEATURE.GOODS_FEEDBACK]);
+    expect(requiredFeatures({ text: MENU.PAYMENTS })).toEqual([FEATURE.PAYMENTS_REPORT]);
+    expect(requiredFeatures({ text: MENU.PRICE_RECOMMENDATIONS })).toEqual([
+      FEATURE.PRICE_RECOMMENDATIONS,
+    ]);
+    expect(requiredFeatures({ text: MENU.MARKET_REPORTS })).toEqual([FEATURE.MARKET_REPORTS]);
+    expect(requiredFeatures({ text: MENU.OFFER_CARDS })).toEqual([FEATURE.OFFER_CARDS]);
+  });
+
+  it('кнопки раздела отчётов Маркета требуют фичу раздела', () => {
+    for (const data of ['mkt:menu', 'mkt:real', 'mkt:real:2026:7', 'mkt:comp:123:prevmonth']) {
+      expect(requiredFeatures({ callbackData: data })).toEqual([FEATURE.MARKET_REPORTS]);
+    }
+    expect(requiredFeatures({ callbackData: 'mkt:xxx' })).toEqual([]);
+  });
+
+  it('deep_history и fby_supply кнопок не чеканят — гейт их не знает', () => {
+    // Оба флага читаются в run/payload (прецедент TARIFF_CALC-строки), а не
+    // гейтом: у них нет ни кнопки меню, ни своего callback-префикса.
+    expect(MENU_LABELS).not.toContain(FEATURE_META[FEATURE.DEEP_HISTORY].label);
+    expect(MENU_LABELS).not.toContain(FEATURE_META[FEATURE.FBY_SUPPLY].label);
+  });
+
   it('документ гейтом не закрывается — решение у stock-upload.handler', () => {
     // Прайс делает два независимых дела (закуп и остатки), каждое под своей
     // фичей, и исход бывает частичным. Гейт умеет отбить апдейт только
@@ -221,7 +278,17 @@ describe('Раскладка меню по возможностям', () => {
     // «Склады» и «FBY» — default-off И только для FBY-магазина, «Калькулятор» —
     // просто default-off, поэтому у продавца без явного решения этих кнопок
     // нет; их ряды схлопываются или худеют. Остальная раскладка — прежняя.
-    const HIDDEN_BY_DEFAULT: string[] = [MENU.WAREHOUSES, MENU.FBY, MENU.TARIFF_CALC];
+    const HIDDEN_BY_DEFAULT: string[] = [
+      MENU.WAREHOUSES,
+      MENU.FBY,
+      MENU.TARIFF_CALC,
+      MENU.QUARANTINE,
+      MENU.FEEDBACK,
+      MENU.PAYMENTS,
+      MENU.PRICE_RECOMMENDATIONS,
+      MENU.MARKET_REPORTS,
+      MENU.OFFER_CARDS,
+    ];
     const layout = featureMenuLayout(undefined);
     for (const label of HIDDEN_BY_DEFAULT) expect(layout.flat()).not.toContain(label);
     expect(layout).toEqual(

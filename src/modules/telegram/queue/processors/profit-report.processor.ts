@@ -32,6 +32,11 @@ export interface IProfitReportJob {
    * fby-overview.processor не перепроверяет фичу fby.
    */
   tariffEstimate: boolean;
+  /**
+   * Глубокая история (deep_history) — тем же способом и по тем же причинам.
+   * Старые джобы без поля деградируют в «выключено» — безопасно.
+   */
+  deepHistory?: boolean;
 }
 
 /**
@@ -63,7 +68,7 @@ export class ProfitReportProcessor {
 
   @Process(JOB_TYPES.SEND_PROFIT_REPORT)
   async run(job: Job<IProfitReportJob>): Promise<void> {
-    const { botId, chatId, telegramUserId, period, tariffEstimate } = job.data;
+    const { botId, chatId, telegramUserId, period, tariffEstimate, deepHistory } = job.data;
 
     const bot = this.registry.findByTelegramId(botId);
     if (!bot) {
@@ -84,7 +89,10 @@ export class ProfitReportProcessor {
         return;
       }
 
-      const result = await this.profit.build(store, period, new Date(), { tariffEstimate });
+      const result = await this.profit.build(store, period, new Date(), {
+        tariffEstimate,
+        deepHistory: deepHistory ?? false,
+      });
       await bot.telegraf.telegram.sendMessage(chatId, formatProfitReport(result), htmlOptions());
     } catch (error) {
       // Ошибку гасим, НЕ пробрасываем (attempts: 1) — но продавец ждёт отчёт,

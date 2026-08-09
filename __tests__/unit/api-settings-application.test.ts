@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { YandexClientFactory } from '../../src/modules/yandex/yandex-client.factory';
 import { YandexAuthError, YandexNetworkError } from '../../src/modules/yandex/yandex-api.errors';
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
+import { FeedbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/feedback.handler';
 import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
@@ -139,6 +140,8 @@ describe('ApiSettingsHandler: подача заявки', () => {
           provide: ReportsHandler,
           useValue: { handlePendingDay: opts.pendingDay ?? (async () => false) },
         },
+        // Вопрос про ответ на отзыв в этих сценариях тоже закрыт.
+        { provide: FeedbackHandler, useValue: { handlePendingReply: async () => false } },
         {
           provide: AppConfigService,
           useValue: { isAdmin: (id: number) => id === ADMIN_ID, telegramAdminIds: [ADMIN_ID] },

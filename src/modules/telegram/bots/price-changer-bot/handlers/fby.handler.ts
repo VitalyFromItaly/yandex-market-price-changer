@@ -5,6 +5,7 @@ import { Injectable } from '@nestjs/common';
 import { Queue } from 'bull';
 import { Context } from 'telegraf';
 
+import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { fbyOverviewErrorText } from '../../../../../modules/yandex/fby/fby-message';
 import {
@@ -17,6 +18,7 @@ import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { JOB_TYPES, QUEUE_NAMES } from '../../../index';
 import { isQueuedFor } from '../../../queue/queued-for-user';
+import { FEATURE, isFeatureEnabled } from '../../shared/features.domain';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
 
 /**
@@ -43,6 +45,9 @@ export class FbyHandler {
     private readonly errors: ErrorReporter,
     private readonly storePrompt: StorePromptService,
     private readonly stockSync: StockSyncService,
+    // Ради флага секции поставок (fby_supply) — он решается здесь и едет в
+    // payload, процессор UserAccess не читает.
+    private readonly access: UserAccessService,
     @InjectQueue(QUEUE_NAMES.REPORTS) private readonly queue: Queue,
   ) {}
 
@@ -77,10 +82,20 @@ export class FbyHandler {
         return;
       }
 
+      // Секция поставок: явное решение здесь, в payload (паттерн
+      // tariffEstimate). Админ без записи UserAccess → открыто — та же
+      // причина, по которой процессоры фичи не перепроверяют.
+      const account = await this.access.findByUserAndBot(
+        ctx.from.id.toString(),
+        ctx.botInfo.id.toString(),
+      );
+      const supplySection = account ? isFeatureEnabled(account.features, FEATURE.FBY_SUPPLY) : true;
+
       const payload: IFbyOverviewJob = {
         botId: ctx.botInfo.id,
         chatId: ctx.chat.id.toString(),
         telegramUserId: ctx.from.id.toString(),
+        supplySection,
       };
       await this.queue.add(JOB_TYPES.SEND_FBY_OVERVIEW, payload);
 

@@ -28,6 +28,8 @@ export interface ITariffReportJob {
   chatId: string;
   telegramUserId: string;
   period: IReportPeriod;
+  /** Глубокая история (deep_history) — как в IProfitReportJob. */
+  deepHistory?: boolean;
 }
 
 /**
@@ -55,7 +57,7 @@ export class TariffReportProcessor {
 
   @Process(JOB_TYPES.SEND_TARIFF_REPORT)
   async run(job: Job<ITariffReportJob>): Promise<void> {
-    const { botId, chatId, telegramUserId, period } = job.data;
+    const { botId, chatId, telegramUserId, period, deepHistory } = job.data;
 
     const bot = this.registry.findByTelegramId(botId);
     if (!bot) {
@@ -76,7 +78,9 @@ export class TariffReportProcessor {
         return;
       }
 
-      const result = await this.profit.buildTariffReport(store, period);
+      const result = await this.profit.buildTariffReport(store, period, new Date(), {
+        deepHistory: deepHistory ?? false,
+      });
       await bot.telegraf.telegram.sendMessage(
         chatId,
         formatTariffCalcReport(result),

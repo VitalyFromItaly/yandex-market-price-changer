@@ -149,8 +149,9 @@ actionLog → accessGate → featureGate → start → menu → slash → adminC
   requirements cannot be met by one method. Merging them back breaks one of them — which is exactly
   what happened: the whole TASK-052 store picker answered
   `Неизвестная команда: store_pick:12345` until this split.
-- `stockUpload` takes documents and must precede `fallback`; `fallback` last. It is the only write
-  path to Partner API: `StockSyncService.sync(credentials, buffer, { telegramUserId, dryRun })` →
+- `stockUpload` takes documents and must precede `fallback`; `fallback` last. It is the write path
+  to Partner API for stocks (long the ONLY write in the app; now the quarantine confirm and the
+  feedback reply/skip also mutate — see «Четыре экрана из Partner API» below): `StockSyncService.sync(credentials, buffer, { telegramUserId, dryRun })` →
   `price-list.parser` → `sku-resolver` → `PUT v2/.../offers/stocks`, and it also stores purchase
   prices (see "Profit"). The options object is not cosmetic: while `dryRun` was a positional boolean,
   a forgotten third argument meant a **live** stock write where only a check was asked for, so `sync`
@@ -1292,6 +1293,130 @@ their own settings, with no way to fix a token or find out whom to ask.
   `access-decision-text.test.ts` — three copies of "Доступ открыт!" would drift exactly as the help
   screens once did. Revocation and application-rejection are **different** texts: a seller who was
   working has no pending application, and «Заявка отклонена» would answer something they never sent.
+
+### Четыре экрана из Partner API: карантин, отзывы, платежи, рекомендации
+
+Все четыре — за своими фичами (`price_quarantine`, `goods_feedback`, `payments_report`,
+`price_recommendations`), **все `defaultEnabled: false`** — открываются по одному продавцу из
+панели, паттерн `warehouses`/`fby`. Кнопки: «🚧 Карантин цен», «💬 Отзывы», «💳 Платежи»,
+«🎯 Рекомендации цен» — два ряда в `MENU_LAYOUT`, у большинства продавцов схлопываются целиком.
+Inline-кодеки (`pq:`, `fb:`, `pay:`) — чистые модули рядом со своими доменами
+(`quarantine.domain.ts`, `feedback.domain.ts`, `payments.domain.ts`), их разбирает
+`requiredFeatures`, а шаги `quarantineCallbacks`/`feedbackCallbacks`/`paymentsCallbacks` стоят в
+композере между `reportCallbacks` и `onboardingCallbacks`.
+
+- **«PUT остатков — единственная запись» больше не верно.** Мутирующих операций четыре: тот PUT и
+  три POST через **`postWrite`** в клиенте — подтверждение карантина, ответ на отзыв,
+  skip-reaction. `postWrite` — зеркало `put()`, БЕЗ повторов, и по той же причине: withRetry
+  повторяет 5xx/420, а повтор вслепую мог бы опубликовать **два одинаковых публичных комментария**
+  на Маркете. Семантически читающие POST (отчёты, каталог, сам список отзывов) остаются на
+  `post()` с повторами.
+- **Карантин** (`quarantine.handler.ts`) — быстрый экран, без очереди. Цены читаются ТОЛЬКО из
+  `verdicts[].params` (поля `currentPrice`/`lastValidPrice` товара deprecated по спеке). Артикул
+  (до 255 символов) не лезет в 64 байта callback_data, поэтому при отрисовке список пишется в
+  `UserAccess.quarantineOfferIds`, кнопки несут **индекс** (`pq:ok:<idx>` / `pq:all`), протухший
+  список отвечает «откройте заново». Список пишется ДО отправки кнопок. Confirm — батчами ≤200
+  (лимит спеки).
+- **Отзывы** (`feedback.handler.ts`) — быстрый экран; каждый отзыв отдельным сообщением со своими
+  кнопками (одна inline-клавиатура на сообщение). Ответ **никогда не публикуется сразу**: текст →
+  черновик (`UserAccess.feedbackDraft`) → превью с `fb:send`/`fb:cancel`, публикует только кнопка —
+  ответ ПУБЛИЧНЫЙ, случайное сообщение после «Ответить» не должно улетать (довод `dryRun`). Вопрос
+  закрывается ПОСЛЕ успешной публикации (упавший запрос сохраняет черновик).
+  `pendingFeedbackReply` — **четвёртое pending-поле**, его проверка в `ApiSettingsHandler` стоит
+  строго **последней**: три соседних вопроса едят только числа/дату/время, этот — любой текст, и
+  раньше он глотал бы их ответы (пиновано `feedback-domain.test.ts` по исходнику). Открытие
+  вопроса сбрасывает остальные pending одним `$set` (внутри `setPendingFeedbackReply`).
+- **Платежи** (`payments.handler.ts` → `SEND_PAYMENTS_REPORT` → `payments-report.processor.ts`) —
+  united-netting через очередь `reports` (generate→поллинг — минуты). **Ключа в `REPORT` нет
+  намеренно** (прецедент `PLACED_DEFINITION`): ключ отчеканил бы кнопку периода и строку дайджеста
+  для xlsx, бессмысленного в рассылке. Свои периоды `pay:week|month|prevmonth`
+  (`paymentsRange`, московский календарь, все ≤3 мес по построению); даты считаются **в
+  процессоре** — «с 1 числа» на момент отправки, не постановки. `dateFrom`/`dateTo` (YYYY-MM-DD),
+  deprecated `dateTimeFrom/To` не отправлять. `format=FILE` — xlsx Маркета уходит как есть, скоуп
+  сужен `campaignIds: [активный магазин]`. DONE без файла = «данных нет» (NO_DATA), не сбой.
+- **Рекомендации** (`price-recommendations.handler.ts` → `SEND_PRICE_RECOMMENDATIONS`) — очередь
+  (квота метода 100/мин, десятки секунд). Два фильтрованных прохода `competitivenessFilter:
+  AVERAGE|LOW` вместо обхода каталога. Ответ уже несёт текущую цену (`offer.price`) — **сверка с
+  offer-prices не нужна**. Дельта `price − optimalPrice`; нет цены или порога → `null`, не ноль
+  (довод `orderPurchase`), строка уходит в «без данных». Всегда xlsx (довод FBY), момент среза в
+  тексте и имени файла. Фича чисто читающая; follow-up вне скоупа — «применить рекомендованную
+  цену» через `offer-prices/updates`.
+- Оба новых процессора: payload `botId`/`chatId`/`telegramUserId` **без токена**, креды из Mongo,
+  **без второго `@OnQueueFailed`**, дедуп `isQueuedFor` по своему имени джобы, фича в процессоре не
+  перепроверяется (довод fby-overview).
+- Версии путей всех четырёх методов проставлены `v2` **по аналогии** — на боевом ещё не сверены
+  (как в своё время сверяли stocks-report). При первом включении фичи проверить и обновить
+  комментарий в `yandex-api.paths.ts`.
+
+### Второй заход: раздел отчётов, глубокая история, поставки FBY, карточки
+
+Ещё четыре фичи, все `defaultEnabled: false`: `market_reports`, `offer_cards` (кнопки
+«📈 Отчёты Маркета» и «🪪 Карточки», третий default-off ряд `MENU_LAYOUT`), `deep_history` и
+`fby_supply` (**без кнопок** — inline-only подписи в `FEATURE_META`, паттерн `PROMOTION`: первая
+меняет поведение существующих отчётов, вторая — секция внутри «📦 FBY»). Кодек `mkt:` — в
+`market-reports.domain.ts`, шаг `marketReportsCallbacks` в композере; `deep_history`/`fby_supply`
+гейтом не разбираются — читаются в `run`/хендлере и едут в payload (паттерн `tariffEstimate`).
+
+- **«📈 Отчёты Маркета» — шесть асинхронных отчётов за ОДНИМ флагом** (решение продуктовое), все
+  `format=FILE` → готовый xlsx Маркета с caption (паттерн «Платежи»), один job
+  `SEND_MARKET_REPORT`, один `market-report.processor.ts`, один универсальный
+  `client.generateReport(path, body)`. **Параметры разнородны** (проверено по спеке) — общего
+  пикера периода нет, у каждого отчёта своя цепочка кнопок через showMenu/editMessageText (паттерн
+  `schedule.handler`, НЕ pendingRate): реализация — `{campaignId, year, month}` (два последних
+  ЗАВЕРШЁННЫХ месяца); оборачиваемость — `{campaignId}` без параметров и **только FBY** (пункт
+  скрыт у не-FBY по кэшу stores + перепроверка на тапе); конкуренты —
+  `{businessId, categoryId, dateFrom, dateTo}` все обязательны; аналитика продаж — период +
+  `grouping: CATEGORIES|OFFERS`; ключевые показатели — только `detalizationLevel: WEEK|MONTH`
+  (дат нет); география — `{businessId, dateFrom, dateTo}`. Периоды переиспользуют
+  `paymentsRange`/`PAYMENTS_PERIOD_LABELS` (импорт, не копия). **Квота 10/час у comp и shows** —
+  на `YandexRateLimitError` процессор отвечает `mktRateLimitText`, не общей ошибкой. Пикер
+  категории (comp) — `MarketCategoriesService.topCategories`: обход offer-mappings с
+  `mapping.marketCategoryName`, мемо по businessId TTL 10 мин (без single-flight — лимита 1/мин
+  тут нет). Даты в payload НЕ едут — период ключом, даты считает процессор на момент отправки.
+- **Общий поллер `report-poll.ts`** (`pollReportFile`: DONE без файла → null «данных нет»,
+  FAILED/таймаут → throw) — потребители: платежи и раздел отчётов. `fby-stock.service` остаётся
+  на своём цикле НАМЕРЕННО: у него поверх мемо и single-flight под лимит 1/мин.
+- **`deep_history`: архив `POST /v2/campaigns/{id}/stats/orders`, а НЕ мифический
+  `/v1/businesses/{id}/orders`** — того эндпоинта в спеке НЕ существует, декларация
+  `businessOrdersPath` удалена. Скоуп: ✅ `redeemed`/`profit` (updatedAt → `updateFrom/To`),
+  ✅ `tariff_calc` (creationDate → `dateFrom/To`); ❌ `shipped_today` (у stats нет фильтра даты
+  отгрузки) и ❌ `returning` (нет подстатусов) — честно остаются в 30 днях и под флагом.
+  - **Форма заказа другая** (`OrdersStatsOrderDTO`) — маппер `reports/stats-orders.ts`:
+    статусы через `Record` по полному enum (`CANCELLED_*` → CANCELLED, `LOST` → UNKNOWN,
+    **`PARTIALLY_DELIVERED` → PARTIALLY_RETURNED** — денежно-безопасное направление, не завышать
+    прибыль); позиция `offerName === 'Доставка'` уходит в `deliveryTotal` и не в items;
+    `itemsTotal` = Σ BUYER-итогов позиций; из позиционных CASHBACK/MARKETPLACE синтезируются
+    ЗАКАЗНЫЕ subsidies; верхнеуровневые subsidies архива НЕ читаются (баллы размещения). Поле
+    итога цены читается **bracket-доступом** `price['total']` — тест запрещённых денежных полей
+    ловит `.total` текстом, а здесь другой DTO с легитимным полем того же имени (по этой же
+    причине `ICardsSummary.totalCards`, не `total`).
+  - **Роутинг в `collectOrders`**: период, начинающийся глубже 30 дней, при флаге идёт через архив
+    ЦЕЛИКОМ (не сшивать источники — формы расходятся системно); `assertPeriodSupported` под
+    флагом заменяется на выделенную из неё `assertPeriodOrdered`; `periodWindows`/дедуп/
+    `matchesDefinition` общие для обоих путей. Статусы фильтра — `toStatsStatuses` от ПОЛНОГО
+    определения (у архива свой enum, шире `QUERYABLE_STATUSES`). Задержка данных архива до 40 мин.
+  - **Правило включения: `scripts/diagnose-deep-history.ts` — числа сходятся ДО РУБЛЯ**, иначе
+    флаг не открывается никому (прецедент июльской сверки). Скрипт гоняет один 30-дневный период
+    через оба метода: составы по статусам с id расхождений, Σ денег/субсидий, граничный день,
+    доля PARTIALLY_DELIVERED, проба 60-дневного интервала.
+  - Флаг едет: `IProfitReportJob.deepHistory`/`ITariffReportJob.deepHistory`, опции
+    `OrderReportsService.build`/`collectPlacedOrders`/`ProfitService.build`/`buildTariffReport`;
+    предупреждение «не старше 30 дней» в `askDay` меняется на «можно и старше» только у
+    deep-capable отчётов.
+- **`fby_supply`**: второй safe-вызов `loadSupplyRequests(['SUPPLY'])` ТОЛЬКО при флаге (флаг
+  управляет трафиком); `IFbyOverviewJob.supplySection` — паттерн tariffEstimate, старые джобы без
+  поля → «выключено». В `IFbyOverviewData.supplies` **тройная семантика**: `undefined` — фича
+  выключена, секции нет; `null` — сбой, заглушка; массив — секция (между заявками на вывоз и
+  countsLine). Дата поставки — только `targetLocation.requestedDate` (deliveryDate-полей в DTO
+  нет), транзит xDoc — `transitLocation.name`; терминальные FINISHED/CANCELLED не в списке, а
+  хвостом «Завершённых/отменённых: N». Своя таблица подписей `SUPPLY_INBOUND_STATUS_LABEL` —
+  не смешивать с вывозной.
+- **`offer_cards`** — калька price_recommendations: `loadOfferCards()` (полный POST-обход, тело
+  `{}` — `offerIds` несовместим с фильтрами), `cards.domain.ts` (9 статусов + 17 рекомендаций
+  по-русски, fallback сырым кодом), сводка «статусы с действием первыми» + средний рейтинг против
+  `averageContentRating` + топ-10 слабых, всегда xlsx.
+- Новые версии путей (`ordersStats`, `offerCards`, шесть generate на `reports`) — `v2` по
+  аналогии, «сверить на боевом при первом включении».
 
 ### Error handling
 

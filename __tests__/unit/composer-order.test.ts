@@ -16,6 +16,10 @@ import { StockUploadHandler } from '../../src/modules/telegram/bots/price-change
 import { AdminUsersHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-users.handler';
 import { HealthCommandHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/health-command.handler';
 import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
+import { QuarantineHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/quarantine.handler';
+import { FeedbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/feedback.handler';
+import { PaymentsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/payments.handler';
+import { MarketReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/market-reports.handler';
 
 /**
  * Порядок регистрации обработчиков telegraf — значимый инвариант, который
@@ -64,6 +68,24 @@ describe('PriceChangerComposer: порядок регистрации', () => {
           // напрямую, не через composer.
           provide: ReportsHandler,
           useValue: { registerCallbacks: () => order.push('reportCallbacks') },
+        },
+        // У трёх новых экранов в composer — только их inline-колбэки; кнопки
+        // меню зовут handle() напрямую через MenuCommandsHandler.
+        {
+          provide: QuarantineHandler,
+          useValue: { registerCallbacks: () => order.push('quarantineCallbacks') },
+        },
+        {
+          provide: FeedbackHandler,
+          useValue: { registerCallbacks: () => order.push('feedbackCallbacks') },
+        },
+        {
+          provide: PaymentsHandler,
+          useValue: { registerCallbacks: () => order.push('paymentsCallbacks') },
+        },
+        {
+          provide: MarketReportsHandler,
+          useValue: { registerCallbacks: () => order.push('marketReportsCallbacks') },
         },
         { provide: StartHandler, useValue: stub('start', order) },
         { provide: MenuCommandsHandler, useValue: stub('menu', order) },
@@ -134,12 +156,31 @@ describe('PriceChangerComposer: порядок регистрации', () => {
       'healthCommand',
       'scheduleCallbacks',
       'reportCallbacks',
+      'quarantineCallbacks',
+      'feedbackCallbacks',
+      'paymentsCallbacks',
+      'marketReportsCallbacks',
       'onboardingCallbacks',
       'callbacks',
       'apiSettings',
       'stockUpload',
       'fallback',
     ]);
+  });
+
+  it('колбэки новых экранов идут ДО общего обработчика callback_query', async () => {
+    // bot.action не зовёт next(), а общий switch затирает неизвестную строку
+    // «Неизвестной командой» — прецедент store_pick (TASK-052).
+    const { composer } = await buildComposer();
+    const order = composer.registrationOrder;
+    for (const step of [
+      'quarantineCallbacks',
+      'feedbackCallbacks',
+      'paymentsCallbacks',
+      'marketReportsCallbacks',
+    ]) {
+      expect(order.indexOf(step)).toBeLessThan(order.indexOf('callbacks'));
+    }
   });
 
   it('гейт доступа — первый, кто может НЕ пропустить апдейт', async () => {

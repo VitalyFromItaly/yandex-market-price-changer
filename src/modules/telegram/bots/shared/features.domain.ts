@@ -1,5 +1,9 @@
 import type { TReportKey } from '../../../yandex/reports/report-status-map';
 
+import { parseFbCallback } from '../../../yandex/feedback/feedback.domain';
+import { parseMktCallback } from '../../../yandex/market-reports/market-reports.domain';
+import { parsePayCallback } from '../../../yandex/payments/payments.domain';
+import { parsePqCallback } from '../../../yandex/quarantine/quarantine.domain';
 import { parsePromoCallback } from '../../../yandex/reports/promo';
 import { REPORT } from '../../../yandex/reports/report-status-map';
 import { isFby } from '../../../yandex/stocks/placement';
@@ -57,6 +61,28 @@ export const FEATURE = {
   PROMOTION: 'promotion',
   /** Строка «🧮 По калькулятору Маркета» в «Прибыли» — сверка комиссии */
   TARIFF_CALC: 'tariff_calc',
+  /** «🚧 Карантин цен» — товары, скрытые Маркетом, с кнопками подтверждения */
+  PRICE_QUARANTINE: 'price_quarantine',
+  /** «💬 Отзывы» — отзывы без ответа, ответ и «прочитано» из бота */
+  GOODS_FEEDBACK: 'goods_feedback',
+  /** «💳 Платежи» — отчёт по фактическим перечислениям Маркета, xlsx */
+  PAYMENTS_REPORT: 'payments_report',
+  /** «🎯 Рекомендации цен» — какие товары дороже привлекательной цены */
+  PRICE_RECOMMENDATIONS: 'price_recommendations',
+  /** «📈 Отчёты Маркета» — раздел из шести асинхронных отчётов, один флаг */
+  MARKET_REPORTS: 'market_reports',
+  /** «🪪 Карточки» — заполненность карточек и рекомендации Маркета */
+  OFFER_CARDS: 'offer_cards',
+  /**
+   * История заказов глубже 30 дней (через stats/orders). Кнопки не чеканит —
+   * флаг читается в ReportsHandler.run и едет в payload (паттерн TARIFF_CALC).
+   */
+  DEEP_HISTORY: 'deep_history',
+  /**
+   * Секция «поставки» в экране «📦 FBY». Тоже без кнопки: флаг СЕКЦИИ, а не
+   * экрана — читается хендлером FBY и едет в payload джобы.
+   */
+  FBY_SUPPLY: 'fby_supply',
 } as const;
 
 export type TFeatureKey = (typeof FEATURE)[keyof typeof FEATURE];
@@ -83,6 +109,14 @@ const FEATURE_KEY_SET: Record<TFeatureKey, true> = {
   [FEATURE.FBY]: true,
   [FEATURE.PROMOTION]: true,
   [FEATURE.TARIFF_CALC]: true,
+  [FEATURE.PRICE_QUARANTINE]: true,
+  [FEATURE.GOODS_FEEDBACK]: true,
+  [FEATURE.PAYMENTS_REPORT]: true,
+  [FEATURE.PRICE_RECOMMENDATIONS]: true,
+  [FEATURE.MARKET_REPORTS]: true,
+  [FEATURE.OFFER_CARDS]: true,
+  [FEATURE.DEEP_HISTORY]: true,
+  [FEATURE.FBY_SUPPLY]: true,
 };
 
 export const FEATURE_KEYS = Object.keys(FEATURE_KEY_SET) as TFeatureKey[];
@@ -180,6 +214,61 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     // 2–8 лишних запросов к Partner API на каждый показ.
     defaultEnabled: false,
   },
+  [FEATURE.PRICE_QUARANTINE]: {
+    label: MENU.QUARANTINE,
+    description:
+      'Товары, скрытые Маркетом с витрины из-за подозрительной цены, ' +
+      'с кнопками подтверждения. Подтверждение пишет в Partner API.',
+    // Default-off: новая, включается точечно из панели — паттерн warehouses.
+    defaultEnabled: false,
+  },
+  [FEATURE.GOODS_FEEDBACK]: {
+    label: MENU.FEEDBACK,
+    description:
+      'Отзывы без ответа: показать, ответить из бота, пометить прочитанным. ' +
+      'Ответ публикуется на Маркете публично.',
+    defaultEnabled: false,
+  },
+  [FEATURE.PAYMENTS_REPORT]: {
+    label: MENU.PAYMENTS,
+    description: 'Отчёт по фактическим перечислениям Маркета (xlsx-файл).',
+    defaultEnabled: false,
+  },
+  [FEATURE.PRICE_RECOMMENDATIONS]: {
+    label: MENU.PRICE_RECOMMENDATIONS,
+    description:
+      'Рекомендации Маркета по ценам: какие товары дороже «привлекательной» ' +
+      'цены и на сколько.',
+    defaultEnabled: false,
+  },
+  [FEATURE.MARKET_REPORTS]: {
+    label: MENU.MARKET_REPORTS,
+    description:
+      'Раздел из шести отчётов Маркета xlsx-файлами: реализация, ' +
+      'оборачиваемость FBY, конкурентная позиция, аналитика продаж, ' +
+      'ключевые показатели, география продаж.',
+    defaultEnabled: false,
+  },
+  [FEATURE.OFFER_CARDS]: {
+    label: MENU.OFFER_CARDS,
+    description: 'Заполненность карточек товаров: статусы, рейтинг и рекомендации Маркета.',
+    defaultEnabled: false,
+  },
+  [FEATURE.DEEP_HISTORY]: {
+    // Кнопки в MENU нет намеренно (паттерн PROMOTION): фича меняет поведение
+    // существующих отчётов, а не добавляет экран.
+    label: '🕰 История >30 дней',
+    description:
+      'Отчёты «Выкуплено», «Прибыль» и «Калькулятор» за периоды глубже ' +
+      '30 дней — через архивный метод Маркета.',
+    defaultEnabled: false,
+  },
+  [FEATURE.FBY_SUPPLY]: {
+    // Тоже inline-only подпись: это флаг секции внутри «📦 FBY».
+    label: '🚚 Поставки FBY',
+    description: 'Секция заявок на поставку в сводке «📦 FBY».',
+    defaultEnabled: false,
+  },
 };
 
 /** Карта явных решений администратора. Отсутствие ключа — не «выключено». */
@@ -251,6 +340,12 @@ const MENU_TO_FEATURE: Readonly<Record<string, TFeatureKey>> = {
   [MENU.SCHEDULE]: FEATURE.SCHEDULE,
   [MENU.WAREHOUSES]: FEATURE.WAREHOUSES,
   [MENU.FBY]: FEATURE.FBY,
+  [MENU.QUARANTINE]: FEATURE.PRICE_QUARANTINE,
+  [MENU.FEEDBACK]: FEATURE.GOODS_FEEDBACK,
+  [MENU.PAYMENTS]: FEATURE.PAYMENTS_REPORT,
+  [MENU.PRICE_RECOMMENDATIONS]: FEATURE.PRICE_RECOMMENDATIONS,
+  [MENU.MARKET_REPORTS]: FEATURE.MARKET_REPORTS,
+  [MENU.OFFER_CARDS]: FEATURE.OFFER_CARDS,
 };
 
 /**
@@ -284,6 +379,13 @@ export function requiredFeatures(input: {
     // `rate:` и `bdisc:` не гейтятся (настройки должны оставаться доступными),
     // а продвижение — гейтится: это и есть его фича, других входов у неё нет.
     if (parsePromoCallback(input.callbackData) !== null) return [FEATURE.PROMOTION];
+
+    // Кнопки новых экранов — тот же довод, что у промо: старая inline-кнопка
+    // живёт в истории чата вечно, и раскладка меню от неё не защищает.
+    if (parsePqCallback(input.callbackData) !== null) return [FEATURE.PRICE_QUARANTINE];
+    if (parseFbCallback(input.callbackData) !== null) return [FEATURE.GOODS_FEEDBACK];
+    if (parsePayCallback(input.callbackData) !== null) return [FEATURE.PAYMENTS_REPORT];
+    if (parseMktCallback(input.callbackData) !== null) return [FEATURE.MARKET_REPORTS];
 
     return [];
   }

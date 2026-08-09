@@ -4,15 +4,44 @@ import type { AxiosInstance, AxiosError } from 'axios';
 import { Logger } from '@nestjs/common';
 import axios from 'axios';
 
+import { parseOfferCard, type IOfferCard, type TRawOfferCard } from './cards/cards.domain';
+import {
+  parseGoodsFeedback,
+  type IGoodsFeedback,
+  type TRawGoodsFeedback,
+} from './feedback/feedback.domain';
+import {
+  parseQuarantineOffer,
+  type IQuarantineOffer,
+  type TRawQuarantineOffer,
+} from './quarantine/quarantine.domain';
+import {
+  parseOfferRecommendation,
+  type IPriceRecommendation,
+  type TRawOfferRecommendation,
+} from './recommendations/recommendations.domain';
 import { toYandexApiError } from './yandex-api.errors';
 import {
   businessWarehousesPath,
   campaignsPath,
+  FEEDBACK_PAGE_LIMIT,
   fulfillmentWarehousesPath,
+  goodsFeedbackCommentUpdatePath,
+  goodsFeedbackPath,
+  goodsFeedbackSkipReactionPath,
+  OFFER_CARDS_PAGE_LIMIT,
+  offerCardsPath,
   OFFER_IDS_BATCH,
   offerMappingsPath,
+  offerRecommendationsPath,
   ordersPath,
+  ordersStatsPath,
   PAGE_LIMITS,
+  priceQuarantineConfirmPath,
+  priceQuarantinePath,
+  QUARANTINE_CONFIRM_BATCH,
+  QUARANTINE_PAGE_LIMIT,
+  RECOMMENDATIONS_PAGE_LIMIT,
   reportInfoPath,
   returnsPath,
   stocksOnWarehousesGeneratePath,
@@ -20,6 +49,7 @@ import {
   supplyRequestsPath,
   TARIFFS_MAX_OFFERS,
   tariffsCalculatePath,
+  unitedNettingGeneratePath,
   WAREHOUSE_PROBE_LIMIT,
 } from './yandex-api.paths';
 import { assertWithinHistoryWindow, toDateParam, type IDateRange } from './yandex-date-window';
@@ -36,6 +66,20 @@ export interface IYandexTenantCredentials {
   token: string;
   campaignId: string;
   businessId: string;
+}
+
+/**
+ * Запрос к архиву заказов (POST stats/orders). Пары дат ВЗАИМОИСКЛЮЧИМЫ по
+ * спеке: либо создание (dateFrom/dateTo), либо обновление (updateFrom/updateTo),
+ * обе — календарные даты YYYY-MM-DD, границы включительны.
+ */
+export interface IOrdersStatsQuery {
+  dateFrom?: string;
+  dateTo?: string;
+  updateFrom?: string;
+  updateTo?: string;
+  /** Статусы ИЗ ENUM АРХИВА (OrderStatsStatusType), не статусы getOrders. */
+  statuses?: string[];
 }
 
 export interface IOrdersQuery {
@@ -241,9 +285,18 @@ export interface IFbySupplyRequest {
   defectCount: number;
   /** Всего позиций в заявке (counters.planCount), 0 если не пришло. */
   planCount: number;
+  /** Принято складом (counters.factCount), 0 если не пришло. */
+  factCount: number;
   updatedAt?: string;
   /** Куда едет/откуда забирают — targetLocation.name. */
   targetName?: string;
+  /**
+   * Дата поставки на склад/в ПВЗ — targetLocation.requestedDate. Это
+   * ЕДИНСТВЕННАЯ дата заявки: полей deliveryDate* в DTO нет.
+   */
+  requestedDate?: string;
+  /** Транзитный склад (xDoc) — transitLocation.name, когда поставка через него. */
+  transitName?: string;
 }
 
 export interface IPagedResult<T> {
@@ -438,6 +491,49 @@ export class YandexApiClient {
         this.logger.error(
           `Обход возвратов прерван на ${pages} страницах (кампания ${this.credentials.campaignId}): ` +
             'достигнут предел страниц, отчёт неполный',
+        );
+        return;
+      }
+    } while (pageToken);
+  }
+
+  /**
+   * Постраничный обход АРХИВА заказов (POST stats/orders) — глубже 30-дневного
+   * окна getOrders. Пагинация как у business-методов: page_token/limit в query,
+   * фильтры в теле, `result.orders`/`result.paging.nextPageToken`. Отдаёт сырые
+   * OrdersStatsOrderDTO — в форму отчётов их переводит reports/stats-orders.ts.
+   */
+  public async *iterateOrdersStats(
+    query: IOrdersStatsQuery,
+  ): AsyncGenerator<unknown[], void, void> {
+    let pageToken: string | undefined;
+    let pages = 0;
+
+    do {
+      const data = await this.post<{
+        result?: { orders?: unknown[]; paging?: { nextPageToken?: string } };
+      }>(
+        ordersStatsPath(this.credentials.campaignId),
+        { page_token: pageToken, limit: PAGE_LIMITS.ordersStats.default },
+        prune({
+          dateFrom: query.dateFrom,
+          dateTo: query.dateTo,
+          updateFrom: query.updateFrom,
+          updateTo: query.updateTo,
+          statuses: query.statuses,
+        }),
+      );
+
+      const orders = data.result?.orders ?? [];
+      pages += 1;
+      if (orders.length) yield orders;
+
+      pageToken = data.result?.paging?.nextPageToken;
+
+      if (pageToken && pages >= this.maxPages) {
+        this.logger.error(
+          `Обход архива заказов прерван на ${pages} страницах ` +
+            `(кампания ${this.credentials.campaignId}): предел страниц, отчёт неполный`,
         );
         return;
       }
@@ -848,6 +944,266 @@ export class YandexApiClient {
     return out;
   }
 
+  /**
+   * Карантин цен кабинета — полный постраничный обход.
+   *
+   * Полный, а не одна страница: карантин обычно короткий (это исключительная
+   * ситуация), а неполный список означал бы «подтвердить все» не про все.
+   */
+  public async getQuarantineOffers(): Promise<IQuarantineOffer[]> {
+    const out: IQuarantineOffer[] = [];
+    let pageToken: string | undefined;
+    let page = 0;
+
+    do {
+      const data = await this.post<{
+        result?: { offers?: TRawQuarantineOffer[]; paging?: { nextPageToken?: string } };
+      }>(
+        priceQuarantinePath(this.credentials.businessId),
+        { page_token: pageToken, limit: QUARANTINE_PAGE_LIMIT },
+        {},
+      );
+
+      for (const raw of data.result?.offers ?? []) {
+        const offer = parseQuarantineOffer(raw);
+        if (offer) out.push(offer);
+      }
+
+      pageToken = data.result?.paging?.nextPageToken;
+    } while (pageToken && ++page < this.maxPages);
+
+    return out;
+  }
+
+  /**
+   * Подтвердить цены из карантина — товар возвращается на витрину.
+   *
+   * ЗАПИСЬ: идёт через postWrite, без повторов. Батчи по лимиту спеки (200)
+   * последовательно; упавший батч бросает — уже подтверждённые предыдущие
+   * остаются подтверждёнными, повтор кнопкой безопасен (подтверждение
+   * идемпотентно по смыслу).
+   */
+  public async confirmQuarantinePrices(offerIds: readonly string[]): Promise<void> {
+    for (let i = 0; i < offerIds.length; i += QUARANTINE_CONFIRM_BATCH) {
+      const chunk = offerIds.slice(i, i + QUARANTINE_CONFIRM_BATCH);
+      await this.postWrite(priceQuarantineConfirmPath(this.credentials.businessId), {
+        offerIds: chunk,
+      });
+    }
+    this.logger.log(`Карантин: подтверждено цен — ${offerIds.length}`);
+  }
+
+  /**
+   * ОДНА страница отзывов, ждущих ответа (reactionStatus NEED_REACTION).
+   *
+   * Одна намеренно: экран показывает первые несколько, точный счёт дальше
+   * страницы не нужен — «50+» честнее, чем полный обход ради цифры.
+   */
+  public async getFeedbacksNeedingReaction(): Promise<IPagedResult<IGoodsFeedback>> {
+    const data = await this.post<{
+      result?: { feedbacks?: TRawGoodsFeedback[]; paging?: { nextPageToken?: string } };
+    }>(
+      goodsFeedbackPath(this.credentials.businessId),
+      { limit: FEEDBACK_PAGE_LIMIT },
+      { reactionStatus: 'NEED_REACTION' },
+    );
+
+    const items: IGoodsFeedback[] = [];
+    for (const raw of data.result?.feedbacks ?? []) {
+      const feedback = parseGoodsFeedback(raw);
+      if (feedback) items.push(feedback);
+    }
+
+    return { items, nextPageToken: data.result?.paging?.nextPageToken };
+  }
+
+  /**
+   * Опубликовать ответ на отзыв. ЗАПИСЬ через postWrite: повтор вслепую при
+   * 5xx мог бы опубликовать ДВА одинаковых публичных комментария.
+   */
+  public async updateFeedbackComment(feedbackId: number, text: string): Promise<void> {
+    await this.postWrite(goodsFeedbackCommentUpdatePath(this.credentials.businessId), {
+      feedbackId,
+      comment: { text },
+    });
+    this.logger.log(`Отзыв ${feedbackId}: ответ опубликован`);
+  }
+
+  /** Пометить отзывы прочитанными без ответа. ЗАПИСЬ через postWrite. */
+  public async skipFeedbackReaction(feedbackIds: readonly number[]): Promise<void> {
+    await this.postWrite(goodsFeedbackSkipReactionPath(this.credentials.businessId), {
+      feedbackIds: [...feedbackIds],
+    });
+  }
+
+  /**
+   * Запустить генерацию отчёта по платежам (united-netting), формат FILE —
+   * готовый xlsx уходит продавцу как есть, в отличие от CSV остатков FBY.
+   *
+   * Обычный post с повторами: повторный generate безвреден (прецедент
+   * generateStocksOnWarehousesReport). businessId — в теле и ЧИСЛОМ;
+   * дополнительно campaignIds сужает отчёт до активного магазина. Устаревшие
+   * dateTimeFrom/To не отправляются — только dateFrom/dateTo (YYYY-MM-DD).
+   */
+  public async generateUnitedNettingReport(range: {
+    dateFrom: string;
+    dateTo: string;
+  }): Promise<string> {
+    const data = await this.post<{
+      result?: { reportId?: string };
+      errors?: Array<{ code?: string; message?: string }>;
+    }>(
+      unitedNettingGeneratePath(),
+      { format: 'FILE' },
+      {
+        businessId: Number(this.credentials.businessId),
+        dateFrom: range.dateFrom,
+        dateTo: range.dateTo,
+        campaignIds: [Number(this.credentials.campaignId)],
+      },
+    );
+
+    const reportId = data.result?.reportId;
+    if (!reportId) {
+      const reason = data.errors?.[0]?.message ?? 'Partner API не вернул reportId';
+      throw new Error(`Не удалось запустить отчёт по платежам: ${reason}`);
+    }
+    return reportId;
+  }
+
+  /**
+   * Рекомендации Маркета по ценам — товары с НЕпривлекательной ценой.
+   *
+   * Два фильтрованных прохода (AVERAGE и LOW) вместо обхода всего каталога:
+   * страниц на порядок меньше при квоте метода 100 запросов в минуту.
+   * Проход — постраничный, page_token/limit в query, фильтр в теле.
+   */
+  public async loadPriceRecommendations(): Promise<IPriceRecommendation[]> {
+    const out: IPriceRecommendation[] = [];
+
+    for (const filter of ['AVERAGE', 'LOW'] as const) {
+      let pageToken: string | undefined;
+      let page = 0;
+
+      do {
+        const data = await this.post<{
+          result?: {
+            offerRecommendations?: TRawOfferRecommendation[];
+            paging?: { nextPageToken?: string };
+          };
+        }>(
+          offerRecommendationsPath(this.credentials.businessId),
+          { page_token: pageToken, limit: RECOMMENDATIONS_PAGE_LIMIT },
+          { competitivenessFilter: filter },
+        );
+
+        for (const raw of data.result?.offerRecommendations ?? []) {
+          const recommendation = parseOfferRecommendation(raw);
+          if (recommendation) out.push(recommendation);
+        }
+
+        pageToken = data.result?.paging?.nextPageToken;
+      } while (pageToken && ++page < this.maxPages);
+    }
+
+    return out;
+  }
+
+  /**
+   * Запустить генерацию произвольного асинхронного отчёта Маркета.
+   *
+   * Один метод на шесть отчётов раздела «📈 Отчёты Маркета»: тела запросов у
+   * них разнородны (год+месяц, категория, группировка…), а обвязка одна —
+   * query `format=FILE`, идентификаторы в теле ЧИСЛОМ, ответ `result.reportId`.
+   * Обычный post с повторами: повторный generate безвреден (прецедент
+   * generateStocksOnWarehousesReport). 420 доезжает YandexRateLimitError —
+   * у части отчётов квота 10/час, и процессор отвечает своим текстом.
+   */
+  public async generateReport(path: string, body: Record<string, unknown>): Promise<string> {
+    const data = await this.post<{
+      result?: { reportId?: string };
+      errors?: Array<{ code?: string; message?: string }>;
+    }>(path, { format: 'FILE' }, body);
+
+    const reportId = data.result?.reportId;
+    if (!reportId) {
+      const reason = data.errors?.[0]?.message ?? 'Partner API не вернул reportId';
+      throw new Error(`Не удалось запустить отчёт: ${reason}`);
+    }
+    return reportId;
+  }
+
+  /**
+   * Категории каталога с числом товаров — для пикера категории отчёта
+   * «Конкурентная позиция» (метод требует ровно одну категорию).
+   *
+   * Полный обход offer-mappings; имя из `mapping.marketCategoryName` — поле
+   * живёт рядом с marketCategoryId в ответе.
+   */
+  public async loadCategoryUsage(): Promise<Map<number, { name?: string; count: number }>> {
+    const usage = new Map<number, { name?: string; count: number }>();
+    let pageToken: string | undefined;
+    let page = 0;
+
+    do {
+      const data = await this.post<{
+        result?: {
+          offerMappings?: Array<TRawOfferMapping>;
+          paging?: { nextPageToken?: string };
+        };
+      }>(
+        offerMappingsPath(this.credentials.businessId),
+        { limit: PAGE_LIMITS.offerMappings.default, page_token: pageToken },
+        {},
+      );
+
+      for (const m of data.result?.offerMappings ?? []) {
+        const categoryId = m.offer?.marketCategoryId ?? m.mapping?.marketCategoryId;
+        if (typeof categoryId !== 'number') continue;
+        const entry = usage.get(categoryId) ?? { name: undefined, count: 0 };
+        entry.count += 1;
+        entry.name = entry.name ?? m.mapping?.marketCategoryName;
+        usage.set(categoryId, entry);
+      }
+
+      pageToken = data.result?.paging?.nextPageToken;
+    } while (pageToken && ++page < this.maxPages);
+
+    return usage;
+  }
+
+  /**
+   * Заполненность карточек — полный постраничный обход offer-cards.
+   *
+   * Тело пустое намеренно: нужны ВСЕ статусы, а фильтр `offerIds` спека
+   * запрещает совмещать с остальными фильтрами. Каталог 5.6k = ~28 страниц
+   * при квоте 600/мин — секунды, но вызывается из процессора очереди.
+   */
+  public async loadOfferCards(): Promise<IOfferCard[]> {
+    const out: IOfferCard[] = [];
+    let pageToken: string | undefined;
+    let page = 0;
+
+    do {
+      const data = await this.post<{
+        result?: { offerCards?: TRawOfferCard[]; paging?: { nextPageToken?: string } };
+      }>(
+        offerCardsPath(this.credentials.businessId),
+        { page_token: pageToken, limit: OFFER_CARDS_PAGE_LIMIT },
+        {},
+      );
+
+      for (const raw of data.result?.offerCards ?? []) {
+        const card = parseOfferCard(raw);
+        if (card) out.push(card);
+      }
+
+      pageToken = data.result?.paging?.nextPageToken;
+    } while (pageToken && ++page < this.maxPages);
+
+    return out;
+  }
+
   private async get<T>(path: string, params: Record<string, unknown>): Promise<T> {
     // Логируем путь и кампанию, но НИКОГДА заголовки: там токен продавца.
     this.logger.debug(`GET ${path} (кампания ${this.credentials.campaignId})`);
@@ -895,6 +1251,19 @@ export class YandexApiClient {
   private async put<T>(path: string, body: unknown): Promise<T> {
     this.logger.debug(`PUT ${path} (кампания ${this.credentials.campaignId})`);
     const response = await this.http.put<T>(path, body);
+    return response.data;
+  }
+
+  /**
+   * Мутирующий POST — зеркало put(), БЕЗ повторов, и по той же причине:
+   * withRetry повторяет 5xx/420, а Яндекс мог применить изменение и не успеть
+   * ответить. Для подтверждения карантина повтор терпим, для ответа на отзыв —
+   * нет: это второй одинаковый ПУБЛИЧНЫЙ комментарий на Маркете. Семантически
+   * читающие POST (отчёты, каталог, сам список отзывов) остаются на post().
+   */
+  private async postWrite<T>(path: string, body: unknown): Promise<T> {
+    this.logger.debug(`POST(write) ${path} (кампания ${this.credentials.campaignId})`);
+    const response = await this.http.post<T>(path, body);
     return response.data;
   }
 
@@ -949,9 +1318,10 @@ type TRawSupplyRequest = {
   type?: string;
   subtype?: string;
   status?: string;
-  counters?: { defectCount?: number; planCount?: number };
+  counters?: { defectCount?: number; planCount?: number; factCount?: number };
   updatedAt?: string;
-  targetLocation?: { name?: string };
+  targetLocation?: { name?: string; requestedDate?: string };
+  transitLocation?: { name?: string };
 };
 
 /**
@@ -969,8 +1339,11 @@ function toSupplyRequest(raw: TRawSupplyRequest): IFbySupplyRequest {
     status: r.status ?? 'UNKNOWN',
     defectCount: Number(r.counters?.defectCount) || 0,
     planCount: Number(r.counters?.planCount) || 0,
+    factCount: Number(r.counters?.factCount) || 0,
     updatedAt: r.updatedAt,
     targetName: r.targetLocation?.name,
+    requestedDate: r.targetLocation?.requestedDate,
+    transitName: r.transitLocation?.name,
   };
 }
 
@@ -981,7 +1354,7 @@ type TRawOfferMapping = {
     marketCategoryId?: number;
     weightDimensions?: { length?: number; width?: number; height?: number; weight?: number };
   };
-  mapping?: { marketCategoryId?: number };
+  mapping?: { marketCategoryId?: number; marketCategoryName?: string };
 };
 
 /**

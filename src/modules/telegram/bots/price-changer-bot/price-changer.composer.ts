@@ -10,8 +10,12 @@ import { ApiSettingsHandler } from './handlers/api-settings.handler';
 import { CallbackQueryHandler } from './handlers/callback-query.handler';
 import { FallbackHandler } from './handlers/fallback.handler';
 import { FeatureGateHandler } from './handlers/feature-gate.handler';
+import { FeedbackHandler } from './handlers/feedback.handler';
 import { HealthCommandHandler } from './handlers/health-command.handler';
+import { MarketReportsHandler } from './handlers/market-reports.handler';
 import { MenuCommandsHandler } from './handlers/menu-commands.handler';
+import { PaymentsHandler } from './handlers/payments.handler';
+import { QuarantineHandler } from './handlers/quarantine.handler';
 import { ReportsHandler } from './handlers/reports.handler';
 import { ScheduleHandler } from './handlers/schedule.handler';
 import { SlashCommandsHandler } from './handlers/slash-commands.handler';
@@ -67,6 +71,13 @@ export class PriceChangerComposer {
       { name: 'scheduleCallbacks', register: (b) => this.scheduleCallbacks.register(b) },
       // Выбор периода отчёта — тоже ДО общего callback_query.
       { name: 'reportCallbacks', register: (b) => this.reports.registerCallbacks(b) },
+      // Кнопки трёх новых экранов — тоже ДО общего callback_query, по той же
+      // причине: bot.action не зовёт next(), и общий switch затёр бы их
+      // «Неизвестной командой» (прецедент store_pick, TASK-052).
+      { name: 'quarantineCallbacks', register: (b) => this.quarantine.registerCallbacks(b) },
+      { name: 'feedbackCallbacks', register: (b) => this.feedback.registerCallbacks(b) },
+      { name: 'paymentsCallbacks', register: (b) => this.payments.registerCallbacks(b) },
+      { name: 'marketReportsCallbacks', register: (b) => this.marketReports.registerCallbacks(b) },
       // Кнопки визарда (выбор магазина, «Как получить?») — тоже ДО общего
       // callback_query, по той же причине. Пока они регистрировались вместе с
       // текстовым обработчиком, то есть ПОСЛЕ, весь пикер магазина отвечал
@@ -100,6 +111,10 @@ export class PriceChangerComposer {
     private readonly healthCommand: HealthCommandHandler,
     private readonly scheduleCallbacks: ScheduleHandler,
     private readonly reports: ReportsHandler,
+    private readonly quarantine: QuarantineHandler,
+    private readonly feedback: FeedbackHandler,
+    private readonly payments: PaymentsHandler,
+    private readonly marketReports: MarketReportsHandler,
     private readonly callbacks: CallbackQueryHandler,
     private readonly apiSettings: ApiSettingsHandler,
     private readonly stockUpload: StockUploadHandler,

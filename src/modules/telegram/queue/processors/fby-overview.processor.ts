@@ -20,6 +20,13 @@ export interface IFbyOverviewJob {
   /** `ctx.chat.id` — единственное, куда можно слать сообщения. */
   chatId: string;
   telegramUserId: string;
+  /**
+   * Печатать ли секцию входящих поставок (фича `fby_supply`). Решение принято
+   * в хендлере и едет в payload (паттерн IProfitReportJob.tariffEstimate) —
+   * слепая перепроверка в процессоре отбивала бы админов без записи UserAccess.
+   * Старые джобы в Redis без поля деградируют в «выключено» — безопасно.
+   */
+  supplySection?: boolean;
 }
 
 /**
@@ -56,7 +63,7 @@ export class FbyOverviewProcessor {
 
   @Process(JOB_TYPES.SEND_FBY_OVERVIEW)
   async run(job: Job<IFbyOverviewJob>): Promise<void> {
-    const { botId, chatId, telegramUserId } = job.data;
+    const { botId, chatId, telegramUserId, supplySection } = job.data;
 
     const bot = this.registry.findByTelegramId(botId);
     if (!bot) {
@@ -77,7 +84,9 @@ export class FbyOverviewProcessor {
         return;
       }
 
-      const result = await this.fby.build(store);
+      const result = await this.fby.build(store, new Date(), {
+        supply: supplySection ?? false,
+      });
       // Сводка режется на сообщения: проблемные позиции, заявки и разбивка по
       // кластерам вместе перерастают 4096 символов, а на превышение Telegram
       // отвечает 400 — экран не доходил бы вовсе, вместо того чтобы прийти

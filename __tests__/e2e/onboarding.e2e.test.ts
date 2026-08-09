@@ -33,6 +33,13 @@ import { reportCallback } from '../../src/modules/telegram/bots/price-changer-bo
 import { PERIOD } from '../../src/modules/yandex/reports/report-period';
 import { REPORT } from '../../src/modules/yandex/reports/report-status-map';
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
+import { FeedbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/feedback.handler';
+import { MarketReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/market-reports.handler';
+import { OfferCardsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/offer-cards.handler';
+import { MarketCategoriesService } from '../../src/modules/yandex/market-reports/market-categories.service';
+import { PaymentsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/payments.handler';
+import { PriceRecommendationsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/price-recommendations.handler';
+import { QuarantineHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/quarantine.handler';
 import { StockUploadHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
 import { HealthMonitorService } from '../../src/modules/health/health-monitor.service';
 import { AdminUsersHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-users.handler';
@@ -241,6 +248,16 @@ describe('Онбординг: от /start до отчёта', () => {
         StockUploadHandler,
         AdminUsersHandler,
         HealthCommandHandler,
+        // Четыре новых экрана — часть пайплайна композера и роутера меню; в
+        // сценарии онбординга они не нажимаются, но без провайдеров не
+        // резолвятся. Зависимости у них уже есть в этом модуле — берём живые.
+        QuarantineHandler,
+        FeedbackHandler,
+        PaymentsHandler,
+        PriceRecommendationsHandler,
+        MarketReportsHandler,
+        MarketCategoriesService,
+        OfferCardsHandler,
         // /health — тоже часть пайплайна. Монитор заглушён: настоящий полез бы
         // за statfs, соединением mongoose и клиентом Redis, а онбординг про
         // другое.

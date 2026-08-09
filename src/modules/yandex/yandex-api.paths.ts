@@ -16,8 +16,13 @@ export const API_VERSIONS = {
   orders: 'v2',
   returns: 'v2',
   campaigns: 'v2',
-  /** История заказов глубже 30 дней — только через businesses и только v1. */
-  businessOrders: 'v1',
+  /**
+   * Архив заказов глубже 30 дней — POST stats/orders. Прежняя декларация
+   * `businessOrders: 'v1'` удалена: эндпоинта `POST /v1/businesses/{id}/orders`
+   * в спеке Partner API НЕ существует (проверено по openapi 08-08-2026), это
+   * был миф. Сверить v2 на боевом при первом включении фичи deep_history.
+   */
+  ordersStats: 'v2',
   /** Каталог товаров продавца. Проверено на боевом аккаунте: v2 отвечает 200. */
   offerMappings: 'v2',
   /** Остатки. Проверено: v2 -> 200, v1 -> 404 Resource not found. */
@@ -43,6 +48,21 @@ export const API_VERSIONS = {
    * Расчёт «примерный» по документации; лимит 100 запросов в минуту.
    */
   tariffs: 'v2',
+  /**
+   * Карантин цен: список и подтверждение. v2 — как у остальных актуальных
+   * business-методов (offerMappings, warehouses); сверить на боевом при
+   * первом включении фичи.
+   */
+  priceQuarantine: 'v2',
+  /** Отзывы о товарах: список, ответ, «прочитано». */
+  goodsFeedback: 'v2',
+  /** Рекомендации Маркета по ценам (offers/recommendations). */
+  offerRecommendations: 'v2',
+  /**
+   * Заполненность карточек (offer-cards). v2 по аналогии с остальными
+   * business-методами; сверить на боевом при первом включении фичи.
+   */
+  offerCards: 'v2',
 } as const;
 
 export function campaignsPath(): string {
@@ -57,8 +77,13 @@ export function returnsPath(campaignId: string): string {
   return `/${API_VERSIONS.returns}/campaigns/${encodeURIComponent(campaignId)}/returns`;
 }
 
-export function businessOrdersPath(businessId: string): string {
-  return `/${API_VERSIONS.businessOrders}/businesses/${encodeURIComponent(businessId)}/orders`;
+/**
+ * Архив заказов (POST) — глубже 30-дневного окна getOrders. Форма заказа
+ * ДРУГАЯ (OrdersStatsOrderDTO), в отчёты она попадает только через маппер
+ * `reports/stats-orders.ts`. Данные могут отставать до 40 минут.
+ */
+export function ordersStatsPath(campaignId: string): string {
+  return `/${API_VERSIONS.ordersStats}/campaigns/${encodeURIComponent(campaignId)}/stats/orders`;
 }
 
 /** Каталог товаров продавца (POST). Отдаёт offerId — это и есть артикул. */
@@ -85,8 +110,10 @@ export function businessWarehousesPath(businessId: string): string {
 
 /**
  * Остатки. Один и тот же путь: POST — прочитать, PUT — записать.
- * PUT — ЕДИНСТВЕННАЯ операция записи во всём приложении (бот read-only,
- * см. TASK-036…043). Всё остальное только читает.
+ * Долгое время PUT был единственной операцией записи во всём приложении;
+ * теперь мутирующих операций четыре: этот PUT плюс три POST через `postWrite`
+ * (подтверждение карантина, ответ на отзыв, «прочитано» у отзыва). Все прочие
+ * методы только читают.
  */
 export function stocksPath(campaignId: string): string {
   return `/${API_VERSIONS.stocks}/campaigns/${encodeURIComponent(campaignId)}/offers/stocks`;
@@ -124,6 +151,96 @@ export function tariffsCalculatePath(): string {
 }
 
 /**
+ * Карантин цен кабинета (POST — чтение со страницами). Товар попадает сюда,
+ * когда цена изменилась слишком резко или сильно ниже рыночной, — и Маркет
+ * ПРЯЧЕТ его с витрины, не сообщая продавцу иначе как в кабинете.
+ */
+export function priceQuarantinePath(businessId: string): string {
+  return `/${API_VERSIONS.priceQuarantine}/businesses/${encodeURIComponent(businessId)}/price-quarantine`;
+}
+
+/** Подтверждение цен из карантина (POST — ЗАПИСЬ, идёт через postWrite). */
+export function priceQuarantineConfirmPath(businessId: string): string {
+  return `/${API_VERSIONS.priceQuarantine}/businesses/${encodeURIComponent(businessId)}/price-quarantine/confirm`;
+}
+
+/** Отзывы о товарах кабинета (POST — чтение со страницами). */
+export function goodsFeedbackPath(businessId: string): string {
+  return `/${API_VERSIONS.goodsFeedback}/businesses/${encodeURIComponent(businessId)}/goods-feedback`;
+}
+
+/** Ответ на отзыв (POST — ЗАПИСЬ, публичный комментарий на Маркете). */
+export function goodsFeedbackCommentUpdatePath(businessId: string): string {
+  return `/${API_VERSIONS.goodsFeedback}/businesses/${encodeURIComponent(businessId)}/goods-feedback/comments/update`;
+}
+
+/** Пометить отзывы прочитанными без ответа (POST — ЗАПИСЬ). */
+export function goodsFeedbackSkipReactionPath(businessId: string): string {
+  return `/${API_VERSIONS.goodsFeedback}/businesses/${encodeURIComponent(businessId)}/goods-feedback/skip-reaction`;
+}
+
+/**
+ * Генерация отчёта по платежам (united-netting), POST. Асинхронный, как
+ * stocks-on-warehouses: reportId → getReportInfo → скачивание файла.
+ */
+export function unitedNettingGeneratePath(): string {
+  return `/${API_VERSIONS.reports}/reports/united-netting/generate`;
+}
+
+// --- шесть отчётов раздела «📈 Отчёты Маркета» -------------------------------
+//
+// Все асинхронные (generate → reports/info → файл), все на версии reports.
+// Тела запросов РАЗНОРОДНЫ (см. market-reports.service): реализация хочет
+// год+месяц, конкурентная позиция — категорию, у ключевых показателей дат нет.
+
+/** Отчёт по реализации (помесячный, бухгалтерский). Лимит 100/час. */
+export function goodsRealizationGeneratePath(): string {
+  return `/${API_VERSIONS.reports}/reports/goods-realization/generate`;
+}
+
+/** Оборачиваемость (только FBY, на дату). Лимит 100/час. */
+export function goodsTurnoverGeneratePath(): string {
+  return `/${API_VERSIONS.reports}/reports/goods-turnover/generate`;
+}
+
+/** Конкурентная позиция (по одной категории). Лимит 10/час. */
+export function competitorsPositionGeneratePath(): string {
+  return `/${API_VERSIONS.reports}/reports/competitors-position/generate`;
+}
+
+/** Аналитика продаж (показы/продажи, группировка). Лимит 10/час. */
+export function showsSalesGeneratePath(): string {
+  return `/${API_VERSIONS.reports}/reports/shows-sales/generate`;
+}
+
+/** Ключевые показатели (детализация WEEK/MONTH, дат нет). Лимит 100/час. */
+export function keyIndicatorsGeneratePath(): string {
+  return `/${API_VERSIONS.reports}/reports/key-indicators/generate`;
+}
+
+/** География продаж. Лимит 100/час. */
+export function salesGeographyGeneratePath(): string {
+  return `/${API_VERSIONS.reports}/reports/sales-geography/generate`;
+}
+
+/**
+ * Рекомендации Маркета по ценам (POST — чтение со страницами). Ответ несёт и
+ * текущую цену каталога, и пороги привлекательной/умеренной — отдельная сверка
+ * с offer-prices не нужна.
+ */
+export function offerRecommendationsPath(businessId: string): string {
+  return `/${API_VERSIONS.offerRecommendations}/businesses/${encodeURIComponent(businessId)}/offers/recommendations`;
+}
+
+/**
+ * Заполненность карточек товаров (POST — чтение со страницами): статус,
+ * рейтинг заполненности и рекомендации Маркета по каждой карточке.
+ */
+export function offerCardsPath(businessId: string): string {
+  return `/${API_VERSIONS.offerCards}/businesses/${encodeURIComponent(businessId)}/offer-cards`;
+}
+
+/**
  * Лимиты страницы у методов разные, и превышение — это 400, а не «молча
  * обрежем». Значения из документации, см. reference.partner_api в tasks.json.
  */
@@ -132,6 +249,8 @@ export const PAGE_LIMITS = {
   returns: { default: 50, max: 100 },
   /** Каталог: 200 на страницу. Каталог на 5.6k товаров — это 28 запросов. */
   offerMappings: { default: 200, max: 200 },
+  /** Архив stats/orders: до 200 заказов в ответе по спеке. */
+  ordersStats: { default: 200, max: 200 },
 } as const;
 
 /**
@@ -161,6 +280,31 @@ export const HISTORY_WINDOW_DAYS = 30;
  * отвечает 400.
  */
 export const TARIFFS_MAX_OFFERS = 200;
+
+/**
+ * Максимум артикулов в одном подтверждении карантина. Спека: «не более 200
+ * товаров в одном запросе», превышение — 400 на весь батч.
+ */
+export const QUARANTINE_CONFIRM_BATCH = 200;
+
+/** Лимит страницы карантина по спеке — до 500 товаров в запросе. */
+export const QUARANTINE_PAGE_LIMIT = 500;
+
+/** Лимит страницы отзывов по спеке — не более 50 на страницу. */
+export const FEEDBACK_PAGE_LIMIT = 50;
+
+/**
+ * Лимит страницы рекомендаций по ценам. В спеке лимит явно не назван (общий
+ * PageLimit); 200 — по аналогии с offer-mappings, сверить на боевом.
+ */
+export const RECOMMENDATIONS_PAGE_LIMIT = 200;
+
+/**
+ * Лимит страницы offer-cards. В спеке общий PageLimit без числа; 200 — по
+ * аналогии с offer-mappings, сверить на боевом (прецедент
+ * RECOMMENDATIONS_PAGE_LIMIT).
+ */
+export const OFFER_CARDS_PAGE_LIMIT = 200;
 
 /**
  * Максимум артикулов в фильтре `offerIds` метода offer-mappings.

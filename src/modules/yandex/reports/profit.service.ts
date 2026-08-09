@@ -72,6 +72,11 @@ export interface IProfitBuildOptions {
    * запросов к Partner API у продавцов, которым строка не нужна.
    */
   tariffEstimate?: boolean;
+  /**
+   * Пускать ли глубокие периоды через архив stats/orders (фича deep_history).
+   * Решение тоже у вызывающего — по тем же причинам.
+   */
+  deepHistory?: boolean;
 }
 
 /**
@@ -105,8 +110,8 @@ export class ProfitService {
     // оформления), объединить их одним запросом нельзя. Отчёт строится по
     // кнопке и раз в сутки, часовой квоте Partner API это ничто.
     const [result, placedOrders] = await Promise.all([
-      this.reports.build(store, REPORT.PROFIT, now, period),
-      this.reports.collectPlacedOrders(store, period, now),
+      this.reports.build(store, REPORT.PROFIT, now, period, { deepHistory: options.deepHistory }),
+      this.reports.collectPlacedOrders(store, period, now, { deepHistory: options.deepHistory }),
     ]);
 
     const rates = ratesOf(store);
@@ -168,8 +173,11 @@ export class ProfitService {
     store: YandexMarketDocument,
     period: IReportPeriod = DEFAULT_PERIOD,
     now: Date = new Date(),
+    options: { deepHistory?: boolean } = {},
   ): Promise<ITariffCalcReport> {
-    const result = await this.reports.build(store, REPORT.TARIFF_CALC, now, period);
+    const result = await this.reports.build(store, REPORT.TARIFF_CALC, now, period, {
+      deepHistory: options.deepHistory,
+    });
     const orders = result.orders as IReportOrder[];
     const rates = ratesOf(store);
 

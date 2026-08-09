@@ -231,19 +231,7 @@ export function assertPeriodSupported(period: IReportPeriod, now: Date = new Dat
   // истории всё равно определяется тем, сколько отдаст сам Partner API.
   if (isUnbounded(period)) return;
 
-  const bounds = periodBounds(period, now);
-  const from = calendarDayStart(bounds.from, now);
-
-  /**
-   * Возраст меряем в КАЛЕНДАРНЫХ днях — от начала суток до начала суток.
-   *
-   * Считать от `now` нельзя: 31-го числа в 12:00 период «с 1 числа» отстоит от
-   * текущего момента на 30.5 суток и был бы отвергнут, хотя в 09:00 того же дня
-   * прошёл бы. Годность отчёта не может зависеть от того, который час.
-   */
-  const todayStart = calendarDayStart(moscowDay(now), now);
-
-  const age = daysBetween(from, todayStart);
+  const age = periodAgeDays(period, now);
   if (age > HISTORY_WINDOW_DAYS) {
     throw new YandexDateRangeError(
       `Яндекс.Маркет отдаёт заказы не старше ${HISTORY_WINDOW_DAYS} дней. ` +
@@ -251,6 +239,36 @@ export function assertPeriodSupported(period: IReportPeriod, now: Date = new Dat
     );
   }
 
+  assertPeriodOrdered(period, now);
+}
+
+/**
+ * Возраст начала периода в КАЛЕНДАРНЫХ днях — от начала суток до начала суток.
+ *
+ * Считать от `now` нельзя: 31-го числа в 12:00 период «с 1 числа» отстоит от
+ * текущего момента на 30.5 суток и был бы отвергнут, хотя в 09:00 того же дня
+ * прошёл бы. Годность отчёта не может зависеть от того, который час.
+ *
+ * Экспортируется отдельно: глубокая история (`deep_history`) решает по этому же
+ * возрасту, каким методом идти за заказами — getOrders или архивным stats.
+ */
+export function periodAgeDays(period: IReportPeriod, now: Date = new Date()): number {
+  if (isUnbounded(period)) return 0;
+  const bounds = periodBounds(period, now);
+  const from = calendarDayStart(bounds.from, now);
+  const todayStart = calendarDayStart(moscowDay(now), now);
+  return daysBetween(from, todayStart);
+}
+
+/**
+ * Только упорядоченность границ, БЕЗ возраста. Отдельно от
+ * `assertPeriodSupported`: путь глубокой истории возраст не ограничивает, а
+ * «начало позже конца» остаётся ошибкой на любом пути.
+ */
+export function assertPeriodOrdered(period: IReportPeriod, now: Date = new Date()): void {
+  if (isUnbounded(period)) return;
+  const bounds = periodBounds(period, now);
+  const from = calendarDayStart(bounds.from, now);
   const to = calendarDayStart(bounds.to, now);
   if (from.getTime() > to.getTime()) {
     throw new YandexDateRangeError('Начало периода позже его конца.');

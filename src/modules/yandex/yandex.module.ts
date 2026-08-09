@@ -4,6 +4,9 @@ import { DatabaseModule } from '../../database/database.module';
 
 import { FbyStockService } from './fby/fby-stock.service';
 import { FbyService } from './fby/fby.service';
+import { MarketCategoriesService } from './market-reports/market-categories.service';
+import { MarketReportsService } from './market-reports/market-reports.service';
+import { PaymentsReportService } from './payments/payments-report.service';
 import { OrderReportsService } from './reports/order-reports.service';
 import { ProfitService } from './reports/profit.service';
 import { StockSyncService } from './stocks/stock-sync.service';
@@ -35,6 +38,9 @@ import { YandexClientFactory } from './yandex-client.factory';
     WarehousesService,
     FbyStockService,
     FbyService,
+    PaymentsReportService,
+    MarketReportsService,
+    MarketCategoriesService,
   ],
   exports: [
     YandexClientFactory,
@@ -44,6 +50,9 @@ import { YandexClientFactory } from './yandex-client.factory';
     WarehousesService,
     FbyStockService,
     FbyService,
+    PaymentsReportService,
+    MarketReportsService,
+    MarketCategoriesService,
   ],
 })
 export class YandexModule {}

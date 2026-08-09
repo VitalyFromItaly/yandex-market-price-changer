@@ -18,6 +18,12 @@ import { storeTitle } from '../store-title';
 import { AdminUsersHandler } from './admin-users.handler';
 import { ApiSettingsHandler } from './api-settings.handler';
 import { FbyHandler } from './fby.handler';
+import { FeedbackHandler } from './feedback.handler';
+import { MarketReportsHandler } from './market-reports.handler';
+import { OfferCardsHandler } from './offer-cards.handler';
+import { PaymentsHandler } from './payments.handler';
+import { PriceRecommendationsHandler } from './price-recommendations.handler';
+import { QuarantineHandler } from './quarantine.handler';
 import { ReportsHandler } from './reports.handler';
 import { ScheduleHandler } from './schedule.handler';
 import { SharedCommandsHandler } from './shared-commands.handler';
@@ -38,6 +44,12 @@ export class MenuCommandsHandler {
     private scheduleHandler: ScheduleHandler,
     private warehousesHandler: WarehousesHandler,
     private fbyHandler: FbyHandler,
+    private quarantineHandler: QuarantineHandler,
+    private feedbackHandler: FeedbackHandler,
+    private paymentsHandler: PaymentsHandler,
+    private priceRecommendationsHandler: PriceRecommendationsHandler,
+    private marketReportsHandler: MarketReportsHandler,
+    private offerCardsHandler: OfferCardsHandler,
     private apiSettings: ApiSettingsHandler,
     private accessService: UserAccessService,
     private config: AppConfigService,
@@ -71,6 +83,14 @@ export class MenuCommandsHandler {
     bot.hears(MENU.WAREHOUSES, (ctx) => this.warehousesHandler.handle(ctx));
     // Сводка FBY. Работа — в FbyHandler; здесь только пара «метка ↔ hears».
     bot.hears(MENU.FBY, (ctx) => this.fbyHandler.handle(ctx));
+    // Четыре новых экрана (все default-off). Работа — в своих хендлерах;
+    // здесь только пары «метка ↔ hears», которых требует инвариант menu-labels.
+    bot.hears(MENU.QUARANTINE, (ctx) => this.quarantineHandler.handle(ctx));
+    bot.hears(MENU.FEEDBACK, (ctx) => this.feedbackHandler.handle(ctx));
+    bot.hears(MENU.PAYMENTS, (ctx) => this.paymentsHandler.handle(ctx));
+    bot.hears(MENU.PRICE_RECOMMENDATIONS, (ctx) => this.priceRecommendationsHandler.handle(ctx));
+    bot.hears(MENU.MARKET_REPORTS, (ctx) => this.marketReportsHandler.handle(ctx));
+    bot.hears(MENU.OFFER_CARDS, (ctx) => this.offerCardsHandler.handle(ctx));
     bot.hears(MENU.SCHEDULE, (ctx) => this.scheduleHandler.showMenu(ctx));
     // Смена магазина. Кнопка появляется в меню только при >1 магазине; работа —
     // в ApiSettingsHandler. Пара «метка ↔ hears» требуется инвариантом menu-labels.

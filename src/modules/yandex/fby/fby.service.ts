@@ -28,6 +28,19 @@ export interface IFbyOverviewResult {
 /** Заявки этих типов надо физически забрать со склада Маркета. */
 const WITHDRAW_TYPES = ['WITHDRAW', 'UTILIZATION'];
 
+/** Входящие поставки — отдельный запрос, только при включённой фиче fby_supply. */
+const SUPPLY_TYPES = ['SUPPLY'];
+
+/** Что сборке разрешено сверх базового экрана. */
+export interface IFbyBuildOptions {
+  /**
+   * Секция «поставки». Решение принято ДО постановки джобы (флаг едет в
+   * payload — паттерн IProfitReportJob.tariffEstimate), сервис UserAccess не
+   * читает.
+   */
+  supply?: boolean;
+}
+
 /**
  * Сводка FBY: остатки по типам, проблемные позиции, заявки на вывоз/утилизацию,
  * «едет до клиента»/«едет обратно» — на одном экране.
@@ -54,12 +67,16 @@ export class FbyService {
   public async build(
     store: YandexMarketDocument,
     now: Date = new Date(),
+    options: IFbyBuildOptions = {},
   ): Promise<IFbyOverviewResult> {
-    const [stock, requests, inTransit, returning] = await Promise.all([
+    const [stock, requests, inTransit, returning, supplies] = await Promise.all([
       this.stockSource.safeLoad(store),
       this.safeRequests(store),
       this.safeCount(store, REPORT.IN_TRANSIT),
       this.safeCount(store, REPORT.RETURNING),
+      // Выключенная фича не запрашивает ничего: флаг управляет трафиком, а
+      // undefined (не null!) говорит форматтеру «секции нет вовсе».
+      options.supply ? this.safeSupplies(store) : Promise.resolve(undefined),
     ]);
 
     const summary = stock.snapshot?.summary ?? null;
@@ -69,6 +86,7 @@ export class FbyService {
       requests,
       inTransit,
       returning,
+      supplies,
     };
 
     const text = formatFbyOverview(data, now);
@@ -94,6 +112,16 @@ export class FbyService {
       return await this.clients.forStore(store).loadSupplyRequests(WITHDRAW_TYPES);
     } catch (error) {
       this.report(store, error, 'fby:requests', 'заявки FBY');
+      return null;
+    }
+  }
+
+  /** Входящие поставки — та же мягкая деградация, что у вывоза. */
+  private async safeSupplies(store: YandexMarketDocument) {
+    try {
+      return await this.clients.forStore(store).loadSupplyRequests(SUPPLY_TYPES);
+    } catch (error) {
+      this.report(store, error, 'fby:supplies', 'поставки FBY');
       return null;
     }
   }

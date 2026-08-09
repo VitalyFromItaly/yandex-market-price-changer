@@ -82,6 +82,8 @@ describe('TariffReportProcessor', () => {
     expect(buildTariffReport).toHaveBeenCalledWith(
       await findByTelegramUser.mock.results[0].value,
       DEFAULT_PERIOD,
+      expect.any(Date),
+      { deepHistory: false },
     );
 
     const [chatId, text] = sendMessage.mock.calls[0];
@@ -96,7 +98,9 @@ describe('TariffReportProcessor', () => {
   it('период берётся из джобы', async () => {
     await processor.run(jobWith({ period: { key: 'month' } as never }));
 
-    expect(buildTariffReport).toHaveBeenCalledWith(expect.anything(), { key: 'month' });
+    expect(buildTariffReport).toHaveBeenCalledWith(expect.anything(), { key: 'month' }, expect.any(Date), {
+      deepHistory: false,
+    });
   });
 
   it('нет кред — продавцу говорят, расчёт не запускается', async () => {

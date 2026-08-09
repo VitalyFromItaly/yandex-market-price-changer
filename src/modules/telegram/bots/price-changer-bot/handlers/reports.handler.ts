@@ -97,7 +97,21 @@ export class ReportsHandler {
    * хранилище незачем.
    */
   private async askDay(ctx: Context, key: TReportKey): Promise<void> {
+    const account = await this.access.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
     await this.access.setPendingReportDay(ctx.from.id.toString(), ctx.botInfo.id.toString(), key);
+
+    // С открытой глубокой историей 30-дневное предупреждение стало бы ложью —
+    // но только у отчётов, которым архив по силам (см. collectOrders).
+    const deepHistory = account ? isFeatureEnabled(account.features, FEATURE.DEEP_HISTORY) : true;
+    const deepCapable =
+      key === REPORT.REDEEMED || key === REPORT.PROFIT || key === REPORT.TARIFF_CALC;
+    const limitLine =
+      deepHistory && deepCapable
+        ? 'ℹ️ Можно и старше 30 дней — данные придут из архива Маркета.'
+        : `⚠️ Яндекс.Маркет хранит заказы не старше ${HISTORY_WINDOW_DAYS} дней.`;
 
     await ctx.reply(
       [
@@ -105,7 +119,7 @@ export class ReportsHandler {
         '',
         'Пришлите дату — например <code>28-07-2026</code>.',
         '',
-        `⚠️ Яндекс.Маркет хранит заказы не старше ${HISTORY_WINDOW_DAYS} дней.`,
+        limitLine,
       ].join('\n'),
       htmlOptions(),
     );
@@ -223,6 +237,10 @@ export class ReportsHandler {
         return;
       }
 
+      // Глубокая история — тем же способом, что флаг калькулятора ниже:
+      // решается здесь и едет в payload/опции, админ без записи → открыто.
+      const deepHistory = account ? isFeatureEnabled(account.features, FEATURE.DEEP_HISTORY) : true;
+
       /**
        * «Прибыль» уходит в ОЧЕРЕДЬ, остальные отчёты считаются здесь.
        *
@@ -243,6 +261,7 @@ export class ReportsHandler {
           telegramUserId: ctx.from.id.toString(),
           period,
           tariffEstimate: account ? isFeatureEnabled(account.features, FEATURE.TARIFF_CALC) : true,
+          deepHistory,
         };
         await this.queue.add(JOB_TYPES.SEND_PROFIT_REPORT, payload);
         await ctx.reply('⏳ Считаю прибыль, пришлю, как будет готово…');
@@ -259,6 +278,7 @@ export class ReportsHandler {
           chatId: ctx.chat.id.toString(),
           telegramUserId: ctx.from.id.toString(),
           period,
+          deepHistory,
         };
         await this.queue.add(JOB_TYPES.SEND_TARIFF_REPORT, payload);
         await ctx.reply('⏳ Считаю услуги Маркета, пришлю, как будет готово…');
@@ -281,7 +301,7 @@ export class ReportsHandler {
         return;
       }
 
-      const result = await this.reports.build(store, key, new Date(), period);
+      const result = await this.reports.build(store, key, new Date(), period, { deepHistory });
       await ctx.reply(formatReport(result), htmlOptions());
     } catch (error) {
       await this.replyWithError(ctx, key, error);

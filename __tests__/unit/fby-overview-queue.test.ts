@@ -46,6 +46,8 @@ describe('FbyHandler: постановка сводки в очередь', () =
       { report: async () => undefined } as never,
       { replyNeedsStore: vi.fn(async () => undefined) } as never,
       { placementFor: vi.fn(async () => undefined) } as never,
+      // Запись доступа: null означает администратора → флаг секции открыт.
+      { findByUserAndBot: vi.fn(async () => null) } as never,
       { add: queueAdd, getJobs } as never,
     );
   });
@@ -58,6 +60,8 @@ describe('FbyHandler: постановка сводки в очередь', () =
       botId: 999,
       chatId: '222',
       telegramUserId: '222',
+      // Без записи UserAccess (администратор) секция поставок открыта.
+      supplySection: true,
     });
     expect(said(ctx)).toContain('Собираю сводку FBY');
   });
@@ -131,7 +135,12 @@ describe('FbyOverviewProcessor', () => {
   it('happy path: store из Mongo, текст уходит в чат', async () => {
     await processor.run(jobWith());
 
-    expect(build).toHaveBeenCalledWith(await findByTelegramUser.mock.results[0].value);
+    expect(build).toHaveBeenCalledWith(
+      await findByTelegramUser.mock.results[0].value,
+      expect.any(Date),
+      // Старые джобы без поля supplySection деградируют в «выключено».
+      { supply: false },
+    );
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0][0]).toBe('222');
     expect(sendMessage.mock.calls[0][1]).toBe('сводка');

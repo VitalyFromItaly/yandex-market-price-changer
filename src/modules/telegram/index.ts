@@ -34,6 +34,28 @@ export const JOB_TYPES = {
    * хендлере они держали polling-цикл telegraf.
    */
   SEND_TARIFF_REPORT: 'send-tariff-report',
+  /**
+   * Живой отчёт «💳 Платежи» по кнопке: united-netting — асинхронный отчёт
+   * Маркета (generate → поллинг, минуты), ожидание в хендлере стопорило бы
+   * polling-цикл telegraf для всех.
+   */
+  SEND_PAYMENTS_REPORT: 'send-payments-report',
+  /**
+   * Живой экран «🎯 Рекомендации цен» по кнопке: два постраничных прохода по
+   * методу с квотой 100 запросов в минуту — десятки секунд на большом
+   * каталоге, та же причина.
+   */
+  SEND_PRICE_RECOMMENDATIONS: 'send-price-recommendations',
+  /**
+   * Живой экран «🪪 Карточки»: полный обход offer-cards на большом каталоге —
+   * десятки секунд, та же причина, что у рекомендаций.
+   */
+  SEND_OFFER_CARDS: 'send-offer-cards',
+  /**
+   * Живой раздел «📈 Отчёты Маркета»: шесть асинхронных отчётов Маркета
+   * (generate → поллинг, минуты) — один job-тип, конкретный отчёт в payload.
+   */
+  SEND_MARKET_REPORT: 'send-market-report',
   PROCESS_FILE: 'process-file',
   PARSE_FILE: 'parse-file',
   COMPARE_DATA: 'compare-data',
