@@ -4,12 +4,14 @@ import { join, resolve } from 'node:path';
 import {
   DEPRECATED_MONEY_FIELDS,
   NBSP,
+  ZERO_TOTALS,
   addTotals,
   amountValue,
   formatRubles,
   orderTotals,
   subsidiesTotal,
   sumTotals,
+  type IMoneyTotals,
 } from '../../src/modules/yandex/reports/money';
 import {
   moscowClock,
@@ -27,28 +29,39 @@ import {
 describe('Денежные суммы', () => {
   it('берутся itemsTotal и deliveryTotal', () => {
     expect(orderTotals({ itemsTotal: 1000, deliveryTotal: 250 })).toEqual({
-      items: 1000,
+      sales: 1000,
+      subsidies: 0,
       withDelivery: 1250,
     });
   });
 
   it('заказ без доставки не теряет сумму товаров', () => {
-    expect(orderTotals({ itemsTotal: 500 })).toEqual({ items: 500, withDelivery: 500 });
+    expect(orderTotals({ itemsTotal: 500 })).toEqual({
+      sales: 500,
+      subsidies: 0,
+      withDelivery: 500,
+    });
   });
 
   it('отсутствующие и битые значения дают 0, а не NaN', () => {
     // NaN протёк бы через все сложения и превратил итог отчёта в «NaN ₽».
-    expect(orderTotals({})).toEqual({ items: 0, withDelivery: 0 });
+    expect(orderTotals({})).toEqual({ sales: 0, subsidies: 0, withDelivery: 0 });
     expect(orderTotals({ itemsTotal: undefined, deliveryTotal: null as never })).toEqual({
-      items: 0,
+      sales: 0,
+      subsidies: 0,
       withDelivery: 0,
     });
-    expect(orderTotals({ itemsTotal: 'нет' as never })).toEqual({ items: 0, withDelivery: 0 });
+    expect(orderTotals({ itemsTotal: 'нет' as never })).toEqual({
+      sales: 0,
+      subsidies: 0,
+      withDelivery: 0,
+    });
   });
 
   it('устаревшие поля игнорируются, даже если они есть в ответе', () => {
     // total и buyerTotal приходят вместе с актуальными и выглядят так же —
-    // взять их вместо itemsTotal очень легко.
+    // взять их вместо itemsTotal очень легко. subsidyTotal здесь особенно
+    // коварен: он устаревший, но по имени просится в новое поле subsidies.
     const order = {
       itemsTotal: 100,
       deliveryTotal: 50,
@@ -57,41 +70,97 @@ describe('Денежные суммы', () => {
       subsidyTotal: 777,
     } as never;
 
-    expect(orderTotals(order)).toEqual({ items: 100, withDelivery: 150 });
+    expect(orderTotals(order)).toEqual({ sales: 100, subsidies: 0, withDelivery: 150 });
+  });
+
+  /**
+   * ПРОДАЖА ПРОДАВЦА = платёж покупателя + субсидии Маркета. Скидку по акции
+   * даёт Маркет, а продавцу компенсирует, поэтому отчёты показывают именно эту
+   * сумму, а не то, что заплатил покупатель. DELIVERY исключается — это
+   * вознаграждение за доставку, а не за товар.
+   */
+  it('субсидии входят в продажу и видны отдельной величиной', () => {
+    expect(
+      orderTotals({
+        itemsTotal: 10000,
+        deliveryTotal: 500,
+        subsidies: [
+          { type: 'SUBSIDY', amount: 1500 },
+          { type: 'YANDEX_CASHBACK', amount: 500 },
+          { type: 'DELIVERY', amount: 900 },
+        ],
+      }),
+    ).toEqual({ sales: 12000, subsidies: 2000, withDelivery: 12500 });
+  });
+
+  /**
+   * Отдельного поля «платёж покупателя» в IMoneyTotals нет намеренно: два
+   * похожих числа рядом — та же ловушка, что total vs itemsTotal. Оно
+   * восстанавливается вычитанием, и это должно оставаться правдой.
+   */
+  it('платёж покупателя восстанавливается как sales − subsidies', () => {
+    for (const order of [
+      { itemsTotal: 1000, subsidies: [{ type: 'SUBSIDY', amount: 200 }] },
+      { itemsTotal: 0, subsidies: [{ type: 'YANDEX_CASHBACK', amount: 50 }] },
+      { itemsTotal: 777, deliveryTotal: 23 },
+      {},
+    ]) {
+      const totals = orderTotals(order);
+      expect(totals.sales - totals.subsidies).toBe(Number(order.itemsTotal) || 0);
+    }
   });
 
   it('суммирование по списку', () => {
     expect(
       sumTotals([
         { itemsTotal: 100, deliveryTotal: 10 },
-        { itemsTotal: 200, deliveryTotal: 20 },
+        { itemsTotal: 200, deliveryTotal: 20, subsidies: [{ type: 'SUBSIDY', amount: 30 }] },
         {},
       ]),
-    ).toEqual({ items: 300, withDelivery: 330 });
+    ).toEqual({ sales: 330, subsidies: 30, withDelivery: 360 });
   });
 
   it('пустой список даёт нули, а не пустоту', () => {
-    expect(sumTotals([])).toEqual({ items: 0, withDelivery: 0 });
+    expect(sumTotals([])).toEqual({ sales: 0, subsidies: 0, withDelivery: 0 });
   });
 
-  it('сумма с доставкой всегда не меньше суммы товаров', () => {
+  it('сумма с доставкой всегда не меньше суммы продаж', () => {
     // Инвариант отчёта: обратное означало бы ошибку знака или порядка полей.
     for (const order of [
       { itemsTotal: 100, deliveryTotal: 0 },
       { itemsTotal: 0, deliveryTotal: 300 },
       { itemsTotal: 1000, deliveryTotal: 1 },
+      { itemsTotal: 1000, subsidies: [{ type: 'SUBSIDY', amount: 100 }] },
       {},
     ]) {
       const totals = orderTotals(order);
-      expect(totals.withDelivery).toBeGreaterThanOrEqual(totals.items);
+      expect(totals.withDelivery).toBeGreaterThanOrEqual(totals.sales);
     }
   });
 
-  it('addTotals складывает обе величины', () => {
-    expect(addTotals({ items: 1, withDelivery: 2 }, { items: 10, withDelivery: 20 })).toEqual({
-      items: 11,
-      withDelivery: 22,
-    });
+  it('addTotals складывает все величины', () => {
+    expect(
+      addTotals(
+        { sales: 1, subsidies: 3, withDelivery: 2 },
+        { sales: 10, subsidies: 30, withDelivery: 20 },
+      ),
+    ).toEqual({ sales: 11, subsidies: 33, withDelivery: 22 });
+  });
+
+  /**
+   * Дрейф-гард: новое поле в IMoneyTotals нельзя забыть в сумматоре. Забытое
+   * слагаемое не падает — оно молча занижает итог отчёта, то есть ошибка ровно
+   * того класса, ради которого написан весь модуль.
+   */
+  it('addTotals складывает КАЖДОЕ поле итогов, а не перечисленные руками', () => {
+    const keys = Object.keys(ZERO_TOTALS);
+    const one = Object.fromEntries(keys.map((key, i) => [key, i + 1])) as IMoneyTotals;
+    const sum = addTotals(one, one) as unknown as Record<string, number>;
+
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) {
+      expect(sum[key]).toBe((one as unknown as Record<string, number>)[key] * 2);
+    }
   });
 
   it('сумма возврата берётся из объекта amount', () => {
@@ -130,16 +199,18 @@ describe('Скрытых надбавок и коэффициентов нет (
   // применялась только на ОДНОМ из двух путей обновления, а коэффициент по
   // умолчанию был 2 вместо 1.2 — то есть цена молча удваивалась. Отчёты
   // обязаны отдавать ровно то, что вернул Яндекс.
+  // Заказы здесь без субсидий: проверяется, что к пришедшей сумме ничего не
+  // прибавляется САМО, а субсидия — не надбавка, а второе слагаемое из ответа.
   it('сумма равна тому, что пришло, — байт в байт', () => {
-    expect(orderTotals({ itemsTotal: 1000, deliveryTotal: 0 }).items).toBe(1000);
-    expect(orderTotals({ itemsTotal: 1, deliveryTotal: 0 }).items).toBe(1);
-    expect(orderTotals({ itemsTotal: 0, deliveryTotal: 0 }).items).toBe(0);
+    expect(orderTotals({ itemsTotal: 1000, deliveryTotal: 0 }).sales).toBe(1000);
+    expect(orderTotals({ itemsTotal: 1, deliveryTotal: 0 }).sales).toBe(1);
+    expect(orderTotals({ itemsTotal: 0, deliveryTotal: 0 }).sales).toBe(0);
   });
 
   it('к сумме не прибавляется фиксированная надбавка', () => {
     // «+5 ₽» проявился бы как расхождение на маленьких суммах.
     for (const value of [1, 5, 10, 100]) {
-      expect(orderTotals({ itemsTotal: value }).items).toBe(value);
+      expect(orderTotals({ itemsTotal: value }).sales).toBe(value);
       expect(orderTotals({ itemsTotal: value }).withDelivery).toBe(value);
     }
   });
@@ -147,7 +218,7 @@ describe('Скрытых надбавок и коэффициентов нет (
   it('сумма не умножается на коэффициент', () => {
     // Удвоение проявилось бы уже на первом заказе.
     const totals = sumTotals([{ itemsTotal: 777, deliveryTotal: 23 }]);
-    expect(totals.items).toBe(777);
+    expect(totals.sales).toBe(777);
     expect(totals.withDelivery).toBe(800);
   });
 
@@ -156,7 +227,7 @@ describe('Скрытых надбавок и коэффициентов нет (
       { itemsTotal: 100.5, deliveryTotal: 0 },
       { itemsTotal: 200.25, deliveryTotal: 0 },
     ];
-    expect(sumTotals(orders).items).toBeCloseTo(300.75, 10);
+    expect(sumTotals(orders).sales).toBeCloseTo(300.75, 10);
   });
 });
 

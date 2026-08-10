@@ -27,7 +27,7 @@ import { isFby, placementOfCampaign } from '../stocks/placement';
 import {
   addTotals,
   amountValue,
-  orderTotals,
+  sumTotals,
   ZERO_TOTALS,
   type IMoneyTotals,
   type IOrderSubsidy,
@@ -97,9 +97,10 @@ export interface IReportOrder {
   /**
    * Субсидии Маркета — итог по типам на весь заказ.
    *
-   * Нужны прибыли: это вознаграждение партнёру, то есть выручка продавца сверх
-   * платежа покупателя (см. subsidiesTotal в money.ts). Приходили всегда, просто
-   * не читались — за июль в них 421 тыс. ₽.
+   * Нужны ВСЕМ отчётам, а не одной прибыли: это вознаграждение партнёру, то
+   * есть выручка продавца сверх платежа покупателя, и `orderTotals` (money.ts)
+   * складывает их в `sales`. Приходили всегда, просто долго не читались — за
+   * июль в них 421 тыс. ₽, а на срезе «сейчас в пути» это +17,6 %.
    */
   subsidies?: IOrderSubsidy[];
   items?: IReportOrderItem[];
@@ -148,6 +149,11 @@ export interface IReportResult {
   key: TReportKey;
   title: string;
   count: number;
+  /**
+   * Продажи продавца, доля субсидий в них и сумма с доставкой. Считаются
+   * `orderTotals` по ТЕМ ЖЕ заказам, что дали `count` (довод `assembling`), —
+   * то же и в .xlsx, который зовёт `orderTotals` сам по каждой строке.
+   */
   totals: IMoneyTotals;
   orders: IReportOrder[];
   /** За какой период собран — заголовок сообщения печатает именно его. */
@@ -228,10 +234,7 @@ export class OrderReportsService {
     };
 
     const orders = await this.collectOrders(client, definition, now, period, options, context);
-    let totals = orders.reduce<IMoneyTotals>(
-      (acc, order) => addTotals(acc, orderTotals(order)),
-      ZERO_TOTALS,
-    );
+    let totals = sumTotals(orders);
 
     let count = orders.length;
     let returns: IReturnsSummary | undefined;
@@ -556,10 +559,13 @@ export class OrderReportsService {
         if (record.orderId != null && seen.has(record.orderId)) continue;
         if (record.orderId != null) seen.add(record.orderId);
 
-        // У возврата нет разбивки на товары и доставку — сумма одна, и она
-        // попадает в обе величины, иначе «с доставкой» окажется меньше товаров.
+        // У возврата нет разбивки НИ на товары/доставку, НИ на субсидии: метод
+        // возвратов отдаёт одну сумму. Она идёт в обе величины, иначе «с
+        // доставкой» окажется меньше продаж, а субсидии остаются нулём — долю
+        // компенсации Маркета в этой сумме взять неоткуда, а выдуманная
+        // завысила бы строку «в т.ч. субсидии» правдоподобно и молча.
         const value = amountValue(record.amount);
-        totals = addTotals(totals, { items: value, withDelivery: value });
+        totals = addTotals(totals, { sales: value, subsidies: 0, withDelivery: value });
         count += 1;
         records.push(record);
 

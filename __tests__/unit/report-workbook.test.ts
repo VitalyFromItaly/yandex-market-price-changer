@@ -41,7 +41,8 @@ describe('Выгрузка .xlsx', () => {
       'Дата создания',
       'Статус',
       'Состав',
-      'Сумма товаров, ₽',
+      'Сумма продаж, ₽',
+      'в т.ч. субсидии Маркета, ₽',
       'Сумма с доставкой, ₽',
     ]);
   });
@@ -55,7 +56,30 @@ describe('Выгрузка .xlsx', () => {
     expect(first[2]).toBe('DELIVERY');
     expect(first[3]).toBe('Кроссовки ×2');
     expect(first[4]).toBe(1000);
-    expect(first[5]).toBe(1100);
+    expect(first[5]).toBe(0);
+    expect(first[6]).toBe(1100);
+  });
+
+  /**
+   * Продажа в файле — та же, что в сообщении: платёж покупателя ПЛЮС
+   * компенсация Маркета. DELIVERY-субсидия в неё не входит.
+   */
+  it('субсидии входят в сумму продаж и стоят своей колонкой', () => {
+    const { buffer } = buildOrdersWorkbook([
+      ORDER({
+        itemsTotal: 1000,
+        deliveryTotal: 100,
+        subsidies: [
+          { type: 'SUBSIDY', amount: 150 },
+          { type: 'DELIVERY', amount: 90 },
+        ],
+      }),
+    ]);
+    const [, first] = readBack(buffer);
+
+    expect(first[4]).toBe(1150);
+    expect(first[5]).toBe(150);
+    expect(first[6]).toBe(1250);
   });
 
   it('суммы лежат ЧИСЛАМИ, а не строками', () => {
@@ -65,11 +89,17 @@ describe('Выгрузка .xlsx', () => {
 
     expect(typeof first[4]).toBe('number');
     expect(typeof first[5]).toBe('number');
+    expect(typeof first[6]).toBe('number');
   });
 
   it('итоговая строка присутствует и суммирует всё', () => {
     const { buffer } = buildOrdersWorkbook([
-      ORDER({ id: 1, itemsTotal: 1000, deliveryTotal: 100 }),
+      ORDER({
+        id: 1,
+        itemsTotal: 1000,
+        deliveryTotal: 100,
+        subsidies: [{ type: 'SUBSIDY', amount: 200 }],
+      }),
       ORDER({ id: 2, itemsTotal: 500, deliveryTotal: 50 }),
     ]);
     const rows = readBack(buffer);
@@ -77,8 +107,9 @@ describe('Выгрузка .xlsx', () => {
 
     expect(total[0]).toBe('ИТОГО');
     expect(total[3]).toContain('2');
-    expect(total[4]).toBe(1500);
-    expect(total[5]).toBe(1650);
+    expect(total[4]).toBe(1700);
+    expect(total[5]).toBe(200);
+    expect(total[6]).toBe(1850);
   });
 
   it('заказ без товаров и без сумм не роняет выгрузку', () => {

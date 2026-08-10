@@ -12,7 +12,13 @@ import { YandexMarketSchema } from '../src/database/schemas/yandex-market.schema
 import { YandexMarketService } from '../src/database/services/yandex-market.service';
 import { YandexApiClient } from '../src/modules/yandex/yandex-api.client';
 import { YandexModule } from '../src/modules/yandex/yandex.module';
-import { orderTotals } from '../src/modules/yandex/reports/money';
+import {
+  ZERO_TOTALS,
+  addTotals,
+  orderTotals,
+  sumTotals,
+  type IMoneyTotals,
+} from '../src/modules/yandex/reports/money';
 import { formatProfitReport } from '../src/modules/yandex/reports/profit-message';
 import { ProfitService } from '../src/modules/yandex/reports/profit.service';
 import type { IReportPeriod } from '../src/modules/yandex/reports/report-period';
@@ -71,6 +77,11 @@ interface IRawOrder {
   substatus?: string;
   creationDate?: string;
   itemsTotal?: number;
+  // Субсидии Маркета — компенсация продавцу за скидку, которую дал Маркет.
+  // Нужны, чтобы ответить на вопрос «а есть ли они у заказов В ПУТИ»: все
+  // боевые подтверждения субсидий были по DELIVERED, а отчёт «Едет до клиента»
+  // показывает DELIVERY/PICKUP.
+  subsidies?: Array<{ type?: string; amount?: number }>;
   // offerName нужен списку недостающих артикулов: один код без наименования в
   // прайсе не найти.
   items?: Array<{ count?: number; offerId?: string; offerName?: string }>;
@@ -93,16 +104,22 @@ function parseArgs(argv: string[], now: Date): IArgs {
   return { user, day };
 }
 
-/** Свод по одному набору заказов: сколько штук и на сколько — в разрезе статуса. */
-function breakdown(orders: IRawOrder[]): Map<string, { count: number; items: number }> {
-  const rows = new Map<string, { count: number; items: number }>();
+/**
+ * Свод по одному набору заказов: сколько штук и на сколько — в разрезе статуса.
+ *
+ * Печатаются ПРОДАЖИ (то же, что показывает бот: платёж покупателя плюс
+ * компенсация Маркета) и отдельной колонкой доля субсидий в них. Разбивка нужна
+ * затем, чтобы видеть, на каких статусах компенсация вообще проставлена: все
+ * прежние сверки субсидий были по DELIVERED, а «Едет до клиента» — это
+ * DELIVERY/PICKUP.
+ */
+function breakdown(orders: IRawOrder[]): Map<string, IMoneyTotals & { count: number }> {
+  const rows = new Map<string, IMoneyTotals & { count: number }>();
 
   for (const order of orders) {
     const key = order.substatus ? `${order.status} / ${order.substatus}` : `${order.status}`;
-    const row = rows.get(key) ?? { count: 0, items: 0 };
-    row.count += 1;
-    row.items += orderTotals(order).items;
-    rows.set(key, row);
+    const row = rows.get(key) ?? { count: 0, ...ZERO_TOTALS };
+    rows.set(key, { count: row.count + 1, ...addTotals(row, orderTotals(order)) });
   }
 
   return rows;
@@ -110,15 +127,19 @@ function breakdown(orders: IRawOrder[]): Map<string, { count: number; items: num
 
 function printBreakdown(title: string, orders: IRawOrder[]): void {
   const rows = [...breakdown(orders).entries()].sort((a, b) => b[1].count - a[1].count);
-  const total = orders.reduce((sum, order) => sum + orderTotals(order).items, 0);
+  const totals = sumTotals(orders);
+  const rub = (value: number) => Math.round(value).toLocaleString('ru-RU');
 
   console.log(
-    `${title}: ${orders.length} заказов на ${Math.round(total).toLocaleString('ru-RU')} ₽`,
+    `${title}: ${orders.length} заказов на ${rub(totals.sales)} ₽ продаж ` +
+      `(в т.ч. ${rub(totals.subsidies)} ₽ субсидий; ` +
+      `покупатели заплатили ${rub(totals.sales - totals.subsidies)} ₽)`,
   );
   for (const [status, row] of rows) {
     console.log(
       `   ${status.padEnd(42)} ${String(row.count).padStart(4)} шт.  ` +
-        `${Math.round(row.items).toLocaleString('ru-RU').padStart(12)} ₽`,
+        `${rub(row.sales).padStart(12)} ₽  ` +
+        `(субсидий ${rub(row.subsidies).padStart(10)} ₽)`,
     );
   }
   console.log();

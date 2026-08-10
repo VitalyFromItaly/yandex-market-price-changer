@@ -394,6 +394,39 @@ excluded from tsconfig, imported nowhere, and its `core/request.ts` only emits
 `Authorization: Bearer`, which is wrong for Yandex) and `src/services/yandex-market-api.service.ts`
 (429 lines, hardcoded base URL + Bearer auth, imported nowhere).
 
+### Продажи, а не платёж покупателя: одна формула на все отчёты
+
+Every order report prints «💰 Продажи» — **the seller's money, not the buyer's**. The seller put it
+plainly: there are three prices (purchase, their own sale price, and what the customer pays), and the
+third one «мне вообще похер». Until TASK-057 the reports printed exactly that third one: `itemsTotal`
+under the label «Товары». The Market discounts by subsidy and **reimburses the seller**, so the sale
+price exceeds the buyer's payment — on the live store's «Едет до клиента» snapshot (09-08-2026) that
+is 1 037 182 ₽ of payments against 182 876 ₽ of subsidies, **+17,6 %**.
+
+- **The formula lives in exactly one place: `orderTotals` (money.ts).** It used to be written by hand
+  in `profitOf` and in `tariff-estimate.ts` and nowhere else, which is precisely how four screens
+  ended up showing a number the seller never asked for. Now `IMoneyTotals` is
+  `{sales, subsidies, withDelivery}`, `profitOf` destructures it, and «Прибыль» and «Едет до клиента»
+  cannot disagree by construction.
+- **There is no «buyer's payment» field in `IMoneyTotals`, deliberately.** Two similar numbers side by
+  side reproduce inside our own type the very trap money.ts is written against (`total` vs
+  `itemsTotal`): the next report takes the wrong one, and that does not crash — it quietly diverges
+  from the cabinet. The payment is recovered as `sales − subsidies`, pinned by a test.
+- **Renaming `items` → `sales` was the point, not a side effect.** Adding a field would have broken
+  nothing and the defect would have survived in every consumer somebody forgot; the rename made the
+  compiler name all six of them (`DRAFT_FIELD_SET` argument).
+- **The breakdown line «в т.ч. субсидии Маркета» is mandatory and shares `SUBSIDIES_LABEL` with the
+  profit screen.** Without it the new number reconciles with nothing — the cabinet shows the buyer's
+  payment, and the seller remembers the old «Товары». It is skipped at zero: «субсидии 0 ₽» says
+  nothing. The .xlsx keeps the column **even at zero** — a workbook has a fixed schema, and a column
+  that disappears breaks the pivot tables built on the previous export.
+- **A return record contributes `subsidies: 0`.** The returns endpoint gives one `amount` with no
+  breakdown; the Market's share in it is unknowable and a guessed one would inflate the subsidy line
+  plausibly and silently. Consequence to remember: in «Едет обратно» the breakdown covers only the
+  non-redemptions taken from the orders endpoint, and a non-redeemed order still carries its subsidy
+  into «Продажи» although that money will never arrive — an accepted cost of "all order reports"
+  being one function.
+
 ### «Едет обратно»: два источника и три грабли на возвратах
 
 The report sums non-redemptions from the **orders** endpoint (by return substatuses) and records from
@@ -575,7 +608,10 @@ into one line and loses commission, tax and cost.
   `revenue × 0.70 − purchase` at the defaults. The tax base is the customer's decision, written down
   there — taking 7% off the post-commission remainder yields 539 ₽ instead of 700 ₽ on 10 000 ₽, and
   both look equally plausible.
-- **Revenue is `itemsTotal` + Market subsidies**, goods only. `itemsTotal` is documented as «Платёж
+- **Revenue is `itemsTotal` + Market subsidies**, goods only — and since TASK-057 that formula is
+  **not this report's**: it lives in `orderTotals` (money.ts) and every order report prints it. See
+  "Продажи, а не платёж покупателя" below; what follows is why the second term exists at all.
+  `itemsTotal` is documented as «Платёж
   покупателя» and `item.price` as «цена без учёта вознаграждения партнёру за скидки по промокодам,
   купонам и акциям (параметр `subsidies`)» — the Market's discount is paid _by the Market_ and
   **reimbursed to the seller**, so the seller's revenue exceeds what the buyer paid. Verified on the
@@ -590,9 +626,10 @@ into one line and loses commission, tax and cost.
     `DELIVERY` is excluded — that's delivery remuneration, the same reason `itemsTotal` excludes
     `deliveryTotal`. `SUBSIDY_TYPE` lives in `report-status-map.ts` because the literal `'DELIVERY'`
     is also an order status and the "statuses are not scattered" test rightly catches it elsewhere.
-  - The report prints «в т.ч. субсидии Маркета» under Продажи. The other reports show «Товары» as the
-    buyer's payment, so without that line the two screens look like they disagree — for July the gap
-    is 421 000 ₽.
+  - The report prints «в т.ч. субсидии Маркета» under Продажи, from the shared `SUBSIDIES_LABEL` —
+    the order reports print the same line under the same label, and two wordings for one number
+    would read as two different metrics. The line itself is duplicated deliberately: profit has its
+    own block structure, and branching one formatter would put two unrelated reports in one function.
   - Earlier revisions of this file claimed the opposite (that `itemsTotal` includes subsidy
     compensation while `Σ(item.price × count)` does not). On live data those two sums matched **to the
     rouble** (2 456 985) and neither contains subsidies.

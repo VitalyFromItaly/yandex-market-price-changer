@@ -412,7 +412,7 @@ describe('Онбординг: от /start до отчёта', () => {
 
     const text = harness.fake.lastTextTo(USER_ID);
     expect(text).toContain('Заказов');
-    expect(text).toContain('Товары');
+    expect(text).toContain('Продажи');
   });
 
   it('прибыль считается по закупу из базы и сходится с суммой продажи', async () => {

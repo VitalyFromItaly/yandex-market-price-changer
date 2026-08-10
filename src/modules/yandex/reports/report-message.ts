@@ -1,5 +1,5 @@
 import { b, esc } from '../../telegram/formatting/telegram-format';
-import { formatRubles } from './money';
+import { SUBSIDIES_LABEL, formatRubles } from './money';
 import { moscowStamp } from './moscow-day';
 import { DEFAULT_PERIOD, isUnbounded, periodTitle } from './report-period';
 import { REPORT } from './report-status-map';
@@ -62,9 +62,24 @@ export function formatReport(result: IReportResult, now: Date = new Date()): str
     header(result, now),
     '',
     `📦 Заказов: ${b(result.count)}`,
-    `💰 Товары: ${b(formatRubles(result.totals.items))}`,
-    `🚚 С доставкой: ${b(formatRubles(result.totals.withDelivery))}`,
+    `💰 Продажи: ${b(formatRubles(result.totals.sales))}`,
   ];
+
+  /**
+   * Субсидии называются прямо — тот же ярлык и то же место, что в «Прибыли».
+   *
+   * Продажа продавца больше платежа покупателя: скидку по акции даёт Маркет, а
+   * продавцу компенсирует. Раньше здесь печатались «Товары» — платёж
+   * покупателя, то есть чужое число: продавцу оно, по его же словам, не нужно
+   * вовсе. Но без разбивки новую сумму не свести ни с кабинетом Маркета (там
+   * платёж покупателя), ни с прежней строкой, поэтому доля Маркета печатается
+   * рядом. Ноль не печатаем: «субсидии 0 ₽» ничего не сообщает.
+   */
+  if (result.totals.subsidies) {
+    lines.push(`   ${SUBSIDIES_LABEL}: ${b(formatRubles(result.totals.subsidies))}`);
+  }
+
+  lines.push(`🚚 С доставкой: ${b(formatRubles(result.totals.withDelivery))}`);
 
   /**
    * Сборка на складе Маркета. Появляется только на FBY, где такие заказы в

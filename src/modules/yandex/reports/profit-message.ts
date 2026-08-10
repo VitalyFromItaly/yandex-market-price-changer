@@ -5,7 +5,7 @@ import type { ITariffEstimate } from './tariff-estimate';
 import { b, code, esc } from '../../telegram/formatting/telegram-format';
 
 import { BRAND_KEYS, brandTitle } from './brands';
-import { formatRubles } from './money';
+import { SUBSIDIES_LABEL, formatRubles } from './money';
 import { brandDiscountOf, discountsOf } from './profit';
 import { promoConfigsOf, promoValueLabel } from './promo';
 import { moscowDateParam } from './moscow-day';
@@ -87,13 +87,18 @@ function detailedBlock(
   ];
 
   /**
-   * Субсидии называются прямо. Остальные отчёты печатают «Товары» как ПЛАТЁЖ
-   * ПОКУПАТЕЛЯ, а продажи здесь включают ещё и компенсацию Маркета — без этой
-   * строки разница между экранами выглядела бы ошибкой. За июль это 421 тыс. ₽
-   * на 2,46 млн платежей, то есть спорить о ней придётся обязательно.
+   * Субсидии называются прямо: продажа продавца включает компенсацию Маркета, а
+   * покупатель заплатил меньше — за июль разница 421 тыс. ₽ на 2,46 млн, то
+   * есть спорить о ней придётся обязательно.
+   *
+   * Подпись берётся из общей константы, потому что ТУ ЖЕ строку печатают
+   * четыре отчёта о заказах (report-message.ts): число и формула у них одни,
+   * и две формулировки читались бы как два разных показателя. Сама строка
+   * дублируется намеренно — у прибыли своя структура блока, и ветвить общий
+   * форматтер значило бы держать два несвязанных отчёта в одной функции.
    */
   if (totals.subsidies) {
-    lines.push(`   в т.ч. субсидии Маркета: ${b(formatRubles(totals.subsidies))}`);
+    lines.push(`   ${SUBSIDIES_LABEL}: ${b(formatRubles(totals.subsidies))}`);
   }
 
   return [

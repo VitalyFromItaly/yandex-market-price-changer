@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
+import * as XLSX from 'xlsx';
 import { Test } from '@nestjs/testing';
 import { OrderReportsService } from '../../src/modules/yandex/reports/order-reports.service';
 import { YandexClientFactory } from '../../src/modules/yandex/yandex-client.factory';
 import { REPORT } from '../../src/modules/yandex/reports/report-status-map';
 import { formatReport } from '../../src/modules/yandex/reports/report-message';
-import { NBSP } from '../../src/modules/yandex/reports/money';
+import { NBSP, formatRubles } from '../../src/modules/yandex/reports/money';
 import { PERIOD } from '../../src/modules/yandex/reports/report-period';
 
 const NOW = new Date('2026-07-29T10:00:00Z');
@@ -130,7 +131,7 @@ describe('Отчёт «уехало клиенту» (TASK-023)', () => {
     const result = await reports.build(STORE, REPORT.SHIPPED_TODAY, NOW);
 
     expect(result.count).toBe(2);
-    expect(result.totals).toEqual({ items: 1500, withDelivery: 1650 });
+    expect(result.totals).toEqual({ sales: 1500, subsidies: 0, withDelivery: 1650 });
   });
 
   it('заказы не того статуса отсеиваются даже если пришли в ответе', async () => {
@@ -143,7 +144,7 @@ describe('Отчёт «уехало клиенту» (TASK-023)', () => {
 
     const result = await reports.build(STORE, REPORT.SHIPPED_TODAY, NOW);
     expect(result.count).toBe(1);
-    expect(result.totals.items).toBe(100);
+    expect(result.totals.sales).toBe(100);
   });
 });
 
@@ -180,7 +181,7 @@ describe('Отчёт «едет обратно» (TASK-025)', () => {
 
     const result = await reports.build(STORE, REPORT.RETURNING, NOW);
     expect(result.count).toBe(2);
-    expect(result.totals.items).toBe(1000);
+    expect(result.totals.sales).toBe(1000);
   });
 
   it('обычная доставка без возвратного подстатуса в отчёт не попадает', async () => {
@@ -195,7 +196,7 @@ describe('Отчёт «едет обратно» (TASK-025)', () => {
 
     const result = await reports.build(STORE, REPORT.RETURNING, NOW);
     expect(result.count).toBe(1);
-    expect(result.totals.items).toBe(100);
+    expect(result.totals.sales).toBe(100);
   });
 
   it('возвраты берутся по ВСЕМ стадиям пути, а не по одной', async () => {
@@ -230,7 +231,7 @@ describe('Отчёт «едет обратно» (TASK-025)', () => {
     const result = await reports.build(STORE, REPORT.RETURNING, NOW);
 
     expect(result.count).toBe(1);
-    expect(result.totals.items).toBe(500);
+    expect(result.totals.sales).toBe(500);
   });
 
   it('возврат без соответствующего заказа добавляется к отчёту', async () => {
@@ -249,7 +250,27 @@ describe('Отчёт «едет обратно» (TASK-025)', () => {
     const result = await reports.build(STORE, REPORT.RETURNING, NOW);
 
     expect(result.count).toBe(2);
-    expect(result.totals.items).toBe(800);
+    expect(result.totals.sales).toBe(800);
+  });
+
+  /**
+   * У метода возвратов одна сумма без разбивки: долю компенсации Маркета в ней
+   * взять неоткуда, а выдуманная завысила бы строку «в т.ч. субсидии»
+   * правдоподобно и молча. Поэтому записи возвратов дают ноль — и строки о
+   * субсидиях в таком отчёте нет вовсе.
+   */
+  it('запись возврата не выдумывает субсидию', async () => {
+    const { reports } = await service({
+      returns: [
+        { returnId: 1, orderId: 5, creationDate: RETURN_DATE, amount: { value: 400 } },
+      ],
+    });
+
+    const result = await reports.build(STORE, REPORT.RETURNING, NOW);
+
+    expect(result.totals.sales).toBe(400);
+    expect(result.totals.subsidies).toBe(0);
+    expect(formatReport(result, NOW)).not.toContain('субсидии');
   });
 
   it('дубли внутри самого списка возвратов тоже схлопываются', async () => {
@@ -393,10 +414,59 @@ describe('Текст отчёта', () => {
 
     const text = formatReport(result, NOW);
     expect(text).toContain('Заказов');
-    expect(text).toContain('Товары');
+    expect(text).toContain('Продажи');
     expect(text).toContain('С доставкой');
     expect(text).toContain(`1${NBSP}000${NBSP}₽`);
     expect(text).toContain(`1${NBSP}234${NBSP}₽`);
+  });
+
+  /**
+   * Отчёты показывают ПРОДАЖУ ПРОДАВЦА, а не платёж покупателя: скидку по акции
+   * даёт Маркет и продавцу её компенсирует. Продавец сформулировал это прямо —
+   * цена, которую заплатил клиент, ему в отчётах не нужна. Проверяется через
+   * build(), а не только через money.ts: между заказом и суммой лежат маппер,
+   * дедуп и отбор по определению, и регресс в любом звене виден только здесь.
+   */
+  it.each([REPORT.IN_TRANSIT, REPORT.SHIPPED_TODAY, REPORT.REDEEMED])(
+    'субсидии Маркета входят в продажи отчёта %s',
+    async (key) => {
+      const status = key === REPORT.REDEEMED ? 'DELIVERED' : 'DELIVERY';
+      const { reports } = await service({
+        orders: [
+          {
+            id: 1,
+            status,
+            itemsTotal: 1000,
+            deliveryTotal: 100,
+            subsidies: [
+              { type: 'SUBSIDY', amount: 150 },
+              { type: 'YANDEX_CASHBACK', amount: 50 },
+              // Вознаграждение за ДОСТАВКУ — не товарная выручка.
+              { type: 'DELIVERY', amount: 900 },
+            ],
+          },
+        ],
+      });
+
+      const result = await reports.build(STORE, key, NOW);
+      expect(result.totals.sales).toBe(1200);
+      expect(result.totals.subsidies).toBe(200);
+      expect(result.totals.withDelivery).toBe(1300);
+
+      const text = formatReport(result, NOW);
+      expect(text).toContain('в т.ч. субсидии Маркета');
+      expect(text).toContain(`1${NBSP}200${NBSP}₽`);
+    },
+  );
+
+  it('без субсидий строки о них нет — «субсидии 0 ₽» ничего не сообщает', async () => {
+    const { reports } = await service({
+      orders: [{ id: 1, status: 'DELIVERED', itemsTotal: 1000 }],
+    });
+    const result = await reports.build(STORE, REPORT.REDEEMED, NOW);
+
+    expect(result.totals.subsidies).toBe(0);
+    expect(formatReport(result, NOW)).not.toContain('субсидии');
   });
 
   it('в отчёте за период указан ПЕРИОД, а в срезе «в пути» — МОМЕНТ съёмки', async () => {
@@ -496,6 +566,46 @@ describe('Выгрузка «едет до клиента» файлом (TASK-0
       expect(result.caption).toContain('на 29-07-2026 13:00 МСК');
       expect(result.caption).not.toContain('не поместились');
     }
+  });
+
+  /**
+   * Файл обязан сходиться с подписью к нему ПО ПОСТРОЕНИЮ: сообщение считает
+   * суммы через `build()`, а книга зовёт `orderTotals` сама по каждой строке —
+   * два независимых пути к одному числу. Именно этот тест ловит «поправили
+   * сообщение, забыли книгу».
+   */
+  it('итог книги сходится с числами подписи', async () => {
+    const orders = [
+      {
+        id: 1,
+        status: 'DELIVERY',
+        itemsTotal: 1000,
+        deliveryTotal: 100,
+        subsidies: [{ type: 'SUBSIDY', amount: 150 }],
+      },
+      { id: 2, status: 'PICKUP', itemsTotal: 500, deliveryTotal: 50 },
+    ];
+
+    const { reports } = await service({ orders });
+    const result = await reports.exportInTransit(STORE, NOW);
+    const totals = (await (await service({ orders })).reports.build(STORE, REPORT.IN_TRANSIT, NOW))
+      .totals;
+
+    expect(result.empty).toBe(false);
+    if (result.empty) return;
+
+    const book = XLSX.read(result.buffer, { type: 'buffer' });
+    const rows = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], {
+      header: 1,
+      defval: '',
+    }) as (string | number)[][];
+    const total = rows[rows.length - 1];
+
+    expect(total[0]).toBe('ИТОГО');
+    expect(total[4]).toBe(Math.round(totals.sales));
+    expect(total[5]).toBe(Math.round(totals.subsidies));
+    expect(total[6]).toBe(Math.round(totals.withDelivery));
+    expect(result.caption).toContain(formatRubles(totals.sales));
   });
 });
 
@@ -607,7 +717,7 @@ describe('Период длиннее 30 дней собирается неск�
     const result = await reports.build(STORE, REPORT.REDEEMED, LAST_DAY, MONTH);
 
     expect(result.count).toBe(1);
-    expect(result.totals.items).toBe(1000);
+    expect(result.totals.sales).toBe(1000);
   });
 
   it('срез «в пути» окон не знает: один запрос и без дат', async () => {
@@ -649,7 +759,7 @@ describe('Возвраты: период и разбивка', () => {
     const result = await reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
 
     expect(result.count).toBe(1);
-    expect(result.totals.items).toBe(100);
+    expect(result.totals.sales).toBe(100);
   });
 
   it('«сегодня» и «с 1 числа» дают РАЗНОЕ — это и был баг', async () => {
@@ -752,7 +862,7 @@ describe('Возвраты: период и разбивка', () => {
 
     expect(result.count).toBe(2);
     expect(result.returns?.inFlight).toBe(2);
-    expect(result.totals.items).toBe(200);
+    expect(result.totals.sales).toBe(200);
   });
 
   it('текст печатает разбивку, а на «Всего» — оговорку про 30 дней', async () => {

@@ -187,7 +187,11 @@ describe('Глубокая история: выбор источника', () =>
     expect(statsQueries[0].updateFrom).toBe('2026-06-15');
     expect(statsQueries[0].statuses).toEqual(['DELIVERED']);
     expect(result.count).toBe(1);
-    expect(result.totals.items).toBe(3000);
+    // Продажи архивного заказа — платёж покупателя 3000 плюс синтезированные из
+    // CASHBACK/MARKETPLACE субсидии 200 + 500: у архива своя форма, но деньги
+    // после маппера обязаны считаться той же формулой, что у getOrders.
+    expect(result.totals.sales).toBe(3700);
+    expect(result.totals.subsidies).toBe(700);
   });
 
   it('свежий период под флагом остаётся на getOrders', async () => {

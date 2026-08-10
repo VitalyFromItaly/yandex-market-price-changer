@@ -20,12 +20,22 @@ import type { IReportOrder } from './order-reports.service';
  */
 export const MAX_EXPORT_ROWS = 20_000;
 
+/**
+ * Колонки идут в том же порядке, что строки сообщения: продажи → субсидии →
+ * с доставкой. Инвариант, который здесь защищается, — «файл сходится с
+ * подписью к нему», и одинаковый порядок делает расхождение видимым глазом.
+ *
+ * Колонка субсидий печатается ВСЕГДА, даже нулём, — в отличие от строки в чате:
+ * у книги схема фиксированная, и исчезающая колонка ломает сводные таблицы,
+ * которые продавец построил на прошлой выгрузке.
+ */
 const HEADERS = [
   'Номер заказа',
   'Дата создания',
   'Статус',
   'Состав',
-  'Сумма товаров, ₽',
+  'Сумма продаж, ₽',
+  'в т.ч. субсидии Маркета, ₽',
   'Сумма с доставкой, ₽',
 ] as const;
 
@@ -56,12 +66,14 @@ export function buildOrdersWorkbook(orders: readonly IReportOrder[]): IWorkbookR
   const truncated = orders.length - exported.length;
 
   const rows: (string | number)[][] = [[...HEADERS]];
-  let totalItems = 0;
+  let totalSales = 0;
+  let totalSubsidies = 0;
   let totalWithDelivery = 0;
 
   for (const order of exported) {
     const totals = orderTotals(order);
-    totalItems += totals.items;
+    totalSales += totals.sales;
+    totalSubsidies += totals.subsidies;
     totalWithDelivery += totals.withDelivery;
 
     rows.push([
@@ -71,7 +83,8 @@ export function buildOrdersWorkbook(orders: readonly IReportOrder[]): IWorkbookR
       formatItems(order),
       // В ячейку кладём ЧИСЛО, а не отформатированную строку: «1 234 ₽» Excel
       // сложить не сможет, а продавцы считают выгрузку сводными таблицами.
-      round(totals.items),
+      round(totals.sales),
+      round(totals.subsidies),
       round(totals.withDelivery),
     ]);
   }
@@ -82,12 +95,21 @@ export function buildOrdersWorkbook(orders: readonly IReportOrder[]): IWorkbookR
     '',
     '',
     `Заказов: ${exported.length}`,
-    round(totalItems),
+    round(totalSales),
+    round(totalSubsidies),
     round(totalWithDelivery),
   ]);
 
   const sheet = XLSX.utils.aoa_to_sheet(rows);
-  sheet['!cols'] = [{ wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 50 }, { wch: 18 }, { wch: 20 }];
+  sheet['!cols'] = [
+    { wch: 14 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 50 },
+    { wch: 18 },
+    { wch: 26 },
+    { wch: 20 },
+  ];
 
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, 'Заказы');

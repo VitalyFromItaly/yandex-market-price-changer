@@ -41,7 +41,7 @@
  */
 
 import { brandOf, isBrandKey, type TBrandKey } from './brands';
-import { orderTotals, subsidiesTotal, type IOrderMoney } from './money';
+import { orderTotals, type IOrderMoney } from './money';
 import { promoConfigsOf, promoPercentAt } from './promo';
 
 /**
@@ -449,9 +449,10 @@ export function profitOf(
   for (const order of orders ?? []) {
     // Выручка = платёж покупателя ПЛЮС субсидия Маркета: скидку по акции даёт
     // Маркет, а продавцу компенсирует. Без второго слагаемого месяц выходил с
-    // маржой 4 % вместо 22 % (см. шапку модуля).
-    const orderSubsidies = subsidiesTotal(order);
-    const orderRevenue = orderTotals(order).items + orderSubsidies;
+    // маржой 4 % вместо 22 % (см. шапку модуля). Формула живёт в orderTotals
+    // (money.ts) — ТА ЖЕ, что печатают четыре отчёта о заказах, поэтому
+    // «Прибыль» и «Едет до клиента» не могут разойтись по построению.
+    const { sales: orderRevenue, subsidies: orderSubsidies } = orderTotals(order);
 
     // Возврат проверяется ПЕРВЫМ и уводит заказ целиком: товар вернулся на склад,
     // значит нет ни выручки, ни комиссии, ни налога, ни закупа. Порядок важен —

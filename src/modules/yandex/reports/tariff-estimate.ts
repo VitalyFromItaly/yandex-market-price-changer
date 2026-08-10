@@ -1,7 +1,7 @@
 import type { IOfferLogistics, ITariffCalculation, ITariffOfferParams } from '../yandex-api.client';
 import type { IOrderMoney, IOrderSubsidy } from './money';
 
-import { orderTotals, subsidiesTotal } from './money';
+import { orderTotals } from './money';
 import { SUBSIDY_TYPE } from './report-status-map';
 
 /**
@@ -254,7 +254,9 @@ export function estimateOf(
 
     coveredOrders += 1;
     servicesTotal += resolved.servicesTotal;
-    coveredRevenue += orderTotals(order).items + subsidiesTotal(order);
+    // Та же продажа, что печатают отчёты и считает прибыль: формула одна, в
+    // orderTotals. Здесь она — знаменатель для «≈ N % от продаж».
+    coveredRevenue += orderTotals(order).sales;
     for (const [type, value] of Object.entries(resolved.byService)) {
       byService[type] = (byService[type] ?? 0) + value;
     }

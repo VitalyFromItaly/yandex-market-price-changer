@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 
 import { YandexMarketSchema } from '../src/database/schemas/yandex-market.schema';
 import { YandexApiClient } from '../src/modules/yandex/yandex-api.client';
-import { subsidiesTotal, orderTotals } from '../src/modules/yandex/reports/money';
+import { orderTotals, sumTotals } from '../src/modules/yandex/reports/money';
 import {
   calendarDateParam,
   calendarDayBounds,
@@ -65,7 +65,8 @@ function parseArgs(
 
 interface ISetSummary {
   count: number;
-  items: number;
+  /** Продажи продавца: платёж покупателя ВМЕСТЕ с субсидиями (orderTotals). */
+  sales: number;
   delivery: number;
   bySubsidyType: Map<string, number>;
   byStatus: Map<string, number>;
@@ -76,14 +77,14 @@ function summarize(orders: readonly IReportOrder[]): ISetSummary {
   const byStatus = new Map<string, number>();
   const bySubsidyType = new Map<string, number>();
   const ids = new Set<number>();
-  let items = 0;
+  let sales = 0;
   let delivery = 0;
 
   for (const order of orders) {
     byStatus.set(order.status ?? '?', (byStatus.get(order.status ?? '?') ?? 0) + 1);
     const totals = orderTotals(order);
-    items += totals.items;
-    delivery += totals.withDelivery - totals.items;
+    sales += totals.sales;
+    delivery += totals.withDelivery - totals.sales;
     if (order.id != null) ids.add(order.id);
     for (const subsidy of order.subsidies ?? []) {
       bySubsidyType.set(
@@ -93,15 +94,17 @@ function summarize(orders: readonly IReportOrder[]): ISetSummary {
     }
   }
 
-  return { count: orders.length, items, delivery, bySubsidyType, byStatus, ids };
+  return { count: orders.length, sales, delivery, bySubsidyType, byStatus, ids };
 }
 
 function printSummary(title: string, summary: ISetSummary): void {
   console.log(`${title}: ${summary.count} заказов`);
-  console.log(`   товары:   ${rub(summary.items)}`);
+  // «Продажи» уже включают субсидии — разбивка ниже показывает, сколько именно
+  // из них доплатил Маркет, а не добавляется к сумме.
+  console.log(`   продажи:  ${rub(summary.sales)}`);
   console.log(`   доставка: ${rub(summary.delivery)}`);
   for (const [type, amount] of summary.bySubsidyType) {
-    console.log(`   субсидии ${type}: ${rub(amount)}`);
+    console.log(`   из них субсидии ${type}: ${rub(amount)}`);
   }
   for (const [status, count] of [...summary.byStatus.entries()].sort((a, b) => b[1] - a[1])) {
     console.log(`   ${status.padEnd(22)} ${String(count).padStart(5)} шт.`);
@@ -204,7 +207,7 @@ async function compareSet(
   if (extraInStats.length) console.log(`⚠️ Только в архиве (${extraInStats.length}+): ${extraInStats.join(', ')}`);
 
   const moneyMatch =
-    Math.round(a.items) === Math.round(b.items) && Math.round(a.delivery) === Math.round(b.delivery);
+    Math.round(a.sales) === Math.round(b.sales) && Math.round(a.delivery) === Math.round(b.delivery);
   console.log(
     moneyMatch && !missingInStats.length && !extraInStats.length
       ? '✅ СОШЛОСЬ: составы и деньги совпадают до рубля.'
@@ -258,23 +261,22 @@ async function compareSnapshot(client: YandexApiClient): Promise<void> {
   // Деньги сверяются по пересечению: хвост старше 30 дней архиву законен.
   const common = new Set([...a.ids].filter((id) => b.ids.has(id)));
   const sumBy = (orders: IReportOrder[]) =>
-    orders
-      .filter((order) => order.id != null && common.has(order.id))
-      .reduce(
-        (acc, order) => {
-          const totals = orderTotals(order);
-          return { items: acc.items + totals.items, withDelivery: acc.withDelivery + totals.withDelivery };
-        },
-        { items: 0, withDelivery: 0 },
-      );
+    sumTotals(orders.filter((order) => order.id != null && common.has(order.id)));
   const moneyGet = sumBy(viaGet);
   const moneyStats = sumBy(viaStats);
   console.log(`Пересечение: ${common.size} заказов`);
-  console.log(`   getOrders:   товары ${rub(moneyGet.items)}, с доставкой ${rub(moneyGet.withDelivery)}`);
-  console.log(`   statsOrders: товары ${rub(moneyStats.items)}, с доставкой ${rub(moneyStats.withDelivery)}`);
+  console.log(
+    `   getOrders:   продажи ${rub(moneyGet.sales)} (субсидий ${rub(moneyGet.subsidies)}), ` +
+      `с доставкой ${rub(moneyGet.withDelivery)}`,
+  );
+  console.log(
+    `   statsOrders: продажи ${rub(moneyStats.sales)} (субсидий ${rub(moneyStats.subsidies)}), ` +
+      `с доставкой ${rub(moneyStats.withDelivery)}`,
+  );
 
   const moneyMatch =
-    Math.round(moneyGet.items) === Math.round(moneyStats.items) &&
+    Math.round(moneyGet.sales) === Math.round(moneyStats.sales) &&
+    Math.round(moneyGet.subsidies) === Math.round(moneyStats.subsidies) &&
     Math.round(moneyGet.withDelivery) === Math.round(moneyStats.withDelivery);
   console.log(
     moneyMatch && !missingInStats.length
@@ -375,9 +377,11 @@ async function main(): Promise<void> {
 
   // Доля PARTIALLY_DELIVERED — маппер зачитывает их в PARTIALLY_RETURNED.
   const partial = await collectStats(client, from, to, ['PARTIALLY_DELIVERED'], 'update');
-  console.log(`PARTIALLY_DELIVERED за период: ${partial.length} заказов на ${rub(
-    partial.reduce((sum, order) => sum + orderTotals(order).items, 0),
-  )} (subsidies ${rub(partial.reduce((sum, order) => sum + subsidiesTotal(order), 0))})`);
+  const partialMoney = sumTotals(partial);
+  console.log(
+    `PARTIALLY_DELIVERED за период: ${partial.length} заказов на ${rub(partialMoney.sales)} ` +
+      `продаж (в т.ч. субсидий ${rub(partialMoney.subsidies)})`,
+  );
 }
 
 main().catch((error: Error) => {
