@@ -29,6 +29,8 @@ npx ts-node scripts/diagnose-orders.ts --user=<telegramUserId> [--date=DD-MM-YYY
 npx ts-node scripts/diagnose-returns.ts --user=<telegramUserId> [--list]
 # refresh purchase prices from a price list without Telegram; writes Mongo only, never Partner API
 npx ts-node scripts/load-purchase-prices.ts --user=<telegramUserId> --file=stock.xlsx
+# кому и что уйдёт в последний день месяца — предпросмотр рассылки, ничего не отправляет
+npx ts-node scripts/preview-hosting-reminder.ts [--bot=<telegramBotId>]
 docker compose up -d mongodb redis   # mongo on :27018, redis on :6379, mongo-express on :8083
 ```
 
@@ -270,8 +272,9 @@ in `BotRegistry`, and register any new service as a normal Nest provider.
 
 Queue names and job types are constants in `src/modules/telegram/index.ts` (a constants file, not a
 barrel). Queues are registered with per-queue retry/backoff in `telegram.module.ts`; processors live
-in `src/modules/telegram/queue/processors/`. Six are alive: `reports.processor.ts` (the daily
-digest), `stock-sync.processor.ts` (the price-list upload, `SYNC_STOCKS` — see the `stockUpload`
+in `src/modules/telegram/queue/processors/`. Seven are alive: `reports.processor.ts` (the daily
+digest), `hosting-reminder.processor.ts` (the monthly payment reminder — see "The one broadcast"
+below), `stock-sync.processor.ts` (the price-list upload, `SYNC_STOCKS` — see the `stockUpload`
 bullet above), `fby-overview.processor.ts` (`SEND_FBY_OVERVIEW` on the `reports` queue — the FBY
 screen waits out Market's generate→poll report cycle, minutes at worst, which used to stall the
 telegraf polling loop for everyone; the poll ceiling is ~3 min now that it runs in the background.
@@ -329,6 +332,49 @@ the mirror while everything else works. The **live** processors do it differentl
 carries the numeric `botId`, the bot comes from `BotRegistry.findByTelegramId`, messages go through
 `bot.telegraf.telegram` (and thus through the outgoing action-log funnel), and no token ever sits
 in Redis.
+
+### The one broadcast: «не забудьте оплатить хостинг» on the last day of the month
+
+Every other message the bot sends answers something a seller did. This one does not: on the **last
+day of each month at 10:00 MSK** it writes to every approved seller with a connected store. Hosting
+is paid monthly and nobody remembers.
+
+- **Cron cannot say "last day of the month"** — `L` in day-of-month is not something Bull's
+  `cron-parser` guarantees, and 28/29/30/31 depends on the year. So the repeatable job fires on
+  `0 10 28-31 * *` and `isLastDayOfMonth` (pure, in `moscow-day.ts`, via the existing `shiftDays`)
+  decides. Three wake-ups out of four end in nothing — that is the normal case and logs at `debug`,
+  not `warn`. A daily cron would mean 27 idle wake-ups a month and the very same check in code.
+- **Its own scheduler** (`queue/services/hosting-reminder.scheduler.ts`), not a branch in
+  `ReportSchedulerService`: that one reconciles **per-seller** schedules against Mongo — as many jobs
+  as documents. Here there is exactly one job and nothing in Mongo corresponds to it. The `jobId` is
+  a **constant** for the reason `ReportSchedulerService.jobId` is derived rather than random: a fresh
+  id per boot would mean a second job and two identical reminders. On bootstrap a job with that id
+  but a **different** cron is removed (otherwise changing the time in code leaves both); an identical
+  one is left alone, because Bull mints a tick's id from the repeat key plus the tick time, so
+  re-adding the same job creates no duplicate.
+- **It walks `BotRegistry.all()`, not `first()`** — with two tenants the reminder would silently
+  reach the sellers of only one of them. `all()` was added for this.
+- **Recipients are picked by a pure function** (`price-changer-bot/hosting-reminder.ts`, which also
+  holds the single copy of the text): `approved` **and** in the set of connected stores **and** the
+  `hosting_reminder` feature open. Stores are resolved in **one** `$in` query
+  (`findByTelegramUsers`), the `AccessController` trick, never `isConfigured` per row. A record with
+  no `telegramChatId` is skipped silently — `sendMessage` would answer 400 and the throw would cost
+  the reminder to everyone further down the list.
+- **`hosting_reminder` is the first feature to ship `defaultEnabled: true` in a long while.** The last
+  ten were introduced off because they were unproven and cost Partner API requests; this one makes no
+  outbound calls and is meant for everybody — the flag exists to close it for a seller who settled
+  payment some other way. Like `PROMOTION` and `DEEP_HISTORY` it has **no `MENU` key**: there is no
+  screen and no update, so `featureGate` never sees it and the **processor** reads the flag itself.
+- **A failure on one recipient does not stop the rest** (403 «blocked the bot» is the common case and
+  not a fault — the `AccessNotifierService` argument), and those are not reported to `ErrorReporter`:
+  a failed `callApi` is already journalled by the outgoing funnel, and an admin alert per blocked
+  seller would make alerts unreadable. Sends are sequential with a 100 ms gap — Telegram allows ~30
+  messages/second and this is the only place the bot writes to dozens of people in a row.
+- **No second `@OnQueueFailed`** on the `reports` queue — `ReportsProcessor` owns that hook.
+- **`scripts/preview-hosting-reminder.ts` is how you check it without waiting a month**: read-only,
+  no Nest at all (raw mongoose, like the `diagnose-*` scripts — booting `AppModule` would start
+  `BotRegistry`, which re-points the webhook away from the running bot). It prints the text, the next
+  send date and every access record with the one reason it will or will not receive the message.
 
 ### Warehouses: the list is the screen, the stock is enrichment
 
@@ -1325,7 +1371,7 @@ rejected   credentials wiped; 24h during which even entering credentials is refu
 
 ### Per-feature access: approval says _whether_, flags say _what_
 
-`UserAccess.status` is boolean — all or nothing. On top of it sits a registry of twelve features
+`UserAccess.status` is boolean — all or nothing. On top of it sits a registry of 21 features
 (`src/modules/telegram/bots/shared/features.domain.ts`), each switchable **per user** from the admin
 panel. This is not a second access system: `canPass(status, kind)` still answers "may this person
 use the bot", `requiredFeatures(update)` answers "which function is being invoked". Merging the two

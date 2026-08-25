@@ -251,11 +251,14 @@ describe('Какие возможности нужны апдейту', () => {
     expect(requiredFeatures({ callbackData: 'mkt:xxx' })).toEqual([]);
   });
 
-  it('deep_history и fby_supply кнопок не чеканят — гейт их не знает', () => {
-    // Оба флага читаются в run/payload (прецедент TARIFF_CALC-строки), а не
-    // гейтом: у них нет ни кнопки меню, ни своего callback-префикса.
+  it('deep_history, fby_supply и hosting_reminder кнопок не чеканят — гейт их не знает', () => {
+    // Первые два флага читаются в run/payload (прецедент TARIFF_CALC-строки), а
+    // не гейтом: у них нет ни кнопки меню, ни своего callback-префикса.
     expect(MENU_LABELS).not.toContain(FEATURE_META[FEATURE.DEEP_HISTORY].label);
     expect(MENU_LABELS).not.toContain(FEATURE_META[FEATURE.FBY_SUPPLY].label);
+    // У напоминания об оплате апдейта нет вовсе: это фоновая рассылка, флаг
+    // читает её процессор. Кнопка была бы просто нечем.
+    expect(MENU_LABELS).not.toContain(FEATURE_META[FEATURE.HOSTING_REMINDER].label);
   });
 
   it('документ гейтом не закрывается — решение у stock-upload.handler', () => {

@@ -38,6 +38,7 @@ import { BotCommandsService } from './bots/shared/services/bot-commands.service'
 import { StorePromptService } from './bots/shared/services/store-prompt.service';
 import { FbyOverviewProcessor } from './queue/processors/fby-overview.processor';
 import { FileProcessingProcessor } from './queue/processors/file-processing.processor';
+import { HostingReminderProcessor } from './queue/processors/hosting-reminder.processor';
 import { MarketReportProcessor } from './queue/processors/market-report.processor';
 import { NotificationsProcessor } from './queue/processors/notifications.processor';
 import { OfferCardsProcessor } from './queue/processors/offer-cards.processor';
@@ -50,6 +51,7 @@ import { TariffReportProcessor } from './queue/processors/tariff-report.processo
 import { WarehousesOverviewProcessor } from './queue/processors/warehouses-overview.processor';
 import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
 import { FileProcessingService } from './queue/services/file-processing.service';
+import { HostingReminderScheduler } from './queue/services/hosting-reminder.scheduler';
 import { ReportSchedulerService } from './queue/services/report-scheduler.service';
 import { FileDataProcessorService } from './services/file-data-processor.service';
 import { TelegramApiService } from './services/telegram.api.service';
@@ -166,7 +168,9 @@ import { QUEUE_NAMES } from './index';
     PriceRecommendationsProcessor,
     OfferCardsProcessor,
     MarketReportProcessor,
+    HostingReminderProcessor,
     ReportSchedulerService,
+    HostingReminderScheduler,
   ],
   // PriceChangerKeyboard наружу — веб-панель, открывая доступ, шлёт продавцу
   // то же сообщение с тем же меню, что и кнопка «Одобрить» в Telegram.

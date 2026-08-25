@@ -424,6 +424,21 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
     return null;
   }
 
+  /**
+   * Все поднятые боты.
+   *
+   * Нужен рассылкам, которые обходят ВСЕХ арендаторов: `first()` там не
+   * годится — при двух ботах напоминание молча ушло бы продавцам только одного
+   * из них, и заметить это было бы некому.
+   */
+  public all(): RegisteredBot[] {
+    const bots: RegisteredBot[] = [];
+    for (const byType of this.bots.values()) {
+      for (const entry of byType.values()) bots.push(entry);
+    }
+    return bots;
+  }
+
   /** Первый попавшийся бот — для админских рассылок, не привязанных к чату. */
   public first(): RegisteredBot | null {
     for (const byType of this.bots.values()) {

@@ -199,9 +199,17 @@ accessGate → featureGate → start → menu → slash → adminCallbacks → a
 ## ⏰ Очереди Bull
 
 Имена очередей и типы задач — константы в `src/modules/telegram/index.ts` (это файл констант, а не
-barrel). Живых задач шесть:
+barrel). Живых задач семь:
 
 - **ежедневная рассылка отчётов** (`reports.processor.ts`) по расписанию из `ReportSchedule`;
+- **напоминание об оплате хостинга** — `send-hosting-reminder` в `hosting-reminder.processor.ts`,
+  очередь `reports`: единственная рассылка «всем сразу», а не ответ на действие. Задача повторяемая
+  и будит процессор **28–31 числа** — cron «последний день месяца» не выражает, решает чистая
+  `isLastDayOfMonth`; три запуска из четырёх штатно заканчиваются ничем. Расписание заводит
+  `hosting-reminder.scheduler.ts` (одна задача с фиксированным `jobId`, 10:00 МСК), получателей
+  отбирает чистая `pickRecipients` (одобрен + подключён магазин + фича `hosting_reminder`, она
+  **включена по умолчанию**). Проверить состав и текст, не дожидаясь конца месяца:
+  `npx ts-node scripts/preview-hosting-reminder.ts` — только читает, ничего не шлёт;
 - **загрузка прайса** — `sync-stocks` в `stock-sync.processor.ts`, см. «Приём прайса» выше (одна
   джоба, а не реанимация мёртвой цепочки);
 - **сводка FBY** — `send-fby-overview` в `fby-overview.processor.ts`, очередь `reports`: остатки

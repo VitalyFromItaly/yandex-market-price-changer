@@ -168,6 +168,21 @@ export function startOfMonth(date: ICalendarDate): ICalendarDate {
   return { year: date.year, month: date.month, day: 1 };
 }
 
+/**
+ * Последний ли это день месяца.
+ *
+ * Через `shiftDays`, а не через таблицу длин месяцев: 28/29/30/31 и високосный
+ * год выходят сами, и знать про них здесь не нужно. Дата — аргумент, а не
+ * `new Date()` внутри: иначе это не проверить без подмены таймеров (довод
+ * `shouldNotify` в health.domain.ts и `LoginThrottle`).
+ *
+ * Нужно рассылке напоминания об оплате хостинга: cron «последний день месяца»
+ * не выражает, поэтому задача будит нас 28–31 числа, а решает — эта функция.
+ */
+export function isLastDayOfMonth(date: ICalendarDate): boolean {
+  return shiftDays(date, 1).month !== date.month;
+}
+
 /** DD-MM-YYYY — формат fromDate/toDate и supplierShipmentDate. */
 export function calendarDateParam(date: ICalendarDate): string {
   return `${pad(date.day)}-${pad(date.month)}-${date.year}`;

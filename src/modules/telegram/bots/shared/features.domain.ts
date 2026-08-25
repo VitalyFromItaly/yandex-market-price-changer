@@ -83,6 +83,12 @@ export const FEATURE = {
    * экрана — читается хендлером FBY и едет в payload джобы.
    */
   FBY_SUPPLY: 'fby_supply',
+  /**
+   * Напоминание об оплате хостинга в последний день месяца. Кнопки нет и быть
+   * не может (паттерн PROMOTION): это фоновая рассылка, а не экран — гейт её не
+   * разбирает, флаг читает сам процессор.
+   */
+  HOSTING_REMINDER: 'hosting_reminder',
 } as const;
 
 export type TFeatureKey = (typeof FEATURE)[keyof typeof FEATURE];
@@ -117,6 +123,7 @@ const FEATURE_KEY_SET: Record<TFeatureKey, true> = {
   [FEATURE.OFFER_CARDS]: true,
   [FEATURE.DEEP_HISTORY]: true,
   [FEATURE.FBY_SUPPLY]: true,
+  [FEATURE.HOSTING_REMINDER]: true,
 };
 
 export const FEATURE_KEYS = Object.keys(FEATURE_KEY_SET) as TFeatureKey[];
@@ -268,6 +275,18 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     label: '🚚 Поставки FBY',
     description: 'Секция заявок на поставку в сводке «📦 FBY».',
     defaultEnabled: false,
+  },
+  [FEATURE.HOSTING_REMINDER]: {
+    // Inline-only подпись: экрана у рассылки нет.
+    label: '💳 Напоминание об оплате',
+    description:
+      'Сообщение «не забудьте оплатить хостинг» в последний день месяца — ' +
+      'одобренным продавцам с подключённым магазином.',
+    // ВКЛЮЧЕНА по умолчанию, в отличие от последних десяти возможностей.
+    // Те вводились выключенными, потому что были не обкатаны и стоили запросов
+    // к Partner API; эта не ходит наружу вовсе и нужна как раз всем сразу —
+    // закрывается точечно тому, с кем об оплате договорились иначе.
+    defaultEnabled: true,
   },
 };
 

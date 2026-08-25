@@ -56,6 +56,12 @@ export const JOB_TYPES = {
    * (generate → поллинг, минуты) — один job-тип, конкретный отчёт в payload.
    */
   SEND_MARKET_REPORT: 'send-market-report',
+  /**
+   * Напоминание об оплате хостинга — единственная рассылка «всем сразу», а не
+   * ответ на действие пользователя. Задача повторяемая (28–31 числа), последний
+   * ли это день месяца, решает процессор: cron такого не выражает.
+   */
+  SEND_HOSTING_REMINDER: 'send-hosting-reminder',
   PROCESS_FILE: 'process-file',
   PARSE_FILE: 'parse-file',
   COMPARE_DATA: 'compare-data',
