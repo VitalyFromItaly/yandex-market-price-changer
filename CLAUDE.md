@@ -1280,6 +1280,44 @@ rejected   credentials wiped; 24h during which even entering credentials is refu
 - The admin card carries the applicant's `@username`; the admin taps it and writes to the user
   **directly in Telegram**. There is deliberately **no message relay** through the bot, hence no
   conversation state to store.
+- **Nothing a blocked user can see is a button.** Two surfaces carry buttons and both are
+  cleared, because either one alone leaves the seller looking at controls that answer «подайте
+  заявку»:
+  - **The reply keyboard is persistent** — it stays on screen until something explicitly removes
+    it. The gate does that when it refuses an update, but the gate is not enough: `/start` it
+    passes **always**, and «доступ закрыт» is sent from three places that never go through it at
+    all. So `Markup.removeKeyboard()` now rides **every** «нет доступа» reply — the two `/start`
+    branches (`pending`, `rejected`) and the wizard invitation, the rejection from the admin card,
+    the revoke from «👥 Пользователи», the revoke from the panel's toggle, and the three
+    application replies in `api-settings.handler`. `__tests__/unit/blocked-no-keyboard.test.ts`
+    reads those files as text and fails when one drops it — a forgotten argument breaks neither
+    compilation nor any scenario, which is exactly how the whole list ended up missing it.
+    - The wizard invitation is therefore **two messages** (Telegram allows one `reply_markup` per
+      message): the greeting removes the keyboard, the question carries the wizard's inline
+      buttons. Same shape as `replyApproved` for an unconnected store.
+  - **The command list («синяя кнопка Меню») is per-chat.** `setupBotCommands` now installs the
+    **guest** list — `/start` alone, the only thing `canPass` lets through at any status — as the
+    bot's default scope, and `BotCommandsService` sets the full one with
+    `scope: {type:'chat'}` on approval, deleting that override on revoke so the chat falls back to
+    the guest default. Deleting rather than re-sending a copy: editing the default later must not
+    leave chats holding a stale copy of it.
+    - **`UserAccess.commandScope` is memory of what was sent, not a second status.** Without it
+      every update would have to re-confirm the list through Bot API; with it the steady state
+      costs nothing, and already-approved sellers pick the full list up on their next update —
+      no migration. The sync sits in `AccessGateHandler.touch()`, the one place every non-admin
+      update passes with the access record already in hand, and is `void`-ed: a command list may
+      not delay a reply (the action-log policy).
+    - The three admin decision paths push immediately instead of waiting for that next update —
+      a closed seller may never send one, and their menu would stay full meanwhile.
+    - **Admins have no `UserAccess` row**, so there is nowhere to record what was sent: their full
+      list goes out from the admin branch of `/start`, deduped by an in-process `Set`. A restart
+      re-sends it once; admins are few.
+- **The support contact is printed in exactly one screen — `/help`.** That is a screen a
+  non-approved user cannot reach (the gate classifies `/help` and «❓ Помощь» as `command`/`menu`
+  and `canPass` closes both), which is the point: `SUPPORT_CONTACT` is the owner's personal
+  Telegram nick. It used to sit in «⚠️ Не удалось отправить заявку администратору» too — the one
+  support-mentioning screen a **new** user does see, and it fires on the common case of an admin
+  who never pressed `/start`. The same test pins that only `help.text.ts` reads the constant.
 
 > The previous subscription system is **gone** (TASK-036) — it granted every new user a free week,
 > its plan buttons charged nothing, and its only check sat in `/start`, so uploads bypassed it.

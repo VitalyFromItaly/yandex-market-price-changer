@@ -1,7 +1,7 @@
 import type { TFeatureMap } from '../../shared/features.domain';
 
 import { Injectable, Logger } from '@nestjs/common';
-import { Context } from 'telegraf';
+import { Context, Markup } from 'telegraf';
 
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
@@ -10,6 +10,7 @@ import { placementOfCampaign } from '../../../../yandex/stocks/placement';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { hoursUntilRetry, isRejectionExpired } from '../../shared/access.domain';
+import { BotCommandsService } from '../../shared/services/bot-commands.service';
 import { PENDING_TEXT, rejectedText, type TOnboardingDraft } from '../onboarding';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
@@ -34,6 +35,7 @@ export class StartHandler {
     private readonly config: AppConfigService,
     private readonly yandexMarketService: YandexMarketService,
     private readonly apiSettings: ApiSettingsHandler,
+    private readonly commands: BotCommandsService,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -43,7 +45,11 @@ export class StartHandler {
 
       if (this.config.isAdmin(ctx.from.id)) {
         // Записи доступа у администратора нет — раскладка соберётся по
-        // умолчаниям реестра возможностей, то есть полной.
+        // умолчаниям реестра возможностей, то есть полной. По той же причине
+        // ему негде запомнить отправленный список команд, поэтому полный
+        // ставится отсюда: гейт админа пропускает раньше `touch`, где это
+        // делается для всех остальных.
+        void this.commands.syncForAdmin(ctx.telegram, botId, ctx.chat.id.toString());
         await this.replyApproved(ctx);
         return;
       }
@@ -63,7 +69,7 @@ export class StartHandler {
           return;
 
         case 'pending':
-          await ctx.reply(PENDING_TEXT, htmlOptions());
+          await ctx.reply(PENDING_TEXT, htmlOptions(Markup.removeKeyboard()));
           return;
 
         case 'rejected': {
@@ -75,7 +81,7 @@ export class StartHandler {
             return;
           }
           const hours = hoursUntilRetry(access.rejectedAt, new Date());
-          await ctx.reply(rejectedText(hours), htmlOptions());
+          await ctx.reply(rejectedText(hours), htmlOptions(Markup.removeKeyboard()));
           return;
         }
 
@@ -153,13 +159,17 @@ export class StartHandler {
       '',
       'Доступ к боту выдаёт администратор. Чтобы подать заявку, пришлите',
       'API-токен Яндекс.Маркета — магазин бот определит по нему сам.',
-      '',
-      // Пустая строка ОТДЕЛЬНЫМ элементом: join склеивает через один \n, и без
-      // неё вопрос визарда прилипал к приветствию вплотную.
-      '',
     ].join('\n');
 
+    // Двумя сообщениями, как и в `replyApproved` для неподключённого магазина:
+    // Telegram разрешает одному сообщению ровно один reply_markup, а нужны оба.
+    // Первое СНИМАЕТ reply-клавиатуру: она персистентна, и у того, кого удалили
+    // из панели (уведомления при удалении нет), на экране оставалось бы полное
+    // меню отчётов — мёртвых кнопок, каждая из которых теперь отвечает
+    // «подайте заявку». Второе несёт вопрос визарда с его inline-кнопками.
+    await ctx.reply(intro, htmlOptions(Markup.removeKeyboard()));
+
     const reply = await this.apiSettings.firstStepReply(draft);
-    await ctx.reply(intro + reply.message, htmlOptions(reply.keyboard));
+    await ctx.reply(reply.message, htmlOptions(reply.keyboard));
   }
 }

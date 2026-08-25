@@ -6,6 +6,7 @@ import { YandexMarketService } from '../../../../../database/services/yandex-mar
 import { placementOfCampaign } from '../../../../yandex/stocks/placement';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
+import { commandsFor } from '../bot-commands';
 import { helpText } from '../help.text';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
@@ -119,27 +120,22 @@ export class SlashCommandsHandler {
   }
 
   /**
-   * Настройка команд бота (для меню слева от поля ввода)
+   * Умолчание списка команд бота — синей кнопки «Меню» слева от поля ввода.
+   *
+   * Ставится ГОСТЕВОЙ список, а не полный. Умолчание достаётся тому, кому не
+   * поставлен персональный список по чату, то есть человеку без доступа: полный
+   * список показывал ему пять команд, каждая из которых отвечала «Сначала нужно
+   * подать заявку на доступ». Полный ставит `BotCommandsService` — персонально
+   * и по факту одобрения.
+   *
+   * Сами списки живут в `bot-commands.ts` — рядом друг с другом и без Nest,
+   * чтобы совпадение с реально зарегистрированными командами проверялось
+   * тестом. Команда, которую бот рекламирует, но не обрабатывает, молча не
+   * работает — так уже случилось с /files и /cleanup.
    */
   public async setupBotCommands(bot: TTelegrafBot) {
     try {
-      // Список должен содержать ТОЛЬКО реально зарегистрированные команды.
-      // Убраны: /price и /upload (изменение цен отключено, TASK-009),
-      // а также /files и /cleanup — их обработчики были удалены ещё при
-      // миграции, но команды продолжали рекламироваться и молча не работали.
-      // Список содержит ТОЛЬКО реально зарегистрированные команды. Отчёты
-      // вызываются кнопками меню, а не слэш-командами, поэтому в setMyCommands
-      // их нет: команда, которую бот рекламирует, но не обрабатывает, молча не
-      // работает — так уже случилось с /files и /cleanup.
-      await bot.telegram.setMyCommands([
-        { command: 'start', description: '🏠 Запустить бота' },
-        { command: 'menu', description: '📋 Меню и отчёты' },
-        { command: 'settings', description: '⚙️ Настройки' },
-        { command: 'profile', description: '👤 Профиль' },
-        { command: 'help', description: '❓ Помощь' },
-        // /users намеренно НЕ здесь: список команд общий для всех, а раздел
-        // администратора не должен светиться у обычных пользователей.
-      ]);
+      await bot.telegram.setMyCommands(commandsFor('guest'));
       console.log('Bot commands set successfully');
     } catch (error) {
       console.error('Error setting bot commands:', error);

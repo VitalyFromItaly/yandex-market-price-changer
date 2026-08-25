@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Context } from 'telegraf';
+import { Context, Markup } from 'telegraf';
 
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
@@ -9,6 +9,7 @@ import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { ADMIN_CB_PATTERN, parseAdminCallback } from '../../shared/access.domain';
 import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
+import { BotCommandsService } from '../../shared/services/bot-commands.service';
 import { ACCESS_GRANTED_TEXT, accessRejectedText } from '../access-decision.text';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
@@ -36,6 +37,7 @@ export class AdminApprovalHandler {
     private readonly adminNotifier: AdminNotifierService,
     private readonly keyboard: PriceChangerKeyboard,
     private readonly config: AppConfigService,
+    private readonly commands: BotCommandsService,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -106,6 +108,11 @@ export class AdminApprovalHandler {
     ctx: Context,
     access: Awaited<ReturnType<UserAccessService['decide']>>,
   ): Promise<void> {
+    // Список команд («синяя кнопка Меню») меняется вместе с доступом, и ждать
+    // следующего апдейта нельзя: у отклонённого его может не быть вовсе, а
+    // одобренному полный список нужен сейчас, а не после первого нажатия.
+    void this.commands.syncForUser(ctx.telegram, access);
+
     try {
       if (access.status === 'approved') {
         // Раскладку собираем для ЗАЯВИТЕЛЯ, а не для нажавшего кнопку админа:
@@ -126,10 +133,14 @@ export class AdminApprovalHandler {
         return;
       }
 
+      // Клавиатуру СНИМАЕМ: она персистентна, и у заявителя, набравшего её при
+      // прежнем доступе, остались бы кнопки отчётов — каждая отвечает «подайте
+      // заявку». Гейт делает это же при блокировке, но ждать первого нажатия
+      // значит показывать закрытое меню до него.
       await ctx.telegram.sendMessage(
         access.telegramChatId,
         accessRejectedText(access.rejectedAt),
-        htmlOptions(),
+        htmlOptions(Markup.removeKeyboard()),
       );
     } catch (error) {
       this.logger.warn(`Не удалось уведомить пользователя ${access.telegramUserId}: ${error}`);

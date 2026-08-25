@@ -24,13 +24,18 @@ function build(overrides: { users?: unknown[]; revoked?: unknown } = {}) {
   const yandexMarketService = { isConfigured: vi.fn(async () => true) };
   const config = { isAdmin: (id: number) => id === ADMIN_ID };
 
+  // Список команд чата — отдельная забота, у неё свой тест; здесь важно лишь,
+  // что отзыв доступа его трогает.
+  const commands = { syncForUser: vi.fn(async () => undefined) };
+
   const handler = new AdminUsersHandler(
     accessService as never,
     yandexMarketService as never,
     config as never,
+    commands as never,
   );
 
-  return { handler, accessService, yandexMarketService };
+  return { handler, accessService, yandexMarketService, commands };
 }
 
 function fakeCtx(fromId: number, data?: string) {
@@ -208,7 +213,7 @@ describe('AdminUsersHandler: отзыв доступа', () => {
   });
 
   it('подтверждение отзывает доступ и уведомляет пользователя', async () => {
-    const { handler, accessService } = build({
+    const { handler, accessService, commands } = build({
       revoked: { telegramUserId: '900', telegramChatId: '555', username: 'seller' },
     });
     const { confirm } = wire(handler);
@@ -220,7 +225,18 @@ describe('AdminUsersHandler: отзыв доступа', () => {
       id: '111',
       username: 'admin',
     });
-    expect(ctx.telegram.sendMessage).toHaveBeenCalledWith('555', expect.stringContaining('закрыт'));
+    // Клавиатуру снимаем тем же сообщением: она персистентна, и до первого
+    // нажатия у продавца оставалось бы полное меню отчётов.
+    expect(ctx.telegram.sendMessage).toHaveBeenCalledWith(
+      '555',
+      expect.stringContaining('закрыт'),
+      expect.objectContaining({
+        reply_markup: expect.objectContaining({ remove_keyboard: true }),
+      }),
+    );
+
+    // И список команд («синяя кнопка Меню») схлопывается до гостевого.
+    expect(commands.syncForUser).toHaveBeenCalled();
   });
 
   it('повторный отзыв безопасен: revoke вернул null — сообщаем и не падаем', async () => {

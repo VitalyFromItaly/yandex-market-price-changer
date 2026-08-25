@@ -11,6 +11,7 @@ import { ProfitReportProcessor } from '../../src/modules/telegram/queue/processo
 import { TariffReportProcessor } from '../../src/modules/telegram/queue/processors/tariff-report.processor';
 
 import { PriceChangerComposer } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.composer';
+import { BotCommandsService } from '../../src/modules/telegram/bots/shared/services/bot-commands.service';
 import { AccessGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/access-gate.handler';
 import { FeatureGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/feature-gate.handler';
 import { ActionLogHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/action-log.handler';
@@ -228,6 +229,10 @@ describe('Онбординг: от /start до отчёта', () => {
         ActionLogHandler,
         ActionLogService,
         AccessGateHandler,
+        // Настоящий, а не заглушка: список команд («синяя кнопка Меню») —
+        // часть того же решения о доступе, и сквозной тест обязан видеть, что
+        // неодобренному он схлопывается до /start.
+        BotCommandsService,
         FeatureGateHandler,
         StartHandler,
         MenuCommandsHandler,
@@ -413,6 +418,28 @@ describe('Онбординг: от /start до отчёта', () => {
     const text = harness.fake.lastTextTo(USER_ID);
     expect(text).toContain('Заказов');
     expect(text).toContain('Продажи');
+  });
+
+  it('список команд идёт за доступом: гостю только /start, одобренному — полный', async () => {
+    // Умолчание бота — гостевое: оно достаётся всякому, кому персональный
+    // список не ставили. Раньше здесь ставился полный, и человек без доступа
+    // видел пять команд, каждая из которых отвечала «подайте заявку».
+    expect(harness.fake.commandLists.filter((c) => c.chatId === null).at(-1)?.commands).toEqual([
+      'start',
+    ]);
+
+    await send('/start');
+    // Персональный список чата снят — чат остаётся на гостевом умолчании.
+    expect(harness.fake.lastCommandsFor(USER_ID)).toBeNull();
+
+    await send(CREDS.token);
+    await send(CREDS.campaign_id);
+    await send(CREDS.business_id);
+    expect(harness.fake.lastCommandsFor(USER_ID)).toBeNull();
+
+    await tap(formatAdminCallback('approve', USER_ID), admin);
+    expect(harness.fake.lastCommandsFor(USER_ID)).toContain('menu');
+    expect(harness.fake.lastCommandsFor(USER_ID)).toContain('help');
   });
 
   it('прибыль считается по закупу из базы и сходится с суммой продажи', async () => {

@@ -2,12 +2,13 @@ import type { UserAccessDocument } from '../../../../../database/schemas/user-ac
 import type { TTelegrafBot } from '../../../domain.telegram';
 
 import { Injectable, Logger } from '@nestjs/common';
-import { Context } from 'telegraf';
+import { Context, Markup } from 'telegraf';
 
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { b, code, esc, htmlOptions, splitMessage } from '../../../formatting/telegram-format';
+import { BotCommandsService } from '../../shared/services/bot-commands.service';
 import { ACCESS_REVOKED_TEXT } from '../access-decision.text';
 
 /**
@@ -44,6 +45,7 @@ export class AdminUsersHandler {
     private readonly accessService: UserAccessService,
     private readonly yandexMarketService: YandexMarketService,
     private readonly config: AppConfigService,
+    private readonly commands: BotCommandsService,
   ) {}
 
   public register(bot: TTelegrafBot): void {
@@ -201,12 +203,24 @@ export class AdminUsersHandler {
 
     this.logger.log(`Администратор ${ctx.from.id} закрыл доступ пользователю ${userId}`);
 
+    // Список команд («синяя кнопка Меню») схлопывается до /start вместе с
+    // доступом: ждать следующего апдейта нельзя — у закрытого его может не быть.
+    void this.commands.syncForUser(ctx.telegram, revoked);
+
     // Уведомляем пользователя. Молчаливое отключение выглядит как поломка
     // бота, и он придёт разбираться именно как с поломкой.
     try {
       // Текст — из access-decision.text.ts: тот же отзыв доступен тумблером в
       // веб-панели, и вторая копия фразы разошлась бы с этой.
-      await ctx.telegram.sendMessage(revoked.telegramChatId, ACCESS_REVOKED_TEXT);
+      //
+      // Заодно СНИМАЕМ reply-клавиатуру: она персистентна, и полное меню
+      // отчётов осталось бы у продавца на экране до первого нажатия, где его
+      // уберёт гейт.
+      await ctx.telegram.sendMessage(
+        revoked.telegramChatId,
+        ACCESS_REVOKED_TEXT,
+        Markup.removeKeyboard(),
+      );
     } catch (error) {
       // Пользователь мог заблокировать бота — это не повод считать отзыв
       // неудавшимся, статус уже изменён.

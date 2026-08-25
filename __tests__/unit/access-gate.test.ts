@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { AccessGateHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/access-gate.handler';
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { AppConfigService } from '../../src/config/app-config.service';
+import { BotCommandsService } from '../../src/modules/telegram/bots/shared/services/bot-commands.service';
 import { REJECTION_COOLDOWN_MS } from '../../src/modules/telegram/bots/shared/access.domain';
 import { MENU } from '../../src/modules/telegram/bots/price-changer-bot/menu.constants';
 
@@ -22,11 +23,13 @@ describe('AccessGateHandler', () => {
   let access: { status: string; rejectedAt?: Date; telegramUserId: string; botId: string };
   let ensure: ReturnType<typeof vi.fn>;
   let expireRejection: ReturnType<typeof vi.fn>;
+  let syncForUser: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     access = { status: 'new', telegramUserId: String(USER_ID), botId: String(BOT_ID) };
     ensure = vi.fn(async () => access);
     expireRejection = vi.fn(async () => null);
+    syncForUser = vi.fn(async () => undefined);
   });
 
   async function buildGate() {
@@ -35,6 +38,9 @@ describe('AccessGateHandler', () => {
         AccessGateHandler,
         { provide: UserAccessService, useValue: { ensure, expireRejection } },
         { provide: AppConfigService, useValue: { isAdmin: (id: number) => id === ADMIN_ID } },
+        // Список команд чата — предмет своего теста; здесь важно лишь, что гейт
+        // его трогает на каждом апдейте не-администратора.
+        { provide: BotCommandsService, useValue: { syncForUser, syncForAdmin: vi.fn() } },
       ],
     }).compile();
     return moduleRef.get(AccessGateHandler);
@@ -57,6 +63,7 @@ describe('AccessGateHandler', () => {
       botInfo: { id: BOT_ID },
       message: update.text === undefined ? undefined : { text: update.text },
       callbackQuery: update.callbackData === undefined ? undefined : { data: update.callbackData },
+      telegram: {},
       reply: vi.fn(async () => undefined),
       answerCbQuery: vi.fn(async () => undefined),
     };
@@ -166,6 +173,24 @@ describe('AccessGateHandler', () => {
     expect(next).not.toHaveBeenCalled();
     expect(ensure).not.toHaveBeenCalled();
     expect(ctx.reply).not.toHaveBeenCalled();
+  });
+
+  it('список команд чата приводится к статусу на КАЖДОМ апдейте', async () => {
+    // Гейт — единственное место, через которое проходит апдейт любого
+    // не-администратора, и запись доступа тут уже в руках. Сам сервис зовёт
+    // Bot API, только если нужный список ещё не отправлен.
+    await run({ text: '/start' });
+    expect(syncForUser).toHaveBeenCalledWith(expect.anything(), access);
+
+    syncForUser.mockClear();
+    await run({ text: MENU.PROFILE });
+    expect(syncForUser).toHaveBeenCalledWith(expect.anything(), access);
+  });
+
+  it('администратору гейт список команд не трогает: записи доступа у него нет', async () => {
+    // Полный список ставит /start — здесь хранить отметку об отправленном негде.
+    await run({ text: 'что угодно', fromId: ADMIN_ID });
+    expect(syncForUser).not.toHaveBeenCalled();
   });
 
   it('одобренному доступно всё', async () => {

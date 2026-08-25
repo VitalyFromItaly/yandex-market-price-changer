@@ -151,6 +151,18 @@ export class UserAccess {
   @Prop({ type: Object })
   features?: Record<string, boolean>;
 
+  /**
+   * Какой список команд («синяя кнопка Меню») уже отправлен в ЭТОТ чат:
+   * `full` — полный, `guest` — гостевой (`/start`), отсутствует — неизвестно.
+   *
+   * Это НЕ второй статус доступа, а память о том, что ушло в Telegram: список
+   * ставится персонально по чату, и без этой отметки его пришлось бы
+   * подтверждать вызовом Bot API на каждом апдейте. Подробности — в
+   * `BotCommandsService`.
+   */
+  @Prop({ type: String })
+  commandScope?: string;
+
   @Prop({ type: Date })
   appliedAt?: Date;
 

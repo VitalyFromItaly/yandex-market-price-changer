@@ -14,6 +14,7 @@ import {
   isRejectionExpired,
   REJECTION_COOLDOWN_MS,
 } from '../../shared/access.domain';
+import { BotCommandsService } from '../../shared/services/bot-commands.service';
 import { PENDING_TEXT, nextStep, rejectedText, stepPrompt } from '../onboarding';
 
 /**
@@ -36,6 +37,7 @@ export class AccessGateHandler {
   constructor(
     private readonly accessService: UserAccessService,
     private readonly config: AppConfigService,
+    private readonly commands: BotCommandsService,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -90,8 +92,22 @@ export class AccessGateHandler {
     return revived ?? access;
   }
 
+  /**
+   * Завести или освежить запись доступа — и заодно привести к статусу список
+   * команд («синяя кнопка Меню») этого чата.
+   *
+   * Место выбрано не случайно: через `touch` проходит апдейт КАЖДОГО не-админа,
+   * а запись доступа здесь уже в руках, так что сверка ничего не стоит.
+   * `BotCommandsService` зовёт Bot API только когда нужный список ещё не
+   * отправлен, то есть в установившемся состоянии запросов нет вовсе; уже
+   * одобренные продавцы доберут полный список на своём следующем апдейте, и
+   * разовая миграция для этого не понадобилась.
+   *
+   * Не ожидается: список команд не имеет права задержать ответ пользователю
+   * (та же политика, что у журнала действий).
+   */
   private async touch(ctx: Context): Promise<UserAccessDocument> {
-    return await this.accessService.ensure({
+    const access = await this.accessService.ensure({
       telegramUserId: ctx.from.id.toString(),
       botId: ctx.botInfo.id.toString(),
       telegramChatId: (ctx.chat?.id ?? ctx.from.id).toString(),
@@ -99,6 +115,10 @@ export class AccessGateHandler {
       firstName: ctx.from.first_name,
       lastName: ctx.from.last_name,
     });
+
+    void this.commands.syncForUser(ctx.telegram, access);
+
+    return access;
   }
 
   private async block(ctx: Context, access: UserAccessDocument): Promise<void> {

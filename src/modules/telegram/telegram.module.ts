@@ -34,6 +34,7 @@ import { WarehousesHandler } from './bots/price-changer-bot/handlers/warehouses.
 import { PriceChangerComposer } from './bots/price-changer-bot/price-changer.composer';
 import { PriceChangerKeyboard } from './bots/price-changer-bot/price-changer.keyboard';
 import { AdminNotifierService } from './bots/shared/services/admin-notifier.service';
+import { BotCommandsService } from './bots/shared/services/bot-commands.service';
 import { StorePromptService } from './bots/shared/services/store-prompt.service';
 import { FbyOverviewProcessor } from './queue/processors/fby-overview.processor';
 import { FileProcessingProcessor } from './queue/processors/file-processing.processor';
@@ -123,6 +124,7 @@ import { QUEUE_NAMES } from './index';
     PriceChangerComposer,
     PriceChangerKeyboard,
     AdminNotifierService,
+    BotCommandsService,
     StorePromptService,
     AccessGateHandler,
     FeatureGateHandler,
@@ -171,6 +173,15 @@ import { QUEUE_NAMES } from './index';
   // BullModule наружу — QueuesModule читает ТЕ ЖЕ инстансы очередей, что
   // крутят процессоры здесь; свой registerQueue означал бы вторые соединения
   // с Redis и второе место, где могут разъехаться опции очередей.
-  exports: [TelegramService, FileProcessingService, BotRegistry, PriceChangerKeyboard, BullModule],
+  exports: [
+    TelegramService,
+    FileProcessingService,
+    BotRegistry,
+    PriceChangerKeyboard,
+    // Панель доступа открывает и закрывает доступ из веб-интерфейса, а вместе с
+    // ним меняется персональный список команд чата.
+    BotCommandsService,
+    BullModule,
+  ],
 })
 export class TelegramModule {}

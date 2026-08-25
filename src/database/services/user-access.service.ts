@@ -124,6 +124,23 @@ export class UserAccessService {
       .exec();
   }
 
+  /**
+   * Запомнить, какой список команд уже отправлен в чат пользователя.
+   *
+   * Пишется ТОЛЬКО после успешного вызова Bot API — отметка о неотправленном
+   * списке хуже её отсутствия: она бы навсегда отменила следующую попытку.
+   * Смысл поля — в `BotCommandsService`.
+   */
+  async setCommandScope(
+    telegramUserId: string,
+    botId: string,
+    scope: 'full' | 'guest',
+  ): Promise<UserAccessDocument | null> {
+    return await this.model
+      .findOneAndUpdate({ telegramUserId, botId }, { $set: { commandScope: scope } }, { new: true })
+      .exec();
+  }
+
   /** Сохранить один кред в черновик. */
   async saveDraftField(
     telegramUserId: string,

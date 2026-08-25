@@ -41,9 +41,22 @@ export function createFakeBot(botId = 999) {
   const sent: ISentMessage[] = [];
   const documents: Array<{ chatId: string | number; filename?: string }> = [];
   const alerts: string[] = [];
+  /**
+   * Что бот поставил в «синюю кнопку Меню»: `chatId: null` — умолчание бота,
+   * `commands: null` — персональный список чата снят (чат вернулся к умолчанию).
+   */
+  const commandLists: Array<{ chatId: number | null; commands: string[] | null }> = [];
+
+  const scopeChatId = (extra?: TAny): number | null =>
+    extra?.scope?.type === 'chat' ? Number(extra.scope.chat_id) : null;
 
   const telegram = {
-    setMyCommands: async () => undefined,
+    setMyCommands: async (commands: Array<{ command: string }>, extra?: TAny) => {
+      commandLists.push({ chatId: scopeChatId(extra), commands: commands.map((c) => c.command) });
+    },
+    deleteMyCommands: async (extra?: TAny) => {
+      commandLists.push({ chatId: scopeChatId(extra), commands: null });
+    },
     getMe: async () => ({ id: botId }),
     sendMessage: async (chatId: string | number, text: string, extra?: TAny) => {
       sent.push({ chatId, text, extra });
@@ -160,6 +173,11 @@ export function createFakeBot(botId = 999) {
     sent,
     documents,
     alerts,
+    commandLists,
+    /** Последний список команд, поставленный этому чату (null — снят). */
+    lastCommandsFor(chatId: number): string[] | null | undefined {
+      return commandLists.filter((c) => c.chatId === chatId).at(-1)?.commands;
+    },
     /** Тексты, отправленные конкретному получателю. */
     textsTo(chatId: string | number): string[] {
       return sent.filter((m) => String(m.chatId) === String(chatId)).map((m) => m.text);

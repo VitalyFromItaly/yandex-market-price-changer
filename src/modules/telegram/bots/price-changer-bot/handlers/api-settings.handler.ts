@@ -2,7 +2,7 @@ import type { YandexMarketDocument } from '../../../../../database/schemas/yande
 import type { IStoreRef } from '../../../../yandex/yandex-api.client';
 
 import { Injectable, Logger } from '@nestjs/common';
-import { Context } from 'telegraf';
+import { Context, Markup } from 'telegraf';
 
 import { AppConfigService } from '../../../../../config/app-config.service';
 import { PurchasePriceService } from '../../../../../database/services/purchase-price.service';
@@ -76,7 +76,7 @@ import {
   brandDiscountsText,
   brandUsageOf,
 } from '../brand-discounts.text';
-import { MENU, MENU_LABELS, SUPPORT_CONTACT } from '../menu.constants';
+import { MENU, MENU_LABELS } from '../menu.constants';
 import {
   nextStep,
   stepHelp,
@@ -1777,7 +1777,10 @@ export class ApiSettingsHandler {
     const applied = await this.accessService.tryApply(telegramUserId, botId);
     if (!applied) {
       // Заявка уже подана параллельным апдейтом — второй карточки быть не должно.
-      return { message: '⏳ Заявка уже отправлена администратору, ожидайте решения.' };
+      return {
+        message: '⏳ Заявка уже отправлена администратору, ожидайте решения.',
+        keyboard: Markup.removeKeyboard(),
+      };
     }
 
     const store = await saveStore();
@@ -1792,20 +1795,29 @@ export class ApiSettingsHandler {
       // документ, а статус останется new — пользователь застрянет навсегда.
       await this.yandexMarketService.deleteByTelegramUser(telegramUserId);
       return {
+        // Контакта поддержки здесь намеренно НЕТ. Это единственный экран с
+        // упоминанием поддержки, который видит человек БЕЗ доступа, а личный
+        // ник владельца бота не должен доставаться каждому, кто прислал токен.
+        // В справке он остаётся — туда гейт неодобренного не пускает.
         message: [
           '⚠️ Не удалось отправить заявку администратору.',
           '',
-          `Попробуйте позже или напишите в поддержку: ${SUPPORT_CONTACT}`,
+          'Попробуйте ещё раз через несколько минут.',
         ].join('\n'),
+        keyboard: Markup.removeKeyboard(),
       };
     }
 
     return {
+      // Клавиатуру снимаем: доступа ещё нет, а кнопки отчётов могли остаться на
+      // экране от прошлой жизни этого чата (гейт убирает их только при попытке
+      // нажать). Тот же приём во всех ветках «доступа нет».
       message: [
         '✅ <b>Заявка отправлена администратору.</b>',
         '',
         'Как только он примет решение, бот пришлёт сообщение сюда.',
       ].join('\n'),
+      keyboard: Markup.removeKeyboard(),
     };
   }
 

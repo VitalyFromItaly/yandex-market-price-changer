@@ -1,6 +1,7 @@
 import type { UserAccessDocument } from '../../database/schemas/user-access.schema';
 
 import { Injectable, Logger } from '@nestjs/common';
+import { Markup } from 'telegraf';
 
 import { AppConfigService } from '../../config/app-config.service';
 import { YandexMarketService } from '../../database/services/yandex-market.service';
@@ -10,6 +11,7 @@ import {
   ACCESS_REVOKED_TEXT,
 } from '../telegram/bots/price-changer-bot/access-decision.text';
 import { PriceChangerKeyboard } from '../telegram/bots/price-changer-bot/price-changer.keyboard';
+import { BotCommandsService } from '../telegram/bots/shared/services/bot-commands.service';
 import { htmlOptions } from '../telegram/formatting/telegram-format';
 import { placementOfCampaign } from '../yandex/stocks/placement';
 
@@ -35,6 +37,7 @@ export class AccessNotifierService {
     private readonly keyboard: PriceChangerKeyboard,
     private readonly config: AppConfigService,
     private readonly yandexMarketService: YandexMarketService,
+    private readonly commands: BotCommandsService,
   ) {}
 
   /**
@@ -53,8 +56,20 @@ export class AccessNotifierService {
         return;
       }
 
+      // Список команд («синяя кнопка Меню») идёт за доступом: полный —
+      // одобренному, гостевой (`/start`) — закрытому. Ждать его следующего
+      // апдейта нельзя: у закрытого апдейта может не быть вовсе.
+      void this.commands.syncForUser(bot.telegraf.telegram, access);
+
       if (!approved) {
-        await bot.telegraf.telegram.sendMessage(access.telegramChatId, ACCESS_REVOKED_TEXT);
+        // Снимаем и reply-клавиатуру: она персистентна, и до первого нажатия
+        // (где её убрал бы гейт) у продавца на экране оставалось бы полное меню
+        // отчётов, каждая кнопка которого теперь отвечает «подайте заявку».
+        await bot.telegraf.telegram.sendMessage(
+          access.telegramChatId,
+          ACCESS_REVOKED_TEXT,
+          Markup.removeKeyboard(),
+        );
         return;
       }
 
