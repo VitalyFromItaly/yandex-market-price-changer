@@ -339,6 +339,43 @@ export async function fetchQueueJobs(
   );
 }
 
+/** Получатель напоминания об оплате хостинга. */
+export interface IReminderRecipientRow {
+  botId: string;
+  telegramUserId: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  storeName?: string;
+}
+
+/**
+ * Карточка напоминания об оплате хостинга.
+ *
+ * `schedule: null` — задача НЕ заведена: развёрнут код без неё. Это не «пока
+ * нет данных», а диагноз, и на экране он выглядит именно так.
+ */
+export interface IHostingReminder {
+  schedule: { cron: string; time: string | null; tz: string; next: number } | null;
+  lastRun: { at: string; action: string; botId: string } | null;
+  items: IReminderRecipientRow[];
+}
+
+export async function fetchHostingReminder(token: string): Promise<IHostingReminder> {
+  return await request<IHostingReminder>('/api/queues/hosting-reminder', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+/** Разослать напоминание прямо сейчас. Ответ несёт число получателей. */
+export async function runHostingReminder(token: string): Promise<number> {
+  const { recipients } = await request<{ queued: boolean; recipients: number }>(
+    '/api/queues/hosting-reminder/run',
+    { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+  );
+  return recipients;
+}
+
 /**
  * Повторить упавшую задачу. Ответ — `{ ok: true }`, после него список нужно
  * перезагрузить с сервера: угаданное состояние строки может врать.

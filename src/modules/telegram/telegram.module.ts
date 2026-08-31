@@ -52,6 +52,7 @@ import { WarehousesOverviewProcessor } from './queue/processors/warehouses-overv
 import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
 import { FileProcessingService } from './queue/services/file-processing.service';
 import { HostingReminderScheduler } from './queue/services/hosting-reminder.scheduler';
+import { HostingReminderService } from './queue/services/hosting-reminder.service';
 import { ReportSchedulerService } from './queue/services/report-scheduler.service';
 import { FileDataProcessorService } from './services/file-data-processor.service';
 import { TelegramApiService } from './services/telegram.api.service';
@@ -171,6 +172,7 @@ import { QUEUE_NAMES } from './index';
     HostingReminderProcessor,
     ReportSchedulerService,
     HostingReminderScheduler,
+    HostingReminderService,
   ],
   // PriceChangerKeyboard наружу — веб-панель, открывая доступ, шлёт продавцу
   // то же сообщение с тем же меню, что и кнопка «Одобрить» в Telegram.
@@ -185,6 +187,9 @@ import { QUEUE_NAMES } from './index';
     // Панель доступа открывает и закрывает доступ из веб-интерфейса, а вместе с
     // ним меняется персональный список команд чата.
     BotCommandsService,
+    // Панель очередей показывает, кому уйдёт напоминание об оплате, — и обязана
+    // спрашивать это у того же сервиса, что и сама рассылка.
+    HostingReminderService,
     BullModule,
   ],
 })

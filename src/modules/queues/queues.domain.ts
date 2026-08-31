@@ -103,10 +103,18 @@ export function parseReportJobId(id: unknown): IParsedReportJobId | null {
   return { botId, telegramUserId, reportKey };
 }
 
-/** Обратная к toCron() из schedule-time.ts: `30 9 * * *` → «09:30». */
+/**
+ * Обратная к toCron() из schedule-time.ts: `30 9 * * *` → «09:30».
+ *
+ * Остальные три поля не разбираются намеренно: время суток от них не зависит,
+ * а задачи с непустым днём месяца в панели есть — напоминание об оплате
+ * хостинга ходит по `0 10 28-31 * *`. Пока шаблон требовал трёх звёздочек,
+ * его карточка показывала сырой cron вместо «10:00 МСК». Когда именно оно
+ * сработает, объясняет уже сам экран, а не эта строка.
+ */
 export function cronToTime(cron: unknown): string | null {
   if (typeof cron !== 'string') return null;
-  const match = cron.trim().match(/^(\d{1,2}) (\d{1,2}) \* \* \*$/);
+  const match = cron.trim().match(/^(\d{1,2}) (\d{1,2}) \S+ \S+ \S+$/);
   if (!match) return null;
   const minutes = Number(match[1]);
   const hours = Number(match[2]);

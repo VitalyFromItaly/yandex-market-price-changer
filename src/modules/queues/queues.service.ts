@@ -4,7 +4,8 @@ import { InjectQueue } from '@nestjs/bull';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Queue } from 'bull';
 
-import { QUEUE_NAMES } from '../telegram';
+import { JOB_TYPES, QUEUE_NAMES } from '../telegram';
+import { HostingReminderScheduler } from '../telegram/queue/services/hosting-reminder.scheduler';
 
 import { safeJobData, cronToTime, parseReportJobId } from './queues.domain';
 
@@ -116,6 +117,46 @@ export class QueuesService {
     }
 
     return rows;
+  }
+
+  /**
+   * Расписание напоминания об оплате хостинга.
+   *
+   * Отдельно от `digests()` намеренно: та разбирает id вида
+   * `report:<botId>:<userId>:<reportKey>` и всё остальное МОЛЧА пропускает —
+   * из-за чего глобальную рассылку в панели не было видно вовсе. Строкой в ту
+   * таблицу она и не годится: там колонки «кто» и «какой отчёт», а получатель
+   * здесь не один.
+   *
+   * `null` означает «задача не заведена» — это главный диагностический сигнал:
+   * значит, развёрнут код без неё.
+   */
+  async hostingReminder(): Promise<{
+    cron: string;
+    time: string | null;
+    tz: string;
+    next: number;
+  } | null> {
+    const jobs = await this.reports.getRepeatableJobs();
+    const job = jobs.find((row) => row.id === HostingReminderScheduler.JOB_ID);
+    if (!job) return null;
+
+    return { cron: job.cron, time: cronToTime(job.cron), tz: job.tz, next: job.next };
+  }
+
+  /**
+   * Ручной запуск рассылки из панели.
+   *
+   * Обычная задача, не repeatable, и `jobId` намеренно не задаём: два нажатия —
+   * две рассылки. Скрывать это дедупликацией нельзя, иначе повторное нажатие
+   * молча ничего не делало бы; от случайности защищает подтверждение в панели.
+   */
+  async runHostingReminder(): Promise<void> {
+    await this.reports.add(
+      JOB_TYPES.SEND_HOSTING_REMINDER,
+      { force: true },
+      { removeOnComplete: 12, removeOnFail: 12, attempts: 1 },
+    );
   }
 
   /**

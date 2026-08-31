@@ -7,6 +7,7 @@ import {
 } from '../../src/modules/telegram/bots/price-changer-bot/hosting-reminder';
 import { FEATURE, FEATURE_META } from '../../src/modules/telegram/bots/shared/features.domain';
 import { HostingReminderProcessor } from '../../src/modules/telegram/queue/processors/hosting-reminder.processor';
+import { HostingReminderService } from '../../src/modules/telegram/queue/services/hosting-reminder.service';
 import { HostingReminderScheduler } from '../../src/modules/telegram/queue/services/hosting-reminder.scheduler';
 import { isLastDayOfMonth } from '../../src/modules/yandex/reports/moscow-day';
 
@@ -167,8 +168,12 @@ describe('Процессор рассылки', () => {
   function build(accounts: IReminderCandidate[], stores: string[]) {
     const sendMessage = vi.fn(async () => undefined);
     const bot = { telegramId: 999, telegraf: { telegram: { sendMessage } } };
+    const record = vi.fn(async () => undefined);
 
-    const processor = new HostingReminderProcessor(
+    // Отбор получателей — настоящий сервис поверх фейковых репозиториев: то же
+    // правило, что покажет панель. Подменить его целиком значило бы проверять
+    // рассылку в отрыве от того, кого она выбирает.
+    const recipients = new HostingReminderService(
       { all: () => [bot] } as never,
       { listByBot: vi.fn(async () => accounts) } as never,
       {
@@ -181,11 +186,20 @@ describe('Процессор рассылки', () => {
           })),
         ),
       } as never,
+    );
+
+    const processor = new HostingReminderProcessor(
+      { all: () => [bot] } as never,
+      recipients,
+      { record } as never,
       { report: vi.fn(async () => undefined) } as never,
     );
 
-    return { processor, sendMessage };
+    return { processor, sendMessage, record };
   }
+
+  /** Тик расписания приходит без данных, кнопка панели — с `force`. */
+  const tick = (force = false) => ({ data: force ? { force: true } : {} }) as never;
 
   const seller = (id: string): IReminderCandidate => ({
     telegramUserId: id,
@@ -199,7 +213,7 @@ describe('Процессор рассылки', () => {
     atMoscow('2026-08-30T07:00:00Z');
     const { processor, sendMessage } = build([seller('100')], ['100']);
 
-    await processor.run();
+    await processor.run(tick());
 
     expect(sendMessage).not.toHaveBeenCalled();
   });
@@ -209,7 +223,7 @@ describe('Процессор рассылки', () => {
     atMoscow('2026-08-31T07:00:00Z');
     const { processor, sendMessage } = build([seller('100'), seller('200')], ['100', '200']);
 
-    await processor.run();
+    await processor.run(tick());
 
     expect(sendMessage.mock.calls.map((c) => c[0])).toEqual(['100', '200']);
     expect(sendMessage.mock.calls[0][1]).toBe(HOSTING_REMINDER_TEXT);
@@ -222,16 +236,75 @@ describe('Процессор рассылки', () => {
     const { processor, sendMessage } = build([seller('100'), seller('200')], ['100', '200']);
     sendMessage.mockRejectedValueOnce(new Error('403: bot was blocked by the user'));
 
-    await expect(processor.run()).resolves.toBeUndefined();
+    await expect(processor.run(tick())).resolves.toBeUndefined();
 
     expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('кнопка панели (force) шлёт и НЕ в последний день месяца', async () => {
+    // Иначе убедиться, что рассылка работает, можно было бы только дождавшись
+    // последнего дня месяца.
+    atMoscow('2026-08-12T07:00:00Z');
+    const { processor, sendMessage } = build([seller('100')], ['100']);
+
+    await processor.run(tick(true));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('force обходит ТОЛЬКО проверку даты, но не отбор получателей', async () => {
+    // Ручной запуск не должен уметь написать тому, кому рассылка закрыта.
+    atMoscow('2026-08-12T07:00:00Z');
+    const closed = { ...seller('100'), features: { hosting_reminder: false } };
+    const { processor, sendMessage } = build([closed], ['100']);
+
+    await processor.run(tick(true));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('о рассылке остаётся строка в журнале — по ней панель показывает последнюю отправку', async () => {
+    atMoscow('2026-08-31T07:00:00Z');
+    const { processor, record } = build([seller('100')], ['100']);
+
+    await processor.run(tick());
+
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'hosting-reminder',
+        telegramUserId: 'system',
+        botId: '999',
+        action: expect.stringContaining('отправлено 1 из 1'),
+      }),
+    );
+  });
+
+  it('«получателей нет» тоже пишется в журнал: молчание не ответ', async () => {
+    atMoscow('2026-08-31T07:00:00Z');
+    const { processor, record } = build([seller('100')], []);
+
+    await processor.run(tick());
+
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: expect.stringContaining('получателей нет') }),
+    );
+  });
+
+  it('в НЕ последний день журнал не трогается вовсе', async () => {
+    // Три холостых пробуждения из четырёх не должны засорять журнал.
+    atMoscow('2026-08-30T07:00:00Z');
+    const { processor, record } = build([seller('100')], ['100']);
+
+    await processor.run(tick());
+
+    expect(record).not.toHaveBeenCalled();
   });
 
   it('получателей нет — ни одного запроса в Telegram', async () => {
     atMoscow('2026-08-31T07:00:00Z');
     const { processor, sendMessage } = build([seller('100')], []);
 
-    await processor.run();
+    await processor.run(tick());
 
     expect(sendMessage).not.toHaveBeenCalled();
   });

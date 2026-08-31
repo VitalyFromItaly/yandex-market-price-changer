@@ -371,6 +371,32 @@ is paid monthly and nobody remembers.
   seller would make alerts unreadable. Sends are sequential with a 100 ms gap — Telegram allows ~30
   messages/second and this is the only place the bot writes to dozens of people in a row.
 - **No second `@OnQueueFailed`** on the `reports` queue — `ReportsProcessor` owns that hook.
+- **The panel has its own card for it, because the «Рассылки» table structurally cannot show it.**
+  `QueuesService.digests()` parses repeatable-job ids as `report:<botId>:<userId>:<reportKey>` and
+  **silently skips** everything else — so the reminder was invisible in the panel from the day it
+  shipped, and «did it go out?» had no answer short of grepping the journal. A row there would not
+  fit either: that table's columns are «кто» and «какой отчёт», and this broadcast has many
+  recipients and no report. Hence `GET /api/queues/hosting-reminder` and a card on «Очереди»
+  showing four things: **whether the job is registered at all** (absent ⇒ the deployed build
+  predates the feature — the single most useful diagnosis), the next send, who it will reach, and
+  when it last ran.
+  - **Recipients come from `HostingReminderService`, shared with the processor.** A second copy of
+    the selection rule would let the panel show one list while the bot writes to another — the
+    same drift the help screens paid for. The rule itself stays in the pure `pickRecipients`.
+  - **The run leaves one journal row** (`ActionLogService.record`, `kind: 'hosting-reminder'`,
+    `telegramUserId: 'system'`) — the `kind: 'health'` precedent. The outgoing funnel already
+    journals each message («кому ушло»); this row answers a different question («рассылка
+    состоялась»), and it is what the card reads as "last send". «Получателей нет» is recorded too:
+    silence is not an answer to «почему никому не пришло». Nothing is written on the three idle
+    wake-ups — they would bury the real rows.
+  - **«Отправить сейчас» enqueues the same job with `force: true`**, which skips the last-day check
+    and **only** that — the recipient selection stays shared, so the button cannot write to a
+    seller whose flag is closed. No `jobId` and no `repeat` on that job: two clicks mean two
+    broadcasts, and hiding that behind dedup would make a repeat click silently do nothing;
+    the confirmation dialog is what guards it. A test pins both.
+  - `cronToTime` now parses only minutes and hours, ignoring the last three fields: with the old
+    "three asterisks" pattern the card printed a raw cron instead of «10:00 МСК», because this job
+    has a day-of-month range. When it fires is explained by the screen, not by that helper.
 - **`scripts/preview-hosting-reminder.ts` is how you check it without waiting a month**: read-only,
   no Nest at all (raw mongoose, like the `diagnose-*` scripts — booting `AppModule` would start
   `BotRegistry`, which re-points the webhook away from the running bot). It prints the text, the next

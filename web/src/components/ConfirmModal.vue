@@ -9,9 +9,11 @@ const props = withDefaults(
     title: string;
     message: string;
     confirmLabel?: string;
+    /** Подпись во время выполнения: действие бывает не только удалением. */
+    busyLabel?: string;
     busy?: boolean;
   }>(),
-  { confirmLabel: 'Удалить', busy: false },
+  { confirmLabel: 'Удалить', busyLabel: 'Удаление…', busy: false },
 );
 
 const emit = defineEmits<{ confirm: []; cancel: [] }>();
@@ -35,7 +37,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
       <div class="actions">
         <button type="button" :disabled="busy" @click="emit('cancel')">Отмена</button>
         <button type="button" class="danger" :disabled="busy" @click="emit('confirm')">
-          {{ busy ? 'Удаление…' : confirmLabel }}
+          {{ busy ? busyLabel : confirmLabel }}
         </button>
       </div>
     </div>

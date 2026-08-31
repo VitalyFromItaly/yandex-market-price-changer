@@ -3,18 +3,36 @@ import type { IReminderRecipient } from '../../bots/price-changer-bot/hosting-re
 
 import { Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
+import { Job } from 'bull';
 
-import { UserAccessService } from '../../../../database/services/user-access.service';
-import { YandexMarketService } from '../../../../database/services/yandex-market.service';
+import { ActionLogService } from '../../../../database/services/action-log.service';
 import { ErrorReporter } from '../../../errors/error-reporter.service';
 import { isLastDayOfMonth, moscowDay } from '../../../yandex/reports/moscow-day';
 import { BotRegistry } from '../../bots/bot-registry.service';
-import {
-  HOSTING_REMINDER_TEXT,
-  pickRecipients,
-} from '../../bots/price-changer-bot/hosting-reminder';
+import { HOSTING_REMINDER_TEXT } from '../../bots/price-changer-bot/hosting-reminder';
 import { htmlOptions } from '../../formatting/telegram-format';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
+import { HostingReminderService } from '../services/hosting-reminder.service';
+
+/**
+ * Полезная нагрузка рассылки.
+ *
+ * `force` ставит только кнопка панели: она обходит проверку «сегодня последний
+ * день месяца» и НИЧЕГО больше — отбор получателей остаётся тем же. Флаг в
+ * payload, а не второй тип джобы: делает она ровно то же самое, а второй тип
+ * означал бы второй `@Process` с той же логикой.
+ */
+export interface IHostingReminderJob {
+  force?: boolean;
+}
+
+/**
+ * `kind` строки журнала о самой рассылке (не о её сообщениях).
+ *
+ * Прецедент — `kind: 'health'` у самопроверки: это не ошибка и не действие
+ * пользователя, но событие, которое обязано быть видно в панели.
+ */
+export const HOSTING_REMINDER_LOG_KIND = 'hosting-reminder';
 
 /**
  * Пауза между сообщениями.
@@ -46,16 +64,17 @@ export class HostingReminderProcessor {
 
   constructor(
     private readonly registry: BotRegistry,
-    private readonly access: UserAccessService,
-    private readonly yandexMarketService: YandexMarketService,
+    private readonly recipients: HostingReminderService,
+    private readonly actionLog: ActionLogService,
     private readonly errors: ErrorReporter,
   ) {}
 
   @Process(JOB_TYPES.SEND_HOSTING_REMINDER)
-  async run(): Promise<void> {
+  async run(job: Job<IHostingReminderJob>): Promise<void> {
     const today = moscowDay(new Date());
+    const forced = job?.data?.force === true;
 
-    if (!isLastDayOfMonth(today)) {
+    if (!forced && !isLastDayOfMonth(today)) {
       this.logger.debug(`Не последний день месяца (${today.day}.${today.month}) — рассылки нет`);
       return;
     }
@@ -76,33 +95,54 @@ export class HostingReminderProcessor {
     }
   }
 
-  /** Получатели одного бота и последовательная отправка. */
+  /**
+   * Получатели одного бота и последовательная отправка.
+   *
+   * Список берётся у `HostingReminderService` — того же, что отвечает панели на
+   * вопрос «кому уйдёт». Считать его здесь заново значило бы завести вторую
+   * копию правила, которая разошлась бы с показанной админу молча.
+   */
   private async notifyBotUsers(bot: RegisteredBot): Promise<void> {
     const botId = bot.telegramId.toString();
-    const accounts = await this.access.listByBot(botId);
+    const recipients = await this.recipients.recipientsFor(botId);
 
-    // Магазины — ОДНИМ запросом по списку id, а не isConfigured на строку
-    // (приём AccessController). Токен здесь не нужен: важен сам факт
-    // подключения.
-    const stores = await this.yandexMarketService.findByTelegramUsers(
-      accounts.map((account) => account.telegramUserId),
-    );
-    const configured = new Set(
-      stores
-        .filter((store) => store.campaign_id && store.business_id && store.token)
-        .map((store) => store.telegramUserId),
-    );
-
-    const recipients = pickRecipients(accounts, configured);
     if (!recipients.length) {
       this.logger.log(`Напоминание об оплате: у бота ${botId} получателей нет`);
+      // Строку журнала пишем и здесь: «получателей не было» — это ответ на
+      // вопрос «почему никому не пришло», а молчание таким ответом не является.
+      await this.journal(botId, 'получателей нет');
       return;
     }
 
     const sent = await this.send(bot, recipients);
-    this.logger.log(
-      `Напоминание об оплате ботом ${botId}: отправлено ${sent} из ${recipients.length}`,
-    );
+    const summary = `отправлено ${sent} из ${recipients.length}`;
+
+    this.logger.log(`Напоминание об оплате ботом ${botId}: ${summary}`);
+    await this.journal(botId, summary);
+  }
+
+  /**
+   * Одна строка в журнал о самой рассылке.
+   *
+   * Исходящие сообщения журналируются сами (воронка `callApi`) и отвечают на
+   * вопрос «кому ушло». Эта строка отвечает на другой — «рассылка вообще
+   * состоялась?», и именно её читает карточка в панели как «последняя
+   * отправка». Без неё отличить «сегодня не тот день» от «задача не заведена»
+   * можно было только по логам контейнера, которые не переживают рестарт.
+   *
+   * `record` не бросает сам, но и ждать его нечего — журнал не имеет права
+   * помешать рассылке (та же политика, что у ActionLogHandler).
+   */
+  private async journal(botId: string, summary: string): Promise<void> {
+    await this.actionLog.record({
+      // «system» — тот же псевдопользователь, под которым ErrorReporter пишет
+      // сбои HTTP и процесса: рассылка не принадлежит ни одному продавцу.
+      telegramUserId: 'system',
+      botId,
+      direction: 'out',
+      kind: HOSTING_REMINDER_LOG_KIND,
+      action: `напоминание об оплате хостинга: ${summary}`,
+    });
   }
 
   /**

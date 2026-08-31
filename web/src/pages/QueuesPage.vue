@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
-import type { IDigestRow, IQueueJobRow, IQueueSummary } from '../api';
+import type { IDigestRow, IHostingReminder, IQueueJobRow, IQueueSummary } from '../api';
 
-import { fetchDigests, fetchQueueJobs, fetchQueues, retryQueueJob } from '../api';
+import ConfirmModal from '../components/ConfirmModal.vue';
+
+import {
+  fetchDigests,
+  fetchHostingReminder,
+  fetchQueueJobs,
+  fetchQueues,
+  retryQueueJob,
+  runHostingReminder,
+} from '../api';
 import { describeError, token } from '../auth';
 
 /**
@@ -47,6 +56,19 @@ const autoRefresh = ref(false);
 const queues = ref<IQueueSummary[]>([]);
 const digests = ref<IDigestRow[]>([]);
 
+/**
+ * Напоминание об оплате хостинга — единственная рассылка «всем сразу».
+ *
+ * Своя карточка, а не строка в таблице ниже: там колонки «кто» и «какой
+ * отчёт», а здесь получателей много и отчёта нет. Из-за этого её и не было
+ * видно: выдача рассылок отбрасывает задачи чужого формата.
+ */
+const reminder = ref<IHostingReminder | null>(null);
+const reminderAsking = ref(false);
+const reminderBusy = ref(false);
+const reminderError = ref('');
+const reminderDone = ref('');
+
 // По умолчанию — сводная картина: все состояния всех очередей.
 const selectedQueue = ref('all');
 const selectedState = ref('all');
@@ -81,9 +103,10 @@ async function load(): Promise<void> {
   loadError.value = '';
 
   try {
-    const [summaries, digestRows, jobsPage] = await Promise.all([
+    const [summaries, digestRows, reminderCard, jobsPage] = await Promise.all([
       fetchQueues(token.value),
       fetchDigests(token.value),
+      fetchHostingReminder(token.value),
       fetchQueueJobs(token.value, selectedQueue.value, {
         state: selectedState.value,
         limit: LIMIT,
@@ -92,6 +115,7 @@ async function load(): Promise<void> {
     ]);
     queues.value = summaries;
     digests.value = digestRows;
+    reminder.value = reminderCard;
     jobs.value = jobsPage.items;
     jobsTotal.value = jobsPage.total;
   } catch (error) {
@@ -155,6 +179,34 @@ async function retry(job: IQueueJobRow): Promise<void> {
   }
 }
 
+/**
+ * Разослать напоминание прямо сейчас.
+ *
+ * Сообщение уходит РЕАЛЬНЫМ продавцам, поэтому только через подтверждение с
+ * числом получателей: «отправить сейчас» — необратимое действие, в отличие от
+ * ретрая упавшей задачи рядом.
+ */
+async function sendReminder(): Promise<void> {
+  if (!token.value) return;
+
+  reminderBusy.value = true;
+  reminderError.value = '';
+  reminderDone.value = '';
+
+  try {
+    const count = await runHostingReminder(token.value);
+    reminderAsking.value = false;
+    // Не «отправлено»: джоба поставлена в очередь, отправка идёт в фоне с
+    // паузами между сообщениями. Итог появится строкой «последняя отправка».
+    reminderDone.value = `Рассылка поставлена в очередь: получателей ${count}.`;
+    await load();
+  } catch (error) {
+    reminderError.value = describeError(error);
+  } finally {
+    reminderBusy.value = false;
+  }
+}
+
 function toggleAutoRefresh(): void {
   autoRefresh.value = !autoRefresh.value;
   if (!autoRefresh.value) return stopTimer();
@@ -178,6 +230,11 @@ const formatter = new Intl.DateTimeFormat('ru-RU', {
 
 function formatMs(ms: number | null | undefined): string {
   return ms ? formatter.format(new Date(ms)) : '—';
+}
+
+/** Момент из журнала приходит строкой ISO, а не миллисекундами. */
+function formatDate(value: string | null | undefined): string {
+  return value ? formatter.format(new Date(value)) : '—';
 }
 
 /**
@@ -253,6 +310,72 @@ function dataSummary(job: IQueueJobRow): string {
       </div>
     </article>
   </div>
+
+  <section v-if="reminder">
+    <h2>💳 Напоминание об оплате хостинга</h2>
+
+    <article class="card reminder">
+      <!--
+        Первая строка отвечает на главный вопрос — работает ли оно вообще.
+        «Задача не заведена» означает, что развёрнут код без рассылки, и это
+        совсем другой разговор, чем «сегодня не тот день».
+      -->
+      <p v-if="reminder.schedule" class="ok">
+        Задача заведена. Следующая отправка:
+        <b class="tnum">{{ formatMs(reminder.schedule.next) }}</b>
+        <span class="muted">
+          ({{ reminder.schedule.time ? `${reminder.schedule.time} МСК` : reminder.schedule.cron }},
+          последний день месяца)
+        </span>
+      </p>
+      <p v-else class="error">
+        Задача не заведена — значит, развёрнута версия без рассылки. Напоминание не уйдёт.
+      </p>
+
+      <p>
+        Последняя отправка:
+        <template v-if="reminder.lastRun">
+          <b class="tnum">{{ formatDate(reminder.lastRun.at) }}</b> — {{ reminder.lastRun.action }}
+        </template>
+        <span v-else class="muted">отправок не было</span>
+      </p>
+
+      <p>
+        Получателей сейчас: <b class="tnum">{{ reminder.items.length }}</b>
+      </p>
+
+      <ul v-if="reminder.items.length" class="recipients">
+        <li v-for="row in reminder.items" :key="`${row.botId}:${row.telegramUserId}`">
+          <span class="name">{{ who(row) }}</span>
+          <span class="muted">{{ row.storeName || 'магазин без названия' }}</span>
+        </li>
+      </ul>
+      <!-- Ноль получателей объясняем словами: пустота читается как поломка. -->
+      <p v-else class="muted">
+        Никому: напоминание уходит одобренным продавцам с подключённым магазином, у которых открыта
+        возможность «Напоминание об оплате».
+      </p>
+
+      <div class="tools">
+        <button type="button" :disabled="reminderBusy" @click="reminderAsking = true">
+          Отправить сейчас
+        </button>
+        <span v-if="reminderDone" class="muted">{{ reminderDone }}</span>
+      </div>
+      <p v-if="reminderError" class="error">{{ reminderError }}</p>
+    </article>
+  </section>
+
+  <ConfirmModal
+    v-if="reminderAsking"
+    title="Отправить напоминание сейчас?"
+    :message="`Сообщение об оплате хостинга уйдёт продавцам: ${reminder?.items.length ?? 0}. Отменить отправку будет нельзя.`"
+    confirm-label="Отправить"
+    busy-label="Отправка…"
+    :busy="reminderBusy"
+    @confirm="sendReminder"
+    @cancel="reminderAsking = false"
+  />
 
   <section>
     <h2>Рассылки</h2>
@@ -433,6 +556,27 @@ h2 {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px;
+}
+
+/* Карточка рассылки — не счётчик, а текст: своя типографика, без сетки cards. */
+.reminder p {
+  margin: 0 0 8px;
+}
+
+/* Зелёным — только «задача заведена»: это ответ «оно работает», ради которого
+   карточку и завели. Всё остальное держит структура, а не цвет. */
+.reminder .ok {
+  color: var(--ok);
+}
+
+.recipients {
+  margin: 0 0 12px;
+  padding: 0 0 0 18px;
+}
+
+.recipients .name {
+  display: inline;
+  margin-right: 6px;
 }
 
 /* Заголовок карточки — кнопка-фильтр, но выглядит заголовком, а не кнопкой. */

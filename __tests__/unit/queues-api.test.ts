@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bull';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
+import { ActionLogService } from '../../src/database/services/action-log.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { AdminAuthService } from '../../src/modules/admin/admin-auth.service';
@@ -10,6 +11,7 @@ import { AdminJwtGuard } from '../../src/modules/admin/admin-jwt.guard';
 import { QueuesController } from '../../src/modules/queues/queues.controller';
 import { QueuesService } from '../../src/modules/queues/queues.service';
 import { QUEUE_NAMES } from '../../src/modules/telegram';
+import { HostingReminderService } from '../../src/modules/telegram/queue/services/hosting-reminder.service';
 
 /**
  * HTTP-поверхность страницы очередей. Проверяется то, что не ловится
@@ -47,6 +49,7 @@ function fakeQueue() {
       delayed: 2,
     })),
     getRepeatableJobs: vi.fn(async () => []),
+    add: vi.fn(async () => undefined),
     getJobs: vi.fn(async () => [FAILED_JOB, null]),
     getJobCountByTypes: vi.fn(async () => 3),
     getJob: vi.fn(async () => FAILED_JOB),
@@ -57,6 +60,8 @@ describe('QueuesController', () => {
   let queues: Record<string, ReturnType<typeof fakeQueue>>;
   let list: ReturnType<typeof vi.fn>;
   let findByTelegramUsers: ReturnType<typeof vi.fn>;
+  let reminderRecipients: ReturnType<typeof vi.fn>;
+  let logList: ReturnType<typeof vi.fn>;
   let controller: QueuesController;
 
   beforeEach(async () => {
@@ -77,6 +82,11 @@ describe('QueuesController', () => {
       },
     ]);
 
+    reminderRecipients = vi.fn(async () => [
+      { botId: '999', telegramUserId: '222', telegramChatId: '333' },
+    ]);
+    logList = vi.fn(async () => []);
+
     const moduleRef = await Test.createTestingModule({
       controllers: [QueuesController],
       providers: [
@@ -87,6 +97,8 @@ describe('QueuesController', () => {
         })),
         { provide: UserAccessService, useValue: { list } },
         { provide: YandexMarketService, useValue: { findByTelegramUsers } },
+        { provide: HostingReminderService, useValue: { recipients: reminderRecipients } },
+        { provide: ActionLogService, useValue: { list: logList } },
         // Гвард висит на классе; его собственная логика — в admin-auth.test.ts.
         { provide: AdminAuthService, useValue: { verify: async () => '1' } },
       ],
@@ -271,6 +283,79 @@ describe('QueuesController', () => {
       expect(raw).not.toContain('12345678');
       expect(raw).not.toContain('87654321');
       expect(raw).not.toContain('ACMA');
+    });
+  });
+
+  describe('напоминание об оплате хостинга', () => {
+    const scheduled = {
+      key: 'hk',
+      id: 'hosting-reminder',
+      cron: '0 10 28-31 * *',
+      tz: 'Europe/Moscow',
+      next: 1790755200000,
+    };
+
+    it('карточка показывает расписание, получателей и последнюю отправку', async () => {
+      queues[QUEUE_NAMES.REPORTS].getRepeatableJobs.mockResolvedValue([scheduled]);
+      logList.mockResolvedValue([
+        {
+          createdAt: '2026-08-31T07:00:05.000Z',
+          action: 'напоминание об оплате хостинга: отправлено 2 из 2',
+          botId: '999',
+        },
+      ]);
+
+      const card = await controller.hostingReminderCard();
+
+      expect(card.schedule).toMatchObject({ cron: '0 10 28-31 * *', time: '10:00' });
+      expect(card.lastRun?.action).toContain('отправлено 2 из 2');
+      expect(card.items).toEqual([
+        expect.objectContaining({ telegramUserId: '222', username: 'vasya' }),
+      ]);
+      // Читаем ровно свои строки журнала, а не весь журнал.
+      expect(logList).toHaveBeenCalledWith({ kind: 'hosting-reminder', limit: 1 });
+    });
+
+    it('задачи нет — schedule: null, это диагноз «развёрнут код без рассылки»', async () => {
+      // Персональные рассылки в очереди есть, а нашей задачи нет.
+      queues[QUEUE_NAMES.REPORTS].getRepeatableJobs.mockResolvedValue([
+        { key: 'k1', id: 'report:999:222:profit', cron: '0 9 * * *', tz: 'Europe/Moscow', next: 1 },
+      ]);
+
+      const card = await controller.hostingReminderCard();
+
+      expect(card.schedule).toBeNull();
+    });
+
+    it('идентификаторы магазина в карточку не попадают', async () => {
+      queues[QUEUE_NAMES.REPORTS].getRepeatableJobs.mockResolvedValue([scheduled]);
+      const raw = JSON.stringify(await controller.hostingReminderCard());
+
+      expect(raw).toContain('Всё для часов');
+      expect(raw).not.toContain('12345678');
+      expect(raw).not.toContain('87654321');
+      expect(raw).not.toContain('ACMA');
+    });
+
+    it('ручной запуск ставит джобу с force и возвращает число получателей', async () => {
+      const result = await controller.runHostingReminder();
+
+      expect(result).toEqual({ queued: true, recipients: 1 });
+      expect(queues[QUEUE_NAMES.REPORTS].add).toHaveBeenCalledWith(
+        'send-hosting-reminder',
+        { force: true },
+        expect.objectContaining({ attempts: 1 }),
+      );
+    });
+
+    it('ручной запуск не создаёт repeatable-задачу и не задаёт jobId', async () => {
+      // jobId сделал бы повторное нажатие молчаливым no-op, repeat — второй
+      // расписанной рассылкой.
+      await controller.runHostingReminder();
+
+      const options = queues[QUEUE_NAMES.REPORTS].add.mock.calls[0][2] as Record<string, unknown>;
+      expect(options.repeat).toBeUndefined();
+      expect(options.jobId).toBeUndefined();
     });
   });
 

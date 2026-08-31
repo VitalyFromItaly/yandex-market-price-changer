@@ -10,9 +10,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
+import { ActionLogService } from '../../database/services/action-log.service';
 import { UserAccessService } from '../../database/services/user-access.service';
 import { YandexMarketService } from '../../database/services/yandex-market.service';
 import { AdminJwtGuard } from '../admin/admin-jwt.guard';
+import { HOSTING_REMINDER_LOG_KIND } from '../telegram/queue/processors/hosting-reminder.processor';
+import { HostingReminderService } from '../telegram/queue/services/hosting-reminder.service';
 
 import {
   FILTER_ALL,
@@ -51,6 +54,8 @@ export class QueuesController {
     private readonly queues: QueuesService,
     private readonly access: UserAccessService,
     private readonly stores: YandexMarketService,
+    private readonly hostingReminder: HostingReminderService,
+    private readonly actionLog: ActionLogService,
   ) {}
 
   @Get()
@@ -91,6 +96,76 @@ export class QueuesController {
         };
       }),
     };
+  }
+
+  /**
+   * Напоминание об оплате хостинга: заведено ли, когда следующая отправка,
+   * кому уйдёт и когда уходило в прошлый раз.
+   *
+   * Своя ручка, а не строка в `digests()`: та таблица — про персональные
+   * рассылки отчётов, у неё колонки «кто» и «какой отчёт», а здесь получателей
+   * много и отчёта нет вовсе. Именно поэтому глобальной рассылки в панели до
+   * сих пор не было видно: `digests()` молча отбрасывает id чужого формата.
+   *
+   * Получателей спрашиваем у того же сервиса, что и сама рассылка, — иначе
+   * панель показывала бы один список, а сообщения уходили другому.
+   */
+  @Get('hosting-reminder')
+  async hostingReminderCard() {
+    const [schedule, recipients, lastRuns] = await Promise.all([
+      this.queues.hostingReminder(),
+      this.hostingReminder.recipients(),
+      this.actionLog.list({ kind: HOSTING_REMINDER_LOG_KIND, limit: 1 }),
+    ]);
+
+    // Ники и названия магазинов — тем же батчем, что в digests(): один запрос
+    // на всю выдачу, а не по строке.
+    const [users, stores] = await Promise.all([
+      this.access.list(),
+      this.stores.findByTelegramUsers([...new Set(recipients.map((r) => r.telegramUserId))]),
+    ]);
+    const userBy = new Map(users.map((user) => [`${user.botId}:${user.telegramUserId}`, user]));
+    const storeBy = new Map(stores.map((store) => [store.telegramUserId, store]));
+
+    const last = lastRuns[0];
+
+    return {
+      // null — задача не заведена: развёрнут код без неё. Это главный
+      // диагностический ответ на вопрос «почему ничего не пришло».
+      schedule,
+      lastRun: last ? { at: last.createdAt, action: last.action, botId: last.botId } : null,
+      items: recipients.map((recipient) => {
+        const user = userBy.get(`${recipient.botId}:${recipient.telegramUserId}`);
+        // Идентификаторы магазина в ответ не попадают — общее правило панели,
+        // имени достаточно.
+        return {
+          botId: recipient.botId,
+          telegramUserId: recipient.telegramUserId,
+          username: user?.username,
+          firstName: user?.firstName,
+          lastName: user?.lastName,
+          storeName: storeBy.get(recipient.telegramUserId)?.name,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Разослать напоминание прямо сейчас.
+   *
+   * Нужна не для удобства: рассылка уходит раз в месяц, и без кнопки убедиться,
+   * что она работает, можно было только дождавшись последнего дня месяца.
+   * Джоба ставится с `force`, то есть обходит проверку даты — и ТОЛЬКО её:
+   * отбор получателей остаётся общим с расписанием.
+   *
+   * Возвращаем число получателей: панель уже показала его в подтверждении, и
+   * расхождение сразу видно.
+   */
+  @Post('hosting-reminder/run')
+  async runHostingReminder() {
+    const recipients = await this.hostingReminder.recipients();
+    await this.queues.runHostingReminder();
+    return { queued: true, recipients: recipients.length };
   }
 
   /**
