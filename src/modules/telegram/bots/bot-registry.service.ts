@@ -27,6 +27,14 @@ type TBotSource = Pick<BotDocument, 'id' | 'type' | 'name' | 'token'>;
  */
 const FALLBACK_BOT_ID = 'no-database';
 
+/**
+ * Пауза перед повторной регистрацией бота, дальше ×2 до потолка. Недоступный
+ * Bot API (или зеркало TELEGRAM_API_URL) — не повод держать приложение
+ * лежащим: бот переподключится сам, как только связь вернётся.
+ */
+export const BOT_RETRY_FIRST_MS = 15_000;
+export const BOT_RETRY_MAX_MS = 5 * 60_000;
+
 export interface RegisteredBot {
   /** _id документа Bot в Mongo — по нему приходит вебхук. */
   id: string;
@@ -73,12 +81,47 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
     this.logger.log(`Bot API: ${this.config.telegramApiUrl}`);
 
     const docs = await this.loadOrSeedBots();
-    // Раньше launchBots() вызывался БЕЗ await — промис не джойнился, и ошибки
-    // запуска терялись. Здесь дожидаемся каждого бота.
-    for (const doc of docs) {
+    /*
+     * Регистрация — в фоне, НЕ в ожидании bootstrap. Nest не открывает порт,
+     * пока не завершены все bootstrap-хуки, и 25-09-2026 недоступное с прод-хоста
+     * зеркало Bot API (getMe → ETIMEDOUT через две минуты) роняло старт целиком:
+     * контейнер перезапускался по кругу, и вместе с ботом лежали админка, CRM и
+     * API, которым Telegram не нужен вовсе. Теперь HTTP поднимается сразу, а бот
+     * переподключается сам (registerWithRetry). Ошибки не теряются: каждая
+     * неудача — в журнал, а «ни один бот не зарегистрирован» видит монитор.
+     */
+    for (const doc of docs) void this.registerWithRetry(doc, BOT_RETRY_FIRST_MS);
+  }
+
+  private stopped = false;
+  private readonly retryTimers = new Set<NodeJS.Timeout>();
+
+  private async registerWithRetry(doc: TBotSource, delay: number): Promise<void> {
+    if (this.stopped) return;
+    try {
       await this.registerBot(doc);
+      this.logger.log(`Готово ботов: ${this.count}`);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Бот "${doc.name}" не зарегистрирован: ${reason}. Повтор через ${Math.round(delay / 1000)} с`,
+      );
+      // Без алерта: слать его некому — бот и есть то, что не поднялось.
+      void this.errors.report({
+        error,
+        source: 'process',
+        context: 'bot-registry:register',
+        alert: false,
+      });
+      if (this.stopped) return;
+      const timer = setTimeout(() => {
+        this.retryTimers.delete(timer);
+        void this.registerWithRetry(doc, Math.min(delay * 2, BOT_RETRY_MAX_MS));
+      }, delay);
+      // Таймер повтора не должен держать процесс живым после SIGTERM.
+      timer.unref();
+      this.retryTimers.add(timer);
     }
-    this.logger.log(`Готово ботов: ${this.count}`);
   }
 
   /**
@@ -92,6 +135,9 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
    * Работает только при app.enableShutdownHooks() в main.ts.
    */
   onApplicationShutdown(signal?: string): void {
+    this.stopped = true;
+    for (const timer of this.retryTimers) clearTimeout(timer);
+    this.retryTimers.clear();
     for (const byType of this.bots.values()) {
       for (const entry of byType.values()) {
         try {
