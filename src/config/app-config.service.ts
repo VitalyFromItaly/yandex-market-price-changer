@@ -147,6 +147,14 @@ export class AppConfigService {
     return this.config.get<string>('ADMIN_PASSWORD') || undefined;
   }
 
+  /**
+   * Стартовый пароль CRM. Действует только для продавца, у которого ещё нет
+   * своей учётки (`CrmCredential`), и обязан быть сменён при первом входе.
+   */
+  get crmInitialPassword(): string {
+    return this.config.get<string>('CRM_INITIAL_PASSWORD');
+  }
+
   get yandexMarketBaseUrl(): string {
     return this.config.get<string>('YANDEX_MARKET_BASE_URL');
   }

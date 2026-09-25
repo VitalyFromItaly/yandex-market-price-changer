@@ -46,6 +46,10 @@ const SAFE_DATA_KEYS = [
   'step',
   // Джоба sync-stocks: имя файла лежит в корне payload'а (не во fileInfo).
   'fileName',
+  // Фоновая задача CRM: какой отчёт считается. Params не показываем — в них
+  // может приехать что угодно.
+  'kind',
+  'jobId',
 ] as const;
 
 /**

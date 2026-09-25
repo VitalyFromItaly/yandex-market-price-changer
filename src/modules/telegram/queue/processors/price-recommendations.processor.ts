@@ -7,11 +7,9 @@ import { ErrorReporter } from '../../../errors/error-reporter.service';
 import {
   recommendationsEmptyText,
   recommendationsErrorText,
-  recommendationsFileName,
   recommendationsText,
 } from '../../../yandex/recommendations/recommendations-message';
-import { buildRecommendationsWorkbook } from '../../../yandex/recommendations/recommendations-workbook';
-import { YandexClientFactory } from '../../../yandex/yandex-client.factory';
+import { RecommendationsService } from '../../../yandex/recommendations/recommendations.service';
 import { BotRegistry } from '../../bots/bot-registry.service';
 import { htmlOptions, splitMessage } from '../../formatting/telegram-format';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
@@ -36,7 +34,7 @@ export class PriceRecommendationsProcessor {
   constructor(
     private readonly registry: BotRegistry,
     private readonly yandexMarketService: YandexMarketService,
-    private readonly clients: YandexClientFactory,
+    private readonly recommendations: RecommendationsService,
     private readonly errors: ErrorReporter,
   ) {}
 
@@ -61,25 +59,22 @@ export class PriceRecommendationsProcessor {
         return;
       }
 
-      const rows = await this.clients.forStore(store).loadPriceRecommendations();
+      // Загрузка, порядок и книга — общие с CRM (RecommendationsService).
+      // Момент среза в отчёте один на текст и имя файла.
+      const { rows, takenAt, workbook } = await this.recommendations.build(store);
 
-      if (!rows.length) {
+      if (!workbook) {
         await bot.telegraf.telegram.sendMessage(chatId, recommendationsEmptyText(), htmlOptions());
         return;
       }
-
-      // Момент среза один на текст и имя файла — иначе подпись и файл могли бы
-      // разойтись на минуту через границу суток.
-      const takenAt = new Date();
 
       for (const chunk of splitMessage(recommendationsText(rows, takenAt))) {
         await bot.telegraf.telegram.sendMessage(chatId, chunk, htmlOptions());
       }
 
-      const workbook = buildRecommendationsWorkbook(rows);
       await bot.telegraf.telegram.sendDocument(chatId, {
         source: workbook.buffer,
-        filename: recommendationsFileName(takenAt),
+        filename: workbook.filename,
       });
     } catch (error) {
       // Ошибку гасим, НЕ пробрасываем (attempts: 1) — но продавец ждёт экран.

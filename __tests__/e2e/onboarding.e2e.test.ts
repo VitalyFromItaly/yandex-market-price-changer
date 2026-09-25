@@ -41,11 +41,14 @@ import { MarketCategoriesService } from '../../src/modules/yandex/market-reports
 import { PaymentsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/payments.handler';
 import { PriceRecommendationsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/price-recommendations.handler';
 import { QuarantineHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/quarantine.handler';
+import { FeedbackService } from '../../src/modules/yandex/feedback/feedback.service';
+import { QuarantineService } from '../../src/modules/yandex/quarantine/quarantine.service';
 import { StockUploadHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
 import { HealthMonitorService } from '../../src/modules/health/health-monitor.service';
 import { AdminUsersHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/admin-users.handler';
 import { HealthCommandHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/health-command.handler';
 import { StockSyncService } from '../../src/modules/yandex/stocks/stock-sync.service';
+import { StockUploadPolicyService } from '../../src/modules/yandex/stocks/stock-upload-policy.service';
 import { FallbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/fallback.handler';
 import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
 import { AdminNotifierService } from '../../src/modules/telegram/bots/shared/services/admin-notifier.service';
@@ -62,6 +65,7 @@ import { AppConfigService } from '../../src/config/app-config.service';
 import { YandexClientFactory } from '../../src/modules/yandex/yandex-client.factory';
 import { OrderReportsService } from '../../src/modules/yandex/reports/order-reports.service';
 import { ProfitService } from '../../src/modules/yandex/reports/profit.service';
+import { StoreSettingsService } from '../../src/modules/yandex/settings/store-settings.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { PurchasePrice } from '../../src/database/schemas/purchase-price.schema';
 import { formatAdminCallback } from '../../src/modules/telegram/bots/shared/access.domain';
@@ -257,6 +261,8 @@ describe('Онбординг: от /start до отчёта', () => {
         // сценарии онбординга они не нажимаются, но без провайдеров не
         // резолвятся. Зависимости у них уже есть в этом модуле — берём живые.
         QuarantineHandler,
+        QuarantineService,
+        FeedbackService,
         FeedbackHandler,
         PaymentsHandler,
         PriceRecommendationsHandler,
@@ -270,6 +276,7 @@ describe('Онбординг: от /start до отчёта', () => {
         // Загрузка остатков в этом сценарии не участвует, но обработчик —
         // часть пайплайна, и без заглушек его зависимости не резолвятся.
         { provide: StockSyncService, useValue: { sync: async () => ({}) } },
+        StockUploadPolicyService,
         {
           provide: getQueueToken(QUEUE_NAMES.FILE_PROCESSING),
           useValue: {
@@ -295,6 +302,7 @@ describe('Онбординг: от /start до отчёта', () => {
         OrderReportsService,
         ProfitService,
         PurchasePriceService,
+        StoreSettingsService,
         { provide: getModelToken(ActionLog.name), useValue: logsModel },
         { provide: getModelToken(UserAccess.name), useValue: accessModel },
         { provide: getModelToken(ReportSchedule.name), useValue: scheduleModel },

@@ -1,5 +1,5 @@
 import type { IProfitReport } from './profit.service';
-import type { IProfitTotals } from './profit';
+import type { IProfitRates, IProfitTotals } from './profit';
 import type { ITariffEstimate } from './tariff-estimate';
 
 import { b, code, esc } from '../../telegram/formatting/telegram-format';
@@ -39,13 +39,138 @@ import { reportDefinition, REPORT } from './report-status-map';
 const UNKNOWN_PREVIEW = 5;
 
 /** Процент без лишнего «.0»: «23», но «23.5». */
-function percent(value: number): string {
+export function percent(value: number): string {
   return String(Number(value.toFixed(2)));
 }
+
+/*
+ * Тексты и решения, нужные ДВУМ каналам — боту и CRM. Без разметки: HTML
+ * накладывает только formatProfitReport. Вынесены сюда, а не скопированы в
+ * CRM, — прецедент emptyReportText в report-message.ts: две копии одной
+ * формулировки расходятся молча.
+ */
+
+export const PROFIT_EMPTY_TEXT = 'За этот период заказов нет.';
+export const PLACED_IN_TRANSIT_NOTE = 'Заказы ещё едут — часть могут не выкупить.';
+export const OTHER_ORDERS_NOTE =
+  'Это другие заказы: оформленные за период попадут сюда после выкупа.';
+export const UNKNOWN_SKUS_ADVICE = 'Пришлите прайс с этими позициями — они попадут в расчёт.';
+export const NO_PRICES_TEXT = 'Закупочных цен пока нет — пришлите прайс, и прибыль посчитается.';
 
 /** Есть ли в наборе хоть что-нибудь, о чём стоит сказать. */
 function isEmpty(totals: IProfitTotals): boolean {
   return !totals?.orders && !totals?.excludedOrders && !totals?.returnedOrders;
+}
+
+/**
+ * Ни одного заказа ни в одном наборе — это результат, а не сбой. Отменённые
+ * тоже считаются заказами: «заказов нет» при трёх отменённых было бы неправдой.
+ */
+export function isProfitEmpty(report: IProfitReport): boolean {
+  return isEmpty(report.totals) && isEmpty(report.placed) && !report.cancelledOrders;
+}
+
+/**
+ * Какой набор получает полную разбивку. Когда оформленных за период нет (отчёт
+ * за прошедший день, выходной), основным становится выкупленное: иначе отчёт
+ * схлопнулся бы в одну строку и продавец потерял бы комиссию, налог и закуп.
+ * Тот же предикат считает оценку калькулятора в ProfitService.build.
+ */
+export function profitMainBlock(report: IProfitReport): 'placed' | 'redeemed' {
+  return report.placed?.orders ? 'placed' : 'redeemed';
+}
+
+/**
+ * Оценка калькулятора — только для основного блока. Совпадение scope
+ * проверяется явно: если предикаты сервиса и отчёта разойдутся, строка с
+ * чужим набором хуже, чем её отсутствие. Пустая оценка (ни одного покрытого
+ * заказа) тоже не показывается: «0 ₽» читался бы как «услуги бесплатны».
+ */
+export function mainTariffEstimate(report: IProfitReport): ITariffEstimate | undefined {
+  const estimate = report.tariffEstimate;
+  return estimate?.scope === profitMainBlock(report) && estimate.coveredOrders
+    ? estimate
+    : undefined;
+}
+
+export interface IProfitExcluded {
+  orders: number;
+  revenue: number;
+  /** Артикулы без закупа — объединение обоих наборов без повторов. */
+  skus: string[];
+}
+
+/**
+ * Заказы без закупочной цены — один блок на оба набора: продавцу всё равно
+ * грузить их одним прайсом, а два одинаковых списка подряд читаются как ошибка.
+ */
+export function profitExcluded(report: IProfitReport): IProfitExcluded {
+  const { placed, totals } = report;
+  return {
+    orders: (placed?.excludedOrders ?? 0) + (totals?.excludedOrders ?? 0),
+    revenue: (placed?.excludedRevenue ?? 0) + (totals?.excludedRevenue ?? 0),
+    skus: [...new Set([...(placed?.unknownSkus ?? []), ...(totals?.unknownSkus ?? [])])],
+  };
+}
+
+export interface IPurchaseBasis {
+  defaultPercent: number;
+  /** Бренды, чья скидка ОТЛИЧАЕТСЯ от общей, в порядке реестра. */
+  overrides: { title: string; percent: number }[];
+}
+
+/**
+ * Из чего получен закуп: общая скидка от прайса и бренды со своей.
+ *
+ * Перечисляются только отличающиеся бренды: все шесть с одинаковым процентом
+ * утопили бы полезное в шуме. У нетронутого продавца это ровно «Восток 4%» —
+ * легаси-фолбэк vostokDiscountPercent запечён в конфиг (см. discountsOf).
+ * Общее для «Прибыли» и «Калькулятора»: два экрана не должны объяснять одно
+ * число по-разному.
+ */
+export function purchaseBasis(rates: IProfitRates): IPurchaseBasis {
+  const config = discountsOf(rates);
+  return {
+    defaultPercent: config.defaultPercent,
+    overrides: BRAND_KEYS.filter(
+      (key) => brandDiscountOf(config, key) !== config.defaultPercent,
+    ).map((key) => ({ title: brandTitle(key), percent: brandDiscountOf(config, key) })),
+  };
+}
+
+/** «прайс от ДД-ММ-ГГГГ минус 10% (Восток 4%).» — хвост строки о закупе. */
+export function purchaseBasisText(pricesUpdatedAt: Date, rates: IProfitRates): string {
+  const basis = purchaseBasis(rates);
+  const overrides = basis.overrides.map((item) => `${item.title} ${percent(item.percent)}%`);
+  return (
+    `прайс от ${moscowDateParam(pricesUpdatedAt)} минус ${percent(basis.defaultPercent)}%` +
+    (overrides.length ? ` (${overrides.join(', ')}).` : '.')
+  );
+}
+
+/**
+ * Ставки продвижения по брендам — чтобы сумма «Продвижение» была проверяема.
+ * Только настроенные бренды: для остальных продвижения нет, и «CASIO 0%»
+ * значил бы не то.
+ */
+export function promoParts(rates: IProfitRates): string[] {
+  const configs = promoConfigsOf(rates.promoCommissions);
+  return BRAND_KEYS.filter((key) => configs[key]).map(
+    (key) => `${brandTitle(key)} ${promoValueLabel(configs[key])}`,
+  );
+}
+
+/**
+ * «≈24%» или «≈24% по 3 из 5 заказов» — доля услуг калькулятора от выручки
+ * ПОКРЫТЫХ заказов. При частичном покрытии счётчик обязателен: без него
+ * процент выглядел бы долей от всего набора. null — выручки покрытых нет.
+ */
+export function tariffEstimateShare(estimate: ITariffEstimate): string | null {
+  if (!estimate.coveredRevenue) return null;
+  const share = `≈${percent((estimate.servicesTotal / estimate.coveredRevenue) * 100)}%`;
+  return estimate.coveredOrders === estimate.totalOrders
+    ? share
+    : `${share} по ${estimate.coveredOrders} из ${estimate.totalOrders} заказов`;
 }
 
 /**
@@ -58,12 +183,8 @@ function isEmpty(totals: IProfitTotals): boolean {
  * без него «≈24% по трети заказов» выглядел бы как процент от всего набора.
  */
 function tariffEstimateLine(estimate: ITariffEstimate): string {
-  const share = estimate.coveredRevenue
-    ? ` (≈${percent((estimate.servicesTotal / estimate.coveredRevenue) * 100)}%` +
-      (estimate.coveredOrders === estimate.totalOrders
-        ? ')'
-        : ` по ${estimate.coveredOrders} из ${estimate.totalOrders} заказов)`)
-    : '';
+  const text = tariffEstimateShare(estimate);
+  const share = text ? ` (${text})` : '';
   return `🧮 По калькулятору Маркета: ${b(formatRubles(estimate.servicesTotal))}${share}`;
 }
 
@@ -105,9 +226,8 @@ function detailedBlock(
     ...lines,
     `➖ Комиссия ${percent(totals.rates.commissionPercent)}%: ` +
       `${b(formatRubles(totals.commission))}`,
-    // Сразу под комиссией — то, с чем её сверяют. Пустая оценка (ни одного
-    // покрытого заказа) не печатается: «0 ₽» читался бы как «услуги бесплатны».
-    ...(estimate?.coveredOrders ? [tariffEstimateLine(estimate)] : []),
+    // Сразу под комиссией — то, с чем её сверяют (пустую отсекает mainTariffEstimate).
+    ...(estimate ? [tariffEstimateLine(estimate)] : []),
     `➖ Налог ${percent(totals.rates.taxPercent)}%: ${b(formatRubles(totals.tax))}`,
     // Продвижение — только когда начислено: ноль в столбце вычитаний — шум, а
     // не настроившие буст продавцы не должны гадать, что это за строка.
@@ -124,34 +244,22 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
   const title = reportDefinition(REPORT.PROFIT).title;
   const header = `💰 ${b(title)} ${esc(periodTitle(report.period, now))}`;
 
-  // Ни одного заказа ни в одном наборе — это результат, а не сбой; так же
-  // отвечают остальные отчёты. Отменённые тоже считаются заказами: «заказов
-  // нет» при трёх отменённых было бы неправдой.
-  if (isEmpty(totals) && isEmpty(placed) && !report.cancelledOrders) {
-    return `${header}\n\nЗа этот период заказов нет.`;
+  // Пустой отчёт — результат, а не сбой; так же отвечают остальные отчёты.
+  if (isProfitEmpty(report)) {
+    return `${header}\n\n${PROFIT_EMPTY_TEXT}`;
   }
 
   const lines = [header, ''];
 
   // --- оформлено за период: то, что продавец видит в кабинете ---------------
   //
-  // Разбивка целиком достаётся ОСНОВНОМУ набору. Когда оформленных за период
-  // нет (отчёт за прошедший день, выходной), основным становится выкупленное:
-  // иначе сообщение схлопнулось бы в одну строку и продавец потерял бы
-  // комиссию, налог и закуп — то, ради чего отчёт и открывают.
-  const placedIsMain = !!placed?.orders;
-
-  // Оценка калькулятора достаётся только основному блоку, и совпадение
-  // scope проверяется явно: сервис считает её тем же предикатом, но если
-  // наборы разойдутся (правка одного места без другого), строка с чужим
-  // набором хуже, чем её отсутствие.
-  const estimate = report.tariffEstimate;
+  // Разбивка целиком достаётся ОСНОВНОМУ набору (profitMainBlock), оценка
+  // калькулятора — только ему же (mainTariffEstimate).
+  const placedIsMain = profitMainBlock(report) === 'placed';
+  const estimate = mainTariffEstimate(report);
 
   if (placedIsMain) {
-    lines.push(
-      ...detailedBlock(placed, 'placed', estimate?.scope === 'placed' ? estimate : undefined),
-      'Заказы ещё едут — часть могут не выкупить.',
-    );
+    lines.push(...detailedBlock(placed, 'placed', estimate), PLACED_IN_TRANSIT_NOTE);
   }
 
   // Отменённые в кабинете лежат в общем списке. Промолчав о них, мы получим
@@ -172,12 +280,10 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
       lines.push(
         `✅ Выкуплено: ${b(totals.orders)} на ${b(formatRubles(totals.revenue))} → ` +
           `чистая ${b(formatRubles(totals.net))}`,
-        'Это другие заказы: оформленные за период попадут сюда после выкупа.',
+        OTHER_ORDERS_NOTE,
       );
     } else {
-      lines.push(
-        ...detailedBlock(totals, 'redeemed', estimate?.scope === 'redeemed' ? estimate : undefined),
-      );
+      lines.push(...detailedBlock(totals, 'redeemed', estimate));
     }
   }
 
@@ -192,71 +298,45 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
   }
 
   // --- заказы без закупочной цены: один блок на оба набора ------------------
-  //
-  // Список артикулов объединён намеренно: продавцу всё равно грузить их одним
-  // прайсом, а два одинаковых списка подряд читаются как ошибка отчёта.
-  const excludedOrders = (placed?.excludedOrders ?? 0) + (totals?.excludedOrders ?? 0);
-  const excludedRevenue = (placed?.excludedRevenue ?? 0) + (totals?.excludedRevenue ?? 0);
-  const unknownSkus = [
-    ...new Set([...(placed?.unknownSkus ?? []), ...(totals?.unknownSkus ?? [])]),
-  ];
+  const excluded = profitExcluded(report);
 
-  if (excludedOrders) {
+  if (excluded.orders) {
     lines.push('');
 
     // Молчать здесь нельзя: без этой строки прибыль по части заказов просто
     // исчезла бы из отчёта, а выглядело бы это как «продали мало».
     lines.push(
-      `⚠️ Не учтено заказов: ${b(excludedOrders)} ` +
-        `на ${b(formatRubles(excludedRevenue))} — нет закупочной цены.`,
+      `⚠️ Не учтено заказов: ${b(excluded.orders)} ` +
+        `на ${b(formatRubles(excluded.revenue))} — нет закупочной цены.`,
     );
 
-    for (const sku of unknownSkus.slice(0, UNKNOWN_PREVIEW)) {
+    for (const sku of excluded.skus.slice(0, UNKNOWN_PREVIEW)) {
       lines.push(`• ${code(sku)}`);
     }
-    if (unknownSkus.length > UNKNOWN_PREVIEW) {
-      lines.push(`…и ещё ${unknownSkus.length - UNKNOWN_PREVIEW}`);
+    if (excluded.skus.length > UNKNOWN_PREVIEW) {
+      lines.push(`…и ещё ${excluded.skus.length - UNKNOWN_PREVIEW}`);
     }
 
-    lines.push('Пришлите прайс с этими позициями — они попадут в расчёт.');
+    lines.push(UNKNOWN_SKUS_ADVICE);
   }
 
   lines.push('');
 
   const rates = placed?.rates ?? totals.rates;
 
-  if (report.pricesUpdatedAt) {
-    // Скидки печатаются рядом с датой прайса: закуп — не то, что стоит в файле, и
-    // продавец должен видеть, из чего он получен, иначе сумма выглядит взятой
-    // с потолка.
-    //
-    // В скобках — только бренды, чья скидка ОТЛИЧАЕТСЯ от общей: перечислять
-    // все шесть с одинаковым процентом значило бы утопить полезное в шуме.
-    // У нетронутого продавца это ровно «(Восток 4%)» — легаси-фолбэк
-    // vostokDiscountPercent запечён в конфиг (см. discountsOf).
-    const config = discountsOf(rates);
-    const overrides = BRAND_KEYS.filter(
-      (key) => brandDiscountOf(config, key) !== config.defaultPercent,
-    ).map((key) => `${brandTitle(key)} ${percent(brandDiscountOf(config, key))}%`);
-
-    lines.push(
-      `💵 Закуп: прайс от ${esc(moscowDateParam(report.pricesUpdatedAt))} ` +
-        `минус ${percent(config.defaultPercent)}%` +
-        (overrides.length ? ` (${esc(overrides.join(', '))}).` : '.'),
-    );
-  } else {
-    lines.push('💵 Закупочных цен пока нет — пришлите прайс, и прибыль посчитается.');
-  }
-
-  // Ставки продвижения — тем же принципом, что скидки выше: сумма «Продвижение»
-  // должна быть проверяема. Перечисляются только настроенные бренды — для
-  // остальных продвижения нет, и «CASIO 0%» здесь значил бы не то.
-  const promoConfigs = promoConfigsOf(rates.promoCommissions);
-  const promoParts = BRAND_KEYS.filter((key) => promoConfigs[key]).map(
-    (key) => `${brandTitle(key)} ${promoValueLabel(promoConfigs[key])}`,
+  // Скидки печатаются рядом с датой прайса: закуп — не то, что стоит в файле, и
+  // продавец должен видеть, из чего он получен, иначе сумма выглядит взятой
+  // с потолка.
+  lines.push(
+    report.pricesUpdatedAt
+      ? `💵 Закуп: ${esc(purchaseBasisText(report.pricesUpdatedAt, rates))}`
+      : `💵 ${NO_PRICES_TEXT}`,
   );
-  if (promoParts.length) {
-    lines.push(`📣 Продвижение: ${esc(promoParts.join(', '))}.`);
+
+  // Ставки продвижения — тем же принципом, что скидки выше.
+  const promo = promoParts(rates);
+  if (promo.length) {
+    lines.push(`📣 Продвижение: ${esc(promo.join(', '))}.`);
   }
 
   return lines.join('\n');

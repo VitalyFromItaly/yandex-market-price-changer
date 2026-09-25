@@ -4,7 +4,14 @@ import { useRouter } from 'vue-router';
 
 import type { IFeature, IUserRow } from '../api';
 
-import { deleteUser, fetchFeatures, fetchUser, setUserApproved, setUserFeature } from '../api';
+import {
+  deleteUser,
+  fetchFeatures,
+  fetchUser,
+  resetCrmPassword,
+  setUserApproved,
+  setUserFeature,
+} from '../api';
 import { describeError, token } from '../auth';
 import ConfirmModal from '../components/ConfirmModal.vue';
 import ToggleSwitch from '../components/ToggleSwitch.vue';
@@ -23,7 +30,25 @@ const loadError = ref('');
 const showConfirm = ref(false);
 const deleting = ref(false);
 
+/** Модалка сброса пароля CRM и сам сброс. */
+const showCrmReset = ref(false);
+const resettingCrm = ref(false);
+
 const approved = computed(() => !!user.value && isApproved(user.value));
+
+/** Время по Москве — как в журнале и очередях. */
+const formatter = new Intl.DateTimeFormat('ru-RU', {
+  timeZone: 'Europe/Moscow',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+function formatDate(value: string | null | undefined): string {
+  return value ? formatter.format(new Date(value)) : '—';
+}
 
 onMounted(load);
 
@@ -75,6 +100,28 @@ function toggleAccess(value: boolean): void {
 
 function toggleFeature(key: string, value: boolean): void {
   void save(key, (row) => setUserFeature(token.value!, row, key, value));
+}
+
+/**
+ * Сбросить пароль CRM. Меняется только блок CRM: сервер отвечает состоянием
+ * учётки, остальная карточка не тронута. Ошибку показываем, модалку закрываем —
+ * состояние на сервере прежнее.
+ */
+async function resetCrm(): Promise<void> {
+  if (!token.value || !user.value) return;
+
+  resettingCrm.value = true;
+  loadError.value = '';
+
+  try {
+    const crm = await resetCrmPassword(token.value, user.value);
+    user.value = { ...user.value, crm };
+  } catch (error) {
+    loadError.value = describeError(error);
+  } finally {
+    resettingCrm.value = false;
+    showCrmReset.value = false;
+  }
 }
 
 /**
@@ -159,6 +206,36 @@ async function remove(): Promise<void> {
     </section>
 
     <section>
+      <h2>CRM</h2>
+      <div class="item">
+        <div class="text">
+          <template v-if="user.crm">
+            <span class="label tnum">Последний вход: {{ formatDate(user.crm.lastLoginAt) }}</span>
+            <span class="muted tnum">
+              <template v-if="user.crm.mustChangePassword">
+                Пароль стартовый — продавец сменит его при входе
+              </template>
+              <template v-else>Пароль сменён {{ formatDate(user.crm.passwordChangedAt) }}</template>
+            </span>
+          </template>
+          <template v-else>
+            <span class="label">В CRM ещё не входил</span>
+            <span class="muted">Первый вход — со стартовым паролем, сбрасывать нечего.</span>
+          </template>
+        </div>
+        <button
+          v-if="user.crm"
+          type="button"
+          class="danger"
+          :disabled="!!saving || resettingCrm"
+          @click="showCrmReset = true"
+        >
+          Сбросить пароль CRM
+        </button>
+      </div>
+    </section>
+
+    <section>
       <h2>Удаление</h2>
       <div class="item">
         <div class="text">
@@ -178,6 +255,17 @@ async function remove(): Promise<void> {
         </button>
       </div>
     </section>
+
+    <ConfirmModal
+      v-if="showCrmReset"
+      title="Сбросить пароль CRM?"
+      :message="`${displayName(user)} выйдет из CRM на всех устройствах. Войти можно будет стартовым паролем, после чего CRM попросит задать новый.`"
+      confirm-label="Сбросить"
+      busy-label="Сброс…"
+      :busy="resettingCrm"
+      @confirm="resetCrm"
+      @cancel="showCrmReset = false"
+    />
 
     <ConfirmModal
       v-if="showConfirm"

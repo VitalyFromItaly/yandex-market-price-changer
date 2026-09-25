@@ -7,10 +7,12 @@ import {
   buildOrdersWorkbook,
   buildReturningWorkbook,
   formatItems,
+  reportWorkbook,
   returningFileName,
   shippedFileName,
   workbookFileName,
 } from '../../src/modules/yandex/reports/report-workbook';
+import { REPORT } from '../../src/modules/yandex/reports/report-status-map';
 import type { IReportOrder } from '../../src/modules/yandex/reports/order-reports.service';
 import type { IReturnRecord } from '../../src/modules/yandex/yandex-api.client';
 
@@ -291,5 +293,32 @@ describe('Выгрузка «едет обратно» .xlsx', () => {
 
   it('имя файла — edet-obratno с датой и временем', () => {
     expect(returningFileName('29-07-2026', '13:00')).toBe('edet-obratno-29-07-2026-1300.xlsx');
+  });
+});
+
+describe('reportWorkbook — одна книга на бот и CRM (TASK-075)', () => {
+  const NOW = new Date('2026-08-03T10:05:00+03:00');
+  const order = { id: 1, status: 'DELIVERED', itemsTotal: 100 };
+  const result = (key: string, count = 1) =>
+    ({ key, count, orders: count ? [order] : [], returns: undefined }) as never;
+
+  it('имя файла — по отчёту, с моментом съёмки', () => {
+    expect(reportWorkbook(result(REPORT.SHIPPED_TODAY), NOW)?.filename).toBe(
+      'uehalo-klientu-03-08-2026-1005.xlsx',
+    );
+    expect(reportWorkbook(result(REPORT.REDEEMED), NOW)?.filename).toBe(
+      'vykupleno-03-08-2026-1005.xlsx',
+    );
+    expect(reportWorkbook(result(REPORT.RETURNING), NOW)?.filename).toBe(
+      'edet-obratno-03-08-2026-1005.xlsx',
+    );
+    expect(reportWorkbook(result(REPORT.IN_TRANSIT), NOW)?.filename).toBe(
+      'edet-do-klienta-03-08-2026-1005.xlsx',
+    );
+  });
+
+  it('пустой отчёт и чужие экраны — без книги', () => {
+    expect(reportWorkbook(result(REPORT.SHIPPED_TODAY, 0), NOW)).toBeNull();
+    expect(reportWorkbook(result(REPORT.PROFIT), NOW)).toBeNull();
   });
 });

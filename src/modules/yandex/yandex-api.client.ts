@@ -992,13 +992,20 @@ export class YandexApiClient {
    * последовательно; упавший батч бросает — уже подтверждённые предыдущие
    * остаются подтверждёнными, повтор кнопкой безопасен (подтверждение
    * идемпотентно по смыслу).
+   *
+   * `onBatch` получает число уже подтверждённых после каждого успешного батча:
+   * без него вызывающий не отличит «ничего не вышло» от «первые 200 прошли».
    */
-  public async confirmQuarantinePrices(offerIds: readonly string[]): Promise<void> {
+  public async confirmQuarantinePrices(
+    offerIds: readonly string[],
+    onBatch?: (confirmedSoFar: number) => void,
+  ): Promise<void> {
     for (let i = 0; i < offerIds.length; i += QUARANTINE_CONFIRM_BATCH) {
       const chunk = offerIds.slice(i, i + QUARANTINE_CONFIRM_BATCH);
       await this.postWrite(priceQuarantineConfirmPath(this.credentials.businessId), {
         offerIds: chunk,
       });
+      onBatch?.(i + chunk.length);
     }
     this.logger.log(`Карантин: подтверждено цен — ${offerIds.length}`);
   }
@@ -1282,7 +1289,11 @@ export class YandexApiClient {
     // Метод и путь известны ТОЛЬКО здесь. Раньше они попадали лишь в текст
     // строки ниже, то есть на вопрос «на каком запросе упало» журнал ответить
     // не мог. Теперь они едут вместе с ошибкой.
-    const domain = toYandexApiError(status, error.response?.data, error.message).withRequest(
+    // У сетевых сбоев axios текст бывает пустым (AggregateError от перебора
+    // IPv6/IPv4), а причина — только в коде: ETIMEDOUT, ECONNRESET, ENOTFOUND.
+    // Без него журнал писал «без сообщения», и понять, что сломалось, было нельзя.
+    const reason = error.message || error.code || 'сетевой сбой без описания';
+    const domain = toYandexApiError(status, error.response?.data, reason).withRequest(
       error.config?.method,
       error.config?.url,
     );

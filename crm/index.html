@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <!-- Без явной иконки браузер просит /favicon.ico — это адрес админки, а не CRM. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>CRM продавца</title>
+    <!--
+      Тема — до первой отрисовки, иначе тёмная ОС видит вспышку светлой страницы.
+      Правило и ключ повторяют src/shared/composables/useTheme.ts (THEME_STORAGE_KEY):
+      скрипт выполняется раньше бандла, импортировать оттуда нельзя.
+    -->
+    <script>
+      (function () {
+        var pref = 'system';
+        try {
+          var raw = localStorage.getItem('crm.theme');
+          if (raw === 'light' || raw === 'dark') pref = raw;
+        } catch (e) {}
+        var dark = pref === 'dark' || (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

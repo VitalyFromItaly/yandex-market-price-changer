@@ -18,12 +18,44 @@ import {
 /** Сколько отзывов показывать за раз: у каждого 1–2 ряда кнопок и свой текст. */
 export const FEEDBACK_SHOW_LIMIT = 5;
 
+export const FEEDBACK_EMPTY_PLAIN = 'Отзывов без ответа нет — всё прочитано.';
+
+export const FEEDBACK_LOAD_ERROR_PLAIN = 'Не удалось получить отзывы. Попробуйте позже.';
+
+/** Ответ публичный — это продавец должен знать до того, как начнёт писать. */
+export const FEEDBACK_PUBLIC_NOTE = 'Ответ уходит на Яндекс.Маркет и виден всем покупателям.';
+
+/**
+ * В отзыве Partner API нет ни артикула, ни названия товара — только номер
+ * заказа (и устаревший modelId). Сказать это лучше, чем оставить продавца
+ * искать товар, которого на экране нет.
+ */
+export const FEEDBACK_NO_PRODUCT_NOTE =
+  'Маркет не сообщает, о каком товаре отзыв, — указан номер заказа.';
+
+/**
+ * Отзывы — на уровне кабинета (`/businesses/{id}/goods-feedback`), а в CRM
+ * раздел живёт внутри магазина (довод `quarantineBusinessNote`).
+ */
+export function feedbackBusinessNote(businessName: string): string {
+  const cabinet = businessName ? `кабинета «${businessName}»` : 'кабинета';
+  return (
+    `Список общий для всех магазинов ${cabinet}: ` +
+    'ответ или «Пропустить» убирают отзыв из списка во всех них.'
+  );
+}
+
+/** Показана не вся очередь: одна страница Partner API, без полного обхода. */
+export function feedbackMorePlain(shown: number): string {
+  return `Показаны первые ${shown} — ответьте на них, придут следующие.`;
+}
+
 export function feedbackEmptyText(): string {
-  return '💬 Отзывов без ответа нет — всё прочитано.';
+  return `💬 ${FEEDBACK_EMPTY_PLAIN}`;
 }
 
 export function feedbackErrorText(): string {
-  return '❌ Не удалось получить отзывы. Попробуйте позже.';
+  return `❌ ${FEEDBACK_LOAD_ERROR_PLAIN}`;
 }
 
 /**
@@ -33,13 +65,9 @@ export function feedbackErrorText(): string {
  */
 export function feedbackHeaderText(onPage: number, hasNextPage: boolean, shown: number): string {
   const count = hasNextPage ? `${onPage}+` : String(onPage);
-  const lines = [
-    `💬 ${b('Отзывы без ответа')}: ${count}`,
-    '',
-    'Ответ уходит на Яндекс.Маркет и виден всем покупателям.',
-  ];
+  const lines = [`💬 ${b('Отзывы без ответа')}: ${count}`, '', FEEDBACK_PUBLIC_NOTE];
   if (shown < onPage || hasNextPage) {
-    lines.push(`Показаны первые ${shown} — ответьте на них, придут следующие.`);
+    lines.push(feedbackMorePlain(shown));
   }
   return lines.join('\n');
 }

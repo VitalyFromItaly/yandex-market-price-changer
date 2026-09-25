@@ -1,14 +1,7 @@
 import type { YandexMarketDocument } from '../../../../database/schemas/yandex-market.schema';
-import type { TBrandKey } from '../../../yandex/reports/brands';
+import type { IBrandUsage } from '../../../yandex/reports/brands';
 
-import {
-  BRAND_KEYS,
-  brandCallback,
-  brandInputLabel,
-  brandOf,
-  brandTitle,
-  type IBrandSource,
-} from '../../../yandex/reports/brands';
+import { brandCallback, brandInputLabel, brandTitle } from '../../../yandex/reports/brands';
 import { brandDiscountOf, discountsOf, rateCallback } from '../../../yandex/reports/profit';
 import { b, code } from '../../formatting/telegram-format';
 
@@ -24,38 +17,6 @@ import { b, code } from '../../formatting/telegram-format';
  * brands.ts общий, но кнопка «SEIKO» у продавца без SEIKO — это настройка,
  * которая ни на что не влияет, то есть приглашение к недоумению.
  */
-export interface IBrandUsage {
-  key: TBrandKey;
-  count: number;
-}
-
-/**
- * Свернуть строки закупа в список брендов с числом позиций.
- *
- * Порядок — порядок BRAND_KEYS, а не частотный: кнопки не должны прыгать между
- * открытиями экрана из-за того, что изменился состав прайса.
- */
-export function brandUsageOf(rows: readonly IBrandSource[]): {
-  usage: IBrandUsage[];
-  otherCount: number;
-} {
-  const counts = new Map<TBrandKey, number>();
-  let otherCount = 0;
-
-  for (const row of rows) {
-    const key = brandOf(row);
-    if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
-    else otherCount += 1;
-  }
-
-  const usage = BRAND_KEYS.filter((key) => counts.has(key)).map((key) => ({
-    key,
-    count: counts.get(key) ?? 0,
-  }));
-
-  return { usage, otherCount };
-}
-
 export function brandDiscountsText(
   store: YandexMarketDocument | null,
   usage: readonly IBrandUsage[],

@@ -6,7 +6,7 @@ import { moscowStamp } from '../reports/moscow-day';
 import { SUPPLY_STATUS } from '../reports/report-status-map';
 import { YandexApiError } from '../yandex-api.errors';
 
-import { groupByCluster } from './fby-clusters';
+import { groupByCluster, type IFbyClusterGroup } from './fby-clusters';
 import { FBY_STOCK_TYPES } from './fby-stock-report';
 
 /**
@@ -28,6 +28,10 @@ export const FBY_PROBLEM_INLINE_LIMIT = 30;
 
 /** Сколько заявок показывать списком (дальше — «…и ещё N»). */
 const REQUESTS_INLINE_LIMIT = 15;
+
+/** Заглушки упавших источников — общие для бота и CRM. */
+export const REQUESTS_UNAVAILABLE_TEXT = '⚠️ Заявки временно недоступны.';
+export const SUPPLIES_UNAVAILABLE_TEXT = '⚠️ Поставки временно недоступны.';
 
 /** Почему недоступны остатки — от этого зависит текст заглушки. */
 export type TFbyStockError = 'rate_limit' | 'generic';
@@ -78,7 +82,7 @@ const STOCK_LABEL: Readonly<Record<TFbyStockType, string>> = {
  * подписей ниже). Литерал наш, пользовательских данных нет — esc не нужен, но и
  * `<`, `>`, `&` в тексте быть не должно: сообщение уходит с parse_mode HTML.
  */
-const STOCK_HINT =
+export const STOCK_HINT =
   'ℹ️ Резерв — отложено под оформленные заказы. Карантин — Маркет проверяет товар ' +
   '(возврат от покупателя, приёмка, вопросы к упаковке или маркировке), в продаже его нет: ' +
   'потом вернётся в годный или уйдёт в брак. К утилизации — Маркет спишет, если не заказать вывоз.';
@@ -196,11 +200,11 @@ function stockSection(data: IFbyOverviewData): string[] {
  * из реестра — наши литералы, как STOCK_LABEL.
  */
 function clusterLines(byWarehouse: IFbyStockSummary['byWarehouse']): string[] {
-  const groups = groupByCluster(byWarehouse);
+  const groups = clusterTotals(byWarehouse);
   if (!groups.length) return [];
 
   const lines = groups.map((group) => {
-    const totals = sumTotals(group.warehouses.map((w) => w.value));
+    const { totals } = group;
     const parts = STOCK_ORDER.filter((type) => totals[type] > 0).map(
       (type) => `${STOCK_SHORT_LABEL[type]} ${b(formatCount(totals[type]))}`,
     );
@@ -211,6 +215,27 @@ function clusterLines(byWarehouse: IFbyStockSummary['byWarehouse']): string[] {
   });
 
   return ['', ...lines];
+}
+
+/** Кластер с суммой остатков по типам — строка экрана бота и строка таблицы CRM. */
+export interface IFbyClusterTotals {
+  key: IFbyClusterGroup<unknown>['key'];
+  title: string;
+  totals: Record<TFbyStockType, number>;
+  warehouses: { name: string; totals: Record<TFbyStockType, number> }[];
+}
+
+/**
+ * Остатки, сложенные по кластерам-территориям. Одна функция на оба канала:
+ * сумма кластера в CRM обязана совпадать со строкой бота.
+ */
+export function clusterTotals(byWarehouse: IFbyStockSummary['byWarehouse']): IFbyClusterTotals[] {
+  return groupByCluster(byWarehouse).map((group) => ({
+    key: group.key,
+    title: group.title,
+    totals: sumTotals(group.warehouses.map((w) => w.value)),
+    warehouses: group.warehouses.map((w) => ({ name: w.name, totals: w.value })),
+  }));
 }
 
 /** Сумма по-складовых итогов группы — по типам. */
@@ -271,17 +296,31 @@ function statusRank(status: string): number {
   return 1;
 }
 
+/** Заявки в порядке экрана: что забрать сейчас — первым, терминальные — в конце. */
+export function orderRequests(requests: readonly IFbySupplyRequest[]): IFbySupplyRequest[] {
+  return [...requests].sort((a, b2) => statusRank(a.status) - statusRank(b2.status));
+}
+
+/** Тип заявки по-русски; неизвестный код — как есть, строчными. */
+export function requestTypeLabel(type: string): string {
+  return REQUEST_TYPE_LABEL[type] ?? type.toLowerCase();
+}
+
+/** Статус заявки на вывоз по-русски; неизвестный код — как есть. */
+export function requestStatusLabel(status: string): string {
+  return REQUEST_STATUS_LABEL[status] ?? status;
+}
+
 function requestsSection(requests: IFbySupplyRequest[] | null): string[] {
   const title = b('🚚 Заявки на вывоз/утилизацию');
 
-  if (!requests) return [title, '⚠️ Заявки временно недоступны.'];
+  if (!requests) return [title, REQUESTS_UNAVAILABLE_TEXT];
   if (!requests.length) return [`${title}: ${b(0)}`, 'Активных заявок нет.'];
 
-  const ordered = [...requests].sort((a, b2) => statusRank(a.status) - statusRank(b2.status));
-  const shown = ordered.slice(0, REQUESTS_INLINE_LIMIT);
+  const shown = orderRequests(requests).slice(0, REQUESTS_INLINE_LIMIT);
   const rows = shown.map((r) => {
-    const type = REQUEST_TYPE_LABEL[r.type] ?? esc(r.type.toLowerCase());
-    const status = REQUEST_STATUS_LABEL[r.status] ?? esc(r.status);
+    const type = esc(requestTypeLabel(r.type));
+    const status = esc(requestStatusLabel(r.status));
     const tail = [
       r.defectCount ? `брак ${r.defectCount}` : '',
       r.targetName ? `склад «${esc(r.targetName)}»` : '',
@@ -319,6 +358,25 @@ const SUPPLY_INBOUND_STATUS_LABEL: Readonly<Record<string, string>> = {
   [SUPPLY_STATUS.FINISHED]: 'принята',
 };
 
+/** Статус входящей поставки по-русски; неизвестный код — как есть. */
+export function supplyStatusLabel(status: string): string {
+  return SUPPLY_INBOUND_STATUS_LABEL[status] ?? status;
+}
+
+/**
+ * Активные поставки в порядке экрана и число терминальных (принята/отменена):
+ * их не перечисляют, но и не прячут молча.
+ */
+export function splitSupplies(supplies: readonly IFbySupplyRequest[]): {
+  active: IFbySupplyRequest[];
+  terminal: number;
+} {
+  const active = supplies
+    .filter((s) => !isSupplyTerminal(s.status))
+    .sort((a, b2) => supplyRank(a.status) - supplyRank(b2.status));
+  return { active, terminal: supplies.length - active.length };
+}
+
 /** Терминальные статусы поставки — история, а не действие. */
 function isSupplyTerminal(status: string): boolean {
   return status === SUPPLY_STATUS.FINISHED || status === SUPPLY_STATUS.CANCELLED;
@@ -351,20 +409,18 @@ function supplyRank(status: string): number {
 function suppliesSection(supplies: IFbySupplyRequest[] | null): string[] {
   const title = b('📥 Поставки на склад Маркета');
 
-  if (!supplies) return [title, '⚠️ Поставки временно недоступны.'];
+  if (!supplies) return [title, SUPPLIES_UNAVAILABLE_TEXT];
 
-  const active = supplies.filter((s) => !isSupplyTerminal(s.status));
-  const terminal = supplies.length - active.length;
+  const { active, terminal } = splitSupplies(supplies);
 
   if (!active.length) {
     const tail = terminal ? ` Завершённых/отменённых: ${terminal}.` : '';
     return [`${title}: ${b(0)}`, `Активных поставок нет.${tail}`];
   }
 
-  const ordered = [...active].sort((a, b2) => supplyRank(a.status) - supplyRank(b2.status));
-  const shown = ordered.slice(0, SUPPLIES_INLINE_LIMIT);
+  const shown = active.slice(0, SUPPLIES_INLINE_LIMIT);
   const rows = shown.map((s) => {
-    const status = SUPPLY_INBOUND_STATUS_LABEL[s.status] ?? esc(s.status);
+    const status = esc(supplyStatusLabel(s.status));
     const date = s.requestedDate ? formatSupplyDate(s.requestedDate) : '';
     const tail = [
       date ? `к ${esc(date)}` : '',
@@ -388,7 +444,7 @@ function supplyCounts(s: IFbySupplyRequest): string {
 }
 
 /** Дата поставки DD-MM-YYYY; битую печатать нечем — пропускаем. */
-function formatSupplyDate(value: string): string {
+export function formatSupplyDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat('ru-RU', {

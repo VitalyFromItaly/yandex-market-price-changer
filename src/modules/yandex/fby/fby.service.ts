@@ -10,7 +10,7 @@ import { YandexClientFactory } from '../yandex-client.factory';
 
 import { formatFbyOverview, type IFbyOverviewData } from './fby-message';
 import { FbyStockService } from './fby-stock.service';
-import { buildFbyWorkbook, fbyFileName } from './fby-workbook';
+import { buildFbyWorkbook, fbyFileName, type IWorkbookResult } from './fby-workbook';
 
 /** Готовая xlsx-выгрузка остатков FBY для отправки в Telegram. */
 export interface IFbyExport {
@@ -23,6 +23,17 @@ export interface IFbyOverviewResult {
   text: string;
   /** Отсутствует ровно тогда, когда остатки не добылись — выгружать нечего. */
   stockExport?: IFbyExport;
+}
+
+/** Структурные данные сводки — общие для бота и CRM. */
+export interface IFbyOverviewReport {
+  data: IFbyOverviewData;
+  /** Момент сборки экрана — заголовок и имя файла. */
+  takenAt: Date;
+  /** Момент съёмки отчёта остатков (мемо до 60 с); null — остатков нет. */
+  stockTakenAt: Date | null;
+  /** Книга xlsx; null ровно тогда, когда остатки не добылись. */
+  workbook: (IWorkbookResult & { filename: string }) | null;
 }
 
 /** Заявки этих типов надо физически забрать со склада Маркета. */
@@ -64,11 +75,15 @@ export class FbyService {
     private readonly stockSource: FbyStockService,
   ) {}
 
-  public async build(
+  /**
+   * Структурные данные экрана — без текста. Их форматирует бот (build) и
+   * отдаёт CRM (kind `fby:overview`): числа одни по построению, а не сверкой.
+   */
+  public async buildData(
     store: YandexMarketDocument,
     now: Date = new Date(),
     options: IFbyBuildOptions = {},
-  ): Promise<IFbyOverviewResult> {
+  ): Promise<IFbyOverviewReport> {
     const [stock, requests, inTransit, returning, supplies] = await Promise.all([
       this.stockSource.safeLoad(store),
       this.safeRequests(store),
@@ -89,20 +104,30 @@ export class FbyService {
       supplies,
     };
 
-    const text = formatFbyOverview(data, now);
-
     // Файл строится ВСЕГДА, когда остатки добылись: таблица SKU×склад — тысячи
     // строк, она не влезает в сообщение ни при каком пороге, и «файл только
     // когда длинно» заставляло бы продавца гадать, почему в этот раз его нет.
-    let stockExport: IFbyExport | undefined;
-    if (summary) {
-      const workbook = buildFbyWorkbook(summary);
-      stockExport = {
-        buffer: workbook.buffer,
-        filename: fbyFileName(moscowDateParam(now), moscowClock(now)),
-      };
-    }
+    const workbook = summary
+      ? {
+          ...buildFbyWorkbook(summary),
+          filename: fbyFileName(moscowDateParam(now), moscowClock(now)),
+        }
+      : null;
 
+    return { data, takenAt: now, stockTakenAt: stock.snapshot?.takenAt ?? null, workbook };
+  }
+
+  /** Экран бота: текст-сводка поверх buildData и файл, когда остатки есть. */
+  public async build(
+    store: YandexMarketDocument,
+    now: Date = new Date(),
+    options: IFbyBuildOptions = {},
+  ): Promise<IFbyOverviewResult> {
+    const report = await this.buildData(store, now, options);
+    const text = formatFbyOverview(report.data, now);
+    const stockExport = report.workbook
+      ? { buffer: report.workbook.buffer, filename: report.workbook.filename }
+      : undefined;
     return { text, stockExport };
   }
 

@@ -73,6 +73,22 @@ function paramNumber(params: Map<string, string>, name: string): number | undefi
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+/**
+ * Подтверждение упало ПОСЛЕ хотя бы одного успешного батча: первые `confirmed`
+ * из `requested` уже вернулись на витрину. «Ничего не вышло» здесь было бы
+ * неправдой — продавец пошёл бы подтверждать уже подтверждённое вслепую.
+ */
+export class QuarantinePartialConfirmError extends Error {
+  constructor(
+    public readonly confirmed: number,
+    public readonly requested: number,
+    public readonly cause: unknown,
+  ) {
+    super(`Карантин: подтверждено ${confirmed} из ${requested}, дальше — сбой`);
+    this.name = 'QuarantinePartialConfirmError';
+  }
+}
+
 // --- кодек inline-кнопок ------------------------------------------------------
 //
 // `offerId` (ShopSku) — строка до 255 символов и в 64 байта callback_data не

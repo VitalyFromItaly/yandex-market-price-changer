@@ -6,6 +6,7 @@ import {
   queueNote,
 } from '../../src/modules/telegram/bots/price-changer-bot/handlers/stock-upload.handler';
 import { FBY_STOCKS_READONLY } from '../../src/modules/yandex/stocks/placement';
+import { StockUploadPolicyService } from '../../src/modules/yandex/stocks/stock-upload-policy.service';
 
 /**
  * Ранний слой правила «на FBY остатки только читаются».
@@ -46,8 +47,14 @@ describe('StockUploadHandler: модель размещения', () => {
   const enqueued = () => queueAdd.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
 
   function buildHandler(isAdmin: boolean): StockUploadHandler {
-    return new StockUploadHandler(
+    // Барьеры — настоящий общий сервис: запись средой разрешена, модель — из
+    // того же мока `placementFor`, что и раньше.
+    const policy = new StockUploadPolicyService(
       { placementFor } as never,
+      { stockWriteEnabled: true } as never,
+    );
+    return new StockUploadHandler(
+      policy,
       { findByTelegramUser } as never,
       { report: async () => undefined } as never,
       { replyNeedsStore: vi.fn(async () => undefined) } as never,

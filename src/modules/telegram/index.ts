@@ -3,6 +3,12 @@ export const QUEUE_NAMES = {
   YANDEX_API: 'yandex-api',
   NOTIFICATIONS: 'notifications',
   REPORTS: 'reports',
+  /**
+   * Фоновые задачи CRM: результат уходит не в Telegram, а в коллекцию
+   * CrmJobResult, откуда его забирает веб. Своя очередь, а не `reports`: там
+   * `@OnQueueFailed` уже занят ReportsProcessor.
+   */
+  CRM_JOBS: 'crm-jobs',
 } as const;
 
 export const JOB_TYPES = {
@@ -62,6 +68,8 @@ export const JOB_TYPES = {
    * ли это день месяца, решает процессор: cron такого не выражает.
    */
   SEND_HOSTING_REMINDER: 'send-hosting-reminder',
+  /** Любая фоновая задача CRM; что именно считать — `kind` в payload. */
+  RUN_CRM_JOB: 'run-crm-job',
   PROCESS_FILE: 'process-file',
   PARSE_FILE: 'parse-file',
   COMPARE_DATA: 'compare-data',

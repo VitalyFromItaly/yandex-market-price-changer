@@ -4,6 +4,8 @@ export { PurchasePriceService } from './purchase-price.service';
 export { YandexMarketService } from './yandex-market.service';
 export { ActionLogService } from './action-log.service';
 export { AdminCredentialService } from './admin-credential.service';
+export { CrmCredentialService } from './crm-credential.service';
+export { CrmJobResultService } from './crm-job-result.service';
 export type { IAccessIdentity, IAdminIdentity, TDraftField } from './user-access.service';
 export type { IPurchasePriceRow } from './purchase-price.service';
 export type { CreateYandexMarketDto, UpdateYandexMarketDto } from './yandex-market.service';

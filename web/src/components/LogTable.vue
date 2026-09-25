@@ -24,7 +24,22 @@ const KIND_LABELS: Record<string, string> = {
   document: 'файл',
   text: 'текст',
   other: 'прочее',
+  request: 'запрос',
 };
+
+/**
+ * Строка из CRM продавца (`source: crm`). Одна лента на оба канала — ради
+ * вопроса «что делал этот продавец»; метка нужна, чтобы по строке было видно,
+ * нажал он кнопку в боте или открыл раздел в CRM.
+ */
+function isCrm(row: IActionLogRow): boolean {
+  return row.source === 'crm';
+}
+
+function directionTitle(row: IActionLogRow): string {
+  if (isCrm(row)) return 'продавец → CRM';
+  return row.direction === 'out' ? 'бот → пользователю' : 'пользователь → боту';
+}
 
 /**
  * Время по Москве.
@@ -77,7 +92,7 @@ function who(row: IActionLogRow): string {
           <td class="nowrap">{{ formatTime(row.createdAt) }}</td>
           <!-- Стрелка вместо слова: направление читается мгновенно и не
                занимает колонку шириной в «от пользователя». -->
-          <td class="dir" :title="row.direction === 'out' ? 'бот → пользователю' : 'пользователь → боту'">
+          <td class="dir" :title="directionTitle(row)">
             {{ row.direction === 'out' ? '→' : '←' }}
           </td>
           <td>
@@ -86,7 +101,10 @@ function who(row: IActionLogRow): string {
                  нужен, чтобы отфильтровать историю конкретного продавца. -->
             <div class="muted">{{ row.telegramUserId }}</div>
           </td>
-          <td class="nowrap">{{ KIND_LABELS[row.kind] ?? row.kind }}</td>
+          <td class="nowrap">
+            <span v-if="isCrm(row)" class="tag">CRM</span>
+            {{ KIND_LABELS[row.kind] ?? row.kind }}
+          </td>
           <td>
             <!-- В таблице — одна строка без разметки: полный текст и
                  форматирование показывает модалка по клику. -->
@@ -140,6 +158,16 @@ tr:last-child td {
 
 .failed {
   background: var(--danger-bg);
+}
+
+.tag {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .dir {

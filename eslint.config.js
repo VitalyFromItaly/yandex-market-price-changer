@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import js from "@eslint/js";
 import { FlatCompat } from "@eslint/eslintrc";
+import pluginVue from "eslint-plugin-vue";
+import vueParser from "vue-eslint-parser";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +33,8 @@ export default [
       // расширять include ради линта значит тянуть тесты в сборку.
       "vitest.config.ts",
       "scripts/**",
+      // Проекция бэклога (tools/backlog.mjs) — ставится копией из ~/.claude.
+      "tools/**",
       // Админ-панель: свой тулчейн (vite), свой tsconfig не нужен —
       // тянуть .vue и DOM-типы в сборку бэкенда ради линта незачем.
       "web/**",
@@ -172,6 +176,78 @@ export default [
       "@typescript-eslint/no-unsafe-function-type": "warn",
       "@typescript-eslint/no-require-imports": "warn",
       "no-nested-ternary": "warn"
+    }
+  },
+  /*
+   * CRM продавца (crm/) — второй SPA со своим tsconfig. В отличие от web/ она
+   * линтуется: правила скилов frontend-module (только ===, размер компонента)
+   * без линта держались бы на памяти.
+   *
+   * Типизированные правила здесь ВЫКЛЮЧЕНЫ: `project: true` корня ищет
+   * ближайший tsconfig, а crm/tsconfig.json — бандлерный (Bundler, .vue), и
+   * type-aware разбор .vue через него — отдельная работа с хрупким парсером.
+   * Типы CRM проверяет vue-tsc (`npm run typecheck:crm`), это его работа.
+   */
+  ...pluginVue.configs["flat/recommended"].map((config) => ({
+    ...config,
+    files: ["crm/**/*.vue"]
+  })),
+  {
+    files: ["crm/**/*.ts", "crm/**/*.vue"],
+    languageOptions: {
+      parser: vueParser,
+      parserOptions: {
+        parser: tsParser,
+        project: null,
+        extraFileExtensions: [".vue"],
+        sourceType: "module"
+      },
+      globals: {
+        ...globals.browser
+      }
+    },
+    rules: {
+      ...typescriptEslint.configs["disable-type-checked"].rules,
+      // Правило скила frontend-module: только строгое равенство, включая `x == null`.
+      eqeqeq: ["error", "always"],
+      // Формат шаблонов держит prettier, а не линт.
+      "vue/max-attributes-per-line": "off",
+      "vue/singleline-html-element-content-newline": "off",
+      "vue/multiline-html-element-content-newline": "off",
+      "vue/html-self-closing": "off",
+      "vue/html-indent": "off",
+      "vue/html-closing-bracket-newline": "off",
+      // Необязательный проп в TS-типе и есть «по умолчанию undefined»;
+      // требовать явный default — шум на каждом `class?`.
+      "vue/require-default-prop": "off"
+    }
+  },
+  {
+    // Примитивы кита названы как в shadcn-vue (Button, Card, Tooltip) — это
+    // словарь, по которому их ищут; префикс ради правила только мешал бы.
+    files: ["crm/src/components/ui/**/*.vue"],
+    rules: {
+      "vue/multi-word-component-names": "off"
+    }
+  },
+  {
+    /*
+     * Компонент больше ~300 строк — две роли в одном файле (frontend-module).
+     * Предупреждение, а не ошибка: долг не должен блокировать несвязанную
+     * работу. Поднять лимит, чтобы замолчало, — единственный неверный ответ.
+     */
+    files: ["crm/src/modules/**/*.vue", "crm/src/modules/**/*.ts"],
+    rules: {
+      "max-lines": ["warn", { max: 300, skipBlankLines: true, skipComments: true }]
+    }
+  },
+  {
+    // Правило vue-плагина — только для .vue: плагин объявлен конфигами
+    // flat/recommended лишь для них, и на .ts eslint падал бы целиком
+    // («Could not find plugin "vue"») — что и случилось на первом модуле.
+    files: ["crm/src/modules/**/*.vue"],
+    rules: {
+      "vue/max-lines-per-block": ["warn", { template: 200, script: 200 }]
     }
   }
 ];

@@ -10,9 +10,10 @@ import { AlertThrottle } from './alert-throttle';
 /**
  * Откуда прилетела ошибка. `scanner` — внешний сканер секретов (404 на
  * несматченный маршрут); такие записи прячутся из основного журнала и живут во
- * вкладке «Мусор» (см. JUNK_SOURCE в action-log.service).
+ * вкладке «Мусор» (см. JUNK_SOURCE в action-log.service). `crm` — запросы и
+ * ошибки CRM продавцов: в основном журнале видны, помечены в панели.
  */
-export type TErrorSource = 'bot' | 'http' | 'queue' | 'process' | 'yandex' | 'scanner';
+export type TErrorSource = 'bot' | 'http' | 'queue' | 'process' | 'yandex' | 'scanner' | 'crm';
 
 /**
  * Владелец записи, когда пользователя нет: ошибка HTTP-слоя, падение процесса,

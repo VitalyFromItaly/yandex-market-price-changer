@@ -1,0 +1,173 @@
+@import '@fontsource-variable/inter';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Токены CRM — HSL-триплеты, чтобы Tailwind умел прозрачность (`bg-primary/10`).
+ *
+ * Бренд — Яндекс Маркет: жёлтый — основное действие (кнопки, выбранный вариант),
+ * красно-оранжевый `brand` — редкий акцент (знак, активный пункт меню, «нужно
+ * действие»). Поэтому `danger` — МАЛИНОВЫЙ, а не красный: убыток и сбой не должны
+ * читаться как цвет бренда, а красная кнопка — как ошибка. Админка `web/`
+ * намеренно осталась нейтральной: это внутренний инструмент, не витрина продавца.
+ *
+ * Статусы — три смысла: ok (в норме), warn (ждёт человека, не сбой), danger
+ * (сломалось, убыток). У каждого приглушённый фон -subtle для бейджей.
+ * `warn` — оранжево-коричневый, чтобы не сливаться с жёлтым primary.
+ *
+ * Тема — по атрибуту `data-theme` на <html>, его ставит useTheme (и инлайн-скрипт
+ * в index.html до первой отрисовки). Режим «как в системе» разрешается там же
+ * через matchMedia — поэтому тёмные значения живут здесь в ОДНОМ блоке, а не в
+ * двух копиях (media + атрибут), которые разошлись бы.
+ */
+@layer base {
+  :root {
+    --background: 40 20% 99%;
+    --foreground: 30 8% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 30 8% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 30 8% 11%;
+    --muted: 40 20% 96%;
+    --muted-foreground: 30 5% 43%;
+    --border: 38 14% 88%;
+    --input: 38 14% 85%;
+    --ring: 40 100% 38%;
+    --primary: 48 100% 50%;
+    --primary-foreground: 30 10% 9%;
+    --primary-subtle: 49 100% 92%;
+    --secondary: 40 18% 94%;
+    --secondary-foreground: 30 8% 11%;
+    --accent: 44 40% 93%;
+    --accent-foreground: 30 8% 11%;
+    --brand: 11 100% 52%;
+    --brand-foreground: 0 0% 100%;
+    --brand-subtle: 11 100% 96%;
+    --link: 213 70% 42%;
+    --destructive: 345 75% 42%;
+    --destructive-foreground: 0 0% 100%;
+    --ok: 142 72% 29%;
+    --ok-subtle: 138 60% 94%;
+    --warn: 26 90% 37%;
+    --warn-subtle: 34 100% 94%;
+    --danger: 345 75% 42%;
+    --danger-subtle: 345 80% 96%;
+
+    /*
+     * Графики. Категориальные слоты — эталонная палитра скила dataviz в её
+     * порядке (порядок и есть защита от дальтонизма, проверен валидатором);
+     * красить серии по кругу нельзя. `chart-series` — цвет одиночного ряда:
+     * оранжевый слот, ближайший к бренду. Сетка и оси — приглушённые.
+     */
+    --chart-1: 213 68% 50%;
+    --chart-2: 17 82% 56%;
+    --chart-3: 159 73% 40%;
+    --chart-4: 41 100% 46%;
+    --chart-5: 337 70% 70%;
+    --chart-6: 249 48% 44%;
+    --chart-series: 17 82% 56%;
+    --chart-grid: 38 14% 90%;
+    --chart-axis: 30 5% 50%;
+
+    --radius: 0.5rem;
+
+    color-scheme: light;
+  }
+
+  :root[data-theme='dark'] {
+    --background: 30 5% 8%;
+    --foreground: 40 10% 91%;
+    --card: 30 5% 11%;
+    --card-foreground: 40 10% 91%;
+    --popover: 30 5% 12%;
+    --popover-foreground: 40 10% 91%;
+    --muted: 30 5% 14%;
+    --muted-foreground: 38 6% 64%;
+    --border: 30 5% 20%;
+    --input: 30 5% 24%;
+    --ring: 48 100% 55%;
+    --primary: 48 100% 52%;
+    --primary-foreground: 30 10% 9%;
+    --primary-subtle: 45 45% 15%;
+    --secondary: 30 5% 16%;
+    --secondary-foreground: 40 10% 91%;
+    --accent: 35 10% 18%;
+    --accent-foreground: 40 10% 91%;
+    --brand: 11 100% 60%;
+    --brand-foreground: 30 10% 9%;
+    --brand-subtle: 11 40% 15%;
+    --link: 213 94% 72%;
+    --destructive: 345 85% 70%;
+    --destructive-foreground: 30 10% 9%;
+    /* На тёмном семантические цвета светлее и приглушённее — иначе жгут глаза. */
+    --ok: 142 60% 55%;
+    --ok-subtle: 142 30% 13%;
+    --warn: 30 90% 62%;
+    --warn-subtle: 30 35% 14%;
+    --danger: 345 85% 70%;
+    --danger-subtle: 345 30% 15%;
+
+    /* Те же оттенки, шаги подобраны под тёмную поверхность (dataviz: dark — выбран, не инвертирован). */
+    --chart-1: 213 77% 56%;
+    --chart-2: 17 70% 50%;
+    --chart-3: 159 73% 36%;
+    --chart-4: 40 100% 39%;
+    --chart-5: 338 61% 58%;
+    --chart-6: 247 69% 72%;
+    --chart-series: 17 70% 55%;
+    --chart-grid: 30 5% 18%;
+    --chart-axis: 38 6% 55%;
+
+    color-scheme: dark;
+  }
+
+  /*
+   * Unovis читает оформление из своих --vis-* переменных. Они ссылаются на
+   * наши токены, поэтому тема переключается без перерисовки графиков и без
+   * второго блока под тёмную.
+   */
+  :root {
+    --vis-font-family: 'Inter Variable', system-ui, sans-serif;
+    --vis-axis-font-family: 'Inter Variable', system-ui, sans-serif;
+    --vis-axis-tick-label-color: hsl(var(--chart-axis));
+    --vis-axis-tick-label-font-size: 12px;
+    --vis-axis-tick-color: transparent;
+    --vis-axis-domain-color: hsl(var(--border));
+    --vis-axis-grid-color: hsl(var(--chart-grid));
+    --vis-axis-label-color: hsl(var(--muted-foreground));
+    --vis-stacked-bar-hover-stroke-width: 0;
+    --vis-tooltip-background-color: hsl(var(--foreground));
+    --vis-tooltip-text-color: hsl(var(--background));
+    --vis-tooltip-border-color: transparent;
+    --vis-tooltip-border-radius: calc(var(--radius) - 2px);
+    --vis-tooltip-padding: 6px 10px;
+    --vis-tooltip-box-shadow: 0 4px 12px hsl(0 0% 0% / 0.15);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 15px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Меняющиеся числа — моноширинными цифрами: иначе прыгают при обновлении. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+}

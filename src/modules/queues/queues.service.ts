@@ -66,12 +66,14 @@ export class QueuesService {
     @InjectQueue(QUEUE_NAMES.YANDEX_API) yandexApi: Queue,
     @InjectQueue(QUEUE_NAMES.NOTIFICATIONS) notifications: Queue,
     @InjectQueue(QUEUE_NAMES.REPORTS) private readonly reports: Queue,
+    @InjectQueue(QUEUE_NAMES.CRM_JOBS) crmJobs: Queue,
   ) {
     this.queues = new Map([
       [QUEUE_NAMES.FILE_PROCESSING, fileProcessing],
       [QUEUE_NAMES.YANDEX_API, yandexApi],
       [QUEUE_NAMES.NOTIFICATIONS, notifications],
       [QUEUE_NAMES.REPORTS, this.reports],
+      [QUEUE_NAMES.CRM_JOBS, crmJobs],
     ]);
   }
 

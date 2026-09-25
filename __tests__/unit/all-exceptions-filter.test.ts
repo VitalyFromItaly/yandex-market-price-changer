@@ -17,13 +17,17 @@ import { AllExceptionsFilter } from '../../src/common/filters/all-exceptions.fil
 describe('AllExceptionsFilter', () => {
   function run(
     exception: unknown,
-    request: { method: string; url: string; route?: { path: string } },
+    request: { method: string; url: string; route?: { path: string }; crmUser?: object },
   ) {
     const report = vi.fn().mockResolvedValue(undefined);
     const filter = new AllExceptionsFilter({ report } as never);
 
     const json = vi.fn();
-    const response = { status: vi.fn(() => ({ json })), json };
+    const response = {
+      status: vi.fn(() => ({ json })),
+      json,
+      locals: {} as Record<string, unknown>,
+    };
     const host = {
       switchToHttp: () => ({
         getRequest: () => request,
@@ -82,5 +86,22 @@ describe('AllExceptionsFilter', () => {
 
     expect(report).toHaveBeenCalledTimes(1);
     expect(report.mock.calls[0][0].alert).toBe(false);
+  });
+
+  it('ошибка CRM приписывается продавцу, source crm, текст — для строки журнала', () => {
+    const { report, response } = run(new HttpException('Возможность закрыта', 403), {
+      method: 'GET',
+      url: '/api/crm/ym/profit',
+      route: { path: '/api/crm/ym/profit' },
+      crmUser: { telegramUserId: '222', username: 'vasya' },
+    });
+
+    expect(report.mock.calls[0][0]).toMatchObject({
+      source: 'crm',
+      telegramUserId: '222',
+      username: 'vasya',
+      alert: false,
+    });
+    expect(response.locals.errorMessage).toBe('Возможность закрыта');
   });
 });

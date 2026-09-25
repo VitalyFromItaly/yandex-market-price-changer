@@ -13,7 +13,7 @@ import {
   quarantineText,
 } from '../../../../yandex/quarantine/quarantine-message';
 import { PQ_CB_PATTERN, parsePqCallback } from '../../../../yandex/quarantine/quarantine.domain';
-import { YandexClientFactory } from '../../../../yandex/yandex-client.factory';
+import { QuarantineService } from '../../../../yandex/quarantine/quarantine.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
@@ -32,14 +32,15 @@ import { PriceChangerKeyboard } from '../price-changer.keyboard';
  * «откройте заново», а не подтверждает не то.
  *
  * Подтверждение — ЗАПИСЬ в Partner API (postWrite), вторая мутирующая
- * операция приложения после остатков.
+ * операция приложения после остатков. Чтение и запись — `QuarantineService`,
+ * общий с CRM; здесь только магазин бота, индексы кнопок и отрисовка.
  */
 @Injectable()
 export class QuarantineHandler {
   constructor(
     private readonly stores: YandexMarketService,
     private readonly access: UserAccessService,
-    private readonly clients: YandexClientFactory,
+    private readonly quarantine: QuarantineService,
     private readonly keyboard: PriceChangerKeyboard,
     private readonly storePrompt: StorePromptService,
     private readonly errors: ErrorReporter,
@@ -101,7 +102,7 @@ export class QuarantineHandler {
       return;
     }
 
-    await this.clients.forStore(store).confirmQuarantinePrices(offerIds);
+    await this.quarantine.confirm(store, offerIds);
     await ctx.reply(quarantineConfirmedText(offerIds.length));
 
     // Экран перерисовывается с живым списком: подтверждённые товары Маркет
@@ -120,7 +121,7 @@ export class QuarantineHandler {
       return;
     }
 
-    const offers = await this.clients.forStore(store).getQuarantineOffers();
+    const offers = await this.quarantine.list(store);
 
     if (!offers.length) {
       await this.access.setQuarantineOffers(telegramUserId, botId, null);

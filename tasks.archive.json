@@ -2,7 +2,8 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 56
+    "archived_tasks": 79,
+    "updated_at": "2026-09-25"
   },
   "tasks": [
     {
@@ -1443,6 +1444,530 @@
         "TASK-053",
         "TASK-055"
       ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-070",
+      "milestone": "M10",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Бэкенд-аутентификация продавцов в src/modules/crm/: схема CrmCredential {telegramUserId unique, passwordHash, mustChangePassword, passwordChangedAt, lastLoginAt} (пять регистраций + MODELS в scripts/sync-indexes.ts), конфиг CRM_INITIAL_PASSWORD (Joi, геттер в AppConfigService, .env.example, docker-compose; значение tg_rules_2026). POST /api/crm/auth/login {login, password}: login — ник (без @, без регистра) или числовой id → UserAccess; пускать только approved с подключённым магазином и админов с магазином; учётка создаётся лениво при первом входе стартовым паролем с mustChangePassword=true. JWT: секрет в Mongo (паттерн AdminCredential), aud \"crm\", pwdv = passwordChangedAt. Guard CrmJwtGuard на каждом запросе перечитывает UserAccess.status и pwdv; при mustChangePassword пропускает только /auth/me и /auth/password (403 с кодом PASSWORD_CHANGE_REQUIRED). POST /api/crm/auth/password {current, next}: next ≥ 10 символов и ≠ стартового. GET /api/crm/auth/me: имя, ник, магазин (без campaign_id/business_id), модель размещения, открытые фичи, mustChangePassword. ПОЧЕМУ: у продавцов нет веб-входа вообще; общий стартовый пароль без обязательной смены открывал бы чужие токены Маркета каждому, кто знает ник.",
+      "acceptance_criteria": [
+        "LoginThrottle переиспользован (5 ошибок → 15 минут), блокировка проверяется до пароля",
+        "bcrypt выполняется и для несуществующего логина — время ответа не выдаёт, кто есть в базе",
+        "Неоднозначный ник (два UserAccess с одним username у разных id) → 409 с текстом «войдите по Telegram id»",
+        "Несколько botId у одного id → берётся approved-запись",
+        "Админский JWT не проходит CrmJwtGuard, CRM-JWT не проходит AdminJwtGuard (aud)",
+        "Смена пароля гасит ранее выданные токены (pwdv), отзыв доступа в боте/панели закрывает CRM на следующем запросе",
+        "Ответы не содержат token/campaign_id/business_id",
+        "Юнит-тесты по образцу __tests__/unit/admin-auth.test.ts и access-api.test.ts"
+      ],
+      "test_steps": [
+        "Шаг 1: curl POST /api/crm/auth/login с ником approved-продавца и tg_rules_2026 → токен; /auth/me → mustChangePassword: true",
+        "Шаг 2: с этим токеном любой другой /api/crm/... → 403 PASSWORD_CHANGE_REQUIRED",
+        "Шаг 3: POST /auth/password → новый токен работает, старый 401; повторный вход tg_rules_2026 → 401",
+        "Шаг 4: логин pending/rejected-пользователя → 401; вход по числовому id работает так же, как по нику",
+        "Шаг 5: 6 неверных паролей подряд → блокировка с числом минут",
+        "Шаг 6: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-068",
+      "milestone": "M10",
+      "category": "infrastructure",
+      "priority": "high",
+      "description": "Перенести фронтовые скилы из /Users/vitalijperekutnev/work/start-ups/valento/crm/.claude/skills (frontend-design, frontend-module, pinia-store, interface-design) в .claude/skills/ этого репозитория и адаптировать. ПОЧЕМУ: владелец хочет, чтобы CRM строилась по тем же правилам, что valento; без адаптации скилы ссылаются на frontend/src, модули organization/estimate, продукт Velanto и несуществующие хелперы — агент пошёл бы по мёртвым путям.",
+      "acceptance_criteria": [
+        ".claude/skills/{frontend-design,frontend-module,pinia-store,interface-design}/SKILL.md существуют",
+        "Пути frontend/src → crm/src, имя продукта Velanto → CRM продавца Яндекс.Маркета; примеры модулей заменены на модули этой CRM (orders, profit, settings)",
+        "Упоминания хелперов (useBaseState, resettableStoresPlugin, readLocalCache, useRouteTab, lib/http.ts) либо помечены «создаётся в TASK-069», либо удалены",
+        "Обязательный Playwright на каждую правку UI снят: вместо него vitest на сторы/композаблы + ручная проверка в браузере (решение — нет e2e-инфраструктуры)",
+        "Валенто-специфика (kanban-токены, client portal, PWA «с объекта», TASK-282) удалена",
+        "interface-design перенесён как есть"
+      ],
+      "test_steps": [
+        "Шаг 1: grep -rn \"valento\\|Velanto\\|frontend/src\" .claude/skills → пусто",
+        "Шаг 2: в новой сессии скилы видны в списке доступных, описания про CRM продавца"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-069",
+      "milestone": "M10",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "Скаффолд второй SPA crm/ по скилам: Vite 5 (base /crm/, outDir crm/dist), Tailwind 3 с токенами (свет/тьма) в crm/src/assets/index.css, ui-примитивы reka-ui (button, input, card, table, dialog, badge, tabs, dropdown, tooltip, toast, skeleton, page-header, confirm-dialog), shared-хелперы (useBaseState, resettable stores, http-клиент с Bearer и ApiError), шелл: сайдбар с навигацией и переключателем маркетплейса (один пункт «Яндекс Маркет»), hash-роутер с маршрутами /ym/.... Сборка: build:crm в build, dev:crm, main.ts useStaticAssets(crm/dist, {prefix: \"/crm\"}), строка COPY в Dockerfile, typecheck:crm (vue-tsc) и test:crm в CI. ПОЧЕМУ: без каркаса ни одна фича CRM не начинается; hash history — по доводу админки (F5 не уходит на сервер).",
+      "acceptance_criteria": [
+        "crm/ — отдельный вход Vite, зависимости в корневом package.json; vite остаётся 5.x",
+        "Шрифты и все ассеты локальные (@fontsource), ни одного внешнего домена в сборке",
+        "npm run build собирает dist/, web/dist и crm/dist; npm start отдаёт CRM по /crm/ и админку по / без взаимного влияния",
+        "Шелл: сайдбар (цвет канваса, как в админке), переключатель маркетплейса, пустые заглушки разделов; тёмная тема по prefers-color-scheme",
+        "CI (.github/workflows/nodejs.yml) гоняет typecheck:crm и test:crm без --if-present",
+        "Dockerfile кладёт crm/dist в образ; CLAUDE.md упоминает crm/ в разделе про панель"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run dev:crm → открыть http://localhost:<порт>/crm/ — видно шелл с сайдбаром",
+        "Шаг 2: npm run build && npm start → /crm/ отдаёт CRM, / отдаёт админку, /api/... работает",
+        "Шаг 3: grep -rn \"https://\" crm/dist → нет внешних доменов (кроме текстовых ссылок)",
+        "Шаг 4: docker build . проходит",
+        "Шаг 5: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-068"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-071",
+      "milestone": "M10",
+      "category": "ui",
+      "priority": "critical",
+      "description": "UI входа в CRM: модуль auth (store по pinia-store), страница логина («ник или Telegram id» + пароль), принудительный экран смены пароля (роут-гард не выпускает с него, пока mustChangePassword), страница «Безопасность» в разделе профиля для последующей смены, выход (reset всех сторов). Токен в sessionStorage (довод админки). ПОЧЕМУ: решение владельца — стартовый пароль общий и должен быть сменён до любой работы.",
+      "acceptance_criteria": [
+        "Ошибки входа по-русски: неверный логин/пароль, блокировка на N минут, неоднозначный ник, нет доступа",
+        "Пока mustChangePassword — любой маршрут редиректит на смену пароля, сайдбар скрыт",
+        "Форма смены: текущий, новый, повтор; клиентская проверка длины и совпадения, серверная ошибка показывается у поля",
+        "После смены — сразу в CRM с новым токеном, без повторного логина",
+        "401 с любого запроса → выход на логин с сообщением «сессия истекла»",
+        "Состояния загрузки/ошибки оформлены по frontend-design"
+      ],
+      "test_steps": [
+        "Шаг 1: /crm/ → логин; ввести ник и tg_rules_2026 → экран смены пароля; ручной переход на #/ym/orders → обратно на смену",
+        "Шаг 2: сменить пароль → попасть в шелл; выйти; войти новым паролем по числовому id",
+        "Шаг 3: «Безопасность» → сменить пароль ещё раз → старая вкладка с прежним токеном вылетает на логин",
+        "Шаг 4: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-069",
+        "TASK-070"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-072",
+      "milestone": "M10",
+      "category": "functional",
+      "priority": "high",
+      "description": "Фичевые гейты и журнал для CRM. Декоратор @RequireFeature(key) + guard на тех же функциях, что featureGate бота (resolveFeatures/isFeatureEnabled из features.domain.ts; если модуль тянет импорт из бота — вынести чистую часть), FBY-only проверка через stocks/placement.ts, админ — всё открыто. /auth/me отдаёт раскладку навигации по featureMenuLayout, чтобы закрытые разделы не показывались. Каждый CRM-запрос пишется в ActionLog (source \"crm\", маскировка секретов как у бота) — вопрос «что делал этот продавец» должен иметь один ответ на оба канала. Навигация SPA строится из /auth/me. ПОЧЕМУ: закрытие фичи в панели обязано закрывать её и в CRM — иначе CRM становится обходом гейта.",
+      "acceptance_criteria": [
+        "Закрытая фича → 403 с понятным текстом и отсутствие пункта в сайдбаре",
+        "FBY-экраны у не-FBY магазина → 403 с текстом fbyOnlyScreenText (общий с ботом)",
+        "Журнал админки показывает действия из CRM с пометкой источника; фильтр по продавцу их находит",
+        "Тест: guard пропускает админа без UserAccess, закрывает неизвестный ключ"
+      ],
+      "test_steps": [
+        "Шаг 1: закрыть продавцу report_profit в админке → в CRM пропал пункт «Прибыль», прямой запрос → 403",
+        "Шаг 2: в журнале админки видны строки source crm с этим продавцом",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-070"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-074",
+      "milestone": "M11",
+      "category": "infrastructure",
+      "priority": "high",
+      "description": "Фоновые задачи CRM с результатом для веба. Очередь crm-jobs (регистрация в модуле очередей по правилам QueuesModule — без второго registerQueue), процессор вызывает те же сервисы, что процессоры бота, и кладёт результат {status, data json, file: {buffer, filename} | null, error} в коллекцию CrmJobResult с TTL (24 ч). API: POST /api/crm/ym/jobs {kind, params} → {jobId}; GET /jobs/:id → статус/данные; GET /jobs/:id/file → xlsx. Дедуп по (telegramUserId, kind) как isQueuedFor; payload без токена (креды из Mongo). На фронте — композабл useJob (опрос с backoff, отмена при уходе со страницы). Очередь видна в «Очередях» админки. ПОЧЕМУ: прибыль/FBY/платежи/отчёты Маркета считаются от десятков секунд до минут — синхронный HTTP упрётся в таймауты, а процессоры бота доставляют только в Telegram.",
+      "acceptance_criteria": [
+        "Процессоры бота не изменены; второй @OnQueueFailed на reports не появился",
+        "Результат доступен только своему продавцу (чужой jobId → 404)",
+        "Ошибка задачи → статус failed с человеческим текстом + ErrorReporter",
+        "Документ результата < 16 МБ; при превышении — failed с понятной причиной (не падение)"
+      ],
+      "test_steps": [
+        "Шаг 1: POST /jobs с тестовым kind → опрос → done; /file отдаёт xlsx",
+        "Шаг 2: повторный POST того же kind во время работы → тот же jobId или 409 «уже собирается»",
+        "Шаг 3: запрос чужого jobId другим продавцом → 404",
+        "Шаг 4: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-072"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-075",
+      "milestone": "M11",
+      "category": "functional",
+      "priority": "high",
+      "description": "Отчёты о заказах в CRM: «Уехало клиенту», «Выкуплено», «Едет обратно», «Едет до клиента». Выбор периода как в боте (сегодня/вчера/неделя/с 1 числа/конкретный день/«Всего»; deep_history — периоды глубже 30 дней), итоги (Продажи, в т.ч. субсидии, С доставкой; «Из них собирается на складе Маркета» на FBY; момент съёмки у снимков), таблица заказов/позиций с сортировкой и поиском, скачивание того же xlsx. OrderReportsService.export* разделить на данные и книгу (подпись-HTML остаётся боту). ПОЧЕМУ: это основные экраны бота; числа обязаны совпасть с ботом до рубля.",
+      "acceptance_criteria": [
+        "Числа для одного периода совпадают с ботом (один сервис, не копия)",
+        "Период глубже 30 дней без deep_history → понятный отказ, с флагом — архив",
+        "xlsx из CRM и из бота идентичны по содержимому",
+        "Фичи report_* закрывают свои разделы"
+      ],
+      "test_steps": [
+        "Шаг 1: «Едет до клиента» в CRM и в боте в одну минуту → одинаковое число и сумма",
+        "Шаг 2: «Выкуплено» за вчера — сверить итоги с ботом; скачать xlsx",
+        "Шаг 3: «Едет обратно» «Всего» → активные возвраты, число сходится с кабинетом/ботом",
+        "Шаг 4: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 5: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-074"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-076",
+      "milestone": "M11",
+      "category": "functional",
+      "priority": "high",
+      "description": "«Прибыль» и «Калькулятор» в CRM через job-инфраструктуру (ProfitService.build / buildTariffReport). Раскладка как в боте: оформлено за период (продажи → комиссия → налог → продвижение → закуп → ожидается чистая), выкуплено, отменено, исключённые заказы с причинами (нет закупочной цены / нет категории) и списком sku, дата последней загрузки прайса, строка калькулятора Маркета при tariff_calc. У калькулятора — разбивка по услугам и строка сравнения со ставкой. ПОЧЕМУ: самый ценный экран для продавца, в вебе он читается лучше, чем длинное сообщение.",
+      "acceptance_criteria": [
+        "Числа совпадают с ботом за тот же период",
+        "tariff_calc вычисляется в контроллере и едет в payload (у админа нет UserAccess — довод profit-report.processor)",
+        "Список sku без закупа — таблица с переходом к загрузке прайса"
+      ],
+      "test_steps": [
+        "Шаг 1: «Прибыль» за месяц в CRM и в боте → одинаковая чистая",
+        "Шаг 2: включить tariff_calc → появилась строка калькулятора; «Калькулятор» — разбивка сходится с итогом услуг",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 4: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-074"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-078",
+      "milestone": "M12",
+      "category": "functional",
+      "priority": "high",
+      "description": "Настройки прибыли в CRM: ставки (комиссия, налог, скидка по умолчанию), скидки по брендам (только бренды из PurchasePrice продавца + «Остальные»), продвижение (фича promotion: по бренду — общий процент или по ценам в 2 ступени, плюс нижний порог). Валидацию и запись вынести из api-settings.handler.ts в StoreSettingsService (validateRate, promo.ts, brands.ts, updateRate/updateBrandDiscount/updatePromoCommission), бот переводится на него же. Формы шлют итоговые значения целиком — pending-поля UserAccess вебу не нужны. ПОЧЕМУ: пошаговый диалог бота для промо-ступеней — самый неудобный экран, в вебе это одна форма.",
+      "acceptance_criteria": [
+        "Правило: одна валидация на оба канала (тесты на StoreSettingsService, бот зелёный без изменения сценариев)",
+        "Изменение в CRM сразу видно в «Настройках» бота и наоборот",
+        "Промо: 0 в пороге = «нет порога», не хранится; граница ступени включительная",
+        "Закрытая promotion скрывает раздел и отвечает 403"
+      ],
+      "test_steps": [
+        "Шаг 1: поменять комиссию в CRM → в боте «⚙️ Настройки» показывает новое значение",
+        "Шаг 2: задать скидку бренда в боте сообщением «скидка casio: 5» → CRM показывает 5",
+        "Шаг 3: настроить промо по ценам с порогом → «Прибыль» учитывает",
+        "Шаг 4: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 5: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-072"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-080",
+      "milestone": "M12",
+      "category": "functional",
+      "priority": "high",
+      "description": "Загрузка прайса в CRM (остатки + закупочные цены): multipart xls/xlsx до 10 МБ, переключатель «только проверка» (dryRun), задача через crm-jobs → StockSyncService.sync с buffer (без getFileLink). Все барьеры бота — STOCK_WRITE_ENABLED, фичи stock_update/purchase_prices, FBY-запрет записи, неизвестная модель — вынести из stock-upload.handler.ts в общий сервис-проверку, бот на него же; предупреждение о FBY до загрузки. Экран результата: сколько обновлено/пропущено/не найдено, writeSkipReason с советом. Плюс раздел «Закупочные цены»: таблица PurchasePrice с поиском по sku/названию и датой загрузки. ПОЧЕМУ: единственная запись в Маркет — ошибка тут двигает чужой склад, поэтому барьеры обязаны быть одними и теми же.",
+      "acceptance_criteria": [
+        "writeInBatches остаётся последним барьером; CRM не может записать в обход",
+        "Задачи загрузки из бота и CRM идут одной логикой, конкурентная запись исключена (concurrency 1 или общий замок)",
+        "Отчёт результата — те же тексты причин, что в боте (одна функция)",
+        "Токен и файл не лежат в Redis"
+      ],
+      "test_steps": [
+        "Шаг 1: локально (STOCK_WRITE_ENABLED=false) загрузить stock.xlsx в CRM → закуп сохранён, остатки «записи выключены»",
+        "Шаг 2: включить «проверка» → dryRun, отчёт без записи",
+        "Шаг 3: FBY-магазин → предупреждение до загрузки, закуп сохранён, остатки нет",
+        "Шаг 4: «Закупочные цены» — поиск находит загруженный sku",
+        "Шаг 5: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 6: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-074"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-073",
+      "milestone": "M10",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Экраны «Профиль» и «Помощь» в CRM. Профиль: имя, ник, магазин, модель размещения, статус доступа, дата последней загрузки прайса, открытые функции; внутри — вкладка «Безопасность» из TASK-071. Помощь: те же сведения, что /help бота, плюс контакт поддержки. Данные — из того же источника, что profile.text.ts/help.text.ts (вынести структурную часть, бот продолжает рендерить текст из неё). ПОЧЕМУ: «одна экранная правда» — две копии профиля уже однажды разошлись.",
+      "acceptance_criteria": [
+        "profile.text.ts и CRM-эндпоинт строятся из одной функции данных; screens-single-source.test.ts дополнен",
+        "campaign_id/business_id нигде не показываются",
+        "SUPPORT_CONTACT читается по-прежнему только из help-модуля (тест blocked-no-keyboard/help остаётся зелёным)"
+      ],
+      "test_steps": [
+        "Шаг 1: открыть «Профиль» — поля совпадают с «📊 Мой профиль» в боте для того же продавца",
+        "Шаг 2: открыть «Помощь» — те же разделы, что /help",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 4: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-071"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-077",
+      "milestone": "M11",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Главная CRM (дашборд): «Едет до клиента», «Едет обратно», «Уехало сегодня», прибыль с 1 числа (если фича открыта), дата последней загрузки прайса, быстрые ссылки на разделы. Только открытые фичи; медленное (прибыль) догружается задачей, не блокирует остальное. ПОЧЕМУ: CRM открывают, чтобы за секунду понять состояние магазина, а не выбирать отчёт из меню.",
+      "acceptance_criteria": [
+        "Каждая плитка грузится независимо, со своим skeleton/ошибкой",
+        "Числа кликабельны и ведут в соответствующий отчёт с тем же периодом",
+        "Пустое состояние и первая загрузка различаются (довод обзора админки)"
+      ],
+      "test_steps": [
+        "Шаг 1: открыть главную — числа совпадают с отчётами",
+        "Шаг 2: закрыть продавцу report_profit → плитка прибыли пропала",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-075",
+        "TASK-076"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-079",
+      "milestone": "M12",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Раздел «Магазины» в CRM (решение crm_store_drilldown): список магазинов токена, клик — «внутрь» магазина, где отчёты, прибыль и прайс считаются по нему, разделы — по его модели (FBS/FBY). Веб не переключает активный магазин бота. Обновление токена Partner API с проверкой (YandexAuthError → отказ, прежний токен остаётся). Онбординг новичков в CRM НЕ делаем (решение crm_audience). ПОЧЕМУ: у продавца несколько магазинов, и отчёт каждого должен открываться в вебе без смены магазина в боте.",
+      "acceptance_criteria": [
+        "Токен вводится, но никогда не отдаётся обратно (маска)",
+        "Отчёты, прибыль и прайс внутри магазина считаются по нему; активный магазин бота не меняется",
+        "Разделы магазина — по его модели (FBY-разделы только в FBY-магазине)",
+        "campaign_id/business_id не показываются (ни на экране, ни в URL)"
+      ],
+      "test_steps": [
+        "Шаг 1: у продавца с FBS и FBY магазинами открыть в CRM оба → разные числа отчётов; бот остаётся на своём магазине",
+        "Шаг 2: ввести заведомо неверный токен → понятный отказ, старый токен остался",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 4: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-072"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-082",
+      "milestone": "M13",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Карантин цен в CRM (фича price_quarantine): QuarantineService из quarantine.handler.ts (цены только из verdicts[].params), таблица товаров с текущей и последней валидной ценой, подтвердить одну / выбранные / все через ConfirmDialog, батчи ≤200, postWrite без повторов. Бот переводится на сервис; индексное хранение quarantineOfferIds вебу не нужно (offerId в теле). ПОЧЕМУ: запись в Маркет — подтверждение должно быть явным и одинаковым в обоих каналах.",
+      "acceptance_criteria": [
+        "Подтверждение только после диалога; повтор на 5xx не выполняется",
+        "Пустой карантин — отдельное состояние «всё в порядке»"
+      ],
+      "test_steps": [
+        "Шаг 1: открыть «Карантин» у продавца с фичей → список совпадает с ботом",
+        "Шаг 2: подтвердить одну цену → пропала из списка и в боте",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 4: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-072"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-083",
+      "milestone": "M13",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Отзывы в CRM (фича goods_feedback): FeedbackService из feedback.handler.ts, список отзывов, требующих реакции (оценка, текст, товар, дата), ответ: поле → превью → «Опубликовать» (ответ публичный — случайная отправка недопустима, довод dryRun), «Пропустить». Лимит 4096 символов. Бот на тот же сервис. ПОЧЕМУ: длинные ответы удобнее писать в вебе.",
+      "acceptance_criteria": [
+        "Публикация только кнопкой из превью",
+        "Ошибка публикации сохраняет черновик в форме",
+        "postWrite без повторов"
+      ],
+      "test_steps": [
+        "Шаг 1: открыть «Отзывы» → список совпадает с ботом",
+        "Шаг 2: ответить на тестовый отзыв → ответ виден в кабинете Маркета, отзыв ушёл из списка",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 4: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-072"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-084",
+      "milestone": "M13",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Платежи и отчёты Маркета в CRM через crm-jobs: «Платежи» (payments_report; неделя/месяц/прошлый месяц, paymentsRange) и шесть отчётов market_reports (реализация — два последних завершённых месяца; оборачиваемость — только FBY; конкуренты — категория из MarketCategoriesService.topCategories + период; аналитика продаж — период + группировка; ключевые показатели — WEEK|MONTH; география — период) с формами параметров вместо цепочки кнопок. Результат — xlsx Маркета на скачивание; DONE без файла = «данных нет»; YandexRateLimitError → mktRateLimitText. ПОЧЕМУ: форма с параметрами — естественный вид этих отчётов, в боте это пять тапов.",
+      "acceptance_criteria": [
+        "Даты считаются в процессоре на момент выполнения",
+        "Опции форм — из экспортированных констант доменов, не копии",
+        "Пункт «Оборачиваемость» скрыт у не-FBY"
+      ],
+      "test_steps": [
+        "Шаг 1: «Платежи» за прошлый месяц → xlsx скачивается",
+        "Шаг 2: «Ключевые показатели» MONTH → файл или «данных нет»",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 4: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-074"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-085",
+      "milestone": "M13",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Рекомендации цен (price_recommendations) и Карточки (offer_cards) в CRM: вынести из процессоров сервисы (loadPriceRecommendations + дельта; loadOfferCards + summarizeCards), процессоры бота на них же. Экраны: таблица рекомендаций (цена, оптимальная, дельта, конкурентность; «без данных» отдельно), сводка карточек (статусы с действием первыми, средний рейтинг против averageContentRating, топ слабых) + полная таблица; xlsx как в боте. ПОЧЕМУ: это тысячи строк — в Telegram они живут только файлом, в вебе их можно фильтровать.",
+      "acceptance_criteria": [
+        "null-дельта не превращается в 0",
+        "Сводка CRM совпадает с текстом бота по числам",
+        "Моменты среза печатаются"
+      ],
+      "test_steps": [
+        "Шаг 1: открыть оба экрана у продавца с фичами → числа совпадают с ботом",
+        "Шаг 2: фильтр по статусу карточки работает",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 4: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-074"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-086",
+      "milestone": "M13",
+      "category": "functional",
+      "priority": "medium",
+      "description": "FBY-сводка (fby, + секция поставок при fby_supply) и Склады (warehouses) в CRM, только для FBY-магазинов. FbyService.build разделить на buildData (IFbyOverviewData) и форматирование бота; складам — WarehousesService.overview уже структурный. Экраны: остатки по кластерам и складам, проблемные позиции, заявки на вывоз, поставки; склады со стоком и отметками «пусто»/«нет в списке». xlsx как в боте. FbyStockService (single-flight + мемо 60 с) переиспользуется — лимит 1/мин не нарушается двумя каналами. ПОЧЕМУ: паритет с ботом; кластерная раскладка в таблице читается лучше.",
+      "acceptance_criteria": [
+        "Бот рендерит ту же структуру — тексты не изменились (тесты fby зелёные)",
+        "Не-FBY → раздела нет, прямой запрос 403",
+        "Итого складов суммируется из показанных строк"
+      ],
+      "test_steps": [
+        "Шаг 1: FBY-продавец → сводка совпадает с ботом по числам",
+        "Шаг 2: открыть «Склады» сразу после FBY → без ошибки лимита (мемо)",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 4: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-074"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-087",
+      "milestone": "M13",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Связка CRM с админкой и ботом. Админка, карточка продавца: «последний вход в CRM», «пароль сменён/стартовый», кнопка «Сбросить пароль CRM» (обратно на стартовый с mustChangePassword, гасит сессии) с подтверждением. Бот: строка со ссылкой на CRM и логином продавца в «❓ Помощь» и «📊 Мой профиль» (из тех же single-source модулей). ПОЧЕМУ: продавец должен узнать о CRM из бота, а админ — уметь помочь забывшему пароль без доступа к базе.",
+      "acceptance_criteria": [
+        "Сброс — только через AdminJwtGuard, автор решения из JWT",
+        "Ссылка на CRM строится из конфигурации (публичный URL), не литерал",
+        "Пароль нигде не показывается"
+      ],
+      "test_steps": [
+        "Шаг 1: в админке сбросить пароль продавцу → его сессия в CRM вылетает, вход tg_rules_2026 → смена пароля",
+        "Шаг 2: в боте «❓ Помощь» — ссылка на /crm/",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-071"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-088",
+      "milestone": "M13",
+      "category": "unit",
+      "priority": "medium",
+      "description": "Паритет и документация. Тест паритета: каждый ключ FEATURE и каждый экранный MENU-ключ бота имеет маршрут в CRM (таблица соответствия в crm, тест в __tests__), чтобы новый экран бота без CRM ронял CI — требование владельца «абсолютно весь функционал». Документация: раздел CRM в CLAUDE.md (почему/решения), README, src/modules/crm/README.md, crm/README.md. ПОЧЕМУ: без пина паритет развалится с первой новой фичей бота.",
+      "acceptance_criteria": [
+        "Тест падает, если добавить FEATURE без маршрута CRM",
+        "Исключения (hosting_reminder, deep_history, fby_supply — модификаторы) перечислены явно с причиной",
+        "Документы описывают вход, стартовый пароль, барьеры, job-инфраструктуру"
+      ],
+      "test_steps": [
+        "Шаг 1: временно добавить фиктивный ключ FEATURE → тест паритета красный",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-073",
+        "TASK-075",
+        "TASK-076",
+        "TASK-077",
+        "TASK-078",
+        "TASK-079",
+        "TASK-080",
+        "TASK-081",
+        "TASK-082",
+        "TASK-083",
+        "TASK-084",
+        "TASK-085",
+        "TASK-086",
+        "TASK-087"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-090",
+      "milestone": "M13",
+      "category": "functional",
+      "priority": "high",
+      "description": "Очередь crm-jobs обрабатывается с concurrency 1 (дефолт @Process): плитки главной и отчёты ВСЕХ продавцов идут друг за другом, быстрые заказы стоят за «Прибылью» по десятки секунд. Поднять параллельность. Запись остатков не затрагивается — она в очереди file-processing. ПОЧЕМУ: один тяжёлый отчёт одного продавца задерживает CRM всем (замечено владельцем 2026-09-25).",
+      "acceptance_criteria": [
+        "@Process очереди crm-jobs с явной concurrency > 1 и комментарием почему",
+        "Дедуп activeKey и лимиты Маркета (FbyStockService, квоты отчётов) не ослаблены",
+        "Тест пинит concurrency"
+      ],
+      "test_steps": [
+        "Шаг 1: главная магазина — задачи orders:* идут параллельно с profit:profit (статусы в crmjobresults)",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-089",
+      "milestone": "M13",
+      "category": "ui",
+      "priority": "high",
+      "description": "Скелетоны CRM невидимы: bg-muted совпадает с --card в тёмной теме (220 13% 13%) и почти совпадает в светлой (97% vs 100%), поэтому плитки главной во время загрузки выглядят пустыми контейнерами. Подпись загрузки есть только у плитки прибыли. ПОЧЕМУ: продавец видит пустые карточки и думает, что CRM сломана (замечено владельцем 2026-09-25).",
+      "acceptance_criteria": [
+        "Skeleton контрастен карточке в светлой и тёмной теме",
+        "Каждая плитка главной во время загрузки показывает подпись, а не только прибыль"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run dev:crm, главная магазина — во время сборки видны полоски и подпись на всех плитках в обеих темах",
+        "Шаг 2: npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-091",
+      "milestone": "M13",
+      "category": "ui",
+      "priority": "high",
+      "description": "Разделы магазина пропадают из сайдбара CRM на любой странице вне /ym/stores/:store — на «Магазинах», «Настройках», «Рассылке», «Профиле», «Помощи»: AppSidebar показывает блок магазина только при совпадении ключа в адресе. Продавец видит, что пункты меню «иногда исчезают» (владелец, 2026-09-25). Показывать блок последнего открытого магазина всегда, ссылки — с явным параметром store.",
+      "acceptance_criteria": [
+        "После входа в магазин его разделы остаются в сайдбаре на страницах аккаунта и на списке магазинов",
+        "Ссылки блока ведут в тот магазин, чьё имя подписано над блоком",
+        "Открытие другого магазина заменяет блок"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run dev:crm — войти в магазин, перейти в «Настройки», «Профиль», «Магазины»: разделы магазина на месте и ведут в него",
+        "Шаг 2: npm run typecheck:crm && npm run test:crm && npm run lint"
+      ],
+      "dependencies": [],
       "status": "done"
     }
   ]

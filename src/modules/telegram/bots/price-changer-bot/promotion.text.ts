@@ -1,5 +1,5 @@
 import type { YandexMarketDocument } from '../../../../database/schemas/yandex-market.schema';
-import type { TBrandKey } from '../../../yandex/reports/brands';
+import type { IBrandUsage, TBrandKey } from '../../../yandex/reports/brands';
 
 import { brandTitle } from '../../../yandex/reports/brands';
 import {
@@ -10,8 +10,6 @@ import {
   promoValueLabel,
 } from '../../../yandex/reports/promo';
 import { b } from '../../formatting/telegram-format';
-
-import { type IBrandUsage } from './brand-discounts.text';
 
 /**
  * Экран «Продвижение» — ОДИН текст и одна клавиатура на все показы.

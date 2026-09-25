@@ -28,6 +28,27 @@ export interface IGoodsFeedback {
  */
 export const FEEDBACK_REPLY_MAX_LENGTH = 4096;
 
+/** Что не так с текстом ответа — или null, если его можно публиковать. */
+export type TFeedbackReplyProblem = 'empty' | 'too-long';
+
+/**
+ * Проверка текста ответа перед публикацией — одна на оба канала: бот
+ * переспрашивает по ней, CRM отвечает 400, `FeedbackService` — последний барьер.
+ */
+export function feedbackReplyProblem(text: string): TFeedbackReplyProblem | null {
+  if (!text.trim()) return 'empty';
+  if (text.length > FEEDBACK_REPLY_MAX_LENGTH) return 'too-long';
+  return null;
+}
+
+/** Текст ответа, который публиковать нельзя, дошёл до сервиса. */
+export class FeedbackReplyInvalidError extends Error {
+  constructor(public readonly problem: TFeedbackReplyProblem) {
+    super(`Ответ на отзыв не опубликован: ${problem}`);
+    this.name = 'FeedbackReplyInvalidError';
+  }
+}
+
 /** Сырой отзыв из ответа Partner API. */
 export type TRawGoodsFeedback = {
   feedbackId?: number;

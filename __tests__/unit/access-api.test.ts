@@ -2,14 +2,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
+import { ActionLogService } from '../../src/database/services/action-log.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { ReportScheduleService } from '../../src/database/services/report-schedule.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { AccessNotifierService } from '../../src/modules/access/access-notifier.service';
-import { AccessController } from '../../src/modules/access/access.controller';
+import {
+  AccessController,
+  CRM_PASSWORD_RESET_KIND,
+} from '../../src/modules/access/access.controller';
 import { AdminAuthService } from '../../src/modules/admin/admin-auth.service';
 import { AdminJwtGuard } from '../../src/modules/admin/admin-jwt.guard';
+import { CrmAuthService } from '../../src/modules/crm/crm-auth.service';
 import {
   FEATURE,
   FEATURE_KEYS,
@@ -52,7 +57,16 @@ describe('AccessController', () => {
   let deleteByTelegramUser: ReturnType<typeof vi.fn>;
   let deletePricesForUser: ReturnType<typeof vi.fn>;
   let deleteSchedulesForUser: ReturnType<typeof vi.fn>;
+  let crmState: ReturnType<typeof vi.fn>;
+  let resetPassword: ReturnType<typeof vi.fn>;
+  let record: ReturnType<typeof vi.fn>;
   let controller: AccessController;
+
+  const CRM = {
+    lastLoginAt: new Date('2026-09-20T10:00:00Z'),
+    mustChangePassword: false,
+    passwordChangedAt: new Date('2026-09-20T10:01:00Z'),
+  };
 
   beforeEach(async () => {
     list = vi.fn(async () => [USER]);
@@ -66,6 +80,9 @@ describe('AccessController', () => {
     deleteByTelegramUser = vi.fn(async () => true);
     deletePricesForUser = vi.fn(async () => 4100);
     deleteSchedulesForUser = vi.fn(async () => 2);
+    crmState = vi.fn(async () => CRM);
+    resetPassword = vi.fn(async () => ({ ...CRM, mustChangePassword: true }));
+    record = vi.fn(async () => undefined);
 
     const moduleRef = await Test.createTestingModule({
       controllers: [AccessController],
@@ -81,6 +98,8 @@ describe('AccessController', () => {
         { provide: PurchasePriceService, useValue: { deleteForUser: deletePricesForUser } },
         { provide: ReportScheduleService, useValue: { deleteForUser: deleteSchedulesForUser } },
         { provide: AccessNotifierService, useValue: { notify } },
+        { provide: CrmAuthService, useValue: { crmState, resetPassword } },
+        { provide: ActionLogService, useValue: { record } },
         // Гвард висит на классе, поэтому Nest поднимает его вместе с
         // контроллером. Здесь проверяется НАЛИЧИЕ гварда, а его собственная
         // логика — в admin-auth.test.ts.
@@ -206,6 +225,52 @@ describe('AccessController', () => {
       const raw = JSON.stringify(await controller.user('222', '999'));
       expect(raw).not.toContain('12345678');
       expect(raw).not.toContain('ACMA');
+    });
+  });
+
+  describe('CRM на карточке продавца', () => {
+    const req = { adminId: '309809755' };
+
+    it('карточка несёт последний вход и состояние пароля, но не хеш', async () => {
+      const row = await controller.user('222', '999');
+
+      expect(crmState).toHaveBeenCalledWith('222');
+      expect(row.crm).toEqual(CRM);
+      expect(JSON.stringify(row)).not.toContain('passwordHash');
+    });
+
+    it('после тумблера доступа карточка не теряет блок CRM', async () => {
+      // Панель заменяет карточку ответом PATCH целиком.
+      const row = await controller.setStatus('222', { botId: '999', approved: false }, req);
+      expect(row.crm).toEqual(CRM);
+    });
+
+    it('в CRM не входил — crm: null', async () => {
+      crmState.mockResolvedValueOnce(null);
+      expect((await controller.user('222', '999')).crm).toBeNull();
+    });
+
+    it('сброс пароля: автор из токена — в журнал, пароля в ответе нет', async () => {
+      const result = await controller.resetCrmPassword('222', req);
+
+      expect(resetPassword).toHaveBeenCalledWith('222');
+      expect(result.crm.mustChangePassword).toBe(true);
+      expect(record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          telegramUserId: '222',
+          kind: CRM_PASSWORD_RESET_KIND,
+          context: 'admin:309809755',
+        }),
+      );
+      expect(JSON.stringify(result)).not.toMatch(/"password"|passwordHash|tg_rules/);
+    });
+
+    it('продавец в CRM не входил — 404 и журнал молчит', async () => {
+      resetPassword.mockRejectedValueOnce(new NotFoundException('не входил'));
+      await expect(controller.resetCrmPassword('222', req)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(record).not.toHaveBeenCalled();
     });
   });
 

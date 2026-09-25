@@ -25,7 +25,7 @@ import {
   FEEDBACK_REPLY_MAX_LENGTH,
   parseFbCallback,
 } from '../../../../yandex/feedback/feedback.domain';
-import { YandexClientFactory } from '../../../../yandex/yandex-client.factory';
+import { FeedbackService } from '../../../../yandex/feedback/feedback.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
@@ -49,7 +49,7 @@ export class FeedbackHandler {
   constructor(
     private readonly stores: YandexMarketService,
     private readonly access: UserAccessService,
-    private readonly clients: YandexClientFactory,
+    private readonly feedback: FeedbackService,
     private readonly keyboard: PriceChangerKeyboard,
     private readonly storePrompt: StorePromptService,
     private readonly errors: ErrorReporter,
@@ -64,7 +64,7 @@ export class FeedbackHandler {
         return;
       }
 
-      const page = await this.clients.forStore(store).getFeedbacksNeedingReaction();
+      const page = await this.feedback.listNeedingReaction(store);
       if (!page.items.length) {
         await ctx.reply(feedbackEmptyText());
         return;
@@ -169,7 +169,7 @@ export class FeedbackHandler {
       return;
     }
 
-    await this.clients.forStore(store).skipFeedbackReaction([feedbackId]);
+    await this.feedback.skip(store, [feedbackId]);
     await ctx.reply(feedbackSkippedText());
   }
 
@@ -194,7 +194,7 @@ export class FeedbackHandler {
       return;
     }
 
-    await this.clients.forStore(store).updateFeedbackComment(feedbackId, draft);
+    await this.feedback.reply(store, feedbackId, draft);
 
     // Вопрос закрывается ПОСЛЕ успешной публикации: упавший запрос оставляет
     // черновик на месте, и продавец жмёт «Отправить» ещё раз, не набирая текст.

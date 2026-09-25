@@ -8,6 +8,8 @@ import { PurchasePriceSchema } from '../src/database/schemas/purchase-price.sche
 import { YandexMarketSchema } from '../src/database/schemas/yandex-market.schema';
 import { ActionLogSchema } from '../src/database/schemas/action-log.schema';
 import { AdminCredentialSchema } from '../src/database/schemas/admin-credential.schema';
+import { CrmCredentialSchema } from '../src/database/schemas/crm-credential.schema';
+import { CrmJobResultSchema } from '../src/database/schemas/crm-job-result.schema';
 
 /**
  * Приведение индексов существующей базы к схемам.
@@ -35,6 +37,8 @@ const MODELS = [
   { name: 'YandexMarket', schema: YandexMarketSchema },
   { name: 'ActionLog', schema: ActionLogSchema },
   { name: 'AdminCredential', schema: AdminCredentialSchema },
+  { name: 'CrmCredential', schema: CrmCredentialSchema },
+  { name: 'CrmJobResult', schema: CrmJobResultSchema },
 ];
 
 async function main(): Promise<void> {

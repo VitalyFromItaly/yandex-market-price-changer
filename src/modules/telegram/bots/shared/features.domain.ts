@@ -323,7 +323,7 @@ export function isFeatureKey(value: unknown): value is TFeatureKey {
 }
 
 /** Отчёт → фича. Ключи отчётов и фич совпадают, но связь объявлена явно. */
-const REPORT_TO_FEATURE: Readonly<Record<TReportKey, TFeatureKey>> = {
+export const REPORT_TO_FEATURE: Readonly<Record<TReportKey, TFeatureKey>> = {
   [REPORT.SHIPPED_TODAY]: FEATURE.REPORT_SHIPPED_TODAY,
   [REPORT.REDEEMED]: FEATURE.REPORT_REDEEMED,
   [REPORT.RETURNING]: FEATURE.REPORT_RETURNING,
@@ -423,12 +423,40 @@ export function requiredFeatures(input: {
 }
 
 /**
- * Кнопки, живущие только у FBY-магазина: оба экрана — про склад Маркета, и у
- * продавца на FBS/DBS/Express они пусты. Условие раскладки ВТОРОЕ, поверх
- * фичи: показывается кнопка при «фича включена И активный магазин FBY».
- * Хендлеры экранов перепроверяют модель сами — подпись можно набрать текстом.
+ * Фичи, живущие только у FBY-магазина: оба экрана — про склад Маркета, и у
+ * продавца на FBS/DBS/Express они пусты. Условие ВТОРОЕ, поверх флага:
+ * открыто при «фича включена И активный магазин FBY».
+ *
+ * Объявлено по ключу фичи, а не по подписи кнопки: то же правило действует и в
+ * CRM (гард `CrmJwtGuard`), где подписей бота нет. Хендлеры экранов бота
+ * перепроверяют модель сами — подпись можно набрать текстом.
  */
-const FBY_ONLY_LABELS: ReadonlySet<string> = new Set([MENU.WAREHOUSES, MENU.FBY]);
+const FBY_ONLY_FEATURES: ReadonlySet<TFeatureKey> = new Set<TFeatureKey>([
+  FEATURE.WAREHOUSES,
+  FEATURE.FBY,
+]);
+
+export function isFbyOnlyFeature(key: TFeatureKey): boolean {
+  return FBY_ONLY_FEATURES.has(key);
+}
+
+/**
+ * Открыта ли фича с учётом модели магазина — одно правило на оба канала (бот и
+ * CRM). Неизвестная модель — не FBY (`isFby`): кэш `stores` пополняется фоном,
+ * а повести продавца FBS в пустой экран хуже, чем показать кнопку позже.
+ *
+ * Про админа функция не знает: решение «админ проходит флаги» принимает
+ * вызывающий, передавая `allFeaturesEnabled()`. От модели админ не
+ * освобождается — экран склада Маркета пуст и для него.
+ */
+export function isFeatureOpen(
+  features: TFeatureMap,
+  key: TFeatureKey,
+  placementType?: string | null,
+): boolean {
+  if (isFbyOnlyFeature(key) && !isFby(placementType)) return false;
+  return isFeatureEnabled(features, key);
+}
 
 /**
  * Раскладка меню без кнопок выключенных фич.
@@ -439,9 +467,7 @@ const FBY_ONLY_LABELS: ReadonlySet<string> = new Set([MENU.WAREHOUSES, MENU.FBY]
  * inline-кнопка живёт в истории чата вечно — поэтому есть ещё и гейт.
  *
  * `placementType` — модель активного магазина (из кэша `stores`); не-FBY и
- * неизвестная модель прячут FBY-only кнопки. Неизвестная — потому что кэш
- * пополняется фоном (`ensureStoresCached`) и кнопка догонит со следующей
- * отрисовкой, а показать её продавцу FBS значит повести в тупик.
+ * неизвестная модель прячут FBY-only кнопки (см. `isFeatureOpen`).
  */
 export function featureMenuLayout(features: TFeatureMap, placementType?: string): string[][] {
   return menuLayout()
@@ -450,9 +476,8 @@ export function featureMenuLayout(features: TFeatureMap, placementType?: string)
 }
 
 function allowsLabel(features: TFeatureMap, label: string, placementType?: string): boolean {
-  if (FBY_ONLY_LABELS.has(label) && !isFby(placementType)) return false;
   const feature = MENU_TO_FEATURE[label];
-  return !feature || isFeatureEnabled(features, feature);
+  return !feature || isFeatureOpen(features, feature, placementType);
 }
 
 /** Отчёты, доступные пользователю, в порядке главного меню. */

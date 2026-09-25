@@ -10,10 +10,9 @@ import { htmlOptions } from '../../../formatting/telegram-format';
 import { helpText } from '../help.text';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
-import { profileText } from '../profile.text';
+import { profileText, profileView } from '../profile.text';
 import { MENU_TO_REPORT } from '../report-buttons';
 import { settingsKeyboardRows, settingsText } from '../settings.text';
-import { storeTitle } from '../store-title';
 
 import { AdminUsersHandler } from './admin-users.handler';
 import { ApiSettingsHandler } from './api-settings.handler';
@@ -169,16 +168,17 @@ export class MenuCommandsHandler {
     );
 
     await ctx.reply(
-      profileText({
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-        telegramUserId: ctx.from.id,
-        username: ctx.from.username,
-        accessStatus: access?.status,
-        storeName: storeTitle(store),
-        configured: !!(store?.campaign_id && store?.business_id && store?.token),
-        registeredAt: access?.createdAt ? new Date(access.createdAt) : undefined,
-      }),
+      profileText(
+        profileView({
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+          telegramUserId: ctx.from.id,
+          username: ctx.from.username,
+          isAdmin: this.config.isAdmin(ctx.from.id),
+          access,
+          store,
+        }),
+      ),
       htmlOptions(),
     );
   }

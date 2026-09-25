@@ -1,5 +1,6 @@
 import type { IPurchasePriceRow } from '../../../database/services/purchase-price.service';
 import type { IYandexTenantCredentials, IStockUpdate } from '../yandex-api.client';
+import type { TWriteSkipReason } from './stock-upload-policy';
 
 import { Injectable, Logger } from '@nestjs/common';
 
@@ -8,9 +9,10 @@ import { PurchasePriceService } from '../../../database/services/purchase-price.
 import { STOCKS_BATCH_SIZE } from '../yandex-api.paths';
 import { YandexClientFactory } from '../yandex-client.factory';
 
-import { isStockWritable, placementOfCampaign } from './placement';
+import { placementOfCampaign } from './placement';
 import { parsePriceList } from './price-list.parser';
 import { resolveSku, stripBrand } from './sku-resolver';
+import { skipReasonOf } from './stock-upload-policy';
 
 export interface ISkippedRow {
   name: string;
@@ -68,36 +70,8 @@ export interface IStockSyncResult {
   writeSkipReason?: TWriteSkipReason;
 }
 
-/**
- * Повод не отправлять остатки в Partner API.
- *
- * - `placement` — модель магазина не даёт продавцу управлять остатками (FBY)
- *   либо её не удалось определить; какой из двух случаев, различает
- *   `placementType`;
- * - `write-disabled` — запись выключена настройкой среды
- *   (`STOCK_WRITE_ENABLED=false`), то есть решение развёртывания, а не магазина;
- * - `feature-disabled` — администратор выключил продавцу фичу «остатки из
- *   прайса»; действие продавца — написать администратору, а не менять магазин.
- */
-export type TWriteSkipReason = 'placement' | 'write-disabled' | 'feature-disabled';
-
-/**
- * Единственное место, где решается, писать ли остатки.
- *
- * Отдельной функцией, а не выражением на месте: порядок поводов значим (среда
- * шире решения по продавцу, оба шире модели — при выключенной записи модель
- * даже не спрашивается), а `no-nested-ternary` в этом проекте запрещён не зря.
- */
-function skipReasonOf(
-  writeEnabled: boolean,
-  stockWriteAllowed: boolean,
-  placementType?: string,
-): TWriteSkipReason | undefined {
-  if (!writeEnabled) return 'write-disabled';
-  if (!stockWriteAllowed) return 'feature-disabled';
-  if (!isStockWritable(placementType)) return 'placement';
-  return undefined;
-}
+/** Повод не писать остатки — правило живёт в stock-upload-policy.ts, общее с ранним слоем. */
+export type { TWriteSkipReason };
 
 /** Кому принадлежит прайс. Закуп скоупится по продавцу, как и всё остальное. */
 export interface ISyncOptions {

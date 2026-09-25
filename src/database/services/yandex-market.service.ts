@@ -145,11 +145,7 @@ export class YandexMarketService {
   }
 
   /**
-   * Обновить одну ставку расчёта прибыли (комиссия или налог).
-   *
-   * Отдельный метод, а не вычисляемый ключ на месте вызова: `{[field]: value}`
-   * с полем-объединением теряет типизацию, и опечатка в имени поля молча
-   * записала бы в документ лишнее.
+   * Обновить одну ставку расчёта прибыли — частный случай `updateProfitSettings`.
    */
   async updateRate(
     telegramUserId: string,
@@ -159,47 +155,59 @@ export class YandexMarketService {
     field: TRateField,
     value: number,
   ): Promise<YandexMarketDocument | null> {
-    // Перечисление по одному варианту, а не `{[field]: value}`: вычисляемый ключ
-    // с полем-объединением теряет типизацию, и опечатка в имени поля молча
-    // записала бы в документ лишнее поле вместо настройки.
-    const data: UpdateYandexMarketDto = {};
-    if (field === 'commissionPercent') data.commissionPercent = value;
-    if (field === 'taxPercent') data.taxPercent = value;
-    if (field === 'discountPercent') data.discountPercent = value;
-
-    return await this.updateByTelegramUser(telegramUserId, data);
+    return await this.updateProfitSettings(telegramUserId, { rates: { [field]: value } });
   }
 
   /**
-   * Записать скидку одного бренда, % — в карту `brandDiscounts`.
-   *
-   * НЕ через DTO/updateByTelegramUser: запись идёт по dot-path
-   * (`brandDiscounts.vostok`), а не полем документа, — иначе `$set` целой карты
-   * стирал бы скидки остальных брендов при параллельной правке.
-   *
-   * Белый список обязателен и несущий: ключ уходит в путь `$set`, то есть
-   * решает, КУДА писать в документе, — тот же довод, что у `setFeature`.
+   * Записать скидку одного бренда, % — в карту `brandDiscounts`. Путь записи
+   * и белый список брендов — в `updateProfitSettings`.
    */
   async updateBrandDiscount(
     telegramUserId: string,
     brand: TBrandKey,
     value: number,
   ): Promise<YandexMarketDocument | null> {
-    if (!isBrandKey(brand)) {
-      throw new Error(`Недопустимый бренд: ${brand}`);
+    return await this.updateProfitSettings(telegramUserId, { brandDiscounts: { [brand]: value } });
+  }
+
+  /**
+   * Ставки и скидки по брендам — ОДНОЙ записью. Через неё идут и правка одного
+   * поля в боте, и форма CRM, где продавец меняет несколько полей разом: три
+   * отдельных записи на одну кнопку «Сохранить» оставили бы документ
+   * наполовину изменённым, если бы вторая упала.
+   *
+   * Ставки перечисляются по одной явными ветками, а не вычисляемым ключом из
+   * входа, — довод прежнего `updateRate`: опечатка в
+   * имени поля не должна молча записать в документ лишнее.
+   *
+   * Скидки — dot-path (`brandDiscounts.vostok`), а не `$set` целой карты:
+   * иначе правка одного бренда стирала бы скидки остальных. Белый список
+   * обязателен и несущий: ключ уходит в путь `$set`, то есть решает, КУДА писать
+   * в документе, — тот же довод, что у `setFeature`.
+   */
+  async updateProfitSettings(
+    telegramUserId: string,
+    settings: {
+      rates?: Partial<Record<TRateField, number>>;
+      brandDiscounts?: Partial<Record<TBrandKey, number>>;
+    },
+  ): Promise<YandexMarketDocument | null> {
+    const $set: Record<string, unknown> = { updatedAt: new Date() };
+
+    const rates = settings.rates ?? {};
+    if (rates.commissionPercent !== undefined) $set.commissionPercent = rates.commissionPercent;
+    if (rates.taxPercent !== undefined) $set.taxPercent = rates.taxPercent;
+    if (rates.discountPercent !== undefined) $set.discountPercent = rates.discountPercent;
+
+    for (const [brand, value] of Object.entries(settings.brandDiscounts ?? {})) {
+      if (!isBrandKey(brand)) {
+        throw new Error(`Недопустимый бренд: ${brand}`);
+      }
+      $set[`brandDiscounts.${brand}`] = value;
     }
 
     return await this.yandexMarketModel
-      .findOneAndUpdate(
-        { telegramUserId },
-        {
-          $set: {
-            [`brandDiscounts.${brand}`]: value,
-            updatedAt: new Date(),
-          },
-        },
-        { new: true },
-      )
+      .findOneAndUpdate({ telegramUserId }, { $set }, { new: true })
       .exec();
   }
 

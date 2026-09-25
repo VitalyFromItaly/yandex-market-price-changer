@@ -62,6 +62,18 @@ export function parseOfferRecommendation(
   };
 }
 
+/** Оценки по-русски — одна таблица на книгу бота и таблицу CRM. */
+const COMPETITIVENESS_TITLES: Readonly<Record<string, string>> = {
+  OPTIMAL: 'привлекательная',
+  AVERAGE: 'умеренная',
+  LOW: 'непривлекательная',
+};
+
+/** Подпись оценки; неизвестный код печатается как есть. */
+export function competitivenessLabel(code: string): string {
+  return COMPETITIVENESS_TITLES[code] ?? code;
+}
+
 /** Насколько цена выше привлекательного порога. */
 export interface IRecommendationDelta {
   /** Рубли: price − optimalPrice. */

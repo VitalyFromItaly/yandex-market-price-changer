@@ -37,7 +37,6 @@ import { AdminNotifierService } from './bots/shared/services/admin-notifier.serv
 import { BotCommandsService } from './bots/shared/services/bot-commands.service';
 import { StorePromptService } from './bots/shared/services/store-prompt.service';
 import { FbyOverviewProcessor } from './queue/processors/fby-overview.processor';
-import { FileProcessingProcessor } from './queue/processors/file-processing.processor';
 import { HostingReminderProcessor } from './queue/processors/hosting-reminder.processor';
 import { MarketReportProcessor } from './queue/processors/market-report.processor';
 import { NotificationsProcessor } from './queue/processors/notifications.processor';
@@ -105,6 +104,16 @@ import { QUEUE_NAMES } from './index';
         },
       },
       {
+        name: QUEUE_NAMES.CRM_JOBS,
+        defaultJobOptions: {
+          removeOnComplete: 20,
+          removeOnFail: 50,
+          // Одна попытка, довод `reports`: повтор жжёт квоту Partner API, а
+          // продавец видит failed и сам нажмёт ещё раз.
+          attempts: 1,
+        },
+      },
+      {
         name: QUEUE_NAMES.NOTIFICATIONS,
         defaultJobOptions: {
           removeOnComplete: 50,
@@ -156,7 +165,16 @@ import { QUEUE_NAMES } from './index';
     FileProcessingService,
     FileDataProcessorService,
     TelegramApiService,
-    FileProcessingProcessor,
+    /**
+     * FileProcessingProcessor (мёртвый 4-хоповый конвейер) здесь НАМЕРЕННО нет.
+     * Он висел на той же очереди file-processing с тремя `@Process` по
+     * concurrency 3, а Bull СУММИРУЕТ конкурентность всех обработчиков одной
+     * очереди (queue.js, `while (concurrency--)`): любой из 10 циклов берёт
+     * джобу с любым именем. Так две записи остатков — даже одного продавца —
+     * шли параллельно, при том что код и CLAUDE.md обещали «строго по одной».
+     * Единственный обработчик — SYNC_STOCKS с concurrency 1, и туда же ставит
+     * прайс CRM. Пиннится тестом stock-queue-concurrency.test.ts.
+     */
     YandexApiProcessor,
     NotificationsProcessor,
     ReportsProcessor,

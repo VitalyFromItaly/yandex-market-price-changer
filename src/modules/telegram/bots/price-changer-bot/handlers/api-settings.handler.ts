@@ -16,6 +16,7 @@ import {
   BRAND_CB_CANCEL,
   BRAND_CB_PATTERN,
   brandDiscountTitle,
+  brandUsageOf,
   brandInputLabel,
   brandPendingValue,
   parseBrandCallback,
@@ -40,7 +41,6 @@ import {
   rateTitle,
   ratesOf,
   validatePercent,
-  validateRate,
   type IRateInput,
   type TRateField,
 } from '../../../../yandex/reports/profit';
@@ -64,6 +64,7 @@ import {
   type TPromoMode,
   type TPromoPending,
 } from '../../../../yandex/reports/promo';
+import { StoreSettingsService } from '../../../../yandex/settings/store-settings.service';
 import { placementOfCampaign } from '../../../../yandex/stocks/placement';
 import { YandexAuthError } from '../../../../yandex/yandex-api.errors';
 import { YandexClientFactory } from '../../../../yandex/yandex-client.factory';
@@ -71,11 +72,7 @@ import { TTelegrafBot } from '../../../domain.telegram';
 import { b, esc, htmlOptions } from '../../../formatting/telegram-format';
 import { FEATURE, isFeatureEnabled } from '../../shared/features.domain';
 import { AdminNotifierService } from '../../shared/services/admin-notifier.service';
-import {
-  brandDiscountsKeyboardRows,
-  brandDiscountsText,
-  brandUsageOf,
-} from '../brand-discounts.text';
+import { brandDiscountsKeyboardRows, brandDiscountsText } from '../brand-discounts.text';
 import { MENU, MENU_LABELS } from '../menu.constants';
 import {
   nextStep,
@@ -175,6 +172,8 @@ export class ApiSettingsHandler {
     private readonly errors: ErrorReporter,
     // Закупочные цены — источник списка брендов для экрана «Скидки по брендам».
     private readonly purchasePrices: PurchasePriceService,
+    // Единственный путь записи ставок, скидок и продвижения — общий с CRM.
+    private readonly storeSettings: StoreSettingsService,
   ) {}
 
   /**
@@ -667,13 +666,9 @@ export class ApiSettingsHandler {
   private async disablePromotion(ctx: Context, brand: TBrandKey): Promise<void> {
     const telegramUserId = ctx.from.id.toString();
 
-    const updated = await this.yandexMarketService.updatePromoCommission(
-      telegramUserId,
-      brand,
-      null,
-    );
+    const result = await this.storeSettings.setPromotion(telegramUserId, brand, null);
 
-    if (!updated) {
+    if (result.ok === false) {
       await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
       return;
     }
@@ -721,18 +716,17 @@ export class ApiSettingsHandler {
       return false;
     }
 
-    const validation = validateRate(field, value);
-    if (!validation.ok) {
+    const result = await this.storeSettings.setRate(telegramUserId, field, value);
+    if (result.ok === false && result.reason === 'invalid') {
       // Вопрос остаётся открытым: продавец должен ответить ещё раз, не начиная
       // всё заново, — так же ведут себя вопросы про день и время.
-      await ctx.reply(`❌ ${esc(validation.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
+      await ctx.reply(`❌ ${esc(result.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
       return true;
     }
 
-    const updated = await this.yandexMarketService.updateRate(telegramUserId, field, value);
     await this.accessService.setPendingRate(telegramUserId, botId, null);
 
-    if (!updated) {
+    if (result.ok === false) {
       await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
       return true;
     }
@@ -762,20 +756,15 @@ export class ApiSettingsHandler {
       return false;
     }
 
-    const validation = validatePercent(brandDiscountTitle(brand), value);
-    if (!validation.ok) {
-      await ctx.reply(`❌ ${esc(validation.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
+    const result = await this.storeSettings.setBrandDiscount(telegramUserId, brand, value);
+    if (result.ok === false && result.reason === 'invalid') {
+      await ctx.reply(`❌ ${esc(result.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
       return true;
     }
 
-    const updated = await this.yandexMarketService.updateBrandDiscount(
-      telegramUserId,
-      brand,
-      value,
-    );
     await this.accessService.setPendingRate(telegramUserId, botId, null);
 
-    if (!updated) {
+    if (result.ok === false) {
       await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
       return true;
     }
@@ -904,14 +893,17 @@ export class ApiSettingsHandler {
     const telegramUserId = ctx.from.id.toString();
     const botId = ctx.botInfo.id.toString();
 
-    const updated = await this.yandexMarketService.updatePromoCommission(
-      telegramUserId,
-      brand,
-      config,
-    );
+    // Шаги уже проверены по одному; сервис проверяет итог ещё раз теми же
+    // функциями — это та же проверка, через которую идёт форма CRM.
+    const result = await this.storeSettings.setPromotion(telegramUserId, brand, config);
+    if (result.ok === false && result.reason === 'invalid') {
+      await ctx.reply(`❌ ${esc(result.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
+      return true;
+    }
+
     await this.accessService.setPendingRate(telegramUserId, botId, null);
 
-    if (!updated) {
+    if (result.ok === false) {
       await ctx.reply(this.NO_STORE_FOR_RATES, htmlOptions());
       return true;
     }
@@ -1611,19 +1603,12 @@ export class ApiSettingsHandler {
    * токен» в ответ на «комиссия: 25» — это бот, не понявший, о чём его просят.
    */
   private async editRate(ctx: Context, rate: IRateInput): Promise<IReply> {
-    const validation = validateRate(rate.field, rate.value);
-    if (!validation.ok) {
-      return { message: `❌ ${esc(validation.error)}` };
-    }
+    const result = await this.storeSettings.setRate(ctx.from.id.toString(), rate.field, rate.value);
 
-    const updated = await this.yandexMarketService.updateRate(
-      ctx.from.id.toString(),
-      rate.field,
-      rate.value,
-    );
-
-    if (!updated) {
-      return { message: this.NO_STORE_FOR_RATES };
+    if (result.ok === false) {
+      return {
+        message: result.reason === 'invalid' ? `❌ ${esc(result.error)}` : this.NO_STORE_FOR_RATES,
+      };
     }
 
     return {
@@ -1641,19 +1626,16 @@ export class ApiSettingsHandler {
    * на «скидка восток: 4» — это бот, не понявший, о чём его просят.
    */
   private async editBrandDiscount(ctx: Context, input: IBrandDiscountInput): Promise<IReply> {
-    const validation = validatePercent(brandDiscountTitle(input.brand), input.value);
-    if (!validation.ok) {
-      return { message: `❌ ${esc(validation.error)}` };
-    }
-
-    const updated = await this.yandexMarketService.updateBrandDiscount(
+    const result = await this.storeSettings.setBrandDiscount(
       ctx.from.id.toString(),
       input.brand,
       input.value,
     );
 
-    if (!updated) {
-      return { message: this.NO_STORE_FOR_RATES };
+    if (result.ok === false) {
+      return {
+        message: result.reason === 'invalid' ? `❌ ${esc(result.error)}` : this.NO_STORE_FOR_RATES,
+      };
     }
 
     return {

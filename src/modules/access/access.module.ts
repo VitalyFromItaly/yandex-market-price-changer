@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
 import { AdminAuthModule } from '../admin/admin-auth.module';
+import { CrmModule } from '../crm/crm.module';
 import { TelegramModule } from '../telegram/telegram.module';
 
 import { AccessNotifierService } from './access-notifier.service';
@@ -21,9 +22,12 @@ import { AccessController } from './access.controller';
  * сказать об этом продавцу — молчаливое отключение он воспримет как поломку
  * бота. `forwardRef` здесь не для цикла (его нет), а на будущее: TelegramModule
  * тяжёлый и вполне может однажды понадобиться сам знать про пофичный доступ.
+ *
+ * CrmModule — ради сброса пароля CRM с карточки продавца: правило «стартовый
+ * пароль + сдвиг версии» живёт в CrmAuthService, второй копии в панели нет.
  */
 @Module({
-  imports: [DatabaseModule, AdminAuthModule, forwardRef(() => TelegramModule)],
+  imports: [DatabaseModule, AdminAuthModule, CrmModule, forwardRef(() => TelegramModule)],
   controllers: [AccessController],
   providers: [AccessNotifierService],
 })

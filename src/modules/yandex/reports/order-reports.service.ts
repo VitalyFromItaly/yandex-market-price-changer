@@ -32,7 +32,6 @@ import {
   type IMoneyTotals,
   type IOrderSubsidy,
 } from './money';
-import { moscowClock, moscowDateParam } from './moscow-day';
 import {
   DEFAULT_PERIOD,
   assertPeriodOrdered,
@@ -55,14 +54,8 @@ import {
   toStatsStatuses,
 } from './stats-orders';
 import { HISTORY_WINDOW_DAYS } from '../yandex-api.paths';
-import {
-  buildOrdersWorkbook,
-  buildReturningWorkbook,
-  returningFileName,
-  shippedFileName,
-  workbookFileName,
-} from './report-workbook';
-import { formatReport } from './report-message';
+import { reportWorkbook } from './report-workbook';
+import { formatReport, truncatedNote } from './report-message';
 
 /**
  * Позиция заказа в объёме, нужном отчётам.
@@ -587,27 +580,7 @@ export class OrderReportsService {
     store: YandexMarketDocument,
     now: Date = new Date(),
   ): Promise<IReportExport> {
-    const result = await this.build(store, REPORT.IN_TRANSIT, now);
-
-    if (!result.count) {
-      return { empty: true, message: formatReport(result, now) };
-    }
-
-    const workbook = buildOrdersWorkbook(result.orders);
-
-    // Про обрезку сообщаем прямо в подписи к файлу: молча урезанная выгрузка
-    // выглядит как полная, и расхождение с личным кабинетом продавец найдёт
-    // сам, в худший для этого момент.
-    const truncated = workbook.truncated
-      ? `\n\n⚠️ В файл попали первые ${workbook.rows} заказов из ${result.count}: остальные не поместились.`
-      : '';
-
-    return {
-      empty: false,
-      buffer: workbook.buffer,
-      filename: workbookFileName(moscowDateParam(now), moscowClock(now)),
-      caption: formatReport(result, now) + truncated,
-    };
+    return this.toExport(await this.build(store, REPORT.IN_TRANSIT, now), now);
   }
 
   /**
@@ -621,23 +594,7 @@ export class OrderReportsService {
     now: Date = new Date(),
     options: IReportBuildOptions = {},
   ): Promise<IReportExport> {
-    const result = await this.build(store, REPORT.SHIPPED_TODAY, now, period, options);
-
-    if (!result.count) {
-      return { empty: true, message: formatReport(result, now) };
-    }
-
-    const workbook = buildOrdersWorkbook(result.orders);
-    const truncated = workbook.truncated
-      ? `\n\n⚠️ В файл попали первые ${workbook.rows} заказов из ${result.count}: остальные не поместились.`
-      : '';
-
-    return {
-      empty: false,
-      buffer: workbook.buffer,
-      filename: shippedFileName(moscowDateParam(now), moscowClock(now)),
-      caption: formatReport(result, now) + truncated,
-    };
+    return this.toExport(await this.build(store, REPORT.SHIPPED_TODAY, now, period, options), now);
   }
 
   /**
@@ -650,24 +607,26 @@ export class OrderReportsService {
     period: IReportPeriod = DEFAULT_PERIOD,
     now: Date = new Date(),
   ): Promise<IReportExport> {
-    const result = await this.build(store, REPORT.RETURNING, now, period);
+    return this.toExport(await this.build(store, REPORT.RETURNING, now, period), now);
+  }
 
-    if (!result.count) {
-      return { empty: true, message: formatReport(result, now) };
-    }
+  /**
+   * Данные → книга → подпись для Telegram. Книгу выбирает `reportWorkbook` —
+   * та же функция, что у CRM, поэтому файлы двух каналов не могут разойтись;
+   * HTML-подпись остаётся здесь, это дело бота.
+   */
+  private toExport(result: IReportResult, now: Date): IReportExport {
+    const workbook = reportWorkbook(result, now);
+    if (!workbook) return { empty: true, message: formatReport(result, now) };
 
-    const workbook = buildReturningWorkbook(result.orders, result.returns?.records ?? []);
-
-    // «Строк», а не «заказов»: в этой книге строка — позиция, и один заказ
-    // занимает их несколько.
     const truncated = workbook.truncated
-      ? `\n\n⚠️ В файл попали первые ${workbook.rows} строк: остальные не поместились.`
+      ? `\n\n⚠️ ${truncatedNote(result.key, workbook.rows, result.count)}`
       : '';
 
     return {
       empty: false,
       buffer: workbook.buffer,
-      filename: returningFileName(moscowDateParam(now), moscowClock(now)),
+      filename: workbook.filename,
       caption: formatReport(result, now) + truncated,
     };
   }

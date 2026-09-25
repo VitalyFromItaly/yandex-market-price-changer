@@ -9,6 +9,7 @@ import { isFeatureKey } from '../../modules/telegram/bots/shared/features.domain
 import { parseBrandPending } from '../../modules/yandex/reports/brands';
 import { isRateField } from '../../modules/yandex/reports/profit';
 import { parsePromoPending } from '../../modules/yandex/reports/promo';
+import { escapeRegExp } from '../../shared/regexp';
 import { IAdminCard, UserAccess, UserAccessDocument } from '../schemas/user-access.schema';
 
 /** Кто обратился к боту — всё, что нужно, чтобы завести запись доступа. */
@@ -449,6 +450,26 @@ export class UserAccessService {
   async list(botId?: string): Promise<UserAccessDocument[]> {
     const filter = botId ? { botId } : {};
     return await this.model.find(filter).sort({ approvedAt: -1, appliedAt: -1, _id: -1 }).exec();
+  }
+
+  /**
+   * Записи по логину CRM: числовой логин — Telegram id, остальное — ник.
+   *
+   * Возвращаются ВСЕ совпавшие записи, а не первая: ник не уникален (его может
+   * сменить и занять другой человек), а у одного id бывает несколько `botId`.
+   * Разбирается этот список в `resolveAccount` (crm-auth.domain.ts) — решение,
+   * кого пускать, не должно жить в слое БД.
+   *
+   * Ник сравнивается без учёта регистра и целиком (`^…$`): в Telegram ник
+   * регистронезависим, а поиск подстрокой пустил бы «vasya» в чужой «vasya_shop».
+   * Индекса по `username` нет и не нужно — записей десятки, а вход редок.
+   */
+  async findByLogin(login: string): Promise<UserAccessDocument[]> {
+    if (/^\d+$/.test(login)) {
+      return await this.model.find({ telegramUserId: login }).exec();
+    }
+
+    return await this.model.find({ username: new RegExp(`^${escapeRegExp(login)}$`, 'i') }).exec();
   }
 
   /** Счётчики по статусам одним запросом, а не пятью. */

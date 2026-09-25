@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { YandexClientFactory } from '../../src/modules/yandex/yandex-client.factory';
+import { StoreSettingsService } from '../../src/modules/yandex/settings/store-settings.service';
 import { YandexAuthError, YandexNetworkError } from '../../src/modules/yandex/yandex-api.errors';
 import { ApiSettingsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/api-settings.handler';
 import { FeedbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/feedback.handler';
@@ -148,6 +149,8 @@ describe('ApiSettingsHandler: подача заявки', () => {
         },
         { provide: ErrorReporter, useValue: errors },
         { provide: PurchasePriceService, useValue: purchasePrices },
+        // Настоящий: проверка ставок живёт в нём, а запись уходит в мок выше.
+        StoreSettingsService,
       ],
     }).compile();
 

@@ -21,6 +21,8 @@ npm run lint-fix       # eslint . --fix
 npm run prettier-fix   # prettier --write ./src
 npm run api            # regenerate src/modules/yandex/api from api-docs/openapi/openapi.yaml (unused client — see below)
 npm run parser:run     # run the xlsx parser standalone against a local file
+npm run dev:crm        # vite on :5174 for the seller CRM (crm/), /api proxied to :3004
+npm run typecheck:crm && npm run test:crm   # vue-tsc + vitest for crm/ (separate configs, see below)
 npm run tunnel         # vk-tunnel on :3004; tunnel:ngrok for ngrok. Webhook mode needs a public URL.
 
 # read-only diagnostics against a live seller's data (see "Profit")
@@ -173,6 +175,12 @@ actionLog → accessGate → featureGate → start → menu → slash → adminC
     re-run; a second stall fails the job into the panel's «Очереди», retryable by button). A second
     file queues **behind** the first — concurrency is 1, so there is no write race and the old
     in-memory `inFlight` latch is gone; the reply names the queue position when anything is ahead.
+    **"Concurrency is 1" was false until TASK-080.** The dead `FileProcessingProcessor` sat in
+    `providers` on the same queue with three `@Process` at concurrency 3, and Bull 4 **sums** the
+    concurrency of every handler of a queue (`queue.js`, `while (concurrency--)` — each loop takes a
+    job of any name), so up to 10 stock writes, even two files of one seller, ran in parallel. It is
+    out of `providers` now and `stock-upload-policy.test.ts` pins that; the CRM enqueues into this
+    same queue precisely so that bot and web write stocks one at a time.
     The error text is shared (`uploadErrorText` in `stock-report.ts`) so the enqueue path and the
     processor cannot drift. This is **not** a revival of the dead 4-hop chain below: one job, one
     processor.
@@ -192,7 +200,8 @@ actionLog → accessGate → featureGate → start → menu → slash → adminC
     (after a switch in the bot the model is known, and the picker itself runs off that cache, so the
     normal case costs no request), otherwise one `StockSyncService.placementFor()` call. The warning
     must precede the download — promising «загружаю остатки» and reporting «остатки не записаны» a
-    minute later reads as a malfunction, which is why `progressText` has three states, not two.
+    minute later reads as a malfunction, which is why the progress text has four states
+    (`TUploadProgress`), not two.
   - **Writing stocks requires `STOCK_WRITE_ENABLED=true`, declared per deployment.** Development runs
     against the _live_ store — the token in `.env` is real — so a local run with an uploaded price
     list would move a real seller's stock, and nothing can undo it. The variable is **required with
@@ -207,13 +216,28 @@ actionLog → accessGate → featureGate → start → menu → slash → adminC
       `'false'` truthy, and that typo would enable writes silently. Same reason as
       `TELEGRAM_UPDATE_MODE`.
     - Checked **before** the placement, so a run with writes off does not even ask Market for the
-      model.
+      model. Since TASK-080 the **early** layer checks it too (`decideUpload`): with writes off the
+      bot promises «🔍 Разбираю файл — сохраню закупочные цены, остатки не трогаю…» instead of
+      «⏳ Загружаю остатки» followed a minute later by «🧪 Запись остатков выключена». No warning is
+      sent for it — a deployment decision, nothing for the seller to do (the `skipAdvice` argument).
   - **Three barriers, and the handler is not the enforcing one.** `StockSyncService.sync` resolves
     the placement itself from a live `listStores()`; the **last barrier sits inside `writeInBatches`**,
     next to the single `updateStocks` call and _before_ `getWarehouseId()`, so no future write path
     can slip past. Same argument as `featureGate` vs `featureMenuLayout`. The handler asks the
     service rather than calling `listStores` itself — the rule and the way to resolve it stay in one
     place or they drift.
+  - **The early layer is one module for both channels** (TASK-080): `stocks/stock-upload-policy.ts`
+    (pure: `UPLOAD_LIMITS`, `checkUploadFile`, `decideUpload`, and `skipReasonOf` — **moved here from
+    the sync service**, which now imports it, so the early and the last layer apply literally one
+    rule) plus `StockUploadPolicyService` (reads env, resolves placement: cache → `placementFor`).
+    Callers pass **booleans** (`savePrices`, `stockFeatureOn`) with the admin already resolved, so
+    `yandex/` does not import the bot's feature registry. The decision returns codes
+    (`warning`, `progress`), and `stock-upload.texts.ts` turns them into words — the bot's texts
+    moved there verbatim and the handler re-exports the old names. Only wording that points at a bot
+    control differs by channel: `fbyStocksReadonlyText({plain})`, `skipAdvice(result, 'crm')`
+    («…откройте магазин FBS из списка «Магазины»», «без отметки «Только проверка»») — in the CRM a
+    store is opened from the list, not switched (see «Магазины в CRM»), so the bot's button would
+    be a false lead there.
   - **An unknown placement counts as forbidden everywhere**, so a failed `listStores()` blocks the
     write too. An unfair refusal is fixed by switching stores in two taps; a write onto Market's
     warehouse is fixed by nothing — Yandex does not report what applied. "Could not determine"
@@ -904,7 +928,7 @@ redeemed` predicate as `placedIsMain`, computed after `profitOf`. `formatProfitR
 
 Mongoose via `@nestjs/mongoose`. `database/database.module.ts` does `MongooseModule.forRootAsync`
 (uri/dbName from `AppConfigService`) + `forFeature([Bot, User, UserAccess, ReportSchedule,
-PurchasePrice, YandexMarket, ActionLog])` and
+PurchasePrice, YandexMarket, ActionLog, AdminCredential, CrmCredential])` and
 re-exports `MongooseModule` so feature modules can `@InjectModel`. Schemas are decorator classes in
 `database/schemas/*.schema.ts` with imperative `schema.index/methods/statics` appended after
 `SchemaFactory.createForClass`.
@@ -1301,6 +1325,532 @@ ts-node in dev (`src/` → `web/dist`).
 - **No component tests** — that would mean `jsdom` + `@vue/test-utils` for ~250 lines of markup. What
   needs proving (login, throttle, guard, one-shot password generation) is tested on the backend.
 
+**The seller CRM is a second SPA, `crm/`, served at `/crm/` by the same process** (TASK-069;
+decisions `crm_location`, `crm_stack`). Structure, state and screen design are governed by the skills
+in `.claude/skills/` (`frontend-module`, `pinia-store`, `frontend-design`) — they keep the rules, this
+keeps the reasons for the scaffold:
+
+- **`useStaticAssets(crm/dist, {prefix: '/crm'})` is registered BEFORE the root one** for the admin
+  panel. Both builds ship an `index.html` and a `favicon.svg`; express-static answers with the first
+  match. Vite builds with `base: '/crm/'`, otherwise every asset URL points at the admin's root.
+- **Hash router again**, for the admin's reason plus one more: a reload of a history-mode deep link
+  would be an unmatched 404, and `AllExceptionsFilter` tags exactly those as `scanner` junk.
+- **Its own `crm/tsconfig.json` (strict, `Bundler`, alias `@` → `crm/src`) and `crm/vitest.config.ts`**,
+  not extensions of the root ones: the backend is node16 and deliberately loose, and the root vitest
+  runs swc for Nest decorators over `__tests__/**` only. The `@` alias exists **only inside `crm/`** —
+  the backend stays on relative imports.
+- **PostCSS/Tailwind is configured inline in `crm/vite.config.ts`**, not as a `postcss.config.*` file:
+  vite looks such a file up from its root upwards, and one badly placed config would run the admin
+  build through Tailwind it does not have.
+- **Unlike `web/`, `crm/` is linted** — `eqeqeq` (the skill's "strict equality only") and the
+  component size warnings would otherwise live on memory. Type-aware rules are off there
+  (`disable-type-checked`): the root `project: true` does not cover a bundler tsconfig with `.vue`,
+  and type checking is `vue-tsc`'s job. CI runs `typecheck:crm` and `test:crm` without `--if-present`.
+- **Tokens are the admin's colours in HSL** (`crm/src/assets/index.css`) so Tailwind can apply alpha;
+  two tools of one owner must not look like two products. Font is `@fontsource-variable/inter`,
+  bundled — no external domain in `crm/dist` (checked by grep: only XML namespaces and Vue's
+  error-reference text).
+- Sections not yet built render `SectionPlaceholder` from `crm/src/navigation.ts`; a module's
+  `pages/routes.ts` replaces its placeholder. Frontend deps are **devDependencies**, like `web/`'s —
+  the runner image does `npm ci --omit=dev` and needs only the built `crm/dist`.
+
+### CRM продавца: обзор
+
+Веб-кабинет продавца — **второй канал к тем же сервисам**, не второе приложение. Сборка и раздача
+описаны выше (`crm/`, `/crm/`); ниже по разделам — вход, задачи и каждая фича. Здесь — только
+каркас, в который они складываются:
+
+- **Три оси, через которые идёт каждый запрос.** Гвард (`CrmJwtGuard`: JWT, пароль, доступ, фичи —
+  одним классом, второго гварда нет), фоновая задача (`crm-jobs` + `CrmJobResult` для всего, что
+  дольше секунды), магазин из адреса (`scopeStore` — веб не трогает активный магазин бота). Новый
+  раздел, обошедший любую из трёх, — это обход гейта бота, лишний Redis или отчёт не того магазина.
+- **Логика — никогда в `src/modules/crm/`.** Там доставка и разбор параметров; числа, тексты и
+  запись — из сервисов `YandexModule`/отчётов, которые зовёт и бот. Каждый раздел ниже начинался
+  с выноса ядра из хендлера бота в сервис, и это не совпадение: копия расходится с ботом, и
+  продавец видит два разных числа для одного вопроса.
+- **Паритет пинится, а не помнится** (TASK-088, требование владельца «абсолютно весь
+  функционал»). `crm-parity.domain.ts`: `FEATURES_WITHOUT_SECTION` — фичи без раздела с причиной
+  (`promotion` — блок «Настроек», `deep_history`/`fby_supply` — модификаторы, едут снимком
+  `features`, `hosting_reminder` — рассылка без экрана); `BOT_SCREEN_SECTIONS` — кнопка `MENU` →
+  раздел, полный `Record`. `crm-parity.test.ts` краснеет на фиче без раздела и на кнопке, ведущей
+  в раздел, который её фича не открывает. Исключения — `Partial`, **намеренно**: новая фича должна
+  ронять тест с именем ключа, а не компиляцию с сообщением про `Record`.
+  - `ym-schedule` в паритете считается «маршрут есть», хотя это `SectionPlaceholder`: «Рассылка» —
+    TASK-081, владелец её пропустил. Реализуя её, таблицу трогать не нужно.
+  - `USERS` — единственный `botOnly`: в вебе админский экран — это `web/`, а не CRM продавца.
+- Документы-правила — `src/modules/crm/README.md` (API и барьеры) и `crm/README.md` (фронт).
+
+### Вход в CRM продавцов (`src/modules/crm/`)
+
+`POST /api/crm/auth/login {login, password}`, `GET /api/crm/auth/me`, `POST /api/crm/auth/password
+{current, next}`. Built on the admin-panel login pattern, with differences that matter:
+
+- **Login is the Telegram nick (no `@`, case-insensitive) or the numeric id** —
+  `UserAccessService.findByLogin` + pure `resolveAccount` in `crm-auth.domain.ts`. A nick found under
+  two different ids is **409** «войдите по Telegram id» (nicks are not unique); several `botId` for
+  one id → the `approved` row decides. Only approved sellers **with a connected store**, and admins
+  from `TELEGRAM_ADMIN_IDS` with a store (they have no `UserAccess` row, so by id), get in.
+- **The account is created lazily** (`CrmCredential`, one per `telegramUserId`, no `botId` — the store
+  is keyed the same way) on the first successful login with `CRM_INITIAL_PASSWORD` (default
+  `tg_rules_2026`, the owner's decision), via `$setOnInsert` upsert so a race never overwrites a
+  changed password. `mustChangePassword: true` until `/auth/password`; the new password is ≥10 chars
+  and never the initial one.
+- **bcrypt runs on every login**, including an unknown login (against the cached initial-password
+  hash) — timing must not reveal who is in the database. `LoginThrottle` is reused as is, keyed on
+  the normalized login and checked before bcrypt.
+- **An ordinary JWT with the admin panel's secret** (`AdminCredential.jwtSecret`) — no second secret.
+  The two panels are separated by audience: CRM signs/verifies `aud: 'crm'`, and
+  `AdminAuthService.verify` rejects **any** token carrying `aud`. Old admin tokens have none, so no
+  admin was logged out. Without that check a seller who is also an admin would open the admin panel
+  with a CRM token.
+- **`pwdv` = `passwordChangedAt` in ms**, re-read on every request: a password change kills earlier
+  tokens without a blacklist (the change always moves the timestamp by at least 1 ms).
+  `CrmJwtGuard` also re-reads `UserAccess` — revoking access in the bot or the panel closes the CRM
+  on the next request, not in seven days.
+- **The admin panel resets a forgotten password** (TASK-087): the seller card shows «последний вход»
+  and whether the initial password is still in use (`crm` in the single-seller responses only —
+  the list would need a batch read for a column it does not have), and
+  `POST /api/access/users/:id/crm-password-reset` puts the initial password back with
+  `mustChangePassword: true`. Sessions die through the same `pwdv` shift (≥1 ms, the
+  `changePassword` guard), not by deleting the document: deletion gives the same next login but
+  wipes `lastLoginAt`, the very thing the admin opened the card for. The rule lives in
+  `CrmAuthService.resetPassword` — `AccessModule` imports `CrmModule` rather than hashing in the
+  panel. It also clears the `LoginThrottle` lock (id, nick, `pwd:<id>`): whoever forgot the password
+  is exactly who pressed it five times. Author from `req.adminId`, one journal row
+  (`kind: 'crm-password-reset'`, `context: admin:<id>`); the password is in no response. No
+  credential yet → 404, nothing is created. The bot does **not** advertise the CRM (owner's decision
+  `crm_bot_link_dropped`, 2026-09-25) — there is no public-URL variable for a link.
+- **Routes are closed until the password is changed by default**: the guard answers 403
+  `{code: 'PASSWORD_CHANGE_REQUIRED'}` unless the handler carries `@AllowPendingPasswordChange()`
+  (only `me` and `password` do). A permission, not a restriction — a forgotten decorator closes too
+  much rather than opening someone's store to anyone who knows the shared password.
+- `/auth/me` is built by listing fields, never by spreading documents: no `token`, `campaign_id`,
+  `business_id` (pinned by `crm-auth.test.ts`).
+- **«Нет доступа» is its own 403 (`CRM_NO_ACCESS`) only when the password is right** (decision
+  `crm_no_access_message`). With a wrong password the answer stays the generic 401 — access status
+  is not learnable without the password. A seller told «неверный пароль» would go on guessing
+  passwords when what they need is the bot. Password-form errors carry `code`
+  (`WRONG_CURRENT_PASSWORD` / `WEAK_PASSWORD`) so the front puts them under the right field without
+  matching text.
+- **The front (`crm/src/modules/auth`, the reference module for the skills)**: session in
+  `sessionStorage` (`crm.session`, token + `mustChangePassword`, try/catch — no storage means an
+  in-memory session); one pure `resolveAuthRoute` decides every redirect, and while
+  `mustChangePassword` every route including a typed address goes to `/password`, which lives
+  **outside** the shell (no sidebar — nothing there would open). `installAuth` wires the http
+  client: a 401 **with** a session wipes all stores and returns to login with the server's reason;
+  a 401 **without** one is the wrong password on the login form itself and must not read as «сессия
+  истекла». The shell re-reads `/auth/me` when the tab becomes visible (≥30 s apart): a password
+  changed in another tab otherwise surfaces only on a request, and a screen with no requests
+  would never learn. The auth store has `clear()`, not `reset()` — `resetAllStores` on a store
+  switch must not log out.
+
+- **Feature gate (TASK-072): `@RequireFeature(...keys)` is checked INSIDE `CrmJwtGuard`**, not by a second guard —
+  a second guard can be forgotten in `@UseGuards`, and the decorator would then silently close nothing (the
+  `featureGate` argument). The rule is the bot's: `isFeatureOpen(features, key, placementType)` in
+  `features.domain.ts`, which the bot's `featureMenuLayout` now uses too. FBY-only is a property of the **feature
+  key** (`FBY_ONLY_FEATURES`), not of a bot label, so the CRM needs no separate marker. All keys are required; an
+  unknown key is closed; an admin passes the flags (`allFeaturesEnabled`) but **not** the placement. Refusals are 403
+  with `code: FEATURE_DISABLED` (the bot's wording, no HTML) or `FBY_ONLY` (`fbyOnlyScreenText(.., {plain: true})`,
+  shared with the bot). Features come from the same `UserAccess` row `verify()` already reads — no extra query;
+  the placement is read only for FBY-only keys, **from the `stores` cache** (no live `listStores` yet, see
+  `docs/known-gaps.md`).
+- **Navigation is a server-side allow-list** in two scopes since TASK-079: `/auth/me` returns the **account**
+  sections, `GET /api/crm/ym/stores/:key` the **store** ones (`CRM_STORE_SECTIONS`, decided by THAT store's
+  model). Both come from `visibleSections(features, placement, scope)` over `CRM_SECTIONS`
+  (`crm-features.domain.ts`, section → any-of features). `featureMenuLayout` is not reused directly — it returns the
+  bot's emoji labels, and «Прайс» has none. A section missing from the table is **hidden**, the safe drift direction;
+  `crm-features.test.ts` reads `crm/src/navigation.ts` as text and pins the two lists equal. Until `/auth/me` loads,
+  the sidebar is empty rather than full.
+- **Every CRM request is journalled by a middleware, not an interceptor** (`CrmActionLogMiddleware`, on
+  `crm/{*path}` — Nest prepends `/api` itself, pinned by an HTTP test). Interceptors run **after** guards, so a 401 or
+  a feature 403 would never reach one — and those are the rows that matter (the `actionLog`-before-`accessGate`
+  argument). It records on `finish`; the guard sets `request.crmUser` **before** its checks, so a refusal is
+  attributed to the seller, and `/auth/login` sets `crmLoginId`. Rows: `source: 'crm'`, `botId: 'crm'`,
+  `kind: 'request'`, the URL through `maskSecrets`, **never the body** (passwords). `AllExceptionsFilter` tags CRM
+  errors `source: 'crm'` with the seller's id and hands the message to the middleware via `res.locals.errorMessage`.
+  The admin log shows a «CRM» tag; the seller filter finds these rows unchanged (`filterOf` hides only `scanner`).
+
+### Фоновые задачи CRM (`src/modules/crm/jobs/`, очередь `crm-jobs`)
+
+Долгие отчёты (прибыль, FBY, платежи, отчёты Маркета — десятки секунд и минуты) веб не ждёт по
+HTTP: `POST /api/crm/ym/jobs {kind, params}` → `{jobId, created}`, `GET /jobs/:id` → статус и
+`data`, `GET /jobs/:id/file` → xlsx. Процессоры бота не тронуты — CRM регистрирует **kind** в
+`CrmJobsRegistry` и в `run` зовёт те же сервисы; доставка другая, логика одна.
+
+- **Отдельный `CrmJobsModule`, не часть `CrmModule`.** Очередь регистрируется только в
+  TelegramModule (правило `QueuesModule`), а тянуть граф бота во вход и гейт CRM нельзя —
+  `crm-features.test` поднимает `CrmModule` без него. Модули фич импортируют `CrmJobsModule` и
+  регистрируют kind в `onModuleInit`. В этой задаче kind-ов нет: их добавляют TASK-075+.
+- **Результат — в Mongo (`CrmJobResult`, TTL 24 ч), а не в Redis**: `removeOnComplete` режет хвост,
+  а xlsx в Redis — это память. Документ заводится при постановке, так что опрос не встречает
+  «нет такой задачи». Потолок `MAX_RESULT_BYTES` (15 МБ) ниже лимита документа — превышение
+  становится `failed` с причиной, а не падением записи.
+- **Дедуп — уникальный sparse-индекс по `activeKey` (`<telegramUserId>:<kind>[:<campaignId>]`)** — с
+  TASK-079 отчёт магазина замыкается и на кампанию (`scope` в `claim`), загрузка прайса — нет (одна
+  запись остатков за раз на продавца). Поле есть только
+  пока задача идёт и снимается `$unset` при любом исходе. Та же семантика, что `isQueuedFor` (свой
+  kind — свой замок), но атомарно: find-then-create пропустил бы две вкладки разом. Повторный POST
+  отдаёт jobId идущей задачи с `created: false`. Сбой `queue.add` сразу пишет `failed` — иначе
+  замок висел бы до TTL.
+- **`concurrency: CRM_JOBS_CONCURRENCY` (4), не дефолтная 1** (TASK-090): с одной задачей за раз главная
+  собиралась по очереди, плитки заказов стояли за «Прибылью», а тяжёлый отчёт одного продавца задерживал
+  всех. Лимиты очередью здесь не держатся (`activeKey`, `FbyStockService`, квоты Маркета), запись остатков —
+  в `file-processing`. `@Process` в процессоре ровно один — Bull суммирует concurrency (урок TASK-080).
+- **Payload без токена**, магазин перечитывается из Mongo. **Чужой jobId отвечает тем же 404**, что
+  несуществующий — `findOwn` фильтрует по `telegramUserId`.
+- **Фичи kind-а проверяет `CrmJwtGuard.assertFeatures`** — тот же метод, что стоит за
+  `@RequireFeature`, второй копии правила нет.
+- **Ошибки:** `CrmJobError` — текст для продавца как есть, админов не будит; остальное —
+  `reportErrorMessage` (общий с ботом, без значка) плюс `ErrorReporter` с `context: crm-job:<kind>`.
+  **Свой `@OnQueueFailed` здесь законен** — очередь своя; он переводит в `failed` задачу, воркер
+  которой умер (stalled), чтобы замок не держался сутки.
+- **Фронт: `useJob` (`crm/src/shared/composables`)** — опрос с backoff 1 с ×1.5 до 10 с, три сетевых
+  сбоя подряд терпятся (отчёт идёт минутами, моргнувший Wi-Fi не должен его ронять), остальные
+  ошибки останавливают сразу. `onScopeDispose` глушит опрос при уходе со страницы, счётчик запусков
+  выбрасывает ответы, пришедшие после `cancel`. Файл — `http.file` (тот же путь авторизации и 401),
+  имя из `filename*` RFC 5987.
+
+- **Кэш экрана: прошлые данные вместо скелетона** (`crm/src/shared/cache/`, решение владельца
+  2026-09-25). Отчёт собирается минутами, и каждый заход со скелетоном читался как «CRM тормозит».
+  Экран сразу показывает последний свой результат и обновляется фоном — запрос при открытии уходит
+  всегда. Хранится и в localStorage, поэтому переживает F5 и закрытие браузера — а значит, деньги и
+  заказы продавца лежат на его компьютере: ключ несёт id продавца (без сессии кэша нет), выход и 401
+  стирают всё (`clearReportCache`), запись старше недели не показывается, больше 1 МБ — только в
+  памяти вкладки. `useReportJob` ключует по kind + магазин + params, поэтому чужой период или
+  магазин под текущим не всплывёт. Формы (`useSettings`) и вид магазина не кэшируются: свежий ответ
+  стёр бы начатую правку, а устаревший вид — открыл бы закрытый раздел.
+
+### Отчёты о заказах в CRM (`src/modules/crm/orders/`, фронт `crm/src/modules/orders/`)
+
+«Уехало клиенту», «Выкуплено», «Едет обратно», «Едет до клиента» — четыре kind-а `orders:<report>`
+фоновых задач CRM, под фичами `report_*` (`REPORT_TO_FEATURE`, экспортирован ради этого — не копия).
+Своего контроллера нет.
+
+- **Числа и файл совпадают с ботом по построению, а не сверкой.** `run` зовёт тот же
+  `OrderReportsService.build`, а книгу выбирает `reportWorkbook(result, now)` (report-workbook.ts) —
+  та же функция, через которую теперь идут `export*` бота. HTML-подпись (`formatReport`) осталась у
+  бота. Тексты, нужные обоим каналам (`emptyReportText`, `unboundedNote`, `ASSEMBLING_NOTE`,
+  `truncatedNote`), вынесены из `formatReport` без разметки — прецедент `reportErrorMessage`.
+  Паритет пинит `crm-orders.test.ts`: содержимое листа CRM == листу бота (буферы сравнивать нельзя —
+  метаданные книги).
+- **«Выкуплено» в CRM скачивается файлом** (`vykupleno-…xlsx`, книга заказов), хотя бот шлёт его
+  текстом — решение владельца 2026-09-24; бот не менялся.
+- **Строка таблицы — заказ или возврат целиком, с суммой** (решение 2026-09-24): Σ строк = итог по
+  построению (заказ через `orderTotals`, возврат — `amountValue` как в `collectReturns`). Разбивка по
+  позициям — в xlsx.
+- **Фичи едут снимком в payload задачи** (`ICrmJobPayload.features` → `ICrmJobContext.features`) —
+  паттерн `deepHistory` бота: у админа нет `UserAccess`, и kind, читающий его сам, отбил бы именно
+  админа. Старые задачи без поля → `{}` → умолчания (deep_history выключен).
+- **Период глубже 30 дней без deep_history** — `YandexDateRangeError` превращается в `CrmJobError`:
+  понятный отказ продавцу, без алерта админам.
+- **Эхо периода в ответе обязательно.** Дедуп задач — по kind, и повторный POST того же отчёта с
+  другим периодом вернёт идущую задачу со СТАРЫМ периодом. Фронт сверяет `data.period` с запросом,
+  чужой результат не показывает и один раз перезапускает задачу.
+
+### «Прибыль» и «Калькулятор» в CRM (`src/modules/crm/profit/`, фронт `crm/src/modules/profit/`)
+
+Два kind-а фоновых задач: `profit:profit` (фича `report_profit`) и `profit:tariff_calc` (`tariff_calc`).
+Заглушка `GET /api/crm/ym/profit` удалена; HTTP-тесты гейта в `crm-features.test.ts` стучатся в
+**пробный** контроллер, объявленный в самом тесте, — они проверяют гвард и журнал, а не продуктовый адрес.
+
+- **Одна вкладочная страница, не два раздела** (решение владельца 2026-09-24): `CRM_SECTIONS['ym-profit']`
+  = `report_profit` ИЛИ `tariff_calc`, вкладки — только открытые (одна — без `Tabs`). Как у бота: кнопки
+  «💰 Прибыль» и «🧮 Калькулятор» стоят рядом.
+- **Числа — из `ProfitService.build` / `buildTariffReport`, решения и тексты — из plain-хелперов рядом с
+  форматтерами бота** (`profit-message.ts`: `isProfitEmpty`, `profitMainBlock`, `mainTariffEstimate`,
+  `profitExcluded`, `purchaseBasis(Text)`, `promoParts`, `tariffEstimateShare`, тексты-константы;
+  `tariff-calc-message.ts`: `servicesShare`, `servicesBreakdown`, `flatComparison(Text)`). Бот переведён на
+  них же, его текст не изменился (тесты форматтеров не правились). Заодно исчезла копия строки
+  «💵 Закуп: прайс от … минус …%», которую два экрана бота держали каждый у себя.
+- **tariff_calc и deep_history — из снимка `ICrmJobContext.features`**, UserAccess kind не читает (довод
+  `profit-report.processor`: у админа записи нет). В «Прибыли» tariff_calc — модификатор строки
+  калькулятора, у вкладки «Калькулятор» — её гейт.
+- **Файла нет** — бот присылает оба отчёта текстом, xlsx никто не просил. Список sku без закупа в CRM
+  **полный** (бот печатает пять) — таблицей с переходом в «Прайс», если раздел открыт.
+- **Разбор периода общий**: `parsePeriodParams` / `periodEcho` в `crm/jobs/crm-period.domain.ts`
+  (заказы, прибыль, калькулятор); на фронте — `crm/src/shared/period` (`PeriodPicker`, эхо, params) и
+  `useRouteTabs` в `shared/composables` (вкладка в параметре пути — второй потребитель после «Отчётов»).
+
+### «Прайс» в CRM (`src/modules/crm/price-list/`, фронт `crm/src/modules/price-list/`)
+
+Загрузка прайса (остатки + закуп) и список закупочных цен — вкладки раздела `ym-price-list`
+(«Загрузка» под любой из двух фич, «Закупочные цены» — только под `purchase_prices`, иначе вела бы
+в 403). `CRM_SECTIONS`/`navigation.ts` не менялись.
+
+- **Путь записи — ботовый, целиком.** `POST /api/crm/ym/price-list/upload` (multipart, поле `file`
+  + `dryRun`) → `StockUploadPolicyService` → `SYNC_STOCKS` в **ту же** очередь `file-processing` →
+  `StockSyncProcessor` → `StockSyncService.sync`. Своего kind в `CrmJobsRegistry` нет: итог пишется в
+  `CrmJobResult` (kind `price-list:upload`), и веб опрашивает его обычным `GET /jobs/:id`
+  (`useJob.track`). Отдельная очередь `crm-jobs` нарушила бы «одна запись остатков за раз».
+- **`IStockSyncJob` — union по `source`.** `'crm'` несёт `jobId` и опции; ботовый payload поле
+  `source` **не** ставит — его отсутствие и значит «бот», так читаются джобы, поставленные до
+  появления CRM (пиннит payload-тест хендлера).
+- **Файл — в `CrmJobResult.input`, не в Redis**: тот же TTL и владелец, что у результата.
+  Процессор читает его **без снятия** (`readInput`) — воркер, умерший на редеплое, Bull
+  перезапустит, и повтору файл нужен (у бота эту гарантию даёт повторное скачивание по file_id);
+  снимается `$unset` в `finishDone`/`finishFailed`. **`findOwn`/`find`/`claim` исключают `input`
+  (`.select('-input')`)** — иначе каждый опрос статуса тянул бы 10 МБ.
+- **Дедуп — 409 `UPLOAD_RUNNING` с `jobId`, а не «вот идущая задача»**: молча подменить новый файл
+  старым значило бы соврать о загруженном. Фронт подхватывает опрос той задачи.
+- **Multer — обёртка `PriceListUploadInterceptor`** над `FileInterceptor` (memoryStorage, лимит =
+  `UPLOAD_LIMITS.maxBytes`): голый отдаёт 413 с английским «File too large» без `code`. busboy без
+  `defParamCharset` читает имя части как latin1, а multer опцию не пробрасывает — `decodeFileName`
+  возвращает кириллицу. `@types/multer` не ставился: нужные три поля — `IUploadedFile`.
+- **Журнал CRM тело не читает** (middleware берёт URL и статус) — пиннит HTTP-тест с меткой в файле.
+- **Список закупа** — `PurchasePriceService.list` (подстрока sku/названия, ввод через
+  `escapeRegExp` из `src/shared/regexp.ts`, общий с `findByLogin`; потолок страницы 100). Колонка
+  «Закуп» — `applyDiscounts(ratesOf(store))` при чтении, то есть ровно то, чем считает «Прибыль».
+- **Подтверждение перед записью** — `ConfirmDialog`, кроме «Только проверка» и закрытой фичи
+  остатков: там записи заведомо не будет. Про FBY знает только сервер — он и предупреждает в ответе
+  POST (`warning`), тем же текстом, что бот.
+- В кит добавлены `FileInput`, `Checkbox`, `Pagination`; в `httpClient` — `http.upload(FormData)`
+  и `ApiError.details` (тело ошибки целиком: `UPLOAD_RUNNING` несёт `jobId`).
+
+### «Настройки» в CRM и `StoreSettingsService` (`src/modules/yandex/settings/`, `src/modules/crm/settings/`)
+
+Ставки, скидки по брендам и продвижение пишутся **одним сервисом на оба канала**:
+`StoreSettingsService` (провайдер `YandexModule`). Проверка — в чистом `store-settings.domain.ts`
+(`validateProfitSettings`, `validatePromoInput`) из тех же функций, что шаги бота (`validateRate`,
+`validatePercent`, `validatePromoFrom/Limit`); запись — `YandexMarketService.updateProfitSettings`,
+к которому свелись `updateRate`/`updateBrandDiscount`.
+
+- **Бот переведён на сервис, тексты не менялись.** Разбор ввода и проверки отдельных шагов промо
+  (чтобы переспросить конкретный шаг) остались в `api-settings.handler.ts`; итог перед записью
+  проверяется в сервисе ещё раз. Фичу `promotion` сервис не читает: бот проверяет её сам, CRM —
+  гвард маршрута.
+- **CRM:** `GET/PUT /api/crm/ym/settings`, `PUT|DELETE /api/crm/ym/settings/promotion/:brand`.
+  Раздел не гейтится; закрытая `promotion` даёт `promotion: null` в GET (блок скрыт) и 403 на
+  маршрутах записи. Ошибка проверки — 400 `{code: INVALID_SETTING, field}`, фронт ставит её под поле.
+- **Форма шлёт только изменённые поля** (`profitDiff`). Иначе действующая скидка нетронутого бренда
+  (сейчас — общая) записалась бы явным решением и перестала следовать за общей — нарушение правила
+  «хранятся только явные решения». Pending-полей `UserAccess` веб не использует.
+- `brandUsageOf` переехал в `brands.ts` (лист остался листом): бренды из прайса нужны и экрану бота,
+  и CRM.
+
+### «Профиль» и «Помощь» в CRM (`src/modules/crm/profile/`, фронт `crm/src/modules/{profile,help}/`)
+
+`GET /api/crm/profile` и `GET /api/crm/help`, оба под `CrmJwtGuard` (до смены пароля — 403). Своего
+текста у CRM нет: экраны строятся из тех же функций, что экраны бота.
+
+- **Профиль — `profileView(source)` в `profile.text.ts`.** Это единственное место, где считаются
+  `configured`, голое имя магазина, модель (`placementOfCampaign`), дата регистрации, подпись доступа
+  и открытые функции (`isFeatureOpen` с моделью: FBY-only на не-FBY скрыты). Оба входа бота
+  (`showProfile`, `/profile`) зовут `profileText(profileView({...}))` — прежние две ручные сборки
+  полей удалены, и `screens-single-source.test.ts` это пиннит. `profileText` склеивает имя с моделью
+  через `withPlacement` — тот же вывод, что давал `storeTitle`. Дату прайса и функции бот не печатает.
+- **Админ — «👑 Администратор» в обоих каналах** (решение `crm_profile_admin`). Записи `UserAccess`
+  у него нет, и бот раньше показывал ему «❌ Заявка не подана». Это единственное изменение вывода
+  бота; остальное сверено байт в байт с эталонами, снятыми до рефакторинга
+  (`profile-help-model.test.ts`).
+- **Ответ профиля собирается перечислением полей** (`toCrmProfile`), не раскладкой вьюхи — довод
+  `/auth/me`. Отдельный адрес, а не расширение `/auth/me`: тот перечитывается при каждом возврате во
+  вкладку, профилю же нужны запрос в прайс и запись доступа.
+- **Справка — структура `IHelpModel` (`help.model.ts`, лист)**, из которой бот рендерит HTML
+  (`renderHelp`), а CRM получает JSON. Перенос `\n` живёт **внутри** куска текста: в инструкции по
+  токену жирное переносится на следующую строку, и модель «массив строк» его бы разрезала; в вебе
+  обычный `white-space` сворачивает такой перенос в пробел. Три вида абзаца: `text` (сплошной),
+  `lines` (команды, по строке), `list` (маркированный/нумерованный). `TOKEN_HELP` визарда стал
+  `TOKEN_HELP_BLOCKS` — справка берёт его оттуда же, как раньше `stepHelp('token')`.
+- **Контакт поддержки едет полем модели** (`supportContact`), а не импортом константы: белый список
+  `blocked-no-keyboard.test.ts` (только `help.text.ts` и `menu.constants.ts`) не расширялся. Смысл
+  теста сохранён — в CRM пускают только одобренных и админов.
+- «Помощь» повторяет `/help` целиком, включая «Команды» (решение `crm_help_verbatim`).
+- **«Безопасность» — вкладка `/profile/:tab?`** (решение `crm_profile_tabs`), пункт
+  `profile-security` убран из `CRM_SECTIONS` и навигации; старый адрес `/profile/security` открывает
+  вкладку. Форма — `PasswordChangeForm` из модуля `auth`: осознанное исключение из правила «не
+  импортировать внутренности чужого модуля», копия разошлась бы с правилами пароля.
+
+### «Главная» CRM (`crm/src/modules/dashboard/`)
+
+Плитки «Едет до клиента» (срез), «Едет обратно» («Всего» = возвраты в пути), «Уехало сегодня», «Прибыль с
+1 числа», дата прайса и ссылки на разделы. Бэкенд не менялся: своего kind и эндпоинта у главной нет.
+
+- **Числа — из тех же фоновых задач `orders:*` / `profit:profit`**, модели плиток — через мапперы страниц
+  отчётов (`mapOrdersReport`, `profitBreakdown`): копия «на … МСК» / «Ожидается чистая» разошлась бы с экраном,
+  куда ведёт плитка. Закрытая фича — нет плитки и нет задачи (иначе 403 гейта).
+- **Замок задач общий со страницами отчётов** (дедуп по продавцу, kind и магазину), поэтому сверка эха периода и один
+  перезапуск вынесены в `shared/composables/useReportJob` — им пользуются и `useOrdersReport`, и `useProfitReport`.
+- **Число ведёт в отчёт с тем же периодом через query** (`?period=all`, `?period=day&day=ДД-ММ-ГГГГ`,
+  `periodQuery`/`periodFromQuery`): период страниц живёт в сторе, не в URL. `useLinkedPeriod` применяет его
+  **до** `watch(immediate)` первой загрузки и снимает query `replace`-ом — иначе F5 после смены периода
+  возвращал бы к периоду главной. Писать в чужой стор перед `push` нельзя (правило pinia-store), а ссылка
+  остаётся настоящей `RouterLink`.
+- Дата прайса — поле `priceListUpdatedAt` из `GET /api/crm/profile`; `/ym/price-list/purchase-prices` тяжелее и
+  закрыт фичей.
+
+### «Магазины» в CRM (`src/modules/yandex/stores/`, `src/modules/crm/stores/`, фронт `crm/src/modules/stores/`)
+
+TASK-079. Задача была сформулирована как «смена магазина из CRM, общий сервис с ботом» — владелец это
+отменил: **переключение активного магазина — паттерн Telegram**. В вебе магазины — список, в магазин
+«проваливаются»: `/ym/stores/:store/{,orders,profit,price-list}`, и всё внутри считается по магазину из
+адреса. Бот не тронут вовсе.
+
+- **Веб не пишет `YandexMarket.campaign_id`.** Каждый запрос отчёта несёт ключ магазина; сервер
+  перекрывает документ выбранной кампанией (`scopeStore` в `stores.domain.ts`: plain-объект с
+  подменёнными `campaign_id`/`business_id`/`name`, исходный документ не меняется) и отдаёт его тем же
+  `OrderReportsService`/`ProfitService`/`StockSyncService`, что и бот. Две вкладки на двух магазинах —
+  нормальный сценарий; при «общем активном» одна перетирала бы другой отчёты.
+- **Кэш `stores` — это и есть проверка доступа.** Кампания, которой нет в списке магазинов токена,
+  не перекрывается (`null` → 404 `STORE_NOT_FOUND`). Точек, где CRM определяет магазин, три, и все
+  переведены: `CrmJobsController`/`CrmJobsProcessor` (payload несёт `campaignId`, задачи до поля —
+  по активному), загрузка прайса (multipart-поле `store`, `ICrmStockSyncJob.campaignId`, `runCrm`) и
+  гейт FBY (`assertFeatures(user, keys, store)` — модель ОТКРЫТОГО магазина, не активного).
+- **Ключ в URL — первые 16 hex sha256 от campaignId** (`storeKeyOf`). campaign_id не печатается нигде,
+  а адресная строка — тоже экран; индекс в списке сдвинулся бы при обновлении кэша и открыл бы по
+  старой ссылке соседний магазин.
+- **Смена токена — `PUT /api/crm/ym/stores/token`, с проверкой до записи.** `StoresService.listByToken`
+  различает отказ (`YandexAuthError` → 400 `TOKEN_REJECTED` с `userMessage`), недоступность (503
+  `MARKET_UNAVAILABLE`) и пустой список (400 `TOKEN_EMPTY`); во всех трёх прежний токен остаётся —
+  онбординга в CRM нет, и сломать подключение из веба нельзя. Урок TASK-077: `listStoresSafe` бота
+  глотает отказ в `[]`, и «неверный токен» читался бы как «магазинов нет». Успех — одна запись
+  (токен + кэш). **Единственное место, где веб касается активного магазина бота**: если новый токен
+  прежнюю кампанию не открывает, `campaign_id` обязателен, и активным становится первый магазин
+  списка (`botStoreAfterToken`) — ответ называет его, фронт показывает в тосте.
+- **Разделы магазина — с `/ym/stores/:key`, аккаунта — с `/auth/me`** (`CRM_STORE_SECTIONS`,
+  `visibleSections(..., scope)`). Ставки/скидки, рассылка, профиль, помощь — снаружи: ставки общие на
+  аккаунт, `PurchasePrice` без store scope (список закупа внутри «Прайса» — тот же для всех магазинов).
+- **Фронт:** `StoreLayout` (обёртка детей `:store`) грузит вид магазина и, если открыт ДРУГОЙ магазин,
+  зовёт `resetAllStores()` — отчёт одного магазина не мелькнёт под именем другого; вернулись в тот же —
+  отчёты остаются. Ключ разделы берут из адреса (`shared/composables/useStoreKey`) и передают явно:
+  `useReportJob.launch` возвращает `store`, `load(report, store)`, `upload(file, dryRun, store)`.
+  Ссылки внутри магазина — по имени маршрута: Vue Router сам подставляет обязательный `:store` из
+  текущего адреса. Один магазин — со списка сразу внутрь, но только при первом входе за сессию
+  вкладки (`useSingleStoreEntry`), иначе пункт «Магазины» не открыл бы список, а на нём смена токена.
+  Старые адреса (`#/ym/orders`) уходят catch-all'ом в список: магазина они не знают.
+- Известное ограничение: после смены токена с переездом активного магазина reply-клавиатура бота
+  (FBY-кнопки) догонит только на следующей отрисовке меню — гейт всё равно перепроверяет модель.
+
+### «Карантин цен» в CRM (`src/modules/crm/quarantine/`, фронт `crm/src/modules/quarantine/`)
+
+TASK-082. Раздел магазина `ym-quarantine` под фичей `price_quarantine`: таблица товаров, подтверждение
+одной / отмеченных / всех — только через `ConfirmDialog`.
+
+- **Ядро — `QuarantineService` (`yandex/quarantine/quarantine.service.ts`) на оба канала**: `list(store)` и
+  `confirm(store, offerIds)`. Бот зовёт его же; у бота остались поиск магазина, индексы
+  `UserAccess.quarantineOfferIds` и отрисовка. Имя не `PriceQuarantineService` — такое есть в мёртвом
+  сгенерированном клиенте.
+- **Карантин бизнесовый** (`/v2/businesses/{id}/price-quarantine`), а раздел живёт в магазине: магазин
+  задаёт кабинет и токен. Экран и диалог говорят, что список общий на кабинет и подтверждение действует на
+  все его магазины (`quarantineBusinessNote`). Кампанийные эндпоинты не используются — без решения владельца.
+- **Подтверждается пересечение запроса с живым карантином** (`splitByLive`): веб присылает артикулы, а не
+  индексы, и устаревшая вкладка иначе подтвердила бы цену, которую продавец не видел. Ушедшие — `stale` в
+  ответе.
+- **Частичный сбой — не «ничего не вышло».** Клиент зовёт `onBatch` после каждого батча по 200; сбой после
+  первого успешного превращается в `QuarantinePartialConfirmError`, в CRM — 502 `QUARANTINE_PARTIAL` с
+  `confirmed`/`requested` и текстом «Подтверждено N из M…». Прочие ошибки Маркета — 502 `MARKET_ERROR` с
+  `userMessage`. Бот ведёт себя как раньше (общая ошибка).
+- После любого исхода подтверждения фронт перезапрашивает список (Маркет убирает подтверждённые), отметки
+  ушедших снимаются. Тексты (подписи причин `verdictTitle`, пояснение `QUARANTINE_EXPLAINER`) — из
+  `quarantine-message.ts`, общего с ботом; сервер отдаёт их в ответе GET.
+
+### «Отзывы» в CRM (`src/modules/crm/feedback/`, фронт `crm/src/modules/feedback/`)
+
+TASK-083. Раздел магазина `ym-feedback` под фичей `goods_feedback`: таблица отзывов без ответа, «Ответить» →
+диалог (поле → превью → «Опубликовать»), «Пропустить» — через `ConfirmDialog`.
+
+- **Ядро — `FeedbackService` (`yandex/feedback/feedback.service.ts`) на оба канала**: `listNeedingReaction`,
+  `reply`, `skip`. Бот зовёт его же; pending-вопрос, черновик в `UserAccess` и отрисовка остались у бота,
+  тексты бота не менялись. Имя не `GoodsFeedbackService` — такое есть в мёртвом сгенерированном клиенте.
+  `reply` — последний барьер: пустой или длиннее 4096 текст (`feedbackReplyProblem`, одна проверка на
+  всех) бросает `FeedbackReplyInvalidError`, не дойдя до Маркета.
+- **Товара в отзыве нет, и это не упущение**: `GoodsFeedbackIdentifiersDTO` (локальная спека) несёт только
+  `orderId` и deprecated `modelId`. Экран печатает номер заказа и прямо говорит, что товар Маркет не
+  сообщает (`FEEDBACK_NO_PRODUCT_NOTE`) — придуманный товар хуже честного пробела.
+- **Черновик живёт в форме, не на сервере**: `UserAccess.pendingFeedbackReply/feedbackDraft` — бот, веб их
+  не трогает. Публикует только кнопка шага превью; сбой Маркета оставляет диалог и текст, закрытый диалог
+  черновик не стирает.
+- **409 `FEEDBACK_GONE` против второго публичного комментария**: перед записью (ответ и пропуск) сервер
+  перечитывает страницу, и отзыва, которого в ней нет, не трогает — довод `splitByLive`. Вторая вкладка или
+  ответ из бота иначе опубликовали бы ещё один комментарий.
+- **Лимит 4096 — из ответа GET** (`replyMaxLength`): у поля на фронте и 400 `INVALID_REPLY` с `field: 'text'`
+  на сервере, до Маркета. Текст не обрезается и не нормализуется — публикуется ровно то, что было в превью.
+- Список — одна страница (50); при `nextPageToken` — строка «Показаны первые N…» (`feedbackMorePlain`,
+  общая с ботом), без полного обхода. Отзывы бизнесовые — `feedbackBusinessNote`, как у карантина.
+
+### «Платежи» и «Отчёты Маркета» в CRM (`src/modules/crm/{payments,market-reports}/`, фронт `crm/src/modules/{payments,market-reports}/`)
+
+TASK-084. Два раздела магазина (решение `crm_payments_market_layout`): `ym-payments` под `payments_report` и
+`ym-market-reports` под `market_reports`, шесть отчётов — вкладки в URL (`market-reports/:report?`). Kind-ы
+`payments:report` и `market-reports:<key>` зовут те же `PaymentsReportService.build` / `MarketReportsService.build`,
+что процессоры бота; результат — xlsx Маркета как есть.
+
+- **Даты — только в момент выполнения.** В params едет ключ пресета (`week|month|prevmonth`), даты считает
+  `paymentsRange` в kind-е (платежи) или сам сервис (отчёты Маркета). Разбор пресета — `parsePaymentsPeriod` в
+  `crm-period.domain.ts`, по ключам `PAYMENTS_PERIOD_LABELS`, не копии.
+- **Params проверяются строго в `parseMarketParams`**, хотя в боте — нет: сервис молча подставляет умолчания
+  (месяц 0, группировка CATEGORIES), и кнопки бота другого не пришлют, а HTTP пришлёт что угодно.
+  **Реализация принимает любой ЗАВЕРШЁННЫЙ месяц**, а не только из `realizationMonths`: форма, открытая 31-го и
+  отправленная 1-го, иначе получила бы отказ за месяц, который ей только что предложили.
+- **Опции форм отдаёт сервер** (`GET /ym/payments/options`, `GET /ym/market-reports/options?store=`) из констант
+  доменов бота — впервые в CRM: у заказов и прибыли варианты периода захардкожены на фронте, здесь их больше и они
+  зависят от магазина. Список отчётов фильтруется по модели ОТКРЫТОГО магазина (`isMarketReportAvailable`) —
+  оборачиваемость у не-FBY не видна; kind перепроверяет (кэш `stores` → живой `placementFor`, как бот), потому что
+  `market_reports` не FBY-only и гвард модель не смотрит. Категории «Конкурентов» — отдельный
+  `GET /ym/market-reports/categories`: это запрос в Маркет, он нужен одной вкладке и грузится при её открытии.
+- **420 у отчёта с `hourlyLimit` оборачивается в kind-е** в `CrmJobError(mktRateLimitText)`. Процессор CRM
+  `YandexRateLimitError` не различает, и продавец получил бы общий «лимит, будет чуть позже» — в пределах часа
+  позже не будет. У отчёта без квоты 420 уходит наверх обычным путём.
+- **`data` у этих kind-ов никогда не null**, даже когда файла нет: `useReportJob` считает задачу идущей, пока
+  `data === null`, и «данных нет» крутилось бы вечно. DONE без файла — `empty: true` с текстом бота; это
+  отдельное состояние экрана, не ошибка.
+- Тексты бота идут в веб через `withoutIcon` (`crm-jobs.domain.ts`) — формулировка та же, значок снят. `XLSX_TYPE`
+  переехал туда же из `crm-orders.kinds.ts`.
+- **Фронт:** отчёт заказывается кнопкой «Сформировать», а не при открытии (минуты работы Маркета и квота 10 в
+  час). У каждого из шести отчётов своя `useReportJob`: смена вкладки не бросает заказанный отчёт. Форма одна на
+  раздел (период общий у трёх отчётов). Выбор из вариантов — новый примитив `OptionGroup`
+  (`components/ui/option-group`, кнопки как у `PeriodPicker`); состояние «файл-отчёта» — общий
+  `shared/report-file/ReportFileState`.
+
+### «Рекомендации цен» и «Карточки» в CRM (`src/modules/crm/{recommendations,cards}/`, фронт `crm/src/modules/{recommendations,offer-cards}/`)
+
+TASK-085. Два раздела магазина (решение `crm_recommendations_cards_layout`): `ym-recommendations` под
+`price_recommendations` и `ym-offer-cards` под `offer_cards`. Kind-ы `recommendations:report` и
+`cards:report` фоновых задач CRM; в Telegram эти тысячи строк живут только файлом, в вебе — таблицей с
+поиском и фильтром, а xlsx (та же книга, что у бота) — кнопкой в шапке.
+
+- **Ядро на оба канала — `RecommendationsService` / `CardsService` (`yandex/{recommendations,cards}/`)**:
+  `build(store, now)` возвращает строки (рекомендации уже `sortByDeltaDesc`), для карточек — ещё
+  `summarizeCards`, момент среза `takenAt` и книгу с именем файла (`null`, когда строк нет). Процессоры бота
+  переведены на них; у бота остались текст и отправка, тексты не менялись. Момент среза один на текст,
+  таблицу и имя файла — отчёт его и несёт.
+- **Подписи — с сервера, из домена бота.** `competitivenessLabel` вынесен из книги в
+  `recommendations.domain.ts` (книга и CRM зовут одну таблицу); статусы и рекомендации карточек —
+  `cardStatusLabel`/`recommendationLabel`, «требует действия» — `ACTIONABLE_STATUSES`. Фронт копий не держит.
+- **null-дельта остаётся null** до самой ячейки («—»), и сортировка ставит такие строки в конец в ЛЮБОМ
+  направлении — «нет порога» не дешевле и не дороже других. То же у карточки без рейтинга.
+- **`data` никогда не null** — пустой срез отдаёт `emptyText` (текст бота через `withoutIcon`), иначе
+  `useReportJob` крутил бы загрузку вечно (урок TASK-084).
+- **Контроллера нет**: параметров у среза нет, опции форме не нужны. `isOwn` на фронте — `() => true`:
+  дедуп по (продавец, kind, магазин), а другого запроса того же kind-а не бывает.
+- **420 не оборачивается в `CrmJobError`**: квота рекомендаций поминутная (100/мин), общий текст
+  процессора CRM «будет чуть позже» здесь правдив — в отличие от часовых квот «Отчётов Маркета».
+- **Повторный вход в раздел квоту не тратит** (`ensure(store)`: срез этого магазина уже есть или
+  собирается — задача не ставится), свежий — кнопка «Обновить». Смена магазина сбрасывает сторы
+  (`StoreLayout`), так что срез другого магазина не покажется под чужим именем.
+- Таблица показывает **все** строки; книга режется `MAX_EXPORT_ROWS`, как у бота, — под таблицей тогда
+  строка «в файл вошли первые N». Слишком большой результат режет общий `MAX_RESULT_BYTES` задачи.
+
+### «FBY» и «Склады» в CRM (`src/modules/crm/{fby,warehouses}/`, фронт `crm/src/modules/{fby,warehouses}/`)
+
+TASK-086. Два раздела магазина (решение `crm_fby_warehouses_layout`): `ym-fby` под `fby` и `ym-warehouses` под
+`warehouses`, оба **FBY-only**, поэтому у не-FBY магазина их прячет `visibleSections`, а прямой запрос задачи
+получает 403 `FBY_ONLY` от `assertFeatures` по ОТКРЫТОМУ магазину. Ручной проверки модели в kind-ах нет.
+
+- **`FbyService.buildData` — структура, `build` — формат бота поверх неё.** `IFbyOverviewReport` несёт
+  `IFbyOverviewData`, момент съёмки остатков (`stockTakenAt`, раньше терялся) и книгу с именем файла. Процессор
+  бота остался на `build`, его тест не менялся.
+- **Правила экрана — экспортированные хелперы `fby-message.ts`, не копии.** `clusterTotals` (суммы кластеров),
+  `orderRequests` / `splitSupplies` (порядок и отсев терминальных), `requestTypeLabel` / `requestStatusLabel` /
+  `supplyStatusLabel`, `formatSupplyDate`, заглушки `REQUESTS_/SUPPLIES_UNAVAILABLE_TEXT`. Бот зовёт их же, текст
+  байт в байт прежний. Подписи отдаются без `esc` — экранирование дело HTML бота.
+- **`fby_supply` — из снимка `context.features`** (у админа в CRM — все, как `true` у бота). В ответе тройная
+  семантика `supplies` стала `{state: 'off' | 'error' | 'ok'}`: `undefined` в JSON не доезжает.
+- **«Итого» складов — `warehouseRowsSum` по строкам `joinWarehouseStock`**, одна функция с `totalLine` бота.
+  Фильтр на фронте его не пересчитывает. Без отчёта (`totals: null`) «пустых» нет: не знаем ≠ ноль.
+- **Лимит отчёта остатков 1/мин держит `FbyStockService`** (single-flight + мемо 60 с) — общий для бота и CRM,
+  и для обоих разделов. `ensure(store)` на фронте не ставит задачу при повторном входе; свежий срез — «Обновить».
+- **xlsx только у «FBY»** (та же книга `buildFbyWorkbook`). У «Складов» файла нет — бот его не шлёт.
+
 ### Access control: admin approval, not subscriptions
 
 Every user has a `UserAccess` record with status `new` → `pending` → `approved` | `rejected`.
@@ -1519,8 +2069,9 @@ Inline-кодеки (`pq:`, `fb:`, `pay:`) — чистые модули ряд�
 композере между `reportCallbacks` и `onboardingCallbacks`.
 
 - **«PUT остатков — единственная запись» больше не верно.** Мутирующих операций четыре: тот PUT и
-  три POST через **`postWrite`** в клиенте — подтверждение карантина, ответ на отзыв,
-  skip-reaction. `postWrite` — зеркало `put()`, БЕЗ повторов, и по той же причине: withRetry
+  три POST через **`postWrite`** в клиенте — подтверждение карантина (бот и CRM, через
+  `QuarantineService`), ответ на отзыв и
+  skip-reaction (бот и CRM, через `FeedbackService`). `postWrite` — зеркало `put()`, БЕЗ повторов, и по той же причине: withRetry
   повторяет 5xx/420, а повтор вслепую мог бы опубликовать **два одинаковых публичных комментария**
   на Маркете. Семантически читающие POST (отчёты, каталог, сам список отзывов) остаются на
   `post()` с повторами.
@@ -1539,7 +2090,8 @@ Inline-кодеки (`pq:`, `fb:`, `pay:`) — чистые модули ряд�
   строго **последней**: три соседних вопроса едят только числа/дату/время, этот — любой текст, и
   раньше он глотал бы их ответы (пиновано `feedback-domain.test.ts` по исходнику). Открытие
   вопроса сбрасывает остальные pending одним `$set` (внутри `setPendingFeedbackReply`).
-- **Платежи** (`payments.handler.ts` → `SEND_PAYMENTS_REPORT` → `payments-report.processor.ts`) —
+- **Платежи** (`payments.handler.ts` → `SEND_PAYMENTS_REPORT` → `payments-report.processor.ts`; в CRM — kind
+  `payments:report`, см. «Платежи» и «Отчёты Маркета» в CRM) —
   united-netting через очередь `reports` (generate→поллинг — минуты). **Ключа в `REPORT` нет
   намеренно** (прецедент `PLACED_DEFINITION`): ключ отчеканил бы кнопку периода и строку дайджеста
   для xlsx, бессмысленного в рассылке. Свои периоды `pay:week|month|prevmonth`
@@ -1554,6 +2106,9 @@ Inline-кодеки (`pq:`, `fb:`, `pay:`) — чистые модули ряд�
   (довод `orderPurchase`), строка уходит в «без данных». Всегда xlsx (довод FBY), момент среза в
   тексте и имени файла. Фича чисто читающая; follow-up вне скоупа — «применить рекомендованную
   цену» через `offer-prices/updates`.
+- **Загрузка, порядок строк/сводка и книга рекомендаций и карточек — в сервисах `YandexModule`**
+  (`RecommendationsService`, `CardsService`, TASK-085): процессоры бота зовут их, у бота остались
+  только тексты и отправка; CRM зовёт те же сервисы (см. «Рекомендации цен» и «Карточки» в CRM).
 - Оба новых процессора: payload `botId`/`chatId`/`telegramUserId` **без токена**, креды из Mongo,
   **без второго `@OnQueueFailed`**, дедуп `isQueuedFor` по своему имени джобы, фича в процессоре не
   перепроверяется (довод fby-overview).
@@ -1570,7 +2125,7 @@ Inline-кодеки (`pq:`, `fb:`, `pay:`) — чистые модули ряд�
 `market-reports.domain.ts`, шаг `marketReportsCallbacks` в композере; `deep_history`/`fby_supply`
 гейтом не разбираются — читаются в `run`/хендлере и едут в payload (паттерн `tariffEstimate`).
 
-- **«📈 Отчёты Маркета» — шесть асинхронных отчётов за ОДНИМ флагом** (решение продуктовое), все
+- **«📈 Отчёты Маркета» — шесть асинхронных отчётов за ОДНИМ флагом** (в CRM — kind-ы `market-reports:<key>`) (решение продуктовое), все
   `format=FILE` → готовый xlsx Маркета с caption (паттерн «Платежи»), один job
   `SEND_MARKET_REPORT`, один `market-report.processor.ts`, один универсальный
   `client.generateReport(path, body)`. **Параметры разнородны** (проверено по спеке) — общего
@@ -1728,7 +2283,7 @@ the next step — wrapping in `@Injectable()` must not mean rewriting.
 list; `.env.example` documents every key. Required: `STOCK_WRITE_ENABLED`, `MONGODB_URL`,
 `MONGODB_DATABASE`, `REDIS_HOST`,
 `TELEGRAM_TOKEN`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_ADMIN_IDS`. Defaulted: `PORT`, `NODE_ENV`,
-`REDIS_PORT`, `YANDEX_MARKET_BASE_URL`, `TELEGRAM_API_URL`. Optional: `REDIS_PASSWORD` (empty means
+`REDIS_PORT`, `YANDEX_MARKET_BASE_URL`, `TELEGRAM_API_URL`, `CRM_INITIAL_PASSWORD`. Optional: `REDIS_PASSWORD` (empty means
 "no auth") and `ADMIN_PASSWORD` (empty means "generate one and print it once"; when set it overrides
 the hash in Mongo — see "The admin panel is served by Nest itself").
 
@@ -1802,6 +2357,8 @@ CSV uploads, product creation, a price coefficient, Express):
 - `src/modules/imaging/README.md` — the card pipeline, the CLI, the preset, and the rakes already
   stepped on (sharp's one-channel raw, the clipped shadow blur, the pale ghost in low-confidence
   mask areas).
+- `src/modules/crm/README.md` — the seller CRM's API: login, barriers, background jobs, parity with
+  the bot, how to add a section. `crm/README.md` — the CRM frontend: commands, layout, rules.
 - `src/modules/parser/README.md` — states plainly that the module is off the live path, and what to
   delete it together with.
 

@@ -9,7 +9,10 @@ import {
 import { DEFAULT_RATES, RATE_FIELDS, rateCallback } from '../../src/modules/yandex/reports/profit';
 import { BRAND_CB_MENU } from '../../src/modules/yandex/reports/brands';
 import { PROMO_CB_MENU } from '../../src/modules/yandex/reports/promo';
-import { profileText } from '../../src/modules/telegram/bots/price-changer-bot/profile.text';
+import {
+  profileText,
+  profileView,
+} from '../../src/modules/telegram/bots/price-changer-bot/profile.text';
 import { helpText } from '../../src/modules/telegram/bots/price-changer-bot/help.text';
 
 /**
@@ -51,6 +54,28 @@ describe('Экраны собираются из одного источника
   it('оба входа в профиль зовут profileText', () => {
     expect(menuHandler).toContain('profileText(');
     expect(slashHandler).toContain('profileText(');
+  });
+
+  it('оба входа в профиль собирают вьюху одной функцией profileView', () => {
+    // Своих «configured = …» и «storeTitle(store)» в хендлерах быть не должно:
+    // вьюху строит profileView, та же, что отдаёт профиль в CRM.
+    expect(menuHandler).toContain('profileView(');
+    expect(slashHandler).toContain('profileView(');
+    expect(menuHandler).not.toMatch(/registeredAt:/);
+    expect(slashHandler).not.toMatch(/registeredAt:/);
+  });
+
+  it('CRM отдаёт профиль и справку из тех же моделей, без идентификаторов магазина', () => {
+    const crm = readFileSync(
+      resolve(__dirname, '../../src/modules/crm/profile/crm-profile.controller.ts'),
+      'utf8',
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+    expect(crm).toContain('profileView(');
+    expect(crm).toContain('helpModel(');
+    expect(crm).not.toMatch(/campaign_id|business_id|\btoken\b/);
   });
 
   it('кнопки «Автообновление» больше нет — у неё не было обработчика', () => {
@@ -100,6 +125,7 @@ describe('Идентификаторы магазина скрыты от про
     expect(text).toContain('allbestwatch.ru');
     expect(text).not.toContain('12345678');
     expect(text).not.toContain('87654321');
+    expect(text).not.toContain('87654321');
   });
 
   it('экран настроек не НАЗЫВАЕТ Campaign ID и Business ID', () => {
@@ -130,16 +156,24 @@ describe('Идентификаторы магазина скрыты от про
   });
 
   it('профиль показывает магазин по названию', () => {
-    const text = profileText({
-      telegramUserId: 222,
-      firstName: 'Вася',
-      configured: true,
-      storeName: 'allbestwatch.ru',
-      accessStatus: 'approved',
-    });
+    const text = profileText(
+      profileView({
+        telegramUserId: 222,
+        firstName: 'Вася',
+        isAdmin: false,
+        access: { status: 'approved' },
+        store: {
+          name: 'allbestwatch.ru',
+          campaign_id: '12345678',
+          business_id: '87654321',
+          token: 'x',
+        },
+      }),
+    );
 
     expect(text).toContain('allbestwatch.ru');
     expect(text).not.toContain('12345678');
+    expect(text).not.toContain('87654321');
   });
 
   it('неподключённый магазин назван прямо, без «настройки не заполнены»', () => {
@@ -214,6 +248,7 @@ describe('Ставки расчёта прибыли на экране наст�
     const text = settingsText(STORE);
 
     expect(text).not.toContain('12345678');
+    expect(text).not.toContain('87654321');
     expect(text).not.toContain('Campaign ID');
   });
 
@@ -342,6 +377,7 @@ describe('Кнопки правки ставок', () => {
       .join(' ');
 
     expect(text).not.toContain('12345678');
+    expect(text).not.toContain('87654321');
     expect(text).not.toContain('87654321');
   });
 });

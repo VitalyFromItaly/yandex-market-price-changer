@@ -1,4 +1,5 @@
 import type { UserAccessDocument } from '../../database/schemas/user-access.schema';
+import type { ICrmAccountState } from '../crm/crm-auth.service';
 import type { TFeatureKey } from '../telegram/bots/shared/features.domain';
 
 import {
@@ -7,19 +8,24 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   NotFoundException,
   Param,
   Patch,
+  Post,
   Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
 
+import { ActionLogService } from '../../database/services/action-log.service';
 import { PurchasePriceService } from '../../database/services/purchase-price.service';
 import { ReportScheduleService } from '../../database/services/report-schedule.service';
 import { UserAccessService } from '../../database/services/user-access.service';
 import { YandexMarketService } from '../../database/services/yandex-market.service';
 import { AdminJwtGuard } from '../admin/admin-jwt.guard';
+import { CrmAuthService } from '../crm/crm-auth.service';
 import {
   FEATURE_KEYS,
   FEATURE_META,
@@ -28,6 +34,9 @@ import {
 } from '../telegram/bots/shared/features.domain';
 
 import { AccessNotifierService } from './access-notifier.service';
+
+/** `kind` строки журнала о сбросе пароля CRM из панели. */
+export const CRM_PASSWORD_RESET_KIND = 'crm-password-reset';
 
 /** Строка таблицы пользователей в панели. */
 interface IUserRow {
@@ -41,6 +50,12 @@ interface IUserRow {
   configured: boolean;
   features: Record<TFeatureKey, boolean>;
   createdAt?: Date;
+  /**
+   * Учётка CRM — только в ответах об одном продавце (карточка): списку пришлось
+   * бы делать пакетный запрос ради колонки, которой в нём нет. `null` — в CRM
+   * не входил.
+   */
+  crm?: ICrmAccountState | null;
 }
 
 /**
@@ -61,6 +76,8 @@ export class AccessController {
     private readonly prices: PurchasePriceService,
     private readonly schedules: ReportScheduleService,
     private readonly notifier: AccessNotifierService,
+    private readonly crmAuth: CrmAuthService,
+    private readonly actionLog: ActionLogService,
   ) {}
 
   /**
@@ -185,6 +202,37 @@ export class AccessController {
   }
 
   /**
+   * Сбросить пароль CRM — кнопка на карточке продавца (после подтверждения).
+   *
+   * Стартовый пароль, обязательная смена, все сессии продавца в CRM гаснут на
+   * следующем запросе (сдвиг `pwdv`, см. CrmAuthService.resetPassword). Пароль в
+   * ответе не возвращается: стартовый админ знает, а сменённый не знает никто.
+   *
+   * Кто нажал — из токена (`req.adminId`), как у тумблера доступа. Решение
+   * пишется строкой журнала: «кто сбросил» иначе не восстановить.
+   */
+  @Post('users/:telegramUserId/crm-password-reset')
+  @HttpCode(HttpStatus.OK)
+  async resetCrmPassword(
+    @Param('telegramUserId') telegramUserId: string,
+    @Req() req: { adminId?: string },
+  ): Promise<{ crm: ICrmAccountState }> {
+    const crm = await this.crmAuth.resetPassword(telegramUserId);
+    const adminId = req.adminId ?? 'panel';
+
+    void this.actionLog.record({
+      telegramUserId,
+      botId: 'crm',
+      kind: CRM_PASSWORD_RESET_KIND,
+      action: `Сброс пароля CRM администратором ${adminId}`,
+      source: 'crm',
+      context: `admin:${adminId}`,
+    });
+
+    return { crm };
+  }
+
+  /**
    * Полностью удалить пользователя — кнопка «Удалить» на карточке продавца.
    *
    * Стираем запись доступа И связанные с продавцом данные: магазин (токен),
@@ -227,8 +275,14 @@ export class AccessController {
 
   /** Одна строка вместе с её магазином — для методов, отдающих одного продавца. */
   private async withStore(user: UserAccessDocument): Promise<IUserRow> {
-    const store = await this.stores.findByTelegramUser(user.telegramUserId);
-    return this.rowOf(user, new Map(store ? [[user.telegramUserId, store]] : []));
+    const [store, crm] = await Promise.all([
+      this.stores.findByTelegramUser(user.telegramUserId),
+      this.crmAuth.crmState(user.telegramUserId),
+    ]);
+    return {
+      ...this.rowOf(user, new Map(store ? [[user.telegramUserId, store]] : [])),
+      crm,
+    };
   }
 
   /**

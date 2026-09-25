@@ -4,7 +4,11 @@ import * as XLSX from 'xlsx';
 
 import { MAX_EXPORT_ROWS } from '../reports/report-workbook';
 
-import { recommendationDelta, sortByDeltaDesc } from './recommendations.domain';
+import {
+  competitivenessLabel,
+  recommendationDelta,
+  sortByDeltaDesc,
+} from './recommendations.domain';
 
 /**
  * Выгрузка рекомендаций по ценам в .xlsx. Книга собирается в Buffer и уходит в
@@ -21,13 +25,6 @@ const HEADERS = [
   'Оценка Маркета',
   'Показы за 7 дней',
 ] as const;
-
-/** Оценки по-русски; неизвестный код печатается как есть. */
-const COMPETITIVENESS_TITLES: Record<string, string> = {
-  OPTIMAL: 'привлекательная',
-  AVERAGE: 'умеренная',
-  LOW: 'непривлекательная',
-};
 
 export interface IRecommendationsWorkbook {
   buffer: Buffer;
@@ -53,7 +50,7 @@ export function buildRecommendationsWorkbook(
       row.averagePrice ?? '',
       delta ? round(delta.abs) : '',
       delta ? delta.percent : '',
-      COMPETITIVENESS_TITLES[row.competitiveness] ?? row.competitiveness,
+      competitivenessLabel(row.competitiveness),
       row.shows ?? '',
     ]);
   }

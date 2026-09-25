@@ -38,21 +38,53 @@ function header(result: IReportResult, now: Date): string {
 
 /** Пустой отчёт — это результат, а не сбой. Так и пишем. */
 function emptyMessage(result: IReportResult, now: Date): string {
-  switch (result.key) {
+  return `${header(result, now)}\n\n${emptyReportText(result.key)}`;
+}
+
+/**
+ * Текст пустого отчёта без заголовка и разметки — общий для бота и CRM
+ * (прецедент `reportErrorMessage`): две копии формулировки разъедутся.
+ *
+ * Заголовок бот печатает через header() во ВСЕХ ветках: момент съёмки или
+ * период нужны и тогда, когда данных нет, — «возвратов нет» без периода было
+ * нечем проверить (дефект «не видно возвратов за текущий месяц»).
+ */
+export function emptyReportText(key: string): string {
+  switch (key) {
     case REPORT.IN_TRANSIT:
-      // Через тот же header(): момент съёмки нужен и когда заказов нет —
-      // «ничего не едет» без времени невозможно ни перепроверить, ни оспорить.
-      return `${header(result, now)}\n\nСейчас в пути нет ни одного заказа.`;
+      return 'Сейчас в пути нет ни одного заказа.';
     case REPORT.RETURNING:
-      // Через header(), как и остальные: раньше эта ветка печатала заголовок
-      // сама и БЕЗ периода, из-за чего «возвратов нет» было нечем проверить —
-      // непонятно даже, за что именно их не нашли. Ровно так и выглядел дефект
-      // «не видно возвратов за текущий месяц».
-      return `${header(result, now)}\n\nВозвратов и невыкупов нет.`;
+      return 'Возвратов и невыкупов нет.';
     default:
       // «За сегодня данных нет» врало бы, когда спрошен другой период.
-      return `${header(result, now)}\n\nЗа этот период данных нет.`;
+      return 'За этот период данных нет.';
   }
+}
+
+/** Пояснение к строке FBY-сборки — общее для бота и CRM. */
+export const ASSEMBLING_NOTE =
+  'Это FBY: Маркет комплектует заказ у себя и сам передаёт его в доставку.';
+
+/**
+ * Оговорка к «Всего», без значка и разметки — общая для бота и CRM. `null` —
+ * период ограничен, оговорка не нужна. Почему она обязательна — см. formatReport.
+ */
+export function unboundedNote(result: Pick<IReportResult, 'period' | 'viaArchive'>): string | null {
+  if (!isUnbounded(result.period)) return null;
+  return result.viaArchive
+    ? 'Срез «сейчас в пути» собран по архиву Маркета — включая заказы старше 30 дней.'
+    : `Заказы Яндекс.Маркет отдаёт не старше ${HISTORY_WINDOW_DAYS} дней.`;
+}
+
+/**
+ * Про обрезку книги потолком строк. Молча урезанная выгрузка выглядит как
+ * полная, и расхождение с кабинетом продавец найдёт сам, в худший момент.
+ * «Строк», а не «заказов», у «Едет обратно»: там строка — позиция.
+ */
+export function truncatedNote(key: string, rows: number, count: number): string {
+  return key === REPORT.RETURNING
+    ? `В файл попали первые ${rows} строк: остальные не поместились.`
+    : `В файл попали первые ${rows} заказов из ${count}: остальные не поместились.`;
 }
 
 export function formatReport(result: IReportResult, now: Date = new Date()): string {
@@ -92,7 +124,7 @@ export function formatReport(result: IReportResult, now: Date = new Date()): str
     lines.push(
       '',
       `🏭 Из них собирается на складе Маркета: ${b(result.assembling)}`,
-      'Это FBY: Маркет комплектует заказ у себя и сам передаёт его в доставку.',
+      ASSEMBLING_NOTE,
     );
   }
 
@@ -123,14 +155,8 @@ export function formatReport(result: IReportResult, now: Date = new Date()): str
    * нельзя: продавец привык к старой оговорке, и её исчезновение без замены
    * читалось бы как забытая строка, а не как снятое ограничение.
    */
-  if (isUnbounded(result.period)) {
-    lines.push(
-      '',
-      result.viaArchive
-        ? 'ℹ️ Срез «сейчас в пути» собран по архиву Маркета — включая заказы старше 30 дней.'
-        : `ℹ️ Заказы Яндекс.Маркет отдаёт не старше ${HISTORY_WINDOW_DAYS} дней.`,
-    );
-  }
+  const note = unboundedNote(result);
+  if (note) lines.push('', `ℹ️ ${note}`);
 
   return lines.join('\n');
 }
@@ -149,9 +175,15 @@ const ICONS: Record<string, string> = {
  * паттерн uploadErrorText из stock-report.ts.
  */
 export function reportErrorText(error: unknown): string {
-  const text =
-    error instanceof YandexApiError
-      ? error.userMessage
-      : 'Не удалось собрать отчёт. Попробуйте позже.';
-  return `❌ ${text}`;
+  return `❌ ${reportErrorMessage(error)}`;
+}
+
+/**
+ * Та же причина без значка — для CRM, где текст ложится в интерфейс, а не в
+ * чат. Одна функция на оба канала, иначе формулировки разъедутся.
+ */
+export function reportErrorMessage(error: unknown): string {
+  return error instanceof YandexApiError
+    ? error.userMessage
+    : 'Не удалось собрать отчёт. Попробуйте позже.';
 }

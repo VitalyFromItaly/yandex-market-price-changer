@@ -1,7 +1,9 @@
 import * as XLSX from 'xlsx';
 import { orderTotals } from './money';
+import { moscowClock, moscowDateParam } from './moscow-day';
+import { REPORT } from './report-status-map';
 import type { IReturnRecord } from '../yandex-api.client';
-import type { IReportOrder } from './order-reports.service';
+import type { IReportOrder, IReportResult } from './order-reports.service';
 
 /**
  * Выгрузка отчёта в .xlsx.
@@ -250,6 +252,54 @@ function appendItemRows(
       item?.offerName ?? '',
       Number.isFinite(count) ? count : '',
     ]);
+  }
+}
+
+/** Имя файла «выкуплено» — дата и время по той же причине, что выше. */
+export function redeemedFileName(dateParam: string, timeParam: string): string {
+  return `vykupleno-${dateParam}-${timeParam.replace(':', '')}.xlsx`;
+}
+
+/** Книга отчёта вместе с именем файла — то, что уходит продавцу. */
+export interface IReportWorkbook extends IWorkbookResult {
+  filename: string;
+}
+
+/**
+ * Книга отчёта о заказах по его результату — ОДНА на оба канала.
+ *
+ * Бот (export* в OrderReportsService) и CRM зовут эту функцию над одним и тем
+ * же `IReportResult`, поэтому файл из CRM совпадает с файлом из бота по
+ * построению, а не по параллельной копии выбора книги и имени. Подпись к файлу
+ * (HTML-текст отчёта) сюда не входит — она нужна только боту.
+ *
+ * `null` — отчёт пуст: книга из одной шапки читается как поломка, а не как
+ * «заказов нет».
+ *
+ * `now` — тот же момент, что у сборки и подписи: имя файла несёт время съёмки,
+ * и оно обязано совпадать с напечатанным в тексте.
+ */
+export function reportWorkbook(result: IReportResult, now: Date): IReportWorkbook | null {
+  if (!result.count) return null;
+
+  const date = moscowDateParam(now);
+  const time = moscowClock(now);
+
+  switch (result.key) {
+    case REPORT.RETURNING:
+      return {
+        ...buildReturningWorkbook(result.orders, result.returns?.records ?? []),
+        filename: returningFileName(date, time),
+      };
+    case REPORT.SHIPPED_TODAY:
+      return { ...buildOrdersWorkbook(result.orders), filename: shippedFileName(date, time) };
+    case REPORT.REDEEMED:
+      return { ...buildOrdersWorkbook(result.orders), filename: redeemedFileName(date, time) };
+    case REPORT.IN_TRANSIT:
+      return { ...buildOrdersWorkbook(result.orders), filename: workbookFileName(date, time) };
+    default:
+      // Прибыль и калькулятор — свои экраны со своими книгами (или без них).
+      return null;
   }
 }
 

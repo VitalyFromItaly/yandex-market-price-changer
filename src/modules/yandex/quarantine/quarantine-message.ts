@@ -26,12 +26,52 @@ const VERDICT_TITLES: Record<string, string> = {
   LOW_PRICE_PROMO: 'цена после акций сильно ниже рыночной',
 };
 
+/** Подпись причины карантина; неизвестный код — как есть. Общая для бота и CRM. */
+export function verdictTitle(type: string): string {
+  return VERDICT_TITLES[type] ?? type;
+}
+
+/**
+ * Что такое карантин и что с ним делать — без разметки, для обоих каналов.
+ * Бот печатает эти строки под шапкой, CRM — над таблицей.
+ */
+export const QUARANTINE_EXPLAINER: readonly string[] = [
+  'Эти товары скрыты с витрины: Маркету цена показалась подозрительной.',
+  'Если цена верная — подтвердите её кнопкой, и товар вернётся в продажу.',
+  'Если ошибочная — исправьте цену в кабинете или новым прайсом.',
+];
+
+/**
+ * Карантин — на уровне кабинета (`/businesses/{id}/price-quarantine`), а в CRM
+ * раздел живёт внутри магазина. Не сказать этого — значит дать продавцу решить,
+ * что подтверждение касается одного магазина.
+ */
+export function quarantineBusinessNote(businessName: string): string {
+  const cabinet = businessName ? `кабинета «${businessName}»` : 'кабинета';
+  return (
+    `Список общий для всех магазинов ${cabinet}: ` +
+    'подтверждённая цена возвращает товар на витрину во всех них.'
+  );
+}
+
+export const QUARANTINE_EMPTY_PLAIN = 'Карантин пуст — все цены в порядке.';
+
+export const QUARANTINE_LOAD_ERROR_PLAIN = 'Не удалось получить карантин цен. Попробуйте позже.';
+
+/** Часть батчей прошла: сказать, сколько уже на витрине, а не «ничего не вышло». */
+export function quarantinePartialText(confirmed: number, requested: number): string {
+  return (
+    `Подтверждено ${confirmed} из ${requested}: остальные Маркет не принял — ` +
+    'список обновлён, подтвердите оставшиеся ещё раз.'
+  );
+}
+
 export function quarantineEmptyText(): string {
-  return '🚧 Карантин пуст — все цены в порядке.';
+  return `🚧 ${QUARANTINE_EMPTY_PLAIN}`;
 }
 
 export function quarantineErrorText(): string {
-  return '❌ Не удалось получить карантин цен. Попробуйте позже.';
+  return `❌ ${QUARANTINE_LOAD_ERROR_PLAIN}`;
 }
 
 /** Ответ на нажатие кнопки, когда сохранённый список уже неактуален. */
@@ -56,9 +96,7 @@ export function quarantineText(offers: readonly IQuarantineOffer[]): string {
   const lines: string[] = [
     `🚧 ${b('Карантин цен')} — товаров: ${offers.length}`,
     '',
-    'Эти товары скрыты с витрины: Маркету цена показалась подозрительной.',
-    'Если цена верная — подтвердите её кнопкой, и товар вернётся в продажу.',
-    'Если ошибочная — исправьте цену в кабинете или новым прайсом.',
+    ...QUARANTINE_EXPLAINER,
     '',
   ];
 
@@ -79,7 +117,7 @@ export function quarantineText(offers: readonly IQuarantineOffer[]): string {
 
 /** Одна причина карантина строкой: тип и цены, которые сравнивал Маркет. */
 export function verdictLine(verdict: IQuarantineVerdict): string {
-  const title = VERDICT_TITLES[verdict.type] ?? verdict.type;
+  const title = verdictTitle(verdict.type);
 
   if (verdict.type === 'PRICE_CHANGE') {
     const was = formatPrice(verdict.lastValidPrice);

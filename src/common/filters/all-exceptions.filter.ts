@@ -1,10 +1,12 @@
+import type { ICrmUser } from '../../modules/crm/crm-auth.service';
 import type { ArgumentsHost, ExceptionFilter } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
 import { Catch, HttpException, HttpStatus } from '@nestjs/common';
 
 import { JUNK_SOURCE } from '../../database/services/action-log.service';
-import { ErrorReporter } from '../../modules/errors/error-reporter.service';
+import { CRM_API_PREFIX, errorMessageOf } from '../../modules/crm/crm-action-log.domain';
+import { ErrorReporter, TErrorSource } from '../../modules/errors/error-reporter.service';
 
 /**
  * Глобальный фильтр HTTP-ошибок.
@@ -46,9 +48,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
     // группы, различить их можно по httpStatus.
     const serverFault = status >= HttpStatus.INTERNAL_SERVER_ERROR;
 
+    // Запрос CRM: ошибка приписывается продавцу (гвард кладёт его в запрос до
+    // проверок), чтобы фильтр журнала по продавцу находил и её, а не только
+    // строку запроса. Текст — для той строки: её пишет CrmActionLogMiddleware
+    // по `finish`, самой ошибки он не видит.
+    const crmUser = (request as Request & { crmUser?: ICrmUser }).crmUser;
+    const isCrm = request.url.startsWith(CRM_API_PREFIX);
+    if (isCrm) response.locals.errorMessage = errorMessageOf(exception);
+
+    let source: TErrorSource = isCrm ? 'crm' : 'http';
+    if (routeNotFound) source = JUNK_SOURCE;
+
     void this.reporter.report({
       error: exception,
-      source: routeNotFound ? JUNK_SOURCE : 'http',
+      source,
+      telegramUserId: crmUser?.telegramUserId,
+      username: crmUser?.username,
       // В контексте — шаблон маршрута, а не конкретный url: иначе каждый запрос
       // с новым id даёт новый ключ, и троттлинг алертов не срабатывает никогда.
       context: `http:${request.method} ${request.route?.path ?? request.url}`,

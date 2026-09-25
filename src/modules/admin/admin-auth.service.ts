@@ -19,6 +19,8 @@ export const TOKEN_TTL = '7d';
 export interface IAdminTokenPayload {
   /** Telegram id администратора. */
   sub: string;
+  /** У админского токена аудитории нет; она есть у токенов CRM (`crm`). */
+  aud?: string | string[];
 }
 
 @Injectable()
@@ -115,6 +117,13 @@ export class AdminAuthService implements OnApplicationBootstrap {
     } catch {
       // Подделка, истечение и «секрет сменился» неотличимы для пользователя и
       // требуют одного действия — войти заново.
+      throw new UnauthorizedException('Сессия истекла, войдите заново');
+    }
+
+    // Секрет подписи общий с CRM (см. CrmAuthService), и различает токены
+    // аудитория: любой токен с `aud` — не админский. Иначе продавец-админ,
+    // вошедший в CRM, открывал бы своим CRM-токеном админ-панель.
+    if (payload.aud !== undefined) {
       throw new UnauthorizedException('Сессия истекла, войдите заново');
     }
 

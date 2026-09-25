@@ -1,4 +1,5 @@
-import type { IStockSyncResult } from './stock-sync.service';
+import type { ISkippedRow, IStockSyncResult } from './stock-sync.service';
+import type { TUploadChannel } from './stock-upload.texts';
 
 import { b, code, esc } from '../../telegram/formatting/telegram-format';
 import { YandexApiError } from '../yandex-api.errors';
@@ -129,25 +130,57 @@ export function formatStockReport(result: IStockSyncResult): string {
   return lines.join('\n');
 }
 
-/** Заголовок: что произошло с файлом. */
-function headline(result: IStockSyncResult): string {
+/**
+ * Заголовок: что произошло с файлом. Части раздельно, чтобы бот выделил
+ * ключевую фразу `<b>`, а CRM взял тот же текст без разметки — одна копия.
+ */
+interface IHeadlineParts {
+  icon: string;
+  title: string;
+  rest: string;
+}
+
+function headlineParts(result: IStockSyncResult): IHeadlineParts {
   if (result.writeSkipReason === 'write-disabled') {
-    return `🧪 ${b('Запись остатков выключена')} — в Яндекс ничего не отправлено`;
+    return {
+      icon: '🧪',
+      title: 'Запись остатков выключена',
+      rest: ' — в Яндекс ничего не отправлено',
+    };
   }
   if (result.writeSkipReason === 'feature-disabled') {
-    return `🔒 ${b('Остатки не записаны')} — запись отключена администратором`;
+    return {
+      icon: '🔒',
+      title: 'Остатки не записаны',
+      rest: ' — запись отключена администратором',
+    };
   }
   if (result.writeSkipReason === 'placement') {
-    return `🏬 ${b('Остатки не записаны')} — магазин на модели ${esc(placement(result))}`;
+    return {
+      icon: '🏬',
+      title: 'Остатки не записаны',
+      rest: ` — магазин на модели ${placement(result)}`,
+    };
   }
   if (result.dryRun) {
-    return `🔍 ${b('Пробная сверка')} — в Яндекс ничего не записано`;
+    return { icon: '🔍', title: 'Пробная сверка', rest: ' — в Яндекс ничего не записано' };
   }
-  return `✅ ${b('Остатки обновлены')}`;
+  return { icon: '✅', title: 'Остатки обновлены', rest: '' };
+}
+
+function headline(result: IStockSyncResult): string {
+  const { icon, title, rest } = headlineParts(result);
+  return `${icon} ${b(title)}${esc(rest)}`;
+}
+
+/** Заголовок без разметки — для CRM. */
+export function stockHeadlineText(result: IStockSyncResult): string {
+  const { icon, title, rest } = headlineParts(result);
+  return `${icon} ${title}${rest}`;
 }
 
 /** Почему не записали. Пусто — записали или продавец сам просил сверку. */
-function skipExplanation(result: IStockSyncResult): string | null {
+export function skipExplanation(result: IStockSyncResult): string | null {
   if (result.writeSkipReason === 'write-disabled') {
     return 'В этой среде запись остатков отключена настройкой (STOCK_WRITE_ENABLED=false).';
   }
@@ -161,8 +194,17 @@ function skipExplanation(result: IStockSyncResult): string | null {
     : 'Не удалось определить модель магазина, поэтому записывать остатки не стали.';
 }
 
-/** Что продавцу делать дальше. При выключенной записи — ничего. */
-function skipAdvice(result: IStockSyncResult): string | null {
+/**
+ * Что продавцу делать дальше. При выключенной записи — ничего.
+ *
+ * Канал различает только указание, КУДА нажать: в боте магазин переключают
+ * кнопкой, в CRM — открывают другой из списка «Магазины» (активный магазин бота
+ * веб не трогает), а «проверка» в CRM — галочка, а не подпись к файлу.
+ */
+export function skipAdvice(
+  result: IStockSyncResult,
+  channel: TUploadChannel = 'bot',
+): string | null {
   // Выключенная запись — решение развёртывания, а не продавца: советовать ему
   // нечего, и фраза про смену магазина увела бы не туда.
   if (result.writeSkipReason === 'write-disabled') return null;
@@ -174,13 +216,16 @@ function skipAdvice(result: IStockSyncResult): string | null {
   }
 
   if (result.writeSkipReason === 'placement') {
-    return result.placementType
-      ? 'Чтобы обновить остатки, переключитесь на магазин FBS — «🏪 Сменить магазин».'
-      : 'Попробуйте ещё раз через пару минут.';
+    if (!result.placementType) return 'Попробуйте ещё раз через пару минут.';
+    return channel === 'crm'
+      ? 'Чтобы обновить остатки, откройте магазин FBS из списка «Магазины».'
+      : 'Чтобы обновить остатки, переключитесь на магазин FBS — «🏪 Сменить магазин».';
   }
 
   if (result.dryRun) {
-    return 'Чтобы применить — пришлите файл ещё раз без пометки «проверка».';
+    return channel === 'crm'
+      ? 'Чтобы применить — загрузите файл ещё раз без отметки «Только проверка».'
+      : 'Чтобы применить — пришлите файл ещё раз без пометки «проверка».';
   }
 
   return null;
@@ -204,4 +249,51 @@ export function uploadErrorText(error: unknown): string {
       ? error.userMessage
       : 'Не удалось обработать файл. Проверьте, что это прайс в обычном формате, и попробуйте ещё раз.';
   return `❌ ${text}`;
+}
+
+/**
+ * Итог загрузки для CRM — данные, а не HTML. Тексты — те же функции, что у
+ * отчёта бота (канал `crm`), поэтому два экрана не расходятся в словах; числа —
+ * поля самого результата, без пересчёта. Пропуски отдаются ЦЕЛИКОМ: бот
+ * печатает десять, а таблице веба лимит сообщения не мешает.
+ */
+export interface ICrmStockView {
+  headline: string;
+  explanation: string | null;
+  advice: string | null;
+  dryRun: boolean;
+  writeSkipReason: string | null;
+  placementType: string | null;
+  totalRows: number;
+  catalogSize: number;
+  matched: number;
+  zeroed: number;
+  /** `null` — записи не было и не должно было быть (сверка или запрет). */
+  updated: number | null;
+  purchasePricesSaved: number;
+  purchasePricesSkipped: boolean;
+  matchedBy: Record<string, number>;
+  skipped: ISkippedRow[];
+  errors: Array<{ batch: number; skus: string[]; message: string }>;
+}
+
+export function toCrmStockView(result: IStockSyncResult): ICrmStockView {
+  return {
+    headline: stockHeadlineText(result),
+    explanation: skipExplanation(result),
+    advice: skipAdvice(result, 'crm'),
+    dryRun: result.dryRun,
+    writeSkipReason: result.writeSkipReason ?? null,
+    placementType: result.placementType ?? null,
+    totalRows: result.totalRows,
+    catalogSize: result.catalogSize,
+    matched: result.matched,
+    zeroed: result.zeroed,
+    updated: !result.dryRun && !result.writeSkipReason ? result.updated : null,
+    purchasePricesSaved: result.purchasePricesSaved,
+    purchasePricesSkipped: result.purchasePricesSkipped ?? false,
+    matchedBy: result.matchedBy,
+    skipped: result.skipped,
+    errors: result.errors,
+  };
 }

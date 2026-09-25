@@ -16,6 +16,9 @@ function matches(doc: TDoc, filter: TDoc): boolean {
   return Object.entries(filter ?? {}).every(([field, expected]) => {
     const actual = doc[field];
 
+    // Регэксп в фильтре — так ищется ник без учёта регистра (findByLogin).
+    if (expected instanceof RegExp) return typeof actual === 'string' && expected.test(actual);
+
     if (expected && typeof expected === 'object' && !(expected instanceof Date)) {
       if ('$lte' in expected) return actual != null && actual <= expected.$lte;
       if ('$gte' in expected) return actual != null && actual >= expected.$gte;
@@ -139,9 +142,26 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
 
     static findOne(filter: TDoc) {
       const found = () => documents.filter((d) => matches(d, filter));
+      // Проекция — только исключения (`-field`): ими сервис прячет тяжёлые поля
+      // (входной файл задачи CRM), и тест должен видеть, что их правда нет.
+      let excluded: string[] = [];
+      const project = (doc: TDoc | undefined): TDoc | null => {
+        if (!doc) return null;
+        if (!excluded.length) return doc;
+        const copy = { ...doc };
+        for (const field of excluded) delete copy[field];
+        return copy;
+      };
 
-      return {
-        exec: async () => found()[0] ?? null,
+      const chain = {
+        select(spec: string) {
+          excluded = spec
+            .split(/\s+/)
+            .filter((part) => part.startsWith('-'))
+            .map((part) => part.slice(1));
+          return chain;
+        },
+        exec: async () => project(found()[0]),
         /** Только по одному полю — больше сервисам и не нужно. */
         sort(spec: Record<string, 1 | -1>) {
           const [field, direction] = Object.entries(spec)[0] ?? [];
@@ -158,6 +178,7 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
           };
         },
       };
+      return chain;
     }
 
     static find(filter: TDoc = {}) {
@@ -233,6 +254,7 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
             for (const [path, value] of Object.entries(update.$set ?? {})) {
               assign(doc, path, value);
             }
+            for (const path of Object.keys(update.$unset ?? {})) unset(doc, path);
           }
           return { acknowledged: true as const };
         },

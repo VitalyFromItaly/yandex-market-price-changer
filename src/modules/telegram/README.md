@@ -176,8 +176,15 @@ accessGate → featureGate → start → menu → slash → adminCallbacks → a
 
 ## 📥 Приём прайса
 
-`stock-upload.handler.ts` — единственный путь записи в Яндекс из интерфейса. Кнопки нет: файл
-присылается документом в чат.
+`stock-upload.handler.ts` — путь записи остатков из бота. Кнопки нет: файл присылается
+документом в чат. Второй вход — «Прайс» в CRM, и оба идут через **общий** ранний слой барьеров
+`StockUploadPolicyService` (`yandex/stocks/stock-upload-policy*.ts`, тексты — `stock-upload.texts.ts`)
+и **одну** очередь `file-processing`: джоба `sync-stocks` различает источник полем `source`.
+
+- **Очередь `file-processing` исполняет строго одну джобу за раз.** Мёртвый
+  `FileProcessingProcessor` в `providers` не возвращать: Bull суммирует concurrency всех
+  `@Process` одной очереди, и его 3+3+3 превращали «по одной» в «до десяти параллельно» — записи
+  остатков гонялись друг с другом. Пиннится `stock-upload-policy.test.ts`.
 
 - Хендлер делает только **быстрые проверки и ставит джобу** `sync-stocks` в очередь
   `file-processing`; скачивание, разбор и запись — в `stock-sync.processor.ts`. Это не оптимизация:

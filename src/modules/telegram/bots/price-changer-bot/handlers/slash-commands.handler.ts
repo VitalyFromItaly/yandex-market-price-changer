@@ -10,9 +10,8 @@ import { commandsFor } from '../bot-commands';
 import { helpText } from '../help.text';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
-import { profileText } from '../profile.text';
+import { profileText, profileView } from '../profile.text';
 import { settingsKeyboardRows, settingsText } from '../settings.text';
-import { storeTitle } from '../store-title';
 
 import { SharedCommandsHandler } from './shared-commands.handler';
 
@@ -96,16 +95,17 @@ export class SlashCommandsHandler {
       ]);
 
       await ctx.reply(
-        profileText({
-          firstName: ctx.from.first_name,
-          lastName: ctx.from.last_name,
-          telegramUserId: ctx.from.id,
-          username: ctx.from.username,
-          accessStatus: access?.status,
-          storeName: storeTitle(store),
-          configured: !!(store?.campaign_id && store?.business_id && store?.token),
-          registeredAt: access?.createdAt ? new Date(access.createdAt) : undefined,
-        }),
+        profileText(
+          profileView({
+            firstName: ctx.from.first_name,
+            lastName: ctx.from.last_name,
+            telegramUserId: ctx.from.id,
+            username: ctx.from.username,
+            isAdmin: this.config.isAdmin(ctx.from.id),
+            access,
+            store,
+          }),
+        ),
         htmlOptions(keyboard),
       );
     });

@@ -6,6 +6,8 @@ export * from './purchase-price.schema';
 export * from './yandex-market.schema';
 export * from './action-log.schema';
 export * from './admin-credential.schema';
+export * from './crm-credential.schema';
+export * from './crm-job-result.schema';
 
 export interface IYandexMarketSchema {
   telegramUserId: number;

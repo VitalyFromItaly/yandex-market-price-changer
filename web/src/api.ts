@@ -164,6 +164,15 @@ export interface IUserRow {
   configured: boolean;
   features: Record<string, boolean>;
   createdAt?: string;
+  /** Учётка CRM — только в карточке; `null` — в CRM не входил. */
+  crm?: ICrmAccountState | null;
+}
+
+/** Учётка продавца в CRM глазами панели. Пароля и хеша здесь нет. */
+export interface ICrmAccountState {
+  lastLoginAt: string | null;
+  mustChangePassword: boolean;
+  passwordChangedAt: string;
 }
 
 /**
@@ -233,6 +242,18 @@ function patchUser(
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ botId: user.botId, ...body }),
   });
+}
+
+/**
+ * Сбросить пароль CRM на стартовый: продавец выйдет из всех сессий и при входе
+ * сменит пароль. Отвечает новым состоянием учётки, не строкой пользователя.
+ */
+export async function resetCrmPassword(token: string, user: IUserRow): Promise<ICrmAccountState> {
+  const { crm } = await request<{ crm: ICrmAccountState }>(
+    `/api/access/users/${encodeURIComponent(user.telegramUserId)}/crm-password-reset`,
+    { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+  );
+  return crm;
 }
 
 /**

@@ -4,6 +4,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
+import { escapeRegExp } from '../../shared/regexp';
 import { PurchasePrice, PurchasePriceDocument } from '../schemas/purchase-price.schema';
 
 /** Одна строка прайса, готовая к записи: артикул уже разрешён по каталогу. */
@@ -13,6 +14,26 @@ export interface IPurchasePriceRow {
   name?: string;
   category?: string;
 }
+
+/** Строка закупа для списка в CRM. */
+export interface IPurchasePriceListItem {
+  sku: string;
+  price: number;
+  name?: string;
+  category?: string;
+  updatedAt?: Date;
+}
+
+export interface IPurchasePriceQuery {
+  /** Подстрока артикула или названия, без учёта регистра. */
+  q?: string;
+  /** С единицы. */
+  page: number;
+  limit: number;
+}
+
+/** Потолок страницы — список читает человек, а не выгрузка. */
+export const PURCHASE_PRICE_PAGE_MAX = 100;
 
 /** Сколько операций отправлять в одном bulkWrite. */
 const UPSERT_CHUNK_SIZE = 1000;
@@ -140,6 +161,52 @@ export class PurchasePriceService {
     const latest = await this.model.findOne({ telegramUserId }).sort({ updatedAt: -1 }).exec();
 
     return latest?.updatedAt ?? null;
+  }
+
+  /**
+   * Страница закупа продавца с поиском — раздел «Закупочные цены» в CRM.
+   *
+   * Поиск — подстрока артикула ИЛИ названия, ввод экранирован (`escapeRegExp`):
+   * `.*` в строке поиска — это текст, а не «всё». Индекса под регэксп нет и не
+   * нужно: `{telegramUserId, sku}` сужает скан до одного продавца, а у него
+   * тысячи строк, не миллионы. `total` — тем же фильтром, что и страница.
+   */
+  async list(
+    telegramUserId: string,
+    query: IPurchasePriceQuery,
+  ): Promise<{ items: IPurchasePriceListItem[]; total: number }> {
+    const filter: Record<string, unknown> = { telegramUserId };
+    const q = query.q?.trim();
+    if (q) {
+      const rx = new RegExp(escapeRegExp(q), 'i');
+      filter.$or = [{ sku: rx }, { name: rx }];
+    }
+
+    const limit = Math.min(Math.max(1, Math.floor(query.limit)), PURCHASE_PRICE_PAGE_MAX);
+    const page = Math.max(1, Math.floor(query.page));
+
+    const [documents, total] = await Promise.all([
+      this.model
+        .find(filter)
+        .sort({ sku: 1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .select('sku price name category updatedAt')
+        .lean()
+        .exec(),
+      this.model.countDocuments(filter).exec(),
+    ]);
+
+    return {
+      items: documents.map((doc) => ({
+        sku: doc.sku,
+        price: doc.price,
+        name: doc.name,
+        category: doc.category,
+        updatedAt: doc.updatedAt,
+      })),
+      total,
+    };
   }
 
   /** Сколько позиций с закупом известно продавцу — для экрана настроек. */

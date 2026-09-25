@@ -158,6 +158,42 @@ export function brandOf(row: IBrandSource): TBrandKey | null {
   return null;
 }
 
+/** Бренд в прайсе продавца и число его позиций. */
+export interface IBrandUsage {
+  key: TBrandKey;
+  count: number;
+}
+
+/**
+ * Свернуть строки закупа в список брендов с числом позиций.
+ *
+ * Здесь, а не в экране бота: тот же список нужен CRM (раздел «Настройки»), и
+ * модуль остаётся листом — ему хватает brandOf и BRAND_KEYS.
+ *
+ * Порядок — порядок BRAND_KEYS, а не частотный: кнопки не должны прыгать между
+ * открытиями экрана из-за того, что изменился состав прайса.
+ */
+export function brandUsageOf(rows: readonly IBrandSource[]): {
+  usage: IBrandUsage[];
+  otherCount: number;
+} {
+  const counts = new Map<TBrandKey, number>();
+  let otherCount = 0;
+
+  for (const row of rows) {
+    const key = brandOf(row);
+    if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+    else otherCount += 1;
+  }
+
+  const usage = BRAND_KEYS.filter((key) => counts.has(key)).map((key) => ({
+    key,
+    count: counts.get(key) ?? 0,
+  }));
+
+  return { usage, otherCount };
+}
+
 // --- callback_data кнопок ----------------------------------------------------
 
 /**

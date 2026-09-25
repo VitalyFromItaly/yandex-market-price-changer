@@ -34,12 +34,15 @@ import { joinWarehouseStock } from './warehouse-stock';
  */
 
 const FBY_TITLE = '📦 FBY — склад Маркета';
-const FBY_HINT = 'Товар хранит и отгружает Маркет.';
+export const FBY_HINT = 'Товар хранит и отгружает Маркет.';
 const STORE_TITLE = '🏪 Склад магазина';
-const STORE_HINT = 'Ваши склады отгрузки (FBS/DBS/Экспресс).';
+export const STORE_HINT = 'Ваши склады отгрузки (FBS/DBS/Экспресс).';
+
+/** Складов нет вовсе — один текст на бота и CRM. */
+export const WAREHOUSES_EMPTY_TEXT = 'У этого магазина не найдено ни одного склада.';
 
 /** Склад из отчёта, которого нет в списке Маркета, — так и говорим. */
-const NOT_IN_LIST = '⚠️ нет в списке складов Маркета';
+export const NOT_IN_LIST = '⚠️ нет в списке складов Маркета';
 
 /** Данные экрана: список складов плюс остатки FBY, если они добылись. */
 export interface IWarehousesScreenData {
@@ -91,13 +94,18 @@ function fbyLine(row: IWarehouseStockRow): string {
  * то, что показано, складывается в то, что подписано снизу. Взять `totals`
  * напрямую значило бы спрятать ошибку соединения по имени.
  */
-function totalLine(rows: readonly IWarehouseStockRow[]): string {
+export function warehouseRowsSum(
+  rows: readonly IWarehouseStockRow[],
+): Record<TFbyStockType, number> {
   const sum = {} as Record<TFbyStockType, number>;
   for (const type of FBY_STOCK_TYPES) {
     sum[type] = rows.reduce((acc, row) => acc + (row.totals?.[type] ?? 0), 0);
   }
+  return sum;
+}
 
-  const parts = stockParts(sum);
+function totalLine(rows: readonly IWarehouseStockRow[]): string {
+  const parts = stockParts(warehouseRowsSum(rows));
   return `Итого: ${parts.length ? parts.join(' · ') : 'пусто'}`;
 }
 
@@ -138,7 +146,7 @@ export function formatWarehousesOverview(
   const header = `🏬 ${b('Склады')} ${esc(`на ${moscowStamp(now)} МСК`)}`;
 
   if (rows.length + data.overview.store.length === 0) {
-    return [header, '', 'У этого магазина не найдено ни одного склада.'].join('\n');
+    return [header, '', WAREHOUSES_EMPTY_TEXT].join('\n');
   }
 
   return [header, '', ...fbySection(data, rows), '', ...storeSection(data.overview.store)].join(

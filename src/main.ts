@@ -1,6 +1,7 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
 
 import { NestFactory } from '@nestjs/core';
+import { setDefaultAutoSelectFamilyAttemptTimeout } from 'net';
 import { join } from 'path';
 
 import { AppModule } from './app.module';
@@ -8,6 +9,18 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { LoggerInterceptor } from './common/interceptors/logger.interceptor';
 import { AppConfigService } from './config/app-config.service';
 import { ErrorReporter } from './modules/errors/error-reporter.service';
+
+/*
+ * Node ≥20 соединяется по «happy eyeballs»: перебирает IPv6/IPv4-адреса хоста
+ * и даёт каждой попытке 250 мс. У api.partner.market.yandex.ru есть AAAA, а
+ * IPv6 бывает недоступен (ENETUNREACH); если IPv4-рукопожатие дольше 250 мс
+ * (замер 25-09-2026: ~280 мс), падают ОБЕ попытки — ETIMEDOUT с пустым текстом,
+ * хотя curl в тот же миг получает ответ. Выглядело как «Яндекс лежит» то на
+ * минуту, то на час. Две секунды на попытку — запас, а не ожидание: успешное
+ * соединение не ждёт таймаута. Ставится до создания приложения — до первого
+ * сокета; axios, fetch (undici) и telegraf ходят через net.
+ */
+setDefaultAutoSelectFamilyAttemptTimeout(2000);
 
 async function bootstrap() {
   // `import 'dotenv/config'` здесь больше не нужен: загрузку и валидацию
@@ -27,6 +40,14 @@ async function bootstrap() {
    * Статику отдаёт middleware express ДО роутера Nest, поэтому LoggerInterceptor
    * на неё не срабатывает и логи не засоряются строкой на каждый файл.
    */
+  /*
+   * CRM продавца (crm/) — второй SPA, под префиксом /crm, и регистрируется
+   * РАНЬШЕ корневой админки: express-static отдаёт первый найденный файл, а
+   * у обеих сборок есть index.html и favicon.svg. Vite собирает её с base
+   * '/crm/', роутер — на hash, поэтому SPA-fallback не нужен: F5 на
+   * /crm/#/ym/orders запрашивает только /crm/.
+   */
+  app.useStaticAssets(join(__dirname, '..', 'crm', 'dist'), { prefix: '/crm' });
   app.useStaticAssets(join(__dirname, '..', 'web', 'dist'));
 
   app.setGlobalPrefix('/api');

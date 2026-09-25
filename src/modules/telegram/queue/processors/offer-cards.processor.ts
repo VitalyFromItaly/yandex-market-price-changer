@@ -4,15 +4,8 @@ import { Job } from 'bull';
 
 import { YandexMarketService } from '../../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../../errors/error-reporter.service';
-import {
-  cardsEmptyText,
-  cardsErrorText,
-  cardsFileName,
-  cardsText,
-} from '../../../yandex/cards/cards-message';
-import { buildCardsWorkbook } from '../../../yandex/cards/cards-workbook';
-import { summarizeCards } from '../../../yandex/cards/cards.domain';
-import { YandexClientFactory } from '../../../yandex/yandex-client.factory';
+import { cardsEmptyText, cardsErrorText, cardsText } from '../../../yandex/cards/cards-message';
+import { CardsService } from '../../../yandex/cards/cards.service';
 import { BotRegistry } from '../../bots/bot-registry.service';
 import { htmlOptions, splitMessage } from '../../formatting/telegram-format';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
@@ -37,7 +30,7 @@ export class OfferCardsProcessor {
   constructor(
     private readonly registry: BotRegistry,
     private readonly yandexMarketService: YandexMarketService,
-    private readonly clients: YandexClientFactory,
+    private readonly cards: CardsService,
     private readonly errors: ErrorReporter,
   ) {}
 
@@ -62,26 +55,22 @@ export class OfferCardsProcessor {
         return;
       }
 
-      const cards = await this.clients.forStore(store).loadOfferCards();
+      // Загрузка, сводка и книга — общие с CRM (CardsService). Момент среза в
+      // отчёте один на текст и имя файла.
+      const { summary, takenAt, workbook } = await this.cards.build(store);
 
-      if (!cards.length) {
+      if (!workbook) {
         await bot.telegraf.telegram.sendMessage(chatId, cardsEmptyText(), htmlOptions());
         return;
       }
-
-      // Момент среза один на текст и имя файла — иначе подпись и файл могли бы
-      // разойтись через границу суток.
-      const takenAt = new Date();
-      const summary = summarizeCards(cards);
 
       for (const chunk of splitMessage(cardsText(summary, takenAt))) {
         await bot.telegraf.telegram.sendMessage(chatId, chunk, htmlOptions());
       }
 
-      const workbook = buildCardsWorkbook(cards);
       await bot.telegraf.telegram.sendDocument(chatId, {
         source: workbook.buffer,
-        filename: cardsFileName(takenAt),
+        filename: workbook.filename,
       });
     } catch (error) {
       // Ошибку гасим, НЕ пробрасываем (attempts: 1) — но продавец ждёт экран.
