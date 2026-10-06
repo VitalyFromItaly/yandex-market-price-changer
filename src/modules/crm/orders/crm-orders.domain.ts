@@ -14,7 +14,7 @@ import {
 } from '../../yandex/reports/report-message';
 import { DEFAULT_PERIOD, isUnbounded, periodTitle } from '../../yandex/reports/report-period';
 import { REPORT } from '../../yandex/reports/report-status-map';
-import { formatItems } from '../../yandex/reports/report-workbook';
+import { formatOfferIds } from '../../yandex/reports/report-workbook';
 import { parsePeriodParams, periodEcho } from '../jobs/crm-period.domain';
 
 /**
@@ -94,22 +94,6 @@ export interface ICrmOrdersView {
 }
 
 /**
- * Состав возврата одной строкой. У метода возвратов нет названий — только
- * артикул (довод книги «Едет обратно»), поэтому печатаем его, а не
- * «без названия», которое выдал бы formatItems.
- */
-function returnItems(items: { offerId?: string; count?: number }[] | undefined): string {
-  if (!Array.isArray(items)) return '';
-  return items
-    .map((item) => {
-      const offer = (item?.offerId ?? '').trim() || 'без артикула';
-      const count = Number(item?.count);
-      return Number.isFinite(count) && count > 1 ? `${offer} ×${count}` : offer;
-    })
-    .join('; ');
-}
-
-/**
  * Ответ CRM из результата сборки. Σ строк = `totals` по построению: заказ идёт
  * через `orderTotals` (как `sumTotals`), возврат — `amountValue(amount)` в
  * продажи и «с доставкой», субсидии 0 — ровно как `collectReturns`.
@@ -129,7 +113,9 @@ export function toCrmOrdersView(
     date: (order?.creationDate ?? '').trim(),
     // Как в книге «Едет обратно»: у невыкупа смысл несёт подстатус.
     status: (key === REPORT.RETURNING ? order?.substatus : undefined) ?? order?.status ?? '',
-    items: formatItems(order),
+    // Артикулы, а не названия: так строки заказов и возвратов читаются одинаково
+    // (у метода возвратов названий нет вовсе). Названия — в xlsx, колонка «Состав».
+    items: formatOfferIds(order?.items),
     ...orderTotals(order),
   }));
 
@@ -140,7 +126,7 @@ export function toCrmOrdersView(
       type: 'return',
       date: (record.creationDate ?? '').trim(),
       status: record.shipmentStatus ?? '',
-      items: returnItems(record.items),
+      items: formatOfferIds(record.items),
       sales: value,
       subsidies: 0,
       withDelivery: value,

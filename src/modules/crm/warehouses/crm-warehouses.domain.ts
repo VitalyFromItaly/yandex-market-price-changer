@@ -61,10 +61,16 @@ export interface ICrmWarehousesView {
   store: ICrmStoreWarehouse[];
   /** Складов нет вовсе — текст бота; null — есть. */
   emptyText: string | null;
+  /** xlsx остатков (книга «FBY»); null — отчёта остатков нет. */
+  file: { filename: string; rows: number; truncated: number } | null;
 }
 
 /** Вид ответа. Никогда не null (довод `useReportJob`). */
-export function toCrmWarehousesView(data: IWarehousesScreenData, now: Date): ICrmWarehousesView {
+export function toCrmWarehousesView(
+  data: IWarehousesScreenData,
+  now: Date,
+  workbook: { filename: string; rows: number; truncated: number } | null = null,
+): ICrmWarehousesView {
   const rows = joinWarehouseStock(data.overview.fulfillment, data.byWarehouse);
   const empty = rows.length + data.overview.store.length === 0;
   return {
@@ -93,5 +99,9 @@ export function toCrmWarehousesView(data: IWarehousesScreenData, now: Date): ICr
       groupName: warehouse.groupName ?? null,
     })),
     emptyText: empty ? WAREHOUSES_EMPTY_TEXT : null,
+    // Только метаданные: сам буфер уходит отдельным файлом задачи, не в JSON.
+    file: workbook
+      ? { filename: workbook.filename, rows: workbook.rows, truncated: workbook.truncated }
+      : null,
   };
 }

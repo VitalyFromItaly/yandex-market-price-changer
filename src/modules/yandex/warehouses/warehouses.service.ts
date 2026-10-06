@@ -36,6 +36,7 @@ export class WarehousesService {
     return {
       overview,
       byWarehouse: stock.snapshot?.summary.byWarehouse ?? null,
+      stock: stock.snapshot?.summary ?? null,
       stockTakenAt: stock.snapshot?.takenAt,
       stockError: stock.error,
     };

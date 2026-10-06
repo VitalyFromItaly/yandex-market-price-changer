@@ -60,6 +60,14 @@ export interface WarehousesResponse {
   sum: StockTotals | null;
   store: StoreWarehouse[];
   emptyText: string | null;
+  /** xlsx остатков — та же книга, что в «FBY»; null — отчёта остатков нет. */
+  file?: WarehousesFile | null;
+}
+
+export interface WarehousesFile {
+  filename: string;
+  rows: number;
+  truncated: number;
 }
 
 export interface WarehousesReport {
@@ -75,6 +83,7 @@ export interface WarehousesReport {
   sum: StockTotals | null;
   store: StoreWarehouse[];
   emptyText: string | null;
+  file: WarehousesFile | null;
 }
 
 export type WarehousesFilter = 'all' | 'stocked' | 'empty';

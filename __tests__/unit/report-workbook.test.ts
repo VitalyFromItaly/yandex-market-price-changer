@@ -7,6 +7,7 @@ import {
   buildOrdersWorkbook,
   buildReturningWorkbook,
   formatItems,
+  formatOfferIds,
   reportWorkbook,
   returningFileName,
   shippedFileName,
@@ -29,7 +30,7 @@ const ORDER = (over: Partial<IReportOrder> = {}): IReportOrder => ({
   creationDate: '28-07-2026',
   itemsTotal: 1000,
   deliveryTotal: 100,
-  items: [{ offerName: 'Кроссовки', count: 2 }],
+  items: [{ offerId: 'MTP-1', offerName: 'Кроссовки', count: 2 }],
   ...over,
 });
 
@@ -42,6 +43,7 @@ describe('Выгрузка .xlsx', () => {
       'Номер заказа',
       'Дата создания',
       'Статус',
+      'Артикул',
       'Состав',
       'Сумма продаж, ₽',
       'в т.ч. субсидии Маркета, ₽',
@@ -56,10 +58,11 @@ describe('Выгрузка .xlsx', () => {
     expect(first[0]).toBe(777);
     expect(first[1]).toBe('28-07-2026');
     expect(first[2]).toBe('DELIVERY');
-    expect(first[3]).toBe('Кроссовки ×2');
-    expect(first[4]).toBe(1000);
-    expect(first[5]).toBe(0);
-    expect(first[6]).toBe(1100);
+    expect(first[3]).toBe('MTP-1 ×2');
+    expect(first[4]).toBe('Кроссовки ×2');
+    expect(first[5]).toBe(1000);
+    expect(first[6]).toBe(0);
+    expect(first[7]).toBe(1100);
   });
 
   /**
@@ -79,9 +82,9 @@ describe('Выгрузка .xlsx', () => {
     ]);
     const [, first] = readBack(buffer);
 
-    expect(first[4]).toBe(1150);
-    expect(first[5]).toBe(150);
-    expect(first[6]).toBe(1250);
+    expect(first[5]).toBe(1150);
+    expect(first[6]).toBe(150);
+    expect(first[7]).toBe(1250);
   });
 
   it('суммы лежат ЧИСЛАМИ, а не строками', () => {
@@ -89,9 +92,9 @@ describe('Выгрузка .xlsx', () => {
     const { buffer } = buildOrdersWorkbook([ORDER()]);
     const [, first] = readBack(buffer);
 
-    expect(typeof first[4]).toBe('number');
     expect(typeof first[5]).toBe('number');
     expect(typeof first[6]).toBe('number');
+    expect(typeof first[7]).toBe('number');
   });
 
   it('итоговая строка присутствует и суммирует всё', () => {
@@ -108,10 +111,10 @@ describe('Выгрузка .xlsx', () => {
     const total = rows[rows.length - 1];
 
     expect(total[0]).toBe('ИТОГО');
-    expect(total[3]).toContain('2');
-    expect(total[4]).toBe(1700);
-    expect(total[5]).toBe(200);
-    expect(total[6]).toBe(1850);
+    expect(total[4]).toContain('2');
+    expect(total[5]).toBe(1700);
+    expect(total[6]).toBe(200);
+    expect(total[7]).toBe(1850);
   });
 
   it('заказ без товаров и без сумм не роняет выгрузку', () => {
@@ -119,7 +122,8 @@ describe('Выгрузка .xlsx', () => {
     const [, first] = readBack(buffer);
 
     expect(first[3]).toBe('');
-    expect(first[4]).toBe(0);
+    expect(first[4]).toBe('');
+    expect(first[5]).toBe(0);
   });
 
   it('состав склеивается в одну ячейку', () => {
@@ -136,6 +140,21 @@ describe('Выгрузка .xlsx', () => {
   it('товар без названия не превращается в пустоту', () => {
     expect(formatItems({ items: [{ count: 1 }] })).toBe('без названия');
     expect(formatItems({ items: [{ offerName: '   ', count: 3 }] })).toBe('без названия ×3');
+  });
+
+  /**
+   * Артикул — короткий offerId каталога, как в «Едет обратно»; название от
+   * Маркета длинное, и продавец принимал его за «артикул, который надо сокращать».
+   */
+  it('артикулы склеиваются в одну ячейку, пустой не пропадает', () => {
+    expect(
+      formatOfferIds([
+        { offerId: 'MTP-1', count: 2 },
+        { offerId: '540533', count: 1 },
+        { count: 3 },
+      ]),
+    ).toBe('MTP-1 ×2; 540533; без артикула ×3');
+    expect(formatOfferIds(undefined)).toBe('');
   });
 
   it('битый items не роняет разбор', () => {
@@ -169,7 +188,7 @@ describe('Защита от переполнения', () => {
     const result = buildOrdersWorkbook(orders);
     const rows = readBack(result.buffer);
 
-    expect(rows[rows.length - 1][4]).toBe(MAX_EXPORT_ROWS);
+    expect(rows[rows.length - 1][5]).toBe(MAX_EXPORT_ROWS);
   });
 });
 

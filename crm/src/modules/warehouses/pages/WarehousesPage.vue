@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
  * «Склады»: склады Маркета с остатками и склады магазина — тот же
- * WarehousesService, что кнопка бота. Файла нет: бот его не шлёт.
+ * WarehousesService, что кнопка бота. xlsx — книга остатков «FBY» из того же
+ * снимка отчёта (в боте у «Складов» файла нет).
  */
-import { RotateCw, Warehouse } from 'lucide-vue-next';
+import { Download, RotateCw, Warehouse } from 'lucide-vue-next';
 import { storeToRefs } from 'pinia';
 import { watch } from 'vue';
 
@@ -21,7 +22,7 @@ import { useStoreKey } from '@/shared/composables';
 
 const store = useWarehousesStore();
 const storeKey = useStoreKey();
-const { report, isLoading, isRefreshing, savedAt, error } = storeToRefs(store);
+const { report, isLoading, isRefreshing, isFresh, savedAt, error } = storeToRefs(store);
 
 // Срез — при открытии раздела (и при переходе в другой магазин).
 watch(storeKey, (key) => void store.ensure(key), { immediate: true });
@@ -33,6 +34,10 @@ watch(storeKey, (key) => void store.ensure(key), { immediate: true });
       <Button variant="outline" :disabled="isLoading" @click="store.refresh(storeKey)">
         <RotateCw />
         Обновить
+      </Button>
+      <Button :disabled="!isFresh || !report?.file" @click="store.download()">
+        <Download />
+        Скачать xlsx
       </Button>
     </template>
   </PageHeader>

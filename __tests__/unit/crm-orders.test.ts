@@ -164,6 +164,8 @@ describe('Отчёты о заказах в CRM (TASK-075)', () => {
 
     expect(view.rows.map((row) => row.type)).toEqual(['nonRedemption', 'return']);
     expect(view.rows[0].status).toBe('FULL_NOT_RANSOM');
+    // Строки заказов и возвратов читаются одинаково — артикулом, не названием.
+    expect(view.rows[0].items).not.toMatch(/Часы|Casio|Orient/);
     // У возврата нет названий — только артикул.
     expect(view.rows[1]).toMatchObject({ orderId: 555, items: 'D-4 ×3', sales: 430 });
     expect(view.returns).toMatchObject({ count: 1, inFlight: 1, activeOnly: false });

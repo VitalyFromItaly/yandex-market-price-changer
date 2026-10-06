@@ -35,6 +35,7 @@ const HEADERS = [
   'Номер заказа',
   'Дата создания',
   'Статус',
+  'Артикул',
   'Состав',
   'Сумма продаж, ₽',
   'в т.ч. субсидии Маркета, ₽',
@@ -63,6 +64,25 @@ export function formatItems(order: IReportOrder): string {
     .join('; ');
 }
 
+/**
+ * Артикулы позиций одной строкой: «MTP-1234 ×2; 540533». Артикул — `offerId`
+ * каталога, тот же короткий код, что печатает «Едет обратно» (у возвратов это
+ * `shopSku`, переименованный клиентом). В «Составе» — название товара от Маркета,
+ * длинное, и продавец принимал его за «полный артикул, который надо сокращать».
+ */
+export function formatOfferIds(
+  items: readonly { offerId?: string; count?: number }[] | undefined,
+): string {
+  if (!Array.isArray(items)) return '';
+  return items
+    .map((item) => {
+      const offer = (item?.offerId ?? '').trim() || 'без артикула';
+      const count = Number(item?.count);
+      return Number.isFinite(count) && count > 1 ? `${offer} ×${count}` : offer;
+    })
+    .join('; ');
+}
+
 export function buildOrdersWorkbook(orders: readonly IReportOrder[]): IWorkbookResult {
   const exported = orders.slice(0, MAX_EXPORT_ROWS);
   const truncated = orders.length - exported.length;
@@ -82,6 +102,7 @@ export function buildOrdersWorkbook(orders: readonly IReportOrder[]): IWorkbookR
       order?.id ?? '',
       formatCreationDate(order?.creationDate),
       order?.status ?? '',
+      formatOfferIds(order?.items),
       formatItems(order),
       // В ячейку кладём ЧИСЛО, а не отформатированную строку: «1 234 ₽» Excel
       // сложить не сможет, а продавцы считают выгрузку сводными таблицами.
@@ -96,6 +117,7 @@ export function buildOrdersWorkbook(orders: readonly IReportOrder[]): IWorkbookR
     'ИТОГО',
     '',
     '',
+    '',
     `Заказов: ${exported.length}`,
     round(totalSales),
     round(totalSubsidies),
@@ -107,6 +129,7 @@ export function buildOrdersWorkbook(orders: readonly IReportOrder[]): IWorkbookR
     { wch: 14 },
     { wch: 12 },
     { wch: 14 },
+    { wch: 24 },
     { wch: 50 },
     { wch: 18 },
     { wch: 26 },

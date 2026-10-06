@@ -602,9 +602,9 @@ describe('Выгрузка «едет до клиента» файлом (TASK-0
     const total = rows[rows.length - 1];
 
     expect(total[0]).toBe('ИТОГО');
-    expect(total[4]).toBe(Math.round(totals.sales));
-    expect(total[5]).toBe(Math.round(totals.subsidies));
-    expect(total[6]).toBe(Math.round(totals.withDelivery));
+    expect(total[5]).toBe(Math.round(totals.sales));
+    expect(total[6]).toBe(Math.round(totals.subsidies));
+    expect(total[7]).toBe(Math.round(totals.withDelivery));
     expect(result.caption).toContain(formatRubles(totals.sales));
   });
 });

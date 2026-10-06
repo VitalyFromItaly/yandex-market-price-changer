@@ -52,6 +52,11 @@ export interface IWarehousesScreenData {
    * `null`, а не пустой объект: «нет данных» и «везде ноль» — разные ответы.
    */
   byWarehouse: IFbyStockSummary['byWarehouse'] | null;
+  /**
+   * Весь снимок отчёта — для xlsx остатков в CRM (та же книга, что у «FBY»).
+   * Экран бота его не читает: файла «Склады» в боте нет.
+   */
+  stock?: IFbyStockSummary | null;
   /** Момент, НА который сняты остатки. */
   stockTakenAt?: Date;
   /** Почему остатков нет — от этого зависит текст заглушки. */

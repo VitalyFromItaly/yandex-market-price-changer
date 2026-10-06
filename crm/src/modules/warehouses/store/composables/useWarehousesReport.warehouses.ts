@@ -38,6 +38,10 @@ export function useWarehousesReport() {
     return job.run({ store });
   }
 
+  function download(): Promise<void> {
+    return job.download(report.value?.file?.filename);
+  }
+
   return {
     report,
     isLoading: job.isLoading,
@@ -48,6 +52,7 @@ export function useWarehousesReport() {
     ensure,
     refresh,
     retry: job.retry,
+    download,
     reset: job.reset,
   };
 }

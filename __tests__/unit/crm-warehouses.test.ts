@@ -39,7 +39,7 @@ const DATA: IWarehousesScreenData = {
 };
 
 describe('kind «Склады» в CRM (TASK-086)', () => {
-  it('зарегистрирован под FBY-only фичей warehouses, файла нет', async () => {
+  it('зарегистрирован под FBY-only фичей warehouses; без снимка остатков файла нет', async () => {
     const registry = new CrmJobsRegistry();
     const overview = vi.fn(async () => DATA);
     const kinds = new CrmWarehousesKinds(registry, { overview } as never);
@@ -51,7 +51,39 @@ describe('kind «Склады» в CRM (TASK-086)', () => {
       NOW,
     );
     expect(output.file).toBeNull();
+    expect((output.data as ICrmWarehousesView).file).toBeNull();
     expect((output.data as ICrmWarehousesView).fby).toHaveLength(3);
+  });
+
+  it('со снимком остатков — xlsx «FBY» (fby-ostatki-…), в JSON только метаданные', async () => {
+    const registry = new CrmJobsRegistry();
+    const stock = {
+      totals: { ...zero, AVAILABLE: 10 },
+      problems: [],
+      rows: [
+        {
+          sku: 'A-1',
+          name: 'Часы',
+          warehouse: 'Ростов-на-Дону-1',
+          totals: { ...zero, AVAILABLE: 10 },
+        },
+      ],
+      byWarehouse: DATA.byWarehouse,
+    };
+    const overview = vi.fn(async () => ({ ...DATA, stock }));
+    const kinds = new CrmWarehousesKinds(registry, { overview } as never);
+
+    const output = await kinds.run(
+      { telegramUserId: '1', store: {} as never, params: {}, features: {} },
+      NOW,
+    );
+    expect(output.file?.filename).toBe('fby-ostatki-24-09-2026-1005.xlsx');
+    expect(output.file?.buffer.length).toBeGreaterThan(0);
+    expect((output.data as ICrmWarehousesView).file).toEqual({
+      filename: 'fby-ostatki-24-09-2026-1005.xlsx',
+      rows: 1,
+      truncated: 0,
+    });
   });
 
   it('строки — joinWarehouseStock: совпавший, «пусто», «нет в списке»', () => {

@@ -18,5 +18,7 @@ export function mapWarehouses(response: WarehousesResponse): WarehousesReport {
     sum,
     store: response.store,
     emptyText: response.emptyText,
+    // Кэш экрана мог сохранить ответ до появления файла — поля там нет.
+    file: response.file ?? null,
   };
 }

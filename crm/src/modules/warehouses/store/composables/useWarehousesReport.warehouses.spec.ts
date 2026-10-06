@@ -39,7 +39,7 @@ const done = (jobId: string, payload: WarehousesResponse) => ({
   status: 'done',
   data: payload,
   error: null,
-  file: null,
+  file: payload.file ? { filename: payload.file.filename } : null,
 });
 
 beforeEach(() => {
@@ -84,5 +84,19 @@ describe('useWarehousesReport', () => {
 
     store.reset();
     expect(store.report).toBeNull();
+  });
+  it('скачивание — файлом задачи с именем из ответа', async () => {
+    const file = { filename: 'fby-ostatki-24-09-2026-1005.xlsx', rows: 1, truncated: 0 };
+    api.start.mockResolvedValue({ jobId: 'j1', created: true });
+    api.get.mockResolvedValue(done('j1', data({ file })));
+    api.file.mockResolvedValue({ blob: new Blob(), filename: '' });
+    const store = useWarehousesStore();
+
+    await store.ensure('s1');
+    await vi.advanceTimersByTimeAsync(FIRST_POLL_MS);
+    expect(store.report?.file).toEqual(file);
+    await store.download();
+    expect(api.file).toHaveBeenCalledWith('j1');
+    expect(api.saveFile.mock.calls[0]?.[1]).toBe(file.filename);
   });
 });

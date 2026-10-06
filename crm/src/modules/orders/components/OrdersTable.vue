@@ -81,7 +81,7 @@ function sortProps(key: SortKey) {
               class="hidden md:table-cell"
               v-bind="sortProps('status')"
             />
-            <TableHead class="hidden lg:table-cell">Состав</TableHead>
+            <TableHead class="hidden lg:table-cell">Артикулы</TableHead>
             <TableSortHead label="Продажи" align="right" v-bind="sortProps('sales')" />
             <TableSortHead
               label="С доставкой"
