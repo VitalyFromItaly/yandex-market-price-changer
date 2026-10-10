@@ -10,6 +10,8 @@ import { ActionLogSchema } from '../src/database/schemas/action-log.schema';
 import { AdminCredentialSchema } from '../src/database/schemas/admin-credential.schema';
 import { CrmCredentialSchema } from '../src/database/schemas/crm-credential.schema';
 import { CrmJobResultSchema } from '../src/database/schemas/crm-job-result.schema';
+import { TelegramApiBucketSchema } from '../src/database/schemas/telegram-api-bucket.schema';
+import { HealthSampleSchema } from '../src/database/schemas/health-sample.schema';
 
 /**
  * Приведение индексов существующей базы к схемам.
@@ -39,6 +41,8 @@ const MODELS = [
   { name: 'AdminCredential', schema: AdminCredentialSchema },
   { name: 'CrmCredential', schema: CrmCredentialSchema },
   { name: 'CrmJobResult', schema: CrmJobResultSchema },
+  { name: 'TelegramApiBucket', schema: TelegramApiBucketSchema },
+  { name: 'HealthSample', schema: HealthSampleSchema },
 ];
 
 async function main(): Promise<void> {

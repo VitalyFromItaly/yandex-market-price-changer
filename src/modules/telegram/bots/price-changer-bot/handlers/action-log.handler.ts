@@ -3,7 +3,7 @@ import { Context } from 'telegraf';
 
 import { ActionLogService } from '../../../../../database/services/action-log.service';
 import { TTelegrafBot } from '../../../domain.telegram';
-import { describeAction, fullName } from '../../shared/action-log.domain';
+import { describeAction, fullName, refusedOf } from '../../shared/action-log.domain';
 
 /**
  * Журнал действий: пишет, КТО и ЧТО сделал — в консоль и в Mongo.
@@ -55,8 +55,10 @@ export class ActionLogHandler {
         throw e;
       } finally {
         const durationMs = Date.now() - started;
+        const refusedBy = refusedOf(ctx.state);
         this.logger.log(
-          `${who} (${ctx.from.id}) · ${kind}: ${action} · ${status} · ${durationMs}мс`,
+          `${who} (${ctx.from.id}) · ${kind}: ${action} · ${status} · ${durationMs}мс` +
+            (refusedBy ? ` · отказ: ${refusedBy}` : ''),
         );
 
         // Запись НЕ ожидается: поход в Mongo не должен добавляться к времени
@@ -72,6 +74,7 @@ export class ActionLogHandler {
           status,
           durationMs,
           error,
+          refusedBy,
         });
       }
     });

@@ -14,6 +14,7 @@ import {
   isRejectionExpired,
   REJECTION_COOLDOWN_MS,
 } from '../../shared/access.domain';
+import { markRefused } from '../../shared/action-log.domain';
 import { BotCommandsService } from '../../shared/services/bot-commands.service';
 import { PENDING_TEXT, nextStep, rejectedText, stepPrompt } from '../onboarding';
 
@@ -68,6 +69,7 @@ export class AccessGateHandler {
       const access = await this.resolve(ctx);
       if (canPass(access.status, kind)) return next();
 
+      markRefused(ctx.state, 'access');
       await this.block(ctx, access);
     });
   }

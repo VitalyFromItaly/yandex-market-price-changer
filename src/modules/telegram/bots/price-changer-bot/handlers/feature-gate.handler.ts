@@ -7,6 +7,7 @@ import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
+import { markRefused } from '../../shared/action-log.domain';
 import { FEATURE_META, isFeatureEnabled, requiredFeatures } from '../../shared/features.domain';
 
 /**
@@ -65,6 +66,7 @@ export class FeatureGateHandler {
       const blocked = needed.find((key) => !isFeatureEnabled(access?.features, key));
       if (!blocked) return next();
 
+      markRefused(ctx.state, 'feature');
       await this.block(ctx, blocked);
     });
   }

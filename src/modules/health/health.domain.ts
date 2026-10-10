@@ -73,6 +73,17 @@ export interface ICheckResult {
   state: TCheckState;
   /** Подробность для сообщения: «свободно 12% (4,8 ГБ из 40 ГБ)». */
   detail: string;
+  /**
+   * Сколько шла сетевая проверка (Redis, Telegram, Яндекс). Нет — у проверки
+   * сетевой части нет (диск, Mongo по readyState). Пишется в историю
+   * (`HealthSample`): деградация зеркала видна по ней раньше, чем авария.
+   */
+  latencyMs?: number;
+}
+
+/** «· 240 мс» — хвост строки сводки; пусто, если задержки нет. */
+export function latencySuffix(result: ICheckResult): string {
+  return typeof result.latencyMs === 'number' ? ` · ${result.latencyMs} мс` : '';
 }
 
 /**
@@ -206,7 +217,8 @@ const STATE_MARK: Record<TCheckState, string> = {
  */
 export function summaryText(title: string, results: ICheckResult[], stamp: string): string {
   const lines = results.map(
-    (result) => `${STATE_MARK[result.state]} ${checkTitle(result.key)} — ${result.detail}`,
+    (result) =>
+      `${STATE_MARK[result.state]} ${checkTitle(result.key)} — ${result.detail}${latencySuffix(result)}`,
   );
   return [`${title} · ${stamp} МСК`, '', ...lines].join('\n');
 }

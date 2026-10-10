@@ -13,6 +13,7 @@ describe('BotRegistry: журнал исходящих', () => {
   function build() {
     const record = vi.fn().mockResolvedValue(undefined);
     const report = vi.fn().mockResolvedValue(undefined);
+    const observe = vi.fn();
 
     // Зависимости, которые перехвату не нужны: он не трогает ни базу ботов,
     // ни композер, ни конфиг.
@@ -22,6 +23,7 @@ describe('BotRegistry: журнал исходящих', () => {
       null as never,
       { record } as never,
       { report } as never,
+      { observe } as never,
     );
 
     const callApi = vi.fn().mockResolvedValue({ message_id: 1 });
@@ -33,7 +35,7 @@ describe('BotRegistry: журнал исходящих', () => {
       id: 'doc1',
     });
 
-    return { registry, telegraf, callApi, record, report };
+    return { registry, telegraf, callApi, record, report, observe };
   }
 
   it('записывает отправленное пользователю сообщение', async () => {
@@ -81,9 +83,9 @@ describe('BotRegistry: журнал исходящих', () => {
     const { telegraf, callApi, record, report } = build();
     callApi.mockRejectedValueOnce(new Error('403 Forbidden: bot was blocked by the user'));
 
-    await expect(telegraf.telegram.callApi('sendMessage', { chat_id: 1, text: 'x' })).rejects.toThrow(
-      '403',
-    );
+    await expect(
+      telegraf.telegram.callApi('sendMessage', { chat_id: 1, text: 'x' }),
+    ).rejects.toThrow('403');
 
     // В журнал ДЕЙСТВИЙ не пишем: сообщение не ушло, отправкой это не было.
     expect(record).not.toHaveBeenCalled();
@@ -105,6 +107,65 @@ describe('BotRegistry: журнал исходящих', () => {
     expect(report).not.toHaveBeenCalled();
   });
 
+  it('метрика: каждый вызов, включая служебные, с исходом и длительностью', async () => {
+    // Смерть зеркала первой видна на getUpdates/getMe — журнал исходящих их не
+    // пишет, а метрика обязана.
+    const { telegraf, observe } = build();
+
+    await telegraf.telegram.callApi('getUpdates', { timeout: 30 });
+    await telegraf.telegram.callApi('sendMessage', { chat_id: 1, text: 'x' });
+
+    expect(observe).toHaveBeenCalledTimes(2);
+    expect(observe.mock.calls[0].slice(0, 3)).toEqual(['42', 'getUpdates', 'ok']);
+    expect(observe.mock.calls[1].slice(0, 3)).toEqual(['42', 'sendMessage', 'ok']);
+    expect(typeof observe.mock.calls[1][3]).toBe('number');
+  });
+
+  it('ошибка Telegram: код в метрике и в журнале, 403 админов не будит', async () => {
+    const { telegraf, callApi, report, observe } = build();
+    callApi.mockRejectedValueOnce(
+      Object.assign(new Error('403: Forbidden: bot was blocked by the user'), {
+        response: { error_code: 403, description: 'Forbidden: bot was blocked by the user' },
+      }),
+    );
+
+    await expect(
+      telegraf.telegram.callApi('sendMessage', { chat_id: 5, text: 'x' }),
+    ).rejects.toThrow();
+
+    expect(observe.mock.calls[0].slice(0, 3)).toEqual(['42', 'sendMessage', '403']);
+    const reported = report.mock.calls[0][0];
+    expect(reported.httpStatus).toBe(403);
+    expect(reported.direction).toBe('out');
+    expect(reported.alert).toBe(false);
+  });
+
+  it('429 и сетевой сбой будят админов; сеть в метрике — network', async () => {
+    const { telegraf, callApi, report, observe } = build();
+    callApi
+      .mockRejectedValueOnce(
+        Object.assign(new Error('429: Too Many Requests'), {
+          response: {
+            error_code: 429,
+            description: 'Too Many Requests',
+            parameters: { retry_after: 7 },
+          },
+        }),
+      )
+      .mockRejectedValueOnce(new Error('connect ETIMEDOUT'));
+
+    await expect(
+      telegraf.telegram.callApi('sendMessage', { chat_id: 5, text: 'x' }),
+    ).rejects.toThrow();
+    await expect(
+      telegraf.telegram.callApi('sendMessage', { chat_id: 5, text: 'x' }),
+    ).rejects.toThrow();
+
+    expect(report.mock.calls[0][0].alert).toBe(true);
+    expect(report.mock.calls[1][0].alert).toBe(true);
+    expect(observe.mock.calls.map((call) => call[2])).toEqual(['429', 'network']);
+  });
+
   it('сбой журнала не мешает боту ответить', async () => {
     const record = vi.fn().mockRejectedValue(new Error('mongo недоступна'));
     const registry = new BotRegistry(
@@ -113,15 +174,16 @@ describe('BotRegistry: журнал исходящих', () => {
       null as never,
       { record } as never,
       { report: vi.fn() } as never,
+      { observe: vi.fn() } as never,
     );
     const telegraf = { telegram: { callApi: vi.fn().mockResolvedValue('ok') }, botInfo: { id: 1 } };
     (registry as never as { logOutgoing(t: unknown, d: unknown): void }).logOutgoing(telegraf, {
       id: 'doc1',
     });
 
-    await expect(
-      telegraf.telegram.callApi('sendMessage', { chat_id: 1, text: 'x' }),
-    ).resolves.toBe('ok');
+    await expect(telegraf.telegram.callApi('sendMessage', { chat_id: 1, text: 'x' })).resolves.toBe(
+      'ok',
+    );
   });
 });
 
@@ -148,6 +210,7 @@ describe('BotRegistry: журнал исходящих у per-update конте�
       null as never,
       { record } as never,
       { report } as never,
+      { observe: vi.fn() } as never,
     );
     const CtxType = (
       registry as never as { loggingContextType(d: unknown): TCtxCtor }

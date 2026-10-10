@@ -9,8 +9,10 @@ import { AdminCredential, AdminCredentialSchema } from './schemas/admin-credenti
 import { Bot, BotSchema } from './schemas/bot.schema';
 import { CrmCredential, CrmCredentialSchema } from './schemas/crm-credential.schema';
 import { CrmJobResult, CrmJobResultSchema } from './schemas/crm-job-result.schema';
+import { HealthSample, HealthSampleSchema } from './schemas/health-sample.schema';
 import { PurchasePrice, PurchasePriceSchema } from './schemas/purchase-price.schema';
 import { ReportSchedule, ReportScheduleSchema } from './schemas/report-schedule.schema';
+import { TelegramApiBucket, TelegramApiBucketSchema } from './schemas/telegram-api-bucket.schema';
 import { UserAccess, UserAccessSchema } from './schemas/user-access.schema';
 import { User, UserSchema } from './schemas/user.schema';
 import { YandexMarket, YandexMarketSchema } from './schemas/yandex-market.schema';
@@ -18,8 +20,10 @@ import { ActionLogService } from './services/action-log.service';
 import { AdminCredentialService } from './services/admin-credential.service';
 import { CrmCredentialService } from './services/crm-credential.service';
 import { CrmJobResultService } from './services/crm-job-result.service';
+import { HealthSampleService } from './services/health-sample.service';
 import { PurchasePriceService } from './services/purchase-price.service';
 import { ReportScheduleService } from './services/report-schedule.service';
+import { TelegramApiBucketService } from './services/telegram-api-bucket.service';
 import { UserAccessService } from './services/user-access.service';
 import { YandexMarketService } from './services/yandex-market.service';
 
@@ -62,6 +66,8 @@ import { YandexMarketService } from './services/yandex-market.service';
       { name: AdminCredential.name, schema: AdminCredentialSchema },
       { name: CrmCredential.name, schema: CrmCredentialSchema },
       { name: CrmJobResult.name, schema: CrmJobResultSchema },
+      { name: TelegramApiBucket.name, schema: TelegramApiBucketSchema },
+      { name: HealthSample.name, schema: HealthSampleSchema },
     ]),
   ],
   providers: [
@@ -74,6 +80,8 @@ import { YandexMarketService } from './services/yandex-market.service';
     AdminCredentialService,
     CrmCredentialService,
     CrmJobResultService,
+    TelegramApiBucketService,
+    HealthSampleService,
   ],
   exports: [
     DatabaseService,
@@ -86,6 +94,8 @@ import { YandexMarketService } from './services/yandex-market.service';
     AdminCredentialService,
     CrmCredentialService,
     CrmJobResultService,
+    TelegramApiBucketService,
+    HealthSampleService,
   ],
 })
 export class DatabaseModule {}

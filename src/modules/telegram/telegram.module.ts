@@ -36,6 +36,7 @@ import { PriceChangerKeyboard } from './bots/price-changer-bot/price-changer.key
 import { AdminNotifierService } from './bots/shared/services/admin-notifier.service';
 import { BotCommandsService } from './bots/shared/services/bot-commands.service';
 import { StorePromptService } from './bots/shared/services/store-prompt.service';
+import { TelegramApiMetrics } from './bots/telegram-api-metrics.service';
 import { FbyOverviewProcessor } from './queue/processors/fby-overview.processor';
 import { HostingReminderProcessor } from './queue/processors/hosting-reminder.processor';
 import { MarketReportProcessor } from './queue/processors/market-report.processor';
@@ -132,6 +133,7 @@ import { QUEUE_NAMES } from './index';
     TelegramService,
     // Слой ботов: всё через DI, ручного `new` больше нет.
     BotRegistry,
+    TelegramApiMetrics,
     ErrorAlertBridge,
     PriceChangerComposer,
     PriceChangerKeyboard,

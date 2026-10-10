@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { ActionLogService } from '../../database/services/action-log.service';
+import { telegramErrorInfo } from '../metrics/metrics.domain';
 import { maskOutgoing, truncate } from '../telegram/bots/shared/action-log.domain';
 import { esc } from '../telegram/formatting/telegram-format';
 import { YandexApiError } from '../yandex/yandex-api.errors';
@@ -42,6 +43,13 @@ export interface IErrorReport {
   action?: string;
   httpStatus?: number;
   requestUrl?: string;
+  /**
+   * `out` — сломался вызов, который делал БОТ (отправка в Telegram). По
+   * умолчанию `in`: ошибка обработки того, что пришло.
+   */
+  direction?: 'in' | 'out';
+  /** Сколько длился упавший вызов. */
+  durationMs?: number;
   /** Слать ли алерт администраторам. По умолчанию да. */
   alert?: boolean;
 }
@@ -129,7 +137,7 @@ export class ErrorReporter {
         username: input.username,
         botId: input.botId ?? SYSTEM_USER,
         chatId: input.chatId,
-        direction: 'in',
+        direction: input.direction ?? 'in',
         kind: 'error',
         action: input.action ?? input.context,
         status: 'error',
@@ -140,6 +148,7 @@ export class ErrorReporter {
         httpStatus,
         requestUrl,
         context: input.context,
+        durationMs: input.durationMs,
       });
 
       if (input.alert !== false) {
@@ -152,8 +161,16 @@ export class ErrorReporter {
     }
   }
 
-  /** Имя класса — по нему ошибки группируются и троттлятся алерты. */
+  /**
+   * Имя класса — по нему ошибки группируются и троттлятся алерты.
+   *
+   * У ошибки Telegram имя класса бесполезно (telegraf не задаёт `name`, и
+   * выходит голое `Error`), поэтому тип несёт код ответа: `TelegramError:403`.
+   * Заодно 429 и 403 троттлятся раздельно — лимит не прячется за блокировками.
+   */
   private typeOf(error: unknown): string {
+    const { code } = telegramErrorInfo(error);
+    if (code !== undefined) return `TelegramError:${code}`;
     if (error instanceof Error) return error.name || error.constructor.name;
     return typeof error === 'string' ? 'StringError' : 'UnknownError';
   }
@@ -164,7 +181,10 @@ export class ErrorReporter {
    * он его только принимает.
    */
   private messageOf(error: unknown): string {
-    const raw = error instanceof Error ? error.message : String(error);
+    const { retryAfter } = telegramErrorInfo(error);
+    const raw =
+      (error instanceof Error ? error.message : String(error)) +
+      (retryAfter !== undefined ? ` · retry after ${retryAfter} s` : '');
     return truncate(maskOutgoing(raw || 'без сообщения'), 500);
   }
 

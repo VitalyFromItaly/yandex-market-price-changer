@@ -7,10 +7,16 @@ import { AppConfigService } from '../../../config/app-config.service';
 import { Bot, BotDocument } from '../../../database/schemas/bot.schema';
 import { ActionLogService } from '../../../database/services/action-log.service';
 import { ErrorReporter } from '../../errors/error-reporter.service';
+import {
+  outcomeOf,
+  shouldAlertTelegramError,
+  telegramErrorInfo,
+} from '../../metrics/metrics.domain';
 import { EBotType, THandleUpdatePayload, TTelegrafBot, TWebHookResponse } from '../domain.telegram';
 
 import { PriceChangerComposer } from './price-changer-bot/price-changer.composer';
 import { OUTGOING_METHODS, describeOutgoing, outgoingSourceOf } from './shared/action-log.domain';
+import { TelegramApiMetrics } from './telegram-api-metrics.service';
 
 /**
  * То немногое, что реестру нужно от записи бота.
@@ -69,6 +75,7 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
     private readonly config: AppConfigService,
     private readonly logs: ActionLogService,
     private readonly errors: ErrorReporter,
+    private readonly metrics: TelegramApiMetrics,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -299,35 +306,50 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
 
     telegram.callApi = (async (method: string, payload: unknown, options?: unknown) => {
       let result: unknown;
+      const started = Date.now();
 
       try {
         result = await (original as unknown as TCallApi)(method, payload, options);
       } catch (error) {
+        // Метрика — по ВСЕМ методам, включая служебные: смерть зеркала первым
+        // делом видна на getUpdates и getMe, которых журнал исходящих не пишет.
+        this.metrics.observe(botIdOf(), method, outcomeOf(error), Date.now() - started);
+
         // Неудачная отправка — самый заметный для пользователя класс сбоев:
         // он нажал кнопку и не получил ничего. Раньше запись делалась только
         // после успешного вызова, то есть именно такие случаи в журнал не
         // попадали. Типовая причина — 403: пользователь заблокировал бота.
         if (OUTGOING_METHODS.includes(method)) {
           const failed = outgoingSourceOf(method, payload);
+          const info = telegramErrorInfo(error);
           void this.errors.report({
             error,
             source: 'bot',
+            direction: 'out',
             context: `send:${method}`,
             telegramUserId: failed.chatId?.toString(),
             chatId: failed.chatId?.toString(),
             botId: botIdOf(),
             action: describeOutgoing(failed).action,
+            httpStatus: info.code,
+            durationMs: Date.now() - started,
+            // 403 «заблокировал бота» и 400 — поведение клиента, не авария:
+            // запись остаётся, админов не будим (см. shouldAlertTelegramError).
+            alert: shouldAlertTelegramError(info),
           });
         }
         throw error;
       }
+
+      const durationMs = Date.now() - started;
+      this.metrics.observe(botIdOf(), method, outcomeOf(undefined), durationMs);
 
       if (OUTGOING_METHODS.includes(method)) {
         const source = outgoingSourceOf(method, payload);
         const { kind, action } = describeOutgoing(source);
         const chatId = source.chatId?.toString();
 
-        this.outgoingLogger.log(`→ ${chatId ?? '?'} · ${kind}: ${action}`);
+        this.outgoingLogger.log(`→ ${chatId ?? '?'} · ${kind}: ${action} · ${durationMs}мс`);
 
         void this.logs.record({
           // Для лички chat_id совпадает с id пользователя, а бот рассчитан
@@ -338,6 +360,7 @@ export class BotRegistry implements OnApplicationBootstrap, OnApplicationShutdow
           chatId,
           kind,
           action,
+          durationMs,
         });
       }
 

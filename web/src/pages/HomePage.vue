@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 
-import type { IUserRow } from '../api';
+import type { IMetricsReport, IUserRow } from '../api';
 
-import { fetchLogs, fetchUsers } from '../api';
+import { fetchLogs, fetchMetrics, fetchUsers } from '../api';
 import { describeError, token } from '../auth';
+import { formatCount, formatMs } from '../metrics.domain';
 import { displayName } from '../users.domain';
 
 /** Окно, за которое считаются ошибки. Сутки — ровно «со вчера». */
@@ -12,6 +13,8 @@ const ERROR_WINDOW_HOURS = 24;
 
 const users = ref<IUserRow[]>([]);
 const errors = ref(0);
+/** Сводка метрик за сутки — строка-ссылка; без неё обзор всё равно открывается. */
+const metrics = ref<IMetricsReport | null>(null);
 const loading = ref(false);
 const loadError = ref('');
 
@@ -42,6 +45,11 @@ async function load(): Promise<void> {
     ]);
     users.value = items;
     errors.value = log.total;
+    // Отдельно и без await в общем Promise.all: сбой метрик не должен ронять
+    // обзор, на который приходят ради заявок.
+    void fetchMetrics(token.value, '24h')
+      .then((report) => (metrics.value = report))
+      .catch(() => (metrics.value = null));
   } catch (error) {
     loadError.value = describeError(error);
   } finally {
@@ -93,8 +101,7 @@ async function load(): Promise<void> {
         <div class="body">
           <span class="label">Ошибки за сутки</span>
           <span class="muted">
-            <RouterLink to="/logs">Открыть журнал</RouterLink> и отфильтровать по статусу
-            «ошибка».
+            <RouterLink to="/logs">Открыть журнал</RouterLink> и отфильтровать по статусу «ошибка».
           </span>
         </div>
         <span class="count tnum">{{ errors }}</span>
@@ -117,6 +124,15 @@ async function load(): Promise<void> {
       <span class="muted">подключили магазин</span>
     </div>
   </section>
+
+  <p v-if="metrics" class="muted hint tnum">
+    Telegram API за сутки: {{ formatCount(metrics.telegram.total) }} вызовов,
+    <span :class="{ bad: metrics.telegram.errors }">
+      {{ formatCount(metrics.telegram.errors) }} ошибок</span
+    >, p95 {{ formatMs(metrics.telegram.p95) }} · зеркало сейчас
+    {{ formatMs(metrics.probes.find((p) => p.key === 'telegram')?.last?.latencyMs) }} ·
+    <RouterLink to="/metrics">Метрики</RouterLink>
+  </p>
 
   <p class="muted hint">
     Возможности бота настраиваются в разделе
@@ -251,5 +267,9 @@ h2 {
 
 .hint {
   margin: 0;
+}
+
+.bad {
+  color: var(--danger);
 }
 </style>

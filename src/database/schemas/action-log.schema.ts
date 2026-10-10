@@ -82,6 +82,16 @@ export class ActionLog {
   @Prop({ type: Number })
   durationMs?: number;
 
+  /**
+   * Какой гейт отказал апдейту: `access` | `feature`. Пусто — пропущен.
+   *
+   * Ставится гейтом в `ctx.state.refusedBy`, пишется ActionLogHandler-ом в ту
+   * же строку апдейта: гейт сам журнал не пишет, иначе на апдейт было бы две
+   * строки. Нужен странице «Метрики»: «сколько раз упёрлись в закрытое».
+   */
+  @Prop({ type: String })
+  refusedBy?: string;
+
   /** Сообщение исключения, если обработка упала. */
   @Prop({ type: String })
   error?: string;
@@ -136,6 +146,10 @@ ActionLogSchema.index({ status: 1, createdAt: -1 });
 // Направление в индекс не входит: оно принимает два значения, и выборка по
 // нему всё равно читает половину коллекции.
 ActionLogSchema.index({ telegramUserId: 1, createdAt: -1 });
+
+// Окно страницы «Метрики»: все входящие за сутки/неделю. Направление здесь
+// ведёт, потому что выборка — по диапазону времени ВНУТРИ одного направления.
+ActionLogSchema.index({ direction: 1, createdAt: -1 });
 
 /*
  * TTL: Mongo удаляет записи сама.

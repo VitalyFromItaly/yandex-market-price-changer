@@ -8,6 +8,8 @@ export * from './action-log.schema';
 export * from './admin-credential.schema';
 export * from './crm-credential.schema';
 export * from './crm-job-result.schema';
+export * from './telegram-api-bucket.schema';
+export * from './health-sample.schema';
 
 export interface IYandexMarketSchema {
   telegramUserId: number;

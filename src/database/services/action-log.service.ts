@@ -1,3 +1,5 @@
+import type { IUpdateRow } from '../../modules/metrics/metrics.domain';
+
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model } from 'mongoose';
@@ -18,6 +20,8 @@ export interface IActionLogEntry {
   status?: string;
   durationMs?: number;
   error?: string;
+  /** Какой гейт отказал: `access` | `feature`. */
+  refusedBy?: string;
   /** Поля ниже заполняют ErrorReporter и самопроверка (HealthMonitorService). */
   source?: string;
   errorType?: string;
@@ -120,5 +124,50 @@ export class ActionLogService {
   /** Сколько записей подходит под фильтр — чтобы клиент знал про пагинацию. */
   async count(query: IActionLogQuery = {}): Promise<number> {
     return await this.model.countDocuments(this.filterOf(query)).exec();
+  }
+
+  /**
+   * Входящие апдейты окна — только поля свёртки метрик.
+   *
+   * Виды апдейтов передаются явно (`ACTION_KINDS`): direction `in` носят и
+   * записи ошибок, самопроверки, рассылки и запросы CRM, а апдейтами бота они
+   * не являются. Белый список видов, а не чёрный список чужих — новый вид
+   * служебной записи иначе молча попал бы в «апдейты в час».
+   */
+  async findUpdatesSince(since: Date, kinds: readonly string[]): Promise<IUpdateRow[]> {
+    return await this.model
+      .find({ direction: 'in', kind: { $in: kinds }, createdAt: { $gte: since } })
+      .select({
+        _id: 0,
+        createdAt: 1,
+        telegramUserId: 1,
+        username: 1,
+        kind: 1,
+        action: 1,
+        status: 1,
+        durationMs: 1,
+        refusedBy: 1,
+      })
+      .lean<IUpdateRow[]>()
+      .exec();
+  }
+
+  /** Последние неудачные вызовы Bot API (их пишет обёртка callApi, context `send:<метод>`). */
+  async recentTelegramErrors(since: Date, limit: number): Promise<ActionLogDocument[]> {
+    return await this.model
+      .find({ status: 'error', source: 'bot', context: /^send:/, createdAt: { $gte: since } })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select({
+        _id: 0,
+        createdAt: 1,
+        telegramUserId: 1,
+        context: 1,
+        httpStatus: 1,
+        error: 1,
+        action: 1,
+      })
+      .lean<ActionLogDocument[]>()
+      .exec();
   }
 }

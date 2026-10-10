@@ -28,6 +28,7 @@ import { CrmWarehousesModule } from './modules/crm/warehouses/crm-warehouses.mod
 import { ErrorsModule } from './modules/errors/errors.module';
 import { HealthModule } from './modules/health/health.module';
 import { LogsModule } from './modules/logs/logs.module';
+import { MetricsModule } from './modules/metrics/metrics.module';
 import { QueuesModule } from './modules/queues/queues.module';
 import { TelegramModule } from './modules/telegram/telegram.module';
 import { YandexModule } from './modules/yandex/yandex.module';
@@ -55,6 +56,7 @@ import { YandexModule } from './modules/yandex/yandex.module';
     ErrorsModule,
     AdminAuthModule,
     LogsModule,
+    MetricsModule,
     AccessModule,
     CrmModule,
     CrmJobsModule,

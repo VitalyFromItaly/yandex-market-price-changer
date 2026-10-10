@@ -407,3 +407,84 @@ export async function retryQueueJob(token: string, name: string, id: string): Pr
     { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
   );
 }
+
+/* ────────────────────────────── метрики ────────────────────────────── */
+
+export type TMetricsRange = '24h' | '7d';
+
+export interface IApiMethodStats {
+  method: string;
+  count: number;
+  errors: number;
+  byOutcome: Record<string, number>;
+  avgMs: number | null;
+  p50: number | null;
+  p95: number | null;
+  maxMs: number | null;
+}
+
+export interface IProbeSummary {
+  key: string;
+  samples: number;
+  down: number;
+  p50: number | null;
+  p95: number | null;
+  maxMs: number | null;
+  last: { at: number; state: string; latencyMs: number | null } | null;
+  timeline: { at: number; avgMs: number | null; down: number }[];
+}
+
+/** Ответ GET /api/metrics — зеркало IMetricsReport бэкенда. */
+export interface IMetricsReport {
+  range: TMetricsRange;
+  since: number;
+  until: number;
+  step: number;
+  telegram: {
+    total: number;
+    errors: number;
+    network: number;
+    p50: number | null;
+    p95: number | null;
+    methods: IApiMethodStats[];
+    timeline: { at: number; calls: number; errors: number; network: number }[];
+    recentErrors: {
+      at: number;
+      telegramUserId: string;
+      method: string;
+      code: number | null;
+      error: string;
+    }[];
+  };
+  probes: IProbeSummary[];
+  bot: {
+    updates: number;
+    errors: number;
+    users: number;
+    p50: number | null;
+    p95: number | null;
+    refused: Record<string, number>;
+    kinds: {
+      kind: string;
+      count: number;
+      errors: number;
+      p50: number | null;
+      p95: number | null;
+    }[];
+    slowest: {
+      at: number;
+      telegramUserId: string;
+      username?: string;
+      kind: string;
+      action?: string;
+      durationMs: number;
+    }[];
+    timeline: { at: number; updates: number; errors: number }[];
+  };
+}
+
+export async function fetchMetrics(token: string, range: TMetricsRange): Promise<IMetricsReport> {
+  return await request<IMetricsReport>(`/api/metrics?range=${range}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}

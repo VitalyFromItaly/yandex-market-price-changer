@@ -16,6 +16,7 @@ import { statfs } from 'node:fs/promises';
 
 import { AppConfigService } from '../../config/app-config.service';
 import { ActionLogService } from '../../database/services/action-log.service';
+import { HealthSampleService } from '../../database/services/health-sample.service';
 import { ErrorReporter, SYSTEM_USER } from '../errors/error-reporter.service';
 import { QUEUE_NAMES } from '../telegram';
 import { BotRegistry } from '../telegram/bots/bot-registry.service';
@@ -85,6 +86,7 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
     @InjectQueue(QUEUE_NAMES.REPORTS) private readonly reports: Queue,
     private readonly errors: ErrorReporter,
     private readonly logs: ActionLogService,
+    private readonly samples: HealthSampleService,
     private readonly config: AppConfigService,
     // forwardRef и на провайдере, не только на импорте модуля: при обоюдном
     // цикле (TelegramModule ↔ HealthModule) Nest иначе подставляет undefined и
@@ -139,6 +141,17 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
     for (const result of results) {
       this.handle(result, now);
     }
+
+    // История для страницы «Метрики». Не ждём и не боимся сбоя: record сам не
+    // бросает, а монитор обязан работать и при лежащей базе.
+    void this.samples.record(
+      results.map((result) => ({
+        at: now,
+        key: result.key,
+        state: result.state,
+        latencyMs: result.latencyMs ?? null,
+      })),
+    );
 
     this.reportPeriodically(results, new Date());
   }
@@ -271,13 +284,24 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
   }
 
   private async checkRedis(): Promise<ICheckResult> {
+    const started = Date.now();
     try {
       // client Bull — это ioredis; у него свои ретраи, поэтому пинг без гонки
       // может не вернуться вовсе и подвесить весь цикл проверки.
       await this.withTimeout(this.reports.client.ping(), PING_TIMEOUT_MS);
-      return { key: 'redis', state: 'ok', detail: 'отвечает на ping' };
+      return {
+        key: 'redis',
+        state: 'ok',
+        detail: 'отвечает на ping',
+        latencyMs: Date.now() - started,
+      };
     } catch (error) {
-      return { key: 'redis', state: 'down', detail: this.messageOf(error) };
+      return {
+        key: 'redis',
+        state: 'down',
+        detail: this.messageOf(error),
+        latencyMs: Date.now() - started,
+      };
     }
   }
 
@@ -303,11 +327,24 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
       return { key: 'telegram', state: 'down', detail: 'ни один бот не зарегистрирован' };
     }
 
+    // Задержка getMe — это задержка зеркала TELEGRAM_API_URL: ровно тот путь,
+    // которым уходят ответы продавцам. Её история и есть «зеркало деградирует».
+    const started = Date.now();
     try {
       const me = await this.withTimeout(bot.telegraf.telegram.getMe(), PING_TIMEOUT_MS);
-      return { key: 'telegram', state: 'ok', detail: `@${me.username} отвечает` };
+      return {
+        key: 'telegram',
+        state: 'ok',
+        detail: `@${me.username} отвечает`,
+        latencyMs: Date.now() - started,
+      };
     } catch (error) {
-      return { key: 'telegram', state: 'down', detail: this.messageOf(error) };
+      return {
+        key: 'telegram',
+        state: 'down',
+        detail: this.messageOf(error),
+        latencyMs: Date.now() - started,
+      };
     }
   }
 
@@ -325,14 +362,25 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
   private async checkYandex(): Promise<ICheckResult> {
     const url = `${this.config.yandexMarketBaseUrl}/v2/campaigns`;
 
+    const started = Date.now();
     try {
       const response = await this.withTimeout(
         fetch(url, { method: 'GET', signal: AbortSignal.timeout(PING_TIMEOUT_MS) }),
         PING_TIMEOUT_MS,
       );
-      return { key: 'yandex', state: 'ok', detail: `отвечает (HTTP ${response.status})` };
+      return {
+        key: 'yandex',
+        state: 'ok',
+        detail: `отвечает (HTTP ${response.status})`,
+        latencyMs: Date.now() - started,
+      };
     } catch (error) {
-      return { key: 'yandex', state: 'down', detail: this.messageOf(error) };
+      return {
+        key: 'yandex',
+        state: 'down',
+        detail: this.messageOf(error),
+        latencyMs: Date.now() - started,
+      };
     }
   }
 

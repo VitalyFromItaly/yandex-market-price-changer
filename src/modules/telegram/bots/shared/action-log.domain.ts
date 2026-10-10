@@ -18,6 +18,42 @@ export type TActionKind =
   | 'text' // свободный текст
   | 'other'; // всё остальное: фото, стикер, сервисное сообщение
 
+/**
+ * Все виды входящих апдейтов. Через Record — довод DRAFT_FIELD_SET: литерал
+ * массива не заставляет компилятор требовать полноту объединения.
+ */
+const ACTION_KIND_SET: Record<TActionKind, true> = {
+  command: true,
+  menu: true,
+  callback: true,
+  document: true,
+  text: true,
+  other: true,
+};
+export const ACTION_KINDS = Object.keys(ACTION_KIND_SET) as TActionKind[];
+
+/**
+ * Почему гейт не пропустил апдейт.
+ *
+ * Гейт кладёт причину в `ctx.state` — штатное хранилище telegraf на время
+ * апдейта, — а ActionLogHandler, стоящий ПЕРЕД гейтами, читает её после
+ * `await next()` и пишет в ту же строку журнала. Гейт сам журнал не пишет:
+ * на один апдейт было бы две строки.
+ */
+export type TRefusedBy = 'access' | 'feature';
+
+const REFUSED_BY = 'refusedBy';
+
+/** Без state (фейковый контекст) — молча ничего: метка не стоит упавшего гейта. */
+export function markRefused(state: Record<string, unknown> | undefined, by: TRefusedBy): void {
+  if (state) state[REFUSED_BY] = by;
+}
+
+export function refusedOf(state: Record<string, unknown> | undefined): TRefusedBy | undefined {
+  const value = state?.[REFUSED_BY];
+  return value === 'access' || value === 'feature' ? value : undefined;
+}
+
 /** Сколько символов действия хранить. Сообщение телеграма бывает до 4096. */
 export const MAX_ACTION_LENGTH = 200;
 

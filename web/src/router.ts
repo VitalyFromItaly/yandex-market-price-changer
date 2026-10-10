@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory } from 'vue-router';
 
 import HomePage from './pages/HomePage.vue';
 import LogsPage from './pages/LogsPage.vue';
+import MetricsPage from './pages/MetricsPage.vue';
 import QueuesPage from './pages/QueuesPage.vue';
 import UserPage from './pages/UserPage.vue';
 import UsersPage from './pages/UsersPage.vue';
@@ -31,6 +32,7 @@ export const router = createRouter({
     // Вкладка «Мусор» — тот же экран журнала, но показывает ТОЛЬКО записи
     // сканеров (source=scanner). Из основного журнала они скрыты.
     { path: '/junk', name: 'junk', component: LogsPage, props: { junk: true } },
+    { path: '/metrics', name: 'metrics', component: MetricsPage },
     { path: '/queues', name: 'queues', component: QueuesPage },
     { path: '/users', name: 'users', component: UsersPage },
     {

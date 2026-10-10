@@ -6,6 +6,8 @@ export { ActionLogService } from './action-log.service';
 export { AdminCredentialService } from './admin-credential.service';
 export { CrmCredentialService } from './crm-credential.service';
 export { CrmJobResultService } from './crm-job-result.service';
+export { TelegramApiBucketService } from './telegram-api-bucket.service';
+export { HealthSampleService } from './health-sample.service';
 export type { IAccessIdentity, IAdminIdentity, TDraftField } from './user-access.service';
 export type { IPurchasePriceRow } from './purchase-price.service';
 export type { CreateYandexMarketDto, UpdateYandexMarketDto } from './yandex-market.service';

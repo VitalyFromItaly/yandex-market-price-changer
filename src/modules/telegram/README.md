@@ -203,6 +203,18 @@ accessGate → featureGate → start → menu → slash → adminCallbacks → a
   очереди: N»).
 - Дальше работает `StockSyncService` из модуля yandex — см. его README.
 
+## 📈 Метрики Telegram API
+
+- Каждый вызов Bot API (все методы, включая `getUpdates`/`getMe`) замеряется в воронке `callApi`
+  (`BotRegistry.installOutgoingLog`) и копится в `TelegramApiMetrics`: минутные бакеты
+  `(минута, бот, метод, исход)` с гистограммой задержек, слив раз в минуту `$inc`-ом в
+  `TelegramApiBucket`. Строки на вызов нет — под polling это была бы лента `getUpdates`.
+- Исход — `ok`, код Telegram (`403`, `429`…) или `network` (ответа не было — признак смерти зеркала).
+- Неудачная отправка пишется в журнал с кодом (`httpStatus`), `TelegramError:<код>` и
+  `retry_after`; 403/400 админов не будят, 429/5xx/сеть — будят.
+- Гейты помечают отказ в `ctx.state` (`markRefused`), `ActionLogHandler` пишет его полем `refusedBy`.
+- Смотреть — страница «Метрики» админ-панели (`GET /api/metrics`).
+
 ## ⏰ Очереди Bull
 
 Имена очередей и типы задач — константы в `src/modules/telegram/index.ts` (это файл констант, а не
