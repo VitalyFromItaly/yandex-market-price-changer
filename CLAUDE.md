@@ -444,15 +444,30 @@ queue like «📦 FBY» did.
   of another screen — it returns text and an xlsx, knows the inline limits and drags
   `OrderReportsService` — so tomorrow any new dependency of the FBY summary would silently arrive in
   the warehouses screen.
-- **The 1/min generation limit is handled by single-flight + a 60 s memo, not by refusing a screen.**
+- **The generation limit is handled by single-flight + a 120 s memo, not by refusing a screen.**
+  The limit was 1/min; by 10-2026 the docs say **1 per 2 minutes** without a subscription (1/min
+  with Medium), so the memo is sized for the worse case.
   A parallel call awaits the same promise; a repeat within the window gets the parsed report. Since
   the next generation cannot start until a TTL **after** the previous one finished, the interval is
-  always over a minute and the limit is unreachable by construction — without it the second screen
+  always over the window and the limit is unreachable by construction — without it the second screen
   loses the race by design. A failure is deliberately **not** memoised (a one-off outage would stick
   for a minute and pressing the button again would fix nothing), and the snapshot carries `takenAt`,
   the moment it was **taken** — which is why the screen prints two timestamps, header and stock line.
   The queue latch (`queue/queued-for-user.ts`) therefore stays per-job-name: it guards double taps,
   not the limit.
+- **A report we stopped waiting for is resumed, not re-ordered.** On 12–13-10-2026 the report sat
+  in `PENDING` for 50 minutes and then came back `FAILED` with no `subStatus` (accepted 03:39Z,
+  failed 04:29Z). A retry the same morning failed within a second. Each button press used to queue
+  **one more** report behind the stuck one. Now a poll timeout leaves the `reportId` in
+  `FbyStockService.pending` for an hour, and the next call polls that report instead of generating a
+  new one. A final answer, file or `FAILED`, clears it.
+- **Why a report failed is visible in the admin panel.** `pollReport` throws `ReportGenerationError`
+  (`yandex/report-generation.error.ts`), which carries `reportId` and what Market said: status,
+  `subStatus`, `generationRequestedAt`/`FinishedAt`, `estimatedGenerationTime`, and how long we
+  waited. `ErrorReporter` copies these into `ActionLog.details` (Mixed, unindexed), uses
+  `GET /v2/reports/info/<id>` as `requestUrl`, and `MessageModal` prints them. Before this, the
+  `reportId` existed only in a debug line of `docker logs`, and Market's timestamps existed nowhere.
+  `details` is a general-purpose field, so any other error can fill it too.
 - **The join is by name and exact.** There is no shared identifier — `GET v2/warehouses` gives a
   numeric `id`, the report only a `WAREHOUSE` column with a name. `warehouses/warehouse-stock.ts`
   (pure) normalises (case, `ё`→`е`, quotes, dash variants, whitespace) and compares for equality.

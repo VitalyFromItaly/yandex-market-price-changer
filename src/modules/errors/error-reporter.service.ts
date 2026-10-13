@@ -4,6 +4,7 @@ import { ActionLogService } from '../../database/services/action-log.service';
 import { telegramErrorInfo } from '../metrics/metrics.domain';
 import { maskOutgoing, truncate } from '../telegram/bots/shared/action-log.domain';
 import { esc } from '../telegram/formatting/telegram-format';
+import { ReportGenerationError } from '../yandex/report-generation.error';
 import { YandexApiError } from '../yandex/yandex-api.errors';
 
 import { AlertThrottle } from './alert-throttle';
@@ -52,6 +53,11 @@ export interface IErrorReport {
   durationMs?: number;
   /** Слать ли алерт администраторам. По умолчанию да. */
   alert?: boolean;
+  /**
+   * Плоские подробности для разбора в админке: reportId, времена Маркета и
+   * т. п. У ReportGenerationError заполняются сами.
+   */
+  details?: Record<string, string | number>;
 }
 
 /** Как отправить алерт. Подставляется телеграм-слоем, см. ErrorAlertBridge. */
@@ -119,12 +125,14 @@ export class ErrorReporter {
     try {
       const error = input.error;
       const isYandex = error instanceof YandexApiError;
+      const report = error instanceof ReportGenerationError ? error : undefined;
 
       const errorType = this.typeOf(error);
       const message = this.messageOf(error);
       const source = isYandex ? 'yandex' : input.source;
       const httpStatus = input.httpStatus ?? (isYandex ? error.status : undefined);
-      const requestUrl = input.requestUrl ?? (isYandex ? error.request : undefined);
+      const requestUrl = input.requestUrl ?? (isYandex ? error.request : report?.request);
+      const details = input.details ?? report?.details;
 
       this.logger.error(
         `[${source}/${input.context}] ${errorType}: ${message}` +
@@ -149,6 +157,7 @@ export class ErrorReporter {
         requestUrl,
         context: input.context,
         durationMs: input.durationMs,
+        details,
       });
 
       if (input.alert !== false) {

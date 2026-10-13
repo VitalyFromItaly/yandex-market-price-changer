@@ -34,6 +34,41 @@ const who = computed(() => {
   return parts.length ? `${parts.join(' · ')} (${props.row.telegramUserId})` : props.row.telegramUserId;
 });
 
+/**
+ * Подписи подробностей. Неизвестный ключ показывается как есть — новое поле
+ * с бэкенда не должно пропасть только потому, что здесь его не назвали.
+ */
+const DETAIL_LABEL: Record<string, string> = {
+  reportId: 'Отчёт Маркета',
+  status: 'Статус',
+  subStatus: 'Подстатус',
+  requestedAt: 'Маркет принял',
+  finishedAt: 'Маркет закончил',
+  estimatedMs: 'Маркет обещал',
+  waitedMs: 'Мы ждали',
+};
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}T/;
+
+function formatDetail(key: string, value: string | number): string {
+  if (typeof value === 'string' && ISO_DATE.test(value)) {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return `${formatter.format(date)} МСК`;
+  }
+  if (typeof value === 'number' && key.endsWith('Ms')) {
+    return value >= 60_000 ? `${Math.round(value / 60_000)} мин` : `${Math.round(value / 1000)} с`;
+  }
+  return String(value);
+}
+
+const details = computed(() =>
+  Object.entries(props.row.details ?? {}).map(([key, value]) => ({
+    key,
+    label: DETAIL_LABEL[key] ?? key,
+    value: formatDetail(key, value),
+  })),
+);
+
 function onKey(event: KeyboardEvent): void {
   if (event.key === 'Escape') emit('close');
 }
@@ -65,6 +100,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
         <div v-if="row.errorType"><dt>Класс</dt><dd>{{ row.errorType }}</dd></div>
         <div v-if="row.httpStatus"><dt>Код</dt><dd>{{ row.httpStatus }}</dd></div>
         <div v-if="row.requestUrl"><dt>Запрос</dt><dd>{{ row.requestUrl }}</dd></div>
+        <div v-for="item in details" :key="item.key">
+          <dt>{{ item.label }}</dt><dd>{{ item.value }}</dd>
+        </div>
       </dl>
 
       <!-- Пузырь повторяет вид сообщения в телеграме: слева — то, что написал

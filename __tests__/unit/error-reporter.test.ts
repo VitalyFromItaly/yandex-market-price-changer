@@ -5,6 +5,7 @@ import {
   SYSTEM_USER,
 } from '../../src/modules/errors/error-reporter.service';
 import { AlertThrottle, ALERT_WINDOW_MS } from '../../src/modules/errors/alert-throttle';
+import { ReportGenerationError } from '../../src/modules/yandex/report-generation.error';
 import { YandexRateLimitError, YandexApiError } from '../../src/modules/yandex/yandex-api.errors';
 
 /**
@@ -46,6 +47,28 @@ describe('ErrorReporter', () => {
     reporter.setAlertSender(send);
     return { reporter, record, send };
   }
+
+  it('ошибка отчёта Маркета: reportId и времена генерации уходят в журнал', async () => {
+    const { reporter, record } = build();
+    const error = new ReportGenerationError(
+      'Отчёт об остатках FBY не сгенерировался',
+      'rep-1',
+      { status: 'FAILED', requestedAt: '2026-10-13T10:01:24Z', finishedAt: '2026-10-13T10:01:25Z' },
+      1200,
+    );
+
+    await reporter.report({ error, source: 'yandex', context: 'fby:stock', telegramUserId: '777' });
+
+    const entry = record.mock.calls[0][0];
+    expect(entry.requestUrl).toBe('GET /v2/reports/info/rep-1');
+    expect(entry.details).toEqual({
+      reportId: 'rep-1',
+      status: 'FAILED',
+      requestedAt: '2026-10-13T10:01:24Z',
+      finishedAt: '2026-10-13T10:01:25Z',
+      waitedMs: 1200,
+    });
+  });
 
   it('записывает ошибку с классом, стеком и местом', async () => {
     const { reporter, record } = build();

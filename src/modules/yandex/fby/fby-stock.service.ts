@@ -1,11 +1,12 @@
 import type { YandexMarketDocument } from '../../../database/schemas/yandex-market.schema';
-import type { YandexApiClient } from '../yandex-api.client';
+import type { IReportInfo, YandexApiClient } from '../yandex-api.client';
 import type { TFbyStockError } from './fby-message';
 import type { IFbyStockSummary } from './fby-stock-report';
 
 import { Injectable } from '@nestjs/common';
 
 import { ErrorReporter } from '../../errors/error-reporter.service';
+import { ReportGenerationError } from '../report-generation.error';
 import { YandexClientFactory } from '../yandex-client.factory';
 import { realSleep, type TSleep } from '../yandex-retry';
 
@@ -28,10 +29,20 @@ import { parseFbyStockReport } from './fby-stock-report';
  */
 
 /**
- * Сколько считаем разбор свежим. Ровно окно лимита генерации (1/мин на бизнес):
- * держать дольше — показывать старое там, где Маркет уже разрешил обновить.
+ * Сколько считаем разбор свежим. Ровно окно лимита генерации: держать дольше —
+ * показывать старое там, где Маркет уже разрешил обновить. К 10-2026 лимит без
+ * подписки — 1 запрос в 2 минуты (с подпиской Medium — 1/мин), поэтому окно
+ * под худший случай.
  */
-const STOCK_MEMO_TTL_MS = 60_000;
+const STOCK_MEMO_TTL_MS = 120_000;
+
+/**
+ * Сколько помним отчёт, который не дождались. Маркет держал отчёт в очереди
+ * до 50 минут (13-10-2026: принят 03:39Z, провален 04:29Z), а каждое новое
+ * нажатие ставило ему в очередь ЕЩЁ один. Повторный вызов в этом окне
+ * продолжает опрос того же reportId.
+ */
+const PENDING_REPORT_TTL_MS = 60 * 60_000;
 
 /**
  * Поллинг отчёта: интервал и потолок. Генерация обычно ~10 c, но на живом
@@ -81,6 +92,9 @@ export class FbyStockService {
    */
   private readonly memo = new Map<string, IStockMemoEntry>();
 
+  /** Отчёт, не готовый к потолку ожидания: `business:campaign` → reportId. */
+  private readonly pending = new Map<string, { reportId: string; until: number }>();
+
   constructor(
     private readonly clients: YandexClientFactory,
     private readonly errors: ErrorReporter,
@@ -123,7 +137,7 @@ export class FbyStockService {
    * бы гонку первому.
    */
   private fresh(store: YandexMarketDocument): Promise<IFbyStockSnapshot> {
-    const key = `${store.business_id}:${store.campaign_id}`;
+    const key = this.keyOf(store);
     const now = Date.now();
     this.prune(now);
 
@@ -148,13 +162,42 @@ export class FbyStockService {
     return inFlight;
   }
 
-  /** Полный цикл добычи. Бросает — мягкость это дело safeLoad. */
+  /**
+   * Полный цикл добычи. Бросает — мягкость это дело safeLoad.
+   *
+   * Отчёт, не дождавшийся прошлого раза, продолжаем, а не заказываем заново:
+   * новый встал бы в ту же очередь Маркета позади старого. Забываем его на
+   * любом окончательном ответе — файл получен или Маркет сказал FAILED.
+   */
   public async load(store: YandexMarketDocument): Promise<IFbyStockSnapshot> {
+    const key = this.keyOf(store);
     const client = this.clients.forStore(store);
-    const reportId = await client.generateStocksOnWarehousesReport();
-    const fileUrl = await this.pollReport(client, reportId);
+    const waiting = this.pending.get(key);
+    const reportId =
+      waiting && waiting.until > Date.now()
+        ? waiting.reportId
+        : await client.generateStocksOnWarehousesReport();
+
+    let fileUrl: string;
+    try {
+      fileUrl = await this.pollReport(client, reportId);
+    } catch (error) {
+      const timedOut = error instanceof ReportGenerationError && error.info?.status !== 'FAILED';
+      if (timedOut) {
+        this.pending.set(key, { reportId, until: Date.now() + PENDING_REPORT_TTL_MS });
+      } else {
+        this.pending.delete(key);
+      }
+      throw error;
+    }
+    this.pending.delete(key);
+
     const buffer = await client.downloadReportFile(fileUrl);
     return { summary: parseFbyStockReport(buffer), takenAt: new Date() };
+  }
+
+  private keyOf(store: YandexMarketDocument): string {
+    return `${store.business_id}:${store.campaign_id}`;
   }
 
   /**
@@ -166,17 +209,29 @@ export class FbyStockService {
    * админы — продавцу уходит fbyStockUnavailableLine.
    */
   private async pollReport(client: YandexApiClient, reportId: string): Promise<string> {
-    let lastStatus = 'нет ответа';
+    const startedAt = Date.now();
+    let last: IReportInfo | undefined;
     for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
       const info = await client.getReportInfo(reportId);
-      lastStatus = info.status;
+      last = info;
       if (info.status === 'DONE' && info.fileUrl) return info.fileUrl;
-      if (info.status === 'FAILED') throw new Error('Отчёт об остатках FBY не сгенерировался');
+      if (info.status === 'FAILED') {
+        const reason = info.subStatus ? ` (Маркет: ${info.subStatus})` : '';
+        throw new ReportGenerationError(
+          `Отчёт об остатках FBY не сгенерировался${reason}`,
+          reportId,
+          info,
+          Date.now() - startedAt,
+        );
+      }
       await this.sleep(POLL_INTERVAL_MS);
     }
     const minutes = Math.round((POLL_MAX_ATTEMPTS * POLL_INTERVAL_MS) / 60_000);
-    throw new Error(
-      `Отчёт об остатках FBY не готов за ${minutes} мин (последний статус: ${lastStatus})`,
+    throw new ReportGenerationError(
+      `Отчёт об остатках FBY не готов за ${minutes} мин (последний статус: ${last?.status ?? 'нет ответа'})`,
+      reportId,
+      last,
+      Date.now() - startedAt,
     );
   }
 

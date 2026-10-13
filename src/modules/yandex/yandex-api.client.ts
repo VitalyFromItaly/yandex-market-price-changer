@@ -276,6 +276,14 @@ export interface IReportInfo {
   status: string;
   /** Ссылка на файл — только когда status === DONE. */
   fileUrl?: string;
+  /** NO_DATA | TOO_LARGE | RESOURCE_NOT_FOUND — уточнение к FAILED/DONE, бывает не всегда. */
+  subStatus?: string;
+  /** Когда Маркет принял запрос на генерацию (ISO). */
+  requestedAt?: string;
+  /** Когда Маркет закончил генерацию — успехом или провалом (ISO). */
+  finishedAt?: string;
+  /** Сколько, по оценке Маркета, займёт генерация, мс. */
+  estimatedMs?: number;
 }
 
 /**
@@ -816,13 +824,32 @@ export class YandexApiClient {
     return reportId;
   }
 
-  /** Статус готовности отчёта и ссылка на файл, когда он готов. */
+  /**
+   * Статус готовности отчёта и ссылка на файл, когда он готов. Времена и
+   * подстатус нужны не для решения, а для разбора: без них «отчёт не готов»
+   * не отличает очередь Маркета от провала, который Маркет не объяснил.
+   */
   public async getReportInfo(reportId: string): Promise<IReportInfo> {
     const data = await this.get<{
-      result?: { status?: string; file?: string };
+      result?: {
+        status?: string;
+        file?: string;
+        subStatus?: string;
+        generationRequestedAt?: string;
+        generationFinishedAt?: string;
+        estimatedGenerationTime?: number;
+      };
     }>(reportInfoPath(reportId), {});
 
-    return { status: data.result?.status ?? 'UNKNOWN', fileUrl: data.result?.file };
+    const result = data.result;
+    return {
+      status: result?.status ?? 'UNKNOWN',
+      fileUrl: result?.file,
+      subStatus: result?.subStatus,
+      requestedAt: result?.generationRequestedAt,
+      finishedAt: result?.generationFinishedAt,
+      estimatedMs: result?.estimatedGenerationTime,
+    };
   }
 
   /**

@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Schema as MongooseSchema } from 'mongoose';
 
 export type ActionLogDocument = ActionLog & Document;
 
@@ -128,6 +128,15 @@ export class ActionLog {
   /** Короткая метка места: `report:profit`, `stock-upload`, `digest`. */
   @Prop({ type: String })
   context?: string;
+
+  /**
+   * Плоские подробности ошибки: у отчётов Маркета — reportId, статус и
+   * подстатус, когда Маркет принял и закончил генерацию. Без индекса: по ним
+   * не ищут, их читают в модалке одной записи. Раньше это лежало только в
+   * `docker logs`, а reportId и времена — нигде.
+   */
+  @Prop({ type: MongooseSchema.Types.Mixed })
+  details?: Record<string, string | number>;
 
   createdAt?: Date;
   updatedAt?: Date;

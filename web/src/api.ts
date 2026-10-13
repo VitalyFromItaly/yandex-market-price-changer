@@ -18,6 +18,8 @@ export interface IActionLogRow {
   httpStatus?: number;
   requestUrl?: string;
   context?: string;
+  /** Подробности ошибки: у отчётов Маркета — reportId, статус, времена генерации. */
+  details?: Record<string, string | number>;
   createdAt: string;
 }
 

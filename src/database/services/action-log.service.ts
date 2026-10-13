@@ -29,6 +29,8 @@ export interface IActionLogEntry {
   httpStatus?: number;
   requestUrl?: string;
   context?: string;
+  /** Плоские подробности ошибки (reportId, времена Маркета) — для модалки админки. */
+  details?: Record<string, string | number>;
 }
 
 /** Фильтр выборки для админского API. */

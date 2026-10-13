@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { FbyStockService, POLL_MAX_ATTEMPTS } from '../../src/modules/yandex/fby/fby-stock.service';
+import { ReportGenerationError } from '../../src/modules/yandex/report-generation.error';
 
 /**
  * Поллинг отчёта остатков FBY. 12-10-2026 отчёт дважды не уложился в прежние
@@ -12,7 +13,7 @@ interface IPoller {
   pollReport(client: unknown, reportId: string): Promise<string>;
 }
 
-function setup(statuses: Array<{ status: string; fileUrl?: string }>) {
+function setup(statuses: Array<{ status: string; fileUrl?: string; subStatus?: string }>) {
   const service = new FbyStockService({} as never, {} as never);
   const sleep = vi.fn(async () => undefined);
   Object.assign(service, { sleep });
@@ -55,5 +56,28 @@ describe('FbyStockService: ожидание отчёта остатков', () =
     const message = await poll().catch((error: Error) => error.message);
 
     expect(/rate limit|METHOD_FAILURE|1 point per 1 minute/i.test(message)).toBe(false);
+  });
+
+  it('ошибка несёт reportId и то, что Маркет сказал о генерации', async () => {
+    const { poll } = setup([
+      {
+        status: 'FAILED',
+        subStatus: 'RESOURCE_NOT_FOUND',
+        requestedAt: '2026-10-13T10:01:24Z',
+        finishedAt: '2026-10-13T10:01:25Z',
+      } as never,
+    ]);
+    const error = (await poll().catch((e: unknown) => e)) as ReportGenerationError;
+
+    expect(error).toBeInstanceOf(ReportGenerationError);
+    expect(error.message).toBe('Отчёт об остатках FBY не сгенерировался (Маркет: RESOURCE_NOT_FOUND)');
+    expect(error.request).toBe('GET /v2/reports/info/r1');
+    expect(error.details).toMatchObject({
+      reportId: 'r1',
+      status: 'FAILED',
+      subStatus: 'RESOURCE_NOT_FOUND',
+      requestedAt: '2026-10-13T10:01:24Z',
+      finishedAt: '2026-10-13T10:01:25Z',
+    });
   });
 });
