@@ -35,12 +35,16 @@ const STOCK_MEMO_TTL_MS = 60_000;
 
 /**
  * Поллинг отчёта: интервал и потолок. Генерация обычно ~10 c, но на живом
- * магазине бывала дольше 50 c («Отчёт об остатках FBY не готов вовремя»).
- * Потолок ~3 минуты безопасен, потому что оба экрана собираются в фоне
- * (процессоры очереди reports), а не в цикле апдейтов telegraf.
+ * магазине бывала дольше 50 c, а 12-10-2026 дважды подряд не уложилась и в
+ * прежние 3 минуты — Маркет принял генерацию и просто долго её делал, а мы
+ * сдавались раньше. Потолок 10 минут безопасен, потому что все экраны
+ * собираются в фоне (процессоры очереди reports, фоновые задачи CRM), а не в
+ * цикле апдейтов telegraf. Интервал поднят вместе с потолком: лишние 5 с на
+ * обычном отчёте ничего не стоят, а опросов за 10 минут столько же, сколько
+ * раньше за 5.
  */
-const POLL_INTERVAL_MS = 2500;
-const POLL_MAX_ATTEMPTS = 72;
+const POLL_INTERVAL_MS = 5000;
+export const POLL_MAX_ATTEMPTS = 120;
 
 /** Разбор отчёта вместе с моментом, НА который сняты остатки. */
 export interface IFbyStockSnapshot {
@@ -153,15 +157,27 @@ export class FbyStockService {
     return { summary: parseFbyStockReport(buffer), takenAt: new Date() };
   }
 
-  /** Ждём готовности отчёта. Бросает на FAILED и на исчерпании попыток. */
+  /**
+   * Ждём готовности отчёта. Бросает на FAILED и на исчерпании попыток.
+   *
+   * В ошибку исчерпания попадает последний статус: «не готов вовремя» без
+   * него не отличает отчёт, застрявший в очереди Маркета (PENDING), от долгой
+   * сборки (PROCESSING) и от статуса, которого мы не знаем. Текст видят только
+   * админы — продавцу уходит fbyStockUnavailableLine.
+   */
   private async pollReport(client: YandexApiClient, reportId: string): Promise<string> {
+    let lastStatus = 'нет ответа';
     for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
       const info = await client.getReportInfo(reportId);
+      lastStatus = info.status;
       if (info.status === 'DONE' && info.fileUrl) return info.fileUrl;
       if (info.status === 'FAILED') throw new Error('Отчёт об остатках FBY не сгенерировался');
       await this.sleep(POLL_INTERVAL_MS);
     }
-    throw new Error('Отчёт об остатках FBY не готов вовремя');
+    const minutes = Math.round((POLL_MAX_ATTEMPTS * POLL_INTERVAL_MS) / 60_000);
+    throw new Error(
+      `Отчёт об остатках FBY не готов за ${minutes} мин (последний статус: ${lastStatus})`,
+    );
   }
 
   /** Протухшие записи выбрасываем — иначе разбор магазина живёт вечно. */
