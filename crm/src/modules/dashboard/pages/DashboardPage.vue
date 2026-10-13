@@ -184,7 +184,12 @@ watch(
   <div class="flex flex-col gap-8">
     <MarketplaceTabs />
 
-    <section aria-label="Показатели" class="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <!-- Колонок столько, сколько влезает карточек не уже 13.5rem: подпись «Едет до клиента»
+         и «244 987 ₽» помещаются целиком, лишние карточки переносятся на следующий ряд. -->
+    <section
+      aria-label="Показатели"
+      class="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,13.5rem),1fr))]"
+    >
       <KpiCard
         v-for="kpi in kpis"
         :key="kpi.key"
