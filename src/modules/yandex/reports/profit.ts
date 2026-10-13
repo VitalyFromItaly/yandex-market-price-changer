@@ -42,6 +42,7 @@
 
 import { brandOf, isBrandKey, type TBrandKey } from './brands';
 import { orderTotals, type IOrderMoney } from './money';
+import { orderDayIso } from './order-day';
 import { promoConfigsOf, promoPercentAt } from './promo';
 
 /**
@@ -213,6 +214,8 @@ export function applyDiscounts(
 export interface IProfitOrderItem {
   /** Артикул каталога. Тот же, по которому лежит закупочная цена. */
   offerId?: string;
+  /** Название товара — для строк «по товарам»; в ответе Маркета оно есть. */
+  offerName?: string;
   count?: number;
   /**
    * Цена продажи за ЕДИНИЦУ, без субсидий Маркета. По ней считается комиссия
@@ -225,6 +228,9 @@ export interface IProfitOrderItem {
 export interface IProfitOrder extends IOrderMoney {
   id?: number;
   items?: readonly IProfitOrderItem[];
+  /** Даты заказа — для ряда по дням (`IProfitOptions.dayField`). */
+  creationDate?: string;
+  updatedAt?: string;
 }
 
 /**
@@ -261,6 +267,40 @@ export interface IProfitOptions {
    * ставки.
    */
   services?: ReadonlyMap<number | string, number>;
+  /**
+   * По какой дате заказа копить ряд `byDay` — по той, по которой набор
+   * ОТФИЛЬТРОВАН. Оформленные отобраны по `creationDate`, выкупленные — по
+   * `updatedAt`; по дате оформления выкупленные легли бы на дни ДО периода, и
+   * сумма ряда в границах периода разошлась бы с карточкой «Продажи».
+   * По умолчанию `creationDate`.
+   */
+  dayField?: 'creationDate' | 'updatedAt';
+}
+
+/** Точка ряда по дням: МСК-день (`ГГГГ-ММ-ДД`), продажи и чистая учтённых заказов. */
+export interface IProfitDay {
+  date: string;
+  revenue: number;
+  net: number;
+}
+
+/**
+ * Строка «по товарам»: продажи и чистая учтённых заказов по одному артикулу.
+ *
+ * Копится в том же проходе, что итог, поэтому Σ revenue и Σ net по артикулам
+ * равны итогу по построению — довод `byDay`.
+ */
+export interface IProfitSku {
+  sku: string;
+  name: string;
+  /** Штук продано в учтённых заказах. */
+  count: number;
+  revenue: number;
+  net: number;
+  /** Чистая / продажи; `null`, когда продаж нет (только возвраты). */
+  margin: number | null;
+  /** Штук в заказах с возвратом. */
+  returns: number;
 }
 
 /** Услуги по заказу, если они известны. Сравнение id и числом, и строкой. */
@@ -310,6 +350,21 @@ export interface IProfitTotals {
   /** Заказы с возвратом: исключены целиком — товар вернулся, денег нет. */
   returnedOrders: number;
   returnedRevenue: number;
+  /**
+   * Ряд по дням — копится в ТОМ ЖЕ проходе, что итог, поэтому Σ revenue и
+   * Σ net по дням равны итогу по построению (net линеен по заказам). Только
+   * дни с учтёнными заказами, по возрастанию; нули в пропусках — дело экрана.
+   */
+  byDay: IProfitDay[];
+  /** Учтённые заказы без разбираемой даты: в итоге есть, на ряд не легли. */
+  undatedOrders: number;
+  /**
+   * Разрез по артикулам, по убыванию продаж. Выручка, комиссия и налог заказа
+   * делятся между позициями по `price × count` (нет цен — по штукам), закуп и
+   * продвижение — точно по позиции. Возвраты — штуками; исключённых заказов
+   * здесь нет, как нет их и в итоге.
+   */
+  bySku: IProfitSku[];
   rates: IProfitRates;
 }
 
@@ -408,6 +463,23 @@ export function orderPurchase(order: IProfitOrder, costs: Map<string, number>): 
 }
 
 /**
+ * Доли позиций в заказе: по `price × count`, когда цена есть у всех, иначе по
+ * штукам. Сумма долей — ровно 1; заказ без позиций — пустой массив.
+ */
+function itemShares(items: readonly IProfitOrderItem[]): number[] {
+  const byPrice = items.map((item) => amount(item?.price) * (amount(item?.count) || 1));
+  const priced = items.length > 0 && byPrice.every((value) => value > 0);
+  const weights = priced ? byPrice : items.map((item) => amount(item?.count) || 1);
+  const total = weights.reduce((sum, value) => sum + value, 0);
+  return weights.map((value) => value / total);
+}
+
+/** Имя позиции для строк «по товарам»: из заказа, иначе из прайса, иначе артикул. */
+function itemName(sku: string, item: IProfitOrderItem, rows?: IProfitOptions['rows']): string {
+  return item?.offerName || rows?.get(sku)?.name || sku;
+}
+
+/**
  * Прибыль по набору заказов.
  *
  * Округлений внутри НЕТ: копейки живут до самого вывода, где `formatRubles`
@@ -445,6 +517,26 @@ export function profitOf(
   let returnedOrders = 0;
   let returnedRevenue = 0;
   const unknown = new Set<string>();
+  const days = new Map<string, IProfitDay>();
+  const skus = new Map<string, IProfitSku>();
+  const skuOf = (sku: string, item: IProfitOrderItem): IProfitSku => {
+    let row = skus.get(sku);
+    if (!row) {
+      row = {
+        sku,
+        name: itemName(sku, item, options?.rows),
+        count: 0,
+        revenue: 0,
+        net: 0,
+        margin: null,
+        returns: 0,
+      };
+      skus.set(sku, row);
+    }
+    return row;
+  };
+  let undatedOrders = 0;
+  const dayField = options?.dayField ?? 'creationDate';
 
   for (const order of orders ?? []) {
     // Выручка = платёж покупателя ПЛЮС субсидия Маркета: скидку по акции даёт
@@ -461,6 +553,11 @@ export function profitOf(
     if (isReturned(order, options?.returned)) {
       returnedOrders += 1;
       returnedRevenue += orderRevenue;
+      // Заказ возвращается целиком — та же модель, что у итога: штуками по позициям.
+      for (const item of order?.items ?? []) {
+        const sku = item?.offerId;
+        if (sku) skuOf(sku, item).returns += amount(item.count) || 1;
+      }
       continue;
     }
 
@@ -487,19 +584,54 @@ export function profitOf(
     // Только по УЧТЁННЫМ заказам — возвраты и исключённые ушли по continue
     // выше, и продвижение по ним начислять не за что. Позиция без цены даёт
     // ноль: комиссия считается от ценника, которого нет.
-    if (promoRows) {
-      for (const item of order?.items ?? []) {
-        const row = item?.offerId ? promoRows.get(item.offerId) : undefined;
-        const brand = row ? brandOf(row) : null;
-        const config = brand ? promoConfigs[brand] : undefined;
-        if (!config) continue;
+    const items = order?.items ?? [];
+    const itemPromo = items.map((item) => {
+      if (!promoRows) return 0;
+      const row = item?.offerId ? promoRows.get(item.offerId) : undefined;
+      const brand = row ? brandOf(row) : null;
+      const config = brand ? promoConfigs[brand] : undefined;
+      if (!config) return 0;
 
-        const price = amount(item?.price);
-        if (!price) continue;
+      const price = amount(item?.price);
+      if (!price) return 0;
 
-        const count = amount(item?.count) || 1;
-        promo += (price * count * promoPercentAt(config, price)) / 100;
-      }
+      const count = amount(item?.count) || 1;
+      return (price * count * promoPercentAt(config, price)) / 100;
+    });
+    const orderPromo = itemPromo.reduce((sum, value) => sum + value, 0);
+    promo += orderPromo;
+
+    // Чистая заказа — та же формула, что итог ниже, только на один заказ:
+    // формула линейна, и суммы по дням и по артикулам сходятся с итогом без
+    // второго счёта.
+    const orderCommission = options?.services
+      ? (orderServices ?? 0)
+      : (orderRevenue * commissionPercent) / 100;
+    const netBeforeCosts = (part: number): number =>
+      part * (orderRevenue - orderCommission - (orderRevenue * taxPercent) / 100);
+    const orderNet = netBeforeCosts(1) - orderPromo - resolved;
+
+    // Позиции получают долю выручки/комиссии/налога; закуп и промо — свои.
+    // `resolved !== null` здесь гарантирован, значит закуп есть у каждой позиции.
+    const shares = itemShares(items);
+    items.forEach((item, index) => {
+      const sku = item?.offerId;
+      if (!sku) return;
+      const count = amount(item.count) || 1;
+      const row = skuOf(sku, item);
+      row.count += count;
+      row.revenue += orderRevenue * shares[index];
+      row.net += netBeforeCosts(shares[index]) - itemPromo[index] - (costs.get(sku) ?? 0) * count;
+    });
+
+    const day = orderDayIso(order?.[dayField]);
+    if (day === null) {
+      undatedOrders += 1;
+    } else {
+      const point = days.get(day) ?? { date: day, revenue: 0, net: 0 };
+      point.revenue += orderRevenue;
+      point.net += orderNet;
+      days.set(day, point);
     }
   }
 
@@ -525,6 +657,11 @@ export function profitOf(
     unknownSkus: [...unknown].filter((sku) => !costs.has(sku)),
     returnedOrders,
     returnedRevenue,
+    byDay: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    undatedOrders,
+    bySku: [...skus.values()]
+      .map((row) => ({ ...row, margin: row.revenue ? row.net / row.revenue : null }))
+      .sort((a, b) => b.revenue - a.revenue || a.sku.localeCompare(b.sku)),
     // Ставки возвращаются целиком, включая скидки: отчёт печатает их рядом с
     // суммами, чтобы число можно было проверить.
     rates: normalized,

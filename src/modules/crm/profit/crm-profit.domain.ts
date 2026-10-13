@@ -1,4 +1,5 @@
-import type { IProfitTotals } from '../../yandex/reports/profit';
+import type { ICalendarDate } from '../../yandex/reports/moscow-day';
+import type { IProfitDay, IProfitSku, IProfitTotals } from '../../yandex/reports/profit';
 import type { IProfitReport, ITariffCalcReport } from '../../yandex/reports/profit.service';
 import type { TReportKey } from '../../yandex/reports/report-status-map';
 import type { ITariffService } from '../../yandex/reports/tariff-calc-message';
@@ -20,7 +21,7 @@ import {
   purchaseBasisText,
   tariffEstimateShare,
 } from '../../yandex/reports/profit-message';
-import { periodTitle } from '../../yandex/reports/report-period';
+import { PERIOD, periodBounds, periodTitle } from '../../yandex/reports/report-period';
 import { REPORT, reportDefinition } from '../../yandex/reports/report-status-map';
 import {
   TARIFF_APPROX_NOTE,
@@ -69,7 +70,20 @@ export interface ICrmProfitBlock {
   promo: number;
   purchase: number;
   net: number;
+  /** Ряд по дням (`profitOf`): Σ = revenue/net блока по построению. */
+  byDay: IProfitDay[];
+  /** Учтённые заказы без даты — в итоге есть, на ряд не легли. */
+  undatedOrders: number;
+  /**
+   * Товары по убыванию продаж (`profitOf`), первые `SKU_VIEW_LIMIT`. Главная
+   * берёт из них топ и ищет «на исходе» среди проданных — отсюда запас сверх
+   * десяти: товар, который кончается, не обязан быть в топе.
+   */
+  bySku: IProfitSku[];
 }
+
+/** Сколько товаров отдаётся в блоке: топ главной — первые десять. */
+export const SKU_VIEW_LIMIT = 100;
 
 export interface ICrmExcluded {
   orders: number;
@@ -100,6 +114,11 @@ export interface ICrmProfitView extends ICrmReportBase {
   empty: boolean;
   /** Какой набор получает полную разбивку (profitMainBlock бота). */
   main: 'placed' | 'redeemed';
+  /**
+   * Границы периода, `ГГГГ-ММ-ДД` по Москве, — чтобы экран заполнил нулями
+   * дни без заказов. null — у «Всего» границ нет.
+   */
+  days: { from: string; to: string } | null;
   placed: ICrmProfitBlock;
   redeemed: ICrmProfitBlock;
   cancelled: number;
@@ -145,7 +164,20 @@ function block(totals: IProfitTotals): ICrmProfitBlock {
     promo: totals.promo,
     purchase: totals.purchase,
     net: totals.net,
+    byDay: totals.byDay ?? [],
+    undatedOrders: totals.undatedOrders ?? 0,
+    bySku: (totals.bySku ?? []).slice(0, SKU_VIEW_LIMIT),
   };
+}
+
+const iso = (date: ICalendarDate): string =>
+  `${date.year}-${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
+
+/** Границы периода для ряда по дням; у «Всего» их нет. */
+function daysOf(period: IProfitReport['period'], now: Date): ICrmProfitView['days'] {
+  if (period.key === PERIOD.ALL) return null;
+  const bounds = periodBounds(period, now);
+  return { from: iso(bounds.from), to: iso(bounds.to) };
 }
 
 function prices(
@@ -179,6 +211,7 @@ export function toCrmProfitView(report: IProfitReport, now: Date): ICrmProfitVie
     ...base(REPORT.PROFIT, report, now),
     empty: isProfitEmpty(report),
     main: profitMainBlock(report),
+    days: daysOf(report.period, now),
     placed: block(placed),
     redeemed: block(totals),
     cancelled: report.cancelledOrders,

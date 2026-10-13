@@ -9,8 +9,13 @@
  *
  * Место под строку занято всегда (`min-h`), чтобы контент не прыгал, когда
  * обновление закончилось. Скелетон — только когда данных нет вовсе.
+ *
+ * Компактный вид (карточки главной) — без полосы и подписи: еле заметный
+ * спиннер в правом верхнем углу карточки (родитель — `relative`), момент
+ * данных — в подсказке и для скринридера. Полоса с подписью на каждой из
+ * десятка карточек разом читалась как «всё сломалось и грузится заново».
  */
-import { RotateCw } from 'lucide-vue-next';
+import { LoaderCircle, RotateCw } from 'lucide-vue-next';
 import { computed } from 'vue';
 
 import { Alert } from '@/components/ui/alert';
@@ -41,11 +46,23 @@ const at = computed(() => (props.savedAt === null ? null : formatSavedAt(props.s
       Повторить
     </Button>
   </Alert>
-  <div
-    v-else
-    :class="cn('flex flex-col gap-1', compact ? 'min-h-4' : 'min-h-6', props.class)"
+  <span
+    v-else-if="compact"
+    :class="cn('absolute right-3 top-3', props.class)"
     :aria-busy="refreshing"
+    :title="refreshing ? (at ? `Обновляю… данные на ${at}` : 'Обновляю…') : undefined"
   >
+    <template v-if="refreshing">
+      <LoaderCircle
+        class="size-3.5 animate-spin text-muted-foreground/50 motion-reduce:animate-none"
+        aria-hidden="true"
+      />
+      <span class="sr-only" role="status">
+        Обновляю…<template v-if="at"> Данные на {{ at }}</template>
+      </span>
+    </template>
+  </span>
+  <div v-else :class="cn('flex min-h-6 flex-col gap-1', props.class)" :aria-busy="refreshing">
     <template v-if="refreshing">
       <div
         class="relative h-0.5 w-full overflow-hidden rounded-full bg-primary/20"

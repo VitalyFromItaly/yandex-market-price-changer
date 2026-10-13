@@ -1,38 +1,63 @@
-import type { TileKey } from '../dashboard.domain';
+import type { DashboardPeriodKey, SourceKey } from '../dashboard.domain';
 
 import { defineStore } from 'pinia';
+import { ref } from 'vue';
 
-import { TILE, TILES } from '../dashboard.domain';
+import { DEFAULT_DASHBOARD_PERIOD, SOURCE, SOURCES, sourcePeriod } from '../dashboard.domain';
 
 import { usePriceListInfo } from './composables/usePriceListInfo.dashboard';
-import { useReportTile } from './composables/useReportTile.dashboard';
+import { useSourceJob } from './composables/useSourceJob.dashboard';
 
-type Tile = ReturnType<typeof useReportTile>;
+type Source = ReturnType<typeof useSourceJob>;
 
-/** Стор главной — тонкий фасад: плитка на отчёт и дата прайса. */
+/** Стор главной — тонкий фасад: источник на задачу, общий период и дата прайса. */
 export const useDashboardStore = defineStore('dashboard', () => {
-  const tiles = Object.fromEntries(TILES.map((meta) => [meta.key, useReportTile(meta)])) as Record<
-    TileKey,
-    Tile
-  >;
+  const sources = Object.fromEntries(
+    SOURCES.map((meta) => [meta.key, useSourceJob(meta)]),
+  ) as Record<SourceKey, Source>;
   const priceList = usePriceListInfo();
+  const period = ref<DashboardPeriodKey>(DEFAULT_DASHBOARD_PERIOD);
+
+  function start(keys: readonly SourceKey[], store: string): void {
+    for (const meta of SOURCES) {
+      if (keys.includes(meta.key))
+        void sources[meta.key].load(store, sourcePeriod(meta, period.value));
+    }
+  }
 
   /**
-   * Запустить открытые плитки — каждую своей задачей, не дожидаясь соседних.
-   * Закрытая плитка задачу не ставит: гейт ответил бы 403.
+   * Запустить открытые источники — каждый своей задачей, не дожидаясь соседних.
+   * Закрытый источник задачу не ставит: гейт ответил бы 403.
    */
-  function load(open: readonly TileKey[], store: string): void {
-    for (const key of open) void tiles[key].load(store);
+  function load(open: readonly SourceKey[], store: string): void {
+    start(open, store);
     void priceList.load();
   }
 
+  /**
+   * Сменить общий период: перезапускаются только источники, которые от него
+   * зависят. Срезы «сейчас» (в пути, возвраты, остатки) не трогаем.
+   */
+  function setPeriod(next: DashboardPeriodKey, open: readonly SourceKey[], store: string): void {
+    if (next === period.value) return;
+    period.value = next;
+    const dependent = SOURCES.filter((meta) => meta.period === 'dashboard').map((meta) => meta.key);
+    start(
+      open.filter((key) => dependent.includes(key)),
+      store,
+    );
+  }
+
   return {
-    tiles,
+    sources,
     priceList,
+    period,
     load,
+    setPeriod,
     reset() {
-      for (const key of Object.values(TILE)) tiles[key].reset();
+      for (const key of Object.values(SOURCE)) sources[key].reset();
       priceList.reset();
+      period.value = DEFAULT_DASHBOARD_PERIOD;
     },
   };
 });

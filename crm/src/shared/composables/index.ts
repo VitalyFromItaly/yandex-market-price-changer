@@ -8,3 +8,4 @@ export type { ReportJobSpec, UseReportJob } from './useReportJob';
 export { useStoreKey } from './useStoreKey';
 export { useTheme, resolveTheme, THEME_STORAGE_KEY } from './useTheme';
 export type { ThemePreference, ResolvedTheme, UseTheme } from './useTheme';
+export { useSidebarCollapsed, SIDEBAR_STORAGE_KEY } from './useSidebarCollapsed';

@@ -11,6 +11,8 @@ import { useTheme } from '@/shared/composables';
  * Три режима темы иконками — сегментом, а не выпадающим списком: вариантов три,
  * и все помещаются. Подпись режима — в тултипе и `aria-label`.
  */
+defineProps<{ vertical?: boolean }>();
+
 const { preference, setPreference } = useTheme();
 
 const OPTIONS: readonly { value: ThemePreference; label: string; icon: typeof Sun }[] = [
@@ -22,11 +24,18 @@ const OPTIONS: readonly { value: ThemePreference; label: string; icon: typeof Su
 
 <template>
   <div
-    class="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5"
+    :class="
+      cn('inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5', vertical && 'flex-col')
+    "
     role="group"
     aria-label="Тема"
   >
-    <Tooltip v-for="option in OPTIONS" :key="option.value" :text="option.label">
+    <Tooltip
+      v-for="option in OPTIONS"
+      :key="option.value"
+      :text="option.label"
+      :side="vertical ? 'right' : 'top'"
+    >
       <button
         type="button"
         :aria-label="option.label"

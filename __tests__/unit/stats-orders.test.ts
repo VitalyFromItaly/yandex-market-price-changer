@@ -63,6 +63,11 @@ describe('Маппер архивного заказа', () => {
     expect(subsidiesTotal(mapped)).toBe(700);
   });
 
+  it('statusUpdateDate уходит в updatedAt — по нему ряд «по дням» выкупленных', () => {
+    const mapped = statsOrderToReportOrder({ ...STATS_ORDER, statusUpdateDate: '2026-08-05T12:00:00' });
+    expect(mapped.updatedAt).toBe('2026-08-05T12:00:00');
+  });
+
   it('«Доставка» уходит в deliveryTotal и НЕ попадает в позиции', () => {
     const mapped = statsOrderToReportOrder(STATS_ORDER);
     expect(mapped.deliveryTotal).toBe(99);

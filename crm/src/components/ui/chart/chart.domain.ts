@@ -139,3 +139,46 @@ export function divergingStep(value: number, max: number): WaterfallStep {
   const half = ratio(Math.abs(value), max) / 2;
   return value >= 0 ? { left: 0.5, width: half } : { left: 0.5 - half, width: half };
 }
+
+const DAY_MS = 86_400_000;
+const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** ГГГГ-ММ-ДД → полночь UTC; мусор — null. Календарь, а не часовой пояс. */
+function isoDayMs(iso: string): number | null {
+  const match = ISO_DAY.exec(iso);
+  if (!match) return null;
+  const ms = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(ms) ? null : ms;
+}
+
+const isoOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * Ряд по дням без дыр: каждый день от `from` до `to` (ГГГГ-ММ-ДД), недостающие
+ * — `zero(date)`. Ряд с дырами врёт о ритме: соседние точки выглядят соседними
+ * днями, хотя между ними неделя тишины. Точки за границами не теряются —
+ * диапазон расширяется до них (иначе сумма ряда разошлась бы с итогом).
+ * Точка с неразборной датой выкидывается.
+ */
+export function fillDays<T extends { date: string }>(
+  points: readonly T[],
+  from: string | null,
+  to: string | null,
+  zero: (date: string) => T,
+): T[] {
+  const byDate = new Map<number, T>();
+  for (const point of points) {
+    const ms = isoDayMs(point.date);
+    if (ms !== null) byDate.set(ms, point);
+  }
+  const bounds = [from, to, ...[...byDate.keys()].map(isoOf)]
+    .map((iso) => (iso === null ? null : isoDayMs(iso)))
+    .filter((ms): ms is number => ms !== null);
+  if (bounds.length === 0) return [];
+
+  const first = Math.min(...bounds);
+  const last = Math.max(...bounds);
+  const out: T[] = [];
+  for (let ms = first; ms <= last; ms += DAY_MS) out.push(byDate.get(ms) ?? zero(isoOf(ms)));
+  return out;
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatCount, formatMoscowDate, formatRub, formatSavedAt } from './format';
+import { formatCount, formatMoscowDate, formatRub, formatSavedAt, noBreakDates } from './format';
 
 /** Intl ставит узкий неразрывный пробел между разрядами — сравниваем без него. */
 const plain = (text: string): string => text.replace(/[\u00A0\u202F]/g, ' ');
@@ -40,5 +40,15 @@ describe('formatSavedAt', () => {
 
   it('битая строка — null', () => {
     expect(formatSavedAt('вчера', now)).toBeNull();
+  });
+});
+
+describe('noBreakDates', () => {
+  it('дефисы дат неразрывные, остальное как есть', () => {
+    const NBH = String.fromCharCode(0x2011);
+    expect(noBreakDates('с начала месяца, 01-10-2026 — 13-10-2026')).toBe(
+      `с начала месяца, 01${NBH}10${NBH}2026 — 13${NBH}10${NBH}2026`,
+    );
+    expect(noBreakDates('Яндекс-Маркет 12-34')).toBe('Яндекс-Маркет 12-34');
   });
 });

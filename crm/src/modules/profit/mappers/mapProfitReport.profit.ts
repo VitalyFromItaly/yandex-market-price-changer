@@ -58,9 +58,18 @@ function tailRows(block: ProfitBlockResponse, netLabel: string): BreakdownRow[] 
   ];
 }
 
+/**
+ * Основной блок отчёта — оформленные, а без них выкупленные (решение бэкенда,
+ * `main`). Экспортирован для главной: её денежные карточки обязаны читать тот
+ * же блок, что столбец «Прибыли», куда они ведут.
+ */
+export function mainBlock(response: ProfitResponse): ProfitBlockResponse {
+  return response.main === 'placed' ? response.placed : response.redeemed;
+}
+
 export function profitBreakdown(response: ProfitResponse): Breakdown {
   const placed = response.main === 'placed';
-  const block = placed ? response.placed : response.redeemed;
+  const block = mainBlock(response);
   const estimate = response.estimate;
   return {
     countLabel: placed ? 'Оформлено' : 'Заказов',

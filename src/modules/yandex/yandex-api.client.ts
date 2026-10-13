@@ -211,6 +211,14 @@ export interface IWarehousesOverview {
 }
 
 /** Одна позиция для записи остатка. */
+/** Остатки товара на одном складе — ответ `getStocks` (`WarehouseOfferDTO`). */
+export interface IWarehouseOfferStock {
+  warehouseId: number;
+  offerId: string;
+  /** Тип → штуки: AVAILABLE, FIT, FREEZE… */
+  stocks: Array<{ type?: string; count?: number }>;
+}
+
 export interface IStockUpdate {
   /** Артикул в каталоге Яндекса (offerId). */
   sku: string;
@@ -733,6 +741,53 @@ export class YandexApiClient {
     }
 
     return mine;
+  }
+
+  /**
+   * ЧТЕНИЕ остатков кампании — полный постраничный обход `POST offers/stocks`
+   * (`getStocks`). Только чтение: путь тот же, что у записи, но метод — POST
+   * через `post()` с повторами, запись — PUT в `updateStocks`.
+   *
+   * Склады в ответе — все, где лежит товар кампании, включая ЧУЖИЕ (склад
+   * возвратов Маркета на FBS, см. `getWarehouseId`): отсеивает их вызывающий.
+   * На FBY ответ пустой — там источник отчёт остатков (`FbyStockService`).
+   */
+  public async loadStocks(): Promise<IWarehouseOfferStock[]> {
+    const offers: IWarehouseOfferStock[] = [];
+    let pageToken: string | undefined;
+    let page = 0;
+
+    do {
+      const data = await this.post<{
+        result?: {
+          warehouses?: Array<{
+            warehouseId?: number;
+            offers?: Array<{ offerId?: string; stocks?: Array<{ type?: string; count?: number }> }>;
+          }>;
+          paging?: { nextPageToken?: string };
+        };
+      }>(
+        stocksPath(this.credentials.campaignId),
+        { limit: PAGE_LIMITS.stocks.default, page_token: pageToken },
+        {},
+      );
+
+      for (const warehouse of data.result?.warehouses ?? []) {
+        if (typeof warehouse?.warehouseId !== 'number') continue;
+        for (const offer of warehouse.offers ?? []) {
+          if (!offer?.offerId) continue;
+          offers.push({
+            warehouseId: warehouse.warehouseId,
+            offerId: offer.offerId,
+            stocks: offer.stocks ?? [],
+          });
+        }
+      }
+
+      pageToken = data.result?.paging?.nextPageToken;
+    } while (pageToken && ++page < this.maxPages);
+
+    return offers;
   }
 
   /**

@@ -131,7 +131,12 @@ export class ProfitService {
     // по названию и категории profitOf определяет бренд позиции для комиссии
     // за продвижение.
     const returned = await this.returnedOrderIds(store);
-    const totals = profitOf(result.orders, costs, rates, { returned, rows });
+    // Выкупленные отобраны по updatedAt — по нему и ряд по дням (см. dayField).
+    const totals = profitOf(result.orders, costs, rates, {
+      returned,
+      rows,
+      dayField: 'updatedAt',
+    });
     const placed = profitOf(placedOrders.orders, costs, rates, { returned, rows });
 
     this.logger.log(

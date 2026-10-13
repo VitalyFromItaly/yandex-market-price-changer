@@ -85,6 +85,12 @@ export interface IReportOrder {
   status?: string;
   substatus?: string;
   creationDate?: string;
+  /**
+   * Последнее изменение заказа. По нему отобраны выкупленные (`REDEEMED`), и по
+   * нему же их ряд по дням в прибыли (`IProfitOptions.dayField`). Живой
+   * getOrders присылает поле в сыром DTO; архив — `statusUpdateDate`.
+   */
+  updatedAt?: string;
   itemsTotal?: number;
   deliveryTotal?: number;
   /**

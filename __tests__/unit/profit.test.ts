@@ -1146,3 +1146,160 @@ describe('Продвижение в прибыли', () => {
     expect(withoutPromo).not.toContain('Продвижение');
   });
 });
+
+/**
+ * Ряд «по дням» для графика главной CRM копится в ТОМ ЖЕ проходе, что итог:
+ * сумма по дням обязана совпасть с карточками «Продажи» и «Чистая».
+ */
+describe('Прибыль по дням', () => {
+  const sum = (days: { revenue: number; net: number }[], key: 'revenue' | 'net') =>
+    days.reduce((acc, day) => acc + day[key], 0);
+
+  const ORDERS = [
+    { ...ORDER, id: 1, creationDate: '01-08-2026 10:00:00' },
+    { ...ORDER, id: 2, itemsTotal: 7000, creationDate: '01-08-2026 22:30:00' },
+    { ...ORDER, id: 3, itemsTotal: 4000, creationDate: '03-08-2026 09:00:00' },
+    // Возврат и заказ без закупа в ряд не попадают — как и в итог.
+    { ...ORDER, id: 4, itemsTotal: 9000, creationDate: '02-08-2026 12:00:00' },
+    {
+      id: 5,
+      itemsTotal: 5000,
+      creationDate: '02-08-2026 12:00:00',
+      items: [{ offerId: 'НЕТ', count: 1 }],
+    },
+  ];
+
+  it('Σ по дням = итогу; дни по возрастанию, только с учтёнными заказами', () => {
+    const totals = profitOf(ORDERS, COSTS, DEFAULT_RATES, { returned: new Set([4]) });
+
+    expect(totals.byDay.map((day) => day.date)).toEqual(['2026-08-01', '2026-08-03']);
+    expect(sum(totals.byDay, 'revenue')).toBe(totals.revenue);
+    expect(sum(totals.byDay, 'net')).toBeCloseTo(totals.net, 6);
+    expect(totals.byDay[0].revenue).toBe(17000);
+    expect(totals.undatedOrders).toBe(0);
+  });
+
+  it('с продвижением и с услугами калькулятора сумма тоже сходится', () => {
+    const rows = new Map([['A1', { price: 5000, name: 'CASIO A168', category: 'CASIO' }]]);
+    const rates = { ...DEFAULT_RATES, promoCommissions: { casio: { mode: 'flat', percent: 3 } } };
+    const priced = ORDERS.slice(0, 3).map((order) => ({
+      ...order,
+      items: [{ offerId: 'A1', count: 1, price: order.itemsTotal }],
+    }));
+
+    const promo = profitOf(priced, COSTS, rates, { rows });
+    expect(promo.promo).toBeGreaterThan(0);
+    expect(sum(promo.byDay, 'net')).toBeCloseTo(promo.net, 6);
+
+    const services = new Map<number, number>([
+      [1, 1800],
+      [2, 1200],
+      [3, 900],
+    ]);
+    const tariff = profitOf(priced, COSTS, DEFAULT_RATES, { services });
+    expect(tariff.commission).toBe(3900);
+    expect(sum(tariff.byDay, 'net')).toBeCloseTo(tariff.net, 6);
+  });
+
+  it('dayField: выкупленные копятся по updatedAt — дате, по которой отобраны', () => {
+    const redeemed = [
+      { ...ORDER, id: 1, creationDate: '20-07-2026 10:00:00', updatedAt: '02-08-2026 11:00:00' },
+    ];
+    const totals = profitOf(redeemed, COSTS, DEFAULT_RATES, { dayField: 'updatedAt' });
+    expect(totals.byDay).toEqual([{ date: '2026-08-02', revenue: 10000, net: 2000 }]);
+
+    expect(profitOf(redeemed, COSTS).byDay[0].date).toBe('2026-07-20');
+  });
+
+  it('заказ без даты в итоге есть, на ряд не ложится и считается отдельно', () => {
+    const totals = profitOf([ORDER, ORDERS[0]], COSTS);
+    expect(totals.orders).toBe(2);
+    expect(totals.undatedOrders).toBe(1);
+    expect(sum(totals.byDay, 'revenue')).toBe(10000);
+  });
+});
+
+/**
+ * «Топ товаров» главной CRM — разрез по артикулам из того же прохода, что итог:
+ * сумма по товарам обязана совпасть с карточками «Продажи» и «Чистая».
+ */
+describe('Прибыль по товарам', () => {
+  const sum = (rows: { revenue: number; net: number }[], key: 'revenue' | 'net') =>
+    rows.reduce((acc, row) => acc + row[key], 0);
+
+  const PRICES = new Map([
+    ['A1', 5000],
+    ['B2', 1000],
+  ]);
+  const MIXED = {
+    id: 2,
+    itemsTotal: 9000,
+    subsidies: [{ type: 'MARKETPLACE', amount: 1000 }],
+    items: [
+      { offerId: 'A1', offerName: 'CASIO A168', count: 1, price: 6000 },
+      { offerId: 'B2', offerName: 'Ремешок', count: 2, price: 1500 },
+    ],
+  };
+  const ORDERS = [
+    { ...ORDER, id: 1, items: [{ offerId: 'A1', offerName: 'CASIO A168', count: 1 }] },
+    MIXED,
+    // Возврат — штуками в returns, без выручки; заказ без закупа — нигде.
+    { ...ORDER, id: 3, items: [{ offerId: 'B2', count: 3 }] },
+    { id: 4, itemsTotal: 5000, items: [{ offerId: 'НЕТ', count: 1 }] },
+  ];
+
+  it('Σ по товарам = итогу; по убыванию продаж; возвраты штуками', () => {
+    const totals = profitOf(ORDERS, PRICES, DEFAULT_RATES, { returned: new Set([3]) });
+
+    expect(totals.bySku.map((row) => row.sku)).toEqual(['A1', 'B2']);
+    expect(sum(totals.bySku, 'revenue')).toBeCloseTo(totals.revenue, 6);
+    expect(sum(totals.bySku, 'net')).toBeCloseTo(totals.net, 6);
+    expect(totals.bySku.some((row) => row.sku === 'НЕТ')).toBe(false);
+
+    const [a1, b2] = totals.bySku;
+    // Заказ 2 (10 000 с субсидией) делится по price×count: 6000 / 3000.
+    expect(a1.revenue).toBeCloseTo(10000 + 10000 * (6000 / 9000), 6);
+    expect(a1).toMatchObject({ name: 'CASIO A168', count: 2, returns: 0 });
+    expect(b2).toMatchObject({ name: 'Ремешок', count: 2, returns: 3 });
+    expect(b2.revenue).toBeCloseTo(10000 / 3, 6);
+    // Закуп позиции — точно: 2 × 1000 из её чистой, а не доля закупа заказа.
+    expect(b2.net).toBeCloseTo((10000 / 3) * 0.7 - 2000, 6);
+    expect(b2.margin).toBeCloseTo(b2.net / b2.revenue, 9);
+  });
+
+  it('с продвижением и услугами калькулятора сумма тоже сходится', () => {
+    const rows = new Map([
+      ['A1', { price: 5000, name: 'CASIO A168', category: 'CASIO' }],
+      ['B2', { price: 1000, name: 'Ремешок', category: 'Аксессуары' }],
+    ]);
+    const rates = { ...DEFAULT_RATES, promoCommissions: { casio: { mode: 'flat', percent: 3 } } };
+    const promo = profitOf([MIXED], PRICES, rates, { rows });
+    expect(promo.promo).toBe(180);
+    expect(sum(promo.bySku, 'net')).toBeCloseTo(promo.net, 6);
+
+    const tariff = profitOf([MIXED], PRICES, DEFAULT_RATES, { services: new Map([[2, 2700]]) });
+    expect(sum(tariff.bySku, 'net')).toBeCloseTo(tariff.net, 6);
+  });
+
+  it('без цен выручка делится по штукам; имя — из прайса, иначе артикул', () => {
+    const order = {
+      id: 7,
+      itemsTotal: 9000,
+      items: [
+        { offerId: 'A1', count: 1 },
+        { offerId: 'B2', count: 2 },
+      ],
+    };
+    const rows = new Map([['A1', { price: 5000, name: 'CASIO из прайса', category: 'CASIO' }]]);
+    const [first, second] = profitOf([order], PRICES, DEFAULT_RATES, { rows }).bySku;
+    expect(first).toMatchObject({ sku: 'B2', name: 'B2', revenue: 6000 });
+    expect(second).toMatchObject({ sku: 'A1', name: 'CASIO из прайса', revenue: 3000 });
+  });
+
+  it('товар только с возвратами — маржи нет', () => {
+    const totals = profitOf([ORDER], COSTS, DEFAULT_RATES, { returned: new Set([1]) });
+    expect(totals.bySku).toEqual([
+      { sku: 'A1', name: 'A1', count: 0, revenue: 0, net: 0, margin: null, returns: 1 },
+    ]);
+  });
+});

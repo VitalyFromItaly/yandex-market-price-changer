@@ -5,11 +5,16 @@
  */
 import { TooltipContent, TooltipPortal, TooltipRoot, TooltipTrigger } from 'reka-ui';
 
-defineProps<{ text: string; side?: 'top' | 'right' | 'bottom' | 'left' }>();
+defineProps<{
+  text: string;
+  side?: 'top' | 'right' | 'bottom' | 'left';
+  /** Не показывать — подпись и так видна (развёрнутый сайдбар). */
+  disabled?: boolean;
+}>();
 </script>
 
 <template>
-  <TooltipRoot>
+  <TooltipRoot :disabled="disabled">
     <TooltipTrigger as-child>
       <slot />
     </TooltipTrigger>

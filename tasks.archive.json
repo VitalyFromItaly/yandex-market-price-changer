@@ -2,8 +2,8 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 79,
-    "updated_at": "2026-09-25"
+    "archived_tasks": 88,
+    "updated_at": "2026-10-13"
   },
   "tasks": [
     {
@@ -1966,6 +1966,192 @@
       "test_steps": [
         "Шаг 1: npm run dev:crm — войти в магазин, перейти в «Настройки», «Профиль», «Магазины»: разделы магазина на месте и ведут в него",
         "Шаг 2: npm run typecheck:crm && npm run test:crm && npm run lint"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-092",
+      "milestone": "M14",
+      "status": "done",
+      "category": "ui",
+      "priority": "high",
+      "dependencies": [],
+      "description": "Главная CRM, каркас по скрину MarketHub: шапка с общим периодом, вкладки площадок, ряд KPI-карточек. ПОЧЕМУ: владелец хочет главную «как на скрине» (решение crm_dashboard_markethub); сейчас это 4 разрозненные плитки без общего периода. Бэкенд не меняется — числа из существующих задач profit:profit, orders:in_transit, orders:returning, fby:overview.",
+      "acceptance_criteria": [
+        "Примитив components/ui/kpi-card: иконка, подпись, число tnum, подстрочник, тон ok|danger|neutral, состояния skeleton/error/refresh; DashboardTile заменён им",
+        "PageHeader «Главная» с выбором периода Сегодня/Неделя/С 1 числа (shared/period); смена периода перезапускает зависящие задачи, снимки (в пути, возвраты, остатки) от периода не зависят и это видно по подписи",
+        "Вкладки площадок: «Яндекс Маркет» активна, Ozon/Wildberries disabled с подсказкой «скоро»",
+        "KPI: Продажи, Комиссия (% от продаж), Налог, Закуп, Чистая — из profit:profit за период теми же мапперами, что страница «Прибыль»; Заказы в пути; Возвраты; Остатки FBY только у FBY-магазина с открытой фичей",
+        "Каждая карточка — ссылка в свой отчёт с тем же периодом (periodQuery); закрытая фича — нет карточки и нет задачи",
+        "Только семантические токены, обе темы, ширина 375px без горизонтального скролла; прайс и «Разделы» остаются ниже"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run typecheck:crm && npm run test:crm && npm run lint — зелёные",
+        "Шаг 2: npm run dev + npm run dev:crm, войти продавцом, открыть главную магазина: карточки заполнены, числа совпадают со страницей «Прибыль» за тот же период",
+        "Шаг 3: сменить период — карточки прибыли пересчитаны, клик по «Чистой» открывает «Прибыль» с этим периодом",
+        "Шаг 4: тёмная тема и ширина 375px — без поломок",
+        "Шаг 5: продавец без report_profit — карточек прибыли нет, 403 в журнале CRM нет"
+      ]
+    },
+    {
+      "id": "TASK-093",
+      "milestone": "M14",
+      "status": "done",
+      "category": "ui",
+      "priority": "medium",
+      "dependencies": [],
+      "description": "Блок «Заказы» на главной CRM: Оформлено / Едет к клиенту / Выкуплено / Едет обратно / Отменено — число, «на N ₽», переход в отчёт. ПОЧЕМУ: блок со скрина MarketHub (решение crm_dashboard_markethub); все числа уже есть в задачах orders:* и profit:profit.",
+      "acceptance_criteria": [
+        "Строки через mapOrdersReport/profitBreakdown, не копии",
+        "Оформлено — profit.placed (orders/revenue), Отменено — profit.cancelled, только число (суммы нет — «—», не 0)",
+        "Выкуплено — orders:redeemed за период главной",
+        "Каждая строка ведёт в свой отчёт с тем же периодом; строка закрытой фичи скрыта"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run typecheck:crm && npm run test:crm",
+        "Шаг 2: на живом магазине числа строк совпадают со страницами отчётов за тот же период",
+        "Шаг 3: клики по строкам открывают нужный отчёт"
+      ]
+    },
+    {
+      "id": "TASK-094",
+      "milestone": "M14",
+      "status": "done",
+      "category": "functional",
+      "priority": "medium",
+      "dependencies": [
+        "TASK-092"
+      ],
+      "description": "График «Выручка и чистая прибыль» по дням на главной CRM. ПОЧЕМУ: блок со скрина MarketHub; «Прибыль» сейчас отдаёт только итоги, серии по дням нет. Серия считается в profitOf в том же проходе, что итог, — сумма по дням равна итогу по построению.",
+      "acceptance_criteria": [
+        "profitOf копит byDay {date, revenue, net} по МСК-дню creationDate основного блока; Σ byDay = итог (юнит-тест)",
+        "Бот не меняется: тесты форматтеров прибыли не правятся",
+        "toCrmProfitView отдаёт byDay; фронтовый домен profit обновлён",
+        "Примитив components/ui/chart/AreaChart (Unovis, две серии, --chart-* токены, легенда, тултип, пропущенные дни = 0)",
+        "При периоде «Сегодня» график скрыт"
+      ],
+      "test_steps": [
+        "Шаг 1: npm test && npx tsc --noEmit && npm run typecheck:crm && npm run test:crm",
+        "Шаг 2: на живом магазине за «С 1 числа» сумма точек графика = карточкам «Продажи» и «Чистая»",
+        "Шаг 3: обе темы, 375px"
+      ]
+    },
+    {
+      "id": "TASK-095",
+      "milestone": "M14",
+      "status": "done",
+      "category": "functional",
+      "priority": "medium",
+      "dependencies": [
+        "TASK-094"
+      ],
+      "description": "Топ товаров и «Остатки на исходе» на главной CRM. ПОЧЕМУ: блоки со скрина MarketHub; агрегата продаж по sku сейчас нет нигде. Агрегат — в profitOf (те же заказы, закуп и возвраты, что «Прибыль»), остатки — FBY из снимка FbyStockService, FBS — чтение offers/stocks.",
+      "acceptance_criteria": [
+        "profitOf копит bySku {sku, name, count, revenue, net, margin, returns}; Σ по sku сходится с итогом (юнит-тест); CRM-view отдаёт топ-10 по продажам",
+        "Остаток по sku: FBY — FbyStockService (без лишней генерации отчёта, лимит 1/мин), FBS — только чтение offers/stocks; запись остатков не трогается",
+        "Порог «на исходе» — константа, значение записано в reference.decisions",
+        "Таблица топа: товар, SKU, остаток, продано, маржа (ok/danger), возвраты; «На исходе» — до 5 позиций и ссылка в «Прайс»/«FBY»"
+      ],
+      "test_steps": [
+        "Шаг 1: npm test && npx tsc --noEmit && npm run typecheck:crm && npm run test:crm && npm run build",
+        "Шаг 2: на живом магазине топ сверен с «Прибылью» за тот же период",
+        "Шаг 3: FBY- и FBS-магазин — остатки совпадают с «FBY»/кабинетом"
+      ]
+    },
+    {
+      "id": "TASK-096",
+      "milestone": "M14",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Главная CRM ближе к макету MarketHub: цветные иконки KPI, «Заказы» с иконками в цветных плашках и ссылкой «Все заказы», «Топ товаров по продажам» с колонкой #, цветным остатком и долей возвратов, новый блок «Unit-экономика по площадкам» (ЯМ из «Прибыли», Ozon/WB «скоро»). ПОЧЕМУ: владелец прислал фрагменты макета 2026-10-13; сейчас иконки серые, контейнеры голые.",
+      "acceptance_criteria": [
+        "Тон иконки задан одной таблицей ICON_TONE_CLASS на токенах темы; у каждой KPI и строки «Заказов» есть тон",
+        "«Заказы»: иконка в плашке, ссылка «Все заказы →» при открытом разделе",
+        "Топ: #, SKU, остаток цветом (≤3 / ≤10 / выше), маржа по знаку, возвраты «N (x%)»",
+        "Unit-экономика: строка ЯМ = mainBlock «Прибыли», маржа = net/revenue; Ozon/WB приглушены"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run typecheck:crm && npm run test:crm && npm run lint && npm run prettier:check && npm run build",
+        "Шаг 2: главная в браузере — светлая и тёмная тема, узкая ширина"
+      ],
+      "dependencies": [
+        "TASK-095"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-097",
+      "milestone": "M14",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Главная CRM ярче (решение crm_dashboard_vivid): градиенты и свечение KPI в тон иконки, иконки в плашках, градиентная полоска по верху блоков главной, таблетки остатка/маржи в «Топе» и unit-экономике, цветные кружки мест топа, числа «Заказов» в тон. ПОЧЕМУ: владелец 2026-10-13 — «ещё больше цвета, делаю для зумеров».",
+      "acceptance_criteria": [
+        "Все цвета — из ICON_TONE_CLASS/токенов темы, светлая и тёмная",
+        "KPI: фон-градиент, рамка и свечение в тон, иконка в плашке",
+        "Таблицы главной: остаток и маржа таблетками"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run typecheck:crm && npm run test:crm && npm run lint && npm run prettier:check && npm run build",
+        "Шаг 2: главная глазами в обеих темах"
+      ],
+      "dependencies": [
+        "TASK-096"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-098",
+      "milestone": "M14",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Убрать перебор «блеска» в ряду KPI главной CRM: нейтральные поверхности карточек (цвет — только плашки иконок), тихий акцент «Чистой», тоньше полоска блоков; деньги KPI и unit-экономики целыми рублями; дата в подписи периода не рвётся по дефису. ПОЧЕМУ: владелец 2026-10-13 — «перебор» на скрине TASK-097.",
+      "acceptance_criteria": [
+        "KPI без цветной рамки/фона/свечения, иконка в цветной плашке",
+        "Деньги KPI и unit-экономики без копеек",
+        "«13-10-2026» не переносится"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run typecheck:crm && npm run test:crm && npm run lint && npm run prettier:check && npm run build",
+        "Шаг 2: главная глазами"
+      ],
+      "dependencies": [
+        "TASK-097"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-099",
+      "milestone": "M14",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Сворачиваемый левый сайдбар CRM на десктопе: в свёрнутом виде — только иконки пунктов меню, название — тултипом справа; состояние запоминается в браузере. Мобильное выезжающее меню не меняется. ПОЧЕМУ: просьба владельца 2026-10-13.",
+      "acceptance_criteria": [
+        "Кнопка сворачивания/разворачивания на md+",
+        "Свёрнуто: иконки пунктов, тултип с названием, активный пункт виден; заголовки групп и имя скрыты",
+        "Состояние переживает перезагрузку (localStorage в try/catch)",
+        "Мобильное меню как было"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run typecheck:crm && npm run test:crm && npm run lint && npm run prettier:check && npm run build",
+        "Шаг 2: свернуть/развернуть, навести на иконку, F5"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-100",
+      "milestone": "M14",
+      "category": "ui",
+      "priority": "low",
+      "description": "Знаки площадок (Яндекс Маркет, Ozon, Wildberries) в переключателе площадок главной и в «Unit-экономике по площадкам» вместо инициалов. Один компонент MarketplaceMark, свои SVG/текст в бандле — внешних ассетов нет (прод в РФ, CDN недоступны). ПОЧЕМУ: просьба владельца 2026-10-13 со скринами.",
+      "acceptance_criteria": [
+        "MarketplaceMark: ym/ozon/wb, цвета — токены --mp-*",
+        "В табах площадок и в unit-экономике — эти знаки; у «скоро» — приглушены"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run typecheck:crm && npm run test:crm && npm run lint && npm run prettier:check && npm run build",
+        "Шаг 2: главная глазами"
       ],
       "dependencies": [],
       "status": "done"

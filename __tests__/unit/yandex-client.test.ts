@@ -556,3 +556,46 @@ describe('Ошибки Partner API', () => {
     expect(text).not.toContain('read-only');
   });
 });
+
+describe('YandexApiClient.loadStocks — чтение остатков', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('POST offers/stocks постранично: page_token в query, склады и типы как есть', async () => {
+    const stub = stubAxios();
+    stub.setResponses(
+      {
+        result: {
+          warehouses: [
+            {
+              warehouseId: 7,
+              offers: [{ offerId: 'A', stocks: [{ type: 'AVAILABLE', count: 2 }] }],
+            },
+          ],
+          paging: { nextPageToken: 'p2' },
+        },
+      },
+      { result: { warehouses: [{ warehouseId: 8, offers: [{ offerId: 'B' }, { stocks: [] }] }] } },
+    );
+    const client = new YandexApiClient(
+      { token: 'ACMA:secret', campaignId: '12345', businessId: '67890' },
+      BASE_URL,
+      { sleep: async () => undefined },
+    );
+
+    const offers = await client.loadStocks();
+
+    expect(offers).toEqual([
+      { warehouseId: 7, offerId: 'A', stocks: [{ type: 'AVAILABLE', count: 2 }] },
+      { warehouseId: 8, offerId: 'B', stocks: [] },
+    ]);
+    expect(stub.calls.map((call) => call.path)).toEqual([
+      '/v2/campaigns/12345/offers/stocks',
+      '/v2/campaigns/12345/offers/stocks',
+    ]);
+    expect(stub.calls[0].params).toEqual({ limit: PAGE_LIMITS.stocks.default });
+    expect(stub.calls[1].params.page_token).toBe('p2');
+    expect(stub.calls[0].body).toEqual({});
+  });
+});

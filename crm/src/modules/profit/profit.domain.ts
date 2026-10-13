@@ -53,6 +53,31 @@ export interface ProfitBlockResponse {
   promo: number;
   purchase: number;
   net: number;
+  /** Ряд по дням — только дни с учтёнными заказами; Σ = revenue/net блока. */
+  byDay: ProfitDay[];
+  /** Учтённые заказы без даты: в итоге есть, на ряд не легли. */
+  undatedOrders: number;
+  /** Товары по убыванию продаж (первые 100); Σ revenue/net = блоку. */
+  bySku: ProfitSku[];
+}
+
+/** Строка «по товарам»: штуки, продажи и чистая учтённых заказов, возвраты — штуками. */
+export interface ProfitSku {
+  sku: string;
+  name: string;
+  count: number;
+  revenue: number;
+  net: number;
+  /** Чистая / продажи; null — продаж нет (только возвраты). */
+  margin: number | null;
+  returns: number;
+}
+
+/** Точка ряда: МСК-день ГГГГ-ММ-ДД. */
+export interface ProfitDay {
+  date: string;
+  revenue: number;
+  net: number;
 }
 
 export interface ExcludedResponse {
@@ -83,6 +108,8 @@ interface ReportBaseResponse {
 export interface ProfitResponse extends ReportBaseResponse {
   key: typeof PROFIT_REPORT.PROFIT;
   main: 'placed' | 'redeemed';
+  /** Границы периода ГГГГ-ММ-ДД для нулей в пропущенных днях; null — «Всего». */
+  days: { from: string; to: string } | null;
   placed: ProfitBlockResponse;
   redeemed: ProfitBlockResponse;
   cancelled: number;

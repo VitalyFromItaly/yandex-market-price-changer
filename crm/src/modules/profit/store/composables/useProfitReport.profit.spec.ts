@@ -27,6 +27,9 @@ const BLOCK = {
   promo: 0,
   purchase: 500,
   net: 200,
+  byDay: [],
+  undatedOrders: 0,
+  bySku: [],
 };
 
 function data(overrides: Partial<ProfitResponse> = {}): ProfitResponse {
@@ -38,6 +41,7 @@ function data(overrides: Partial<ProfitResponse> = {}): ProfitResponse {
     emptyText: 'За этот период заказов нет.',
     empty: false,
     main: 'placed',
+    days: null,
     placed: BLOCK,
     redeemed: { ...BLOCK, orders: 0 },
     cancelled: 0,

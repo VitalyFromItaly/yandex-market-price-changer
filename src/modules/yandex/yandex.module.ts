@@ -14,6 +14,7 @@ import { RecommendationsService } from './recommendations/recommendations.servic
 import { OrderReportsService } from './reports/order-reports.service';
 import { ProfitService } from './reports/profit.service';
 import { StoreSettingsService } from './settings/store-settings.service';
+import { StockLevelsService } from './stocks/stock-levels.service';
 import { StockSyncService } from './stocks/stock-sync.service';
 import { StockUploadPolicyService } from './stocks/stock-upload-policy.service';
 import { StoresService } from './stores/stores.service';
@@ -42,6 +43,7 @@ import { YandexClientFactory } from './yandex-client.factory';
     OrderReportsService,
     ProfitService,
     StockSyncService,
+    StockLevelsService,
     StockUploadPolicyService,
     WarehousesService,
     FbyStockService,
@@ -61,6 +63,7 @@ import { YandexClientFactory } from './yandex-client.factory';
     OrderReportsService,
     ProfitService,
     StockSyncService,
+    StockLevelsService,
     StockUploadPolicyService,
     WarehousesService,
     FbyStockService,

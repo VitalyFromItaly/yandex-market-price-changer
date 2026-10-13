@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { divergingStep, formatShare, placeSegments, ratio, waterfallSteps } from './chart.domain';
+import {
+  divergingStep,
+  fillDays,
+  formatShare,
+  placeSegments,
+  ratio,
+  waterfallSteps,
+} from './chart.domain';
 
 describe('chart.domain', () => {
   it('ratio: мусор и деление на ноль — 0, выход за шкалу — обрезан', () => {
@@ -58,5 +65,49 @@ describe('chart.domain', () => {
   it('divergingStep: плюс вправо от центра, минус влево', () => {
     expect(divergingStep(50, 100)).toEqual({ left: 0.5, width: 0.25 });
     expect(divergingStep(-100, 100)).toEqual({ left: 0, width: 0.5 });
+  });
+
+  describe('fillDays', () => {
+    const zero = (date: string) => ({ date, value: 0 });
+
+    it('пропущенные дни периода — нули, включая края', () => {
+      const out = fillDays([{ date: '2026-09-02', value: 5 }], '2026-09-01', '2026-09-04', zero);
+      expect(out).toEqual([
+        { date: '2026-09-01', value: 0 },
+        { date: '2026-09-02', value: 5 },
+        { date: '2026-09-03', value: 0 },
+        { date: '2026-09-04', value: 0 },
+      ]);
+    });
+
+    it('через границу месяца и года — календарём', () => {
+      const out = fillDays([], '2026-12-30', '2027-01-02', zero);
+      expect(out.map((p) => p.date)).toEqual([
+        '2026-12-30',
+        '2026-12-31',
+        '2027-01-01',
+        '2027-01-02',
+      ]);
+    });
+
+    it('точка за границами расширяет диапазон, а не теряется', () => {
+      const out = fillDays([{ date: '2026-09-06', value: 3 }], '2026-09-04', '2026-09-05', zero);
+      expect(out.map((p) => p.date)).toEqual(['2026-09-04', '2026-09-05', '2026-09-06']);
+      expect(out.reduce((sum, p) => sum + p.value, 0)).toBe(3);
+    });
+
+    it('без границ — от первой точки до последней; пусто — пусто', () => {
+      const out = fillDays(
+        [
+          { date: '2026-09-03', value: 1 },
+          { date: '2026-09-01', value: 2 },
+        ],
+        null,
+        null,
+        zero,
+      );
+      expect(out.map((p) => p.value)).toEqual([2, 0, 1]);
+      expect(fillDays([], null, null, zero)).toEqual([]);
+    });
   });
 });

@@ -1,2 +1,2 @@
 // Чистые межмодульные хелперы CRM.
-export { formatCount, formatMoscowDate, formatRub, formatSavedAt } from './format';
+export { formatCount, formatMoscowDate, formatRub, formatSavedAt, noBreakDates } from './format';

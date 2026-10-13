@@ -251,6 +251,11 @@ export const PAGE_LIMITS = {
   offerMappings: { default: 200, max: 200 },
   /** Архив stats/orders: до 200 заказов в ответе по спеке. */
   ordersStats: { default: 200, max: 200 },
+  /**
+   * Чтение остатков (`getStocks`). Спека максимум не называет — 200, как у
+   * каталога; на боевом ещё не сверено (docs/known-gaps.md).
+   */
+  stocks: { default: 200, max: 200 },
 } as const;
 
 /**

@@ -17,6 +17,9 @@ const BLOCK: ProfitBlockResponse = {
   promo: 0,
   purchase: 5000,
   net: 2000,
+  byDay: [],
+  undatedOrders: 0,
+  bySku: [],
 };
 
 const BASE = {
@@ -40,6 +43,7 @@ function profit(overrides: Partial<ProfitResponse> = {}): ProfitResponse {
     ...BASE,
     key: 'profit',
     main: 'placed',
+    days: null,
     placed: BLOCK,
     redeemed: { ...BLOCK, orders: 2, revenue: 4000, net: -150 },
     cancelled: 0,

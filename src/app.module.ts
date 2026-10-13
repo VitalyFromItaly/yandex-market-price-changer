@@ -23,6 +23,7 @@ import { CrmProfitModule } from './modules/crm/profit/crm-profit.module';
 import { CrmQuarantineModule } from './modules/crm/quarantine/crm-quarantine.module';
 import { CrmRecommendationsModule } from './modules/crm/recommendations/crm-recommendations.module';
 import { CrmSettingsModule } from './modules/crm/settings/crm-settings.module';
+import { CrmStocksModule } from './modules/crm/stocks/crm-stocks.module';
 import { CrmStoresModule } from './modules/crm/stores/crm-stores.module';
 import { CrmWarehousesModule } from './modules/crm/warehouses/crm-warehouses.module';
 import { ErrorsModule } from './modules/errors/errors.module';
@@ -74,6 +75,7 @@ import { YandexModule } from './modules/yandex/yandex.module';
     CrmCardsModule,
     CrmFbyModule,
     CrmWarehousesModule,
+    CrmStocksModule,
     QueuesModule,
     YandexModule,
     TelegramModule,

@@ -1,3 +1,5 @@
+export { default as AreaChart } from './AreaChart.vue';
+export type { AreaPoint, AreaSeries } from './AreaChart.vue';
 export { default as BarChart } from './BarChart.vue';
 export type { BarPoint } from './BarChart.vue';
 export { default as DataBar } from './DataBar.vue';
@@ -6,6 +8,7 @@ export {
   TONE_BG,
   TONE_CSS,
   divergingStep,
+  fillDays,
   formatShare,
   placeSegments,
   ratio,

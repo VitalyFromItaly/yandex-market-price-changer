@@ -7,6 +7,7 @@ import AppSidebar from './AppSidebar.vue';
 
 import { Button } from '@/components/ui/button';
 import { useSessionRefresh } from '@/modules/auth/composables/useSessionRefresh.auth';
+import { useSidebarCollapsed } from '@/shared/composables';
 
 /*
  * Один сайдбар на все ширины: на телефоне он выезжает поверх контента по
@@ -14,6 +15,8 @@ import { useSessionRefresh } from '@/modules/auth/composables/useSessionRefresh.
  * места, где забыть поправить.
  */
 const menuOpen = ref(false);
+// Свёрнут только на десктопе: на телефоне меню выезжает целиком, как было.
+const { collapsed, toggle } = useSidebarCollapsed();
 // Пароль сменили в другой вкладке или доступ отозвали — узнаём при возврате сюда.
 useSessionRefresh();
 const route = useRoute();
@@ -40,10 +43,13 @@ watch(
     />
     <AppSidebar
       :class="[
-        'fixed inset-y-0 left-0 z-50 w-64 -translate-x-full transition-transform md:sticky md:top-0 md:h-screen md:translate-x-0',
+        'fixed inset-y-0 left-0 z-50 w-64 shrink-0 -translate-x-full transition-[transform,width] md:sticky md:top-0 md:h-screen md:translate-x-0',
+        collapsed ? 'md:w-16' : 'md:w-64',
         menuOpen && 'translate-x-0',
       ]"
+      :collapsed="collapsed"
       @close="menuOpen = false"
+      @toggle="toggle"
     />
 
     <main class="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">

@@ -74,6 +74,8 @@ type TRawStatsOrder = {
   id?: number;
   status?: string;
   creationDate?: string;
+  /** ISO без смещения, московское время — аналог `updatedAt` живого getOrders. */
+  statusUpdateDate?: string;
   items?: Array<{
     shopSku?: string;
     offerName?: string;
@@ -138,6 +140,7 @@ export function statsOrderToReportOrder(raw: unknown): IReportOrder {
     // не имеют по построению (returning вне скоупа фичи).
     substatus: undefined,
     creationDate: order.creationDate,
+    updatedAt: order.statusUpdateDate,
     itemsTotal,
     deliveryTotal,
     subsidies,

@@ -49,3 +49,11 @@ export function formatSavedAt(iso: string, now: Date = new Date()): string | nul
   const time = MOSCOW_TIME.format(new Date(iso));
   return date === formatMoscowDate(now.toISOString()) ? time : `${date} ${time}`;
 }
+
+/** Неразрывный дефис: дата «13-10-2026» в подписи не рвётся на «13-» и «10-2026». */
+const NB_HYPHEN = String.fromCharCode(0x2011);
+
+/** Дефисы внутри дат ДД-ММ-ГГГГ — неразрывные; остальной текст не трогается. */
+export function noBreakDates(text: string): string {
+  return text.replace(/\b(\d{2})-(\d{2})-(\d{4})\b/g, `$1${NB_HYPHEN}$2${NB_HYPHEN}$3`);
+}

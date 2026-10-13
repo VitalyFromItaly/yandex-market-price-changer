@@ -169,6 +169,28 @@ describe('«Прибыль» и «Калькулятор» в CRM (TASK-076)', (
     expect(view.estimate).toBeNull();
   });
 
+  it('прибыль: ряд по дням у каждого блока и границы периода (TASK-094)', async () => {
+    const { profit, kinds } = await setup();
+    const view = (await kinds.run(REPORT.PROFIT, context(MONTH), NOW)).data as ICrmProfitView;
+    const bot = await profit.build(STORE, { key: PERIOD.MONTH }, NOW, {});
+
+    expect(view.days).toEqual({ from: '2026-08-01', to: '2026-08-03' });
+    expect(view.placed.byDay).toEqual(bot.placed.byDay);
+    const revenue = view.placed.byDay.reduce((acc, day) => acc + day.revenue, 0);
+    expect(revenue).toBe(view.placed.revenue);
+    expect(view.placed.byDay.map((day) => day.date)).toEqual(['2026-08-01', '2026-08-03']);
+
+    // Топ товаров главной (TASK-095): тот же разрез, что у бота, Σ = блоку.
+    expect(view.placed.bySku).toEqual(bot.placed.bySku);
+    expect(view.placed.bySku.map((row) => row.sku)).toEqual(['C-3', 'A-1']);
+    const skuRevenue = view.placed.bySku.reduce((acc, row) => acc + row.revenue, 0);
+    expect(skuRevenue).toBeCloseTo(view.placed.revenue, 6);
+
+    const all = (await kinds.run(REPORT.PROFIT, context({ period: { key: PERIOD.ALL } }), NOW))
+      .data as ICrmProfitView;
+    expect(all.days).toBeNull();
+  });
+
   it('tariff_calc из снимка → строка калькулятора; без флага — ни запроса, ни строки', async () => {
     const off = await setup();
     await off.kinds.run(REPORT.PROFIT, context(MONTH), NOW);
