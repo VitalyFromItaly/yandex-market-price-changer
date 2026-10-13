@@ -114,7 +114,7 @@ defineEmits<{ retry: [] }>();
               </TableCell>
               <TableCell class="text-right">
                 <span
-                  class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold tnum"
+                  class="inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold tnum"
                   :class="PRODUCT_TONE_PILL[row.stockTone]"
                 >
                   {{ row.stock === null ? '—' : `${row.stock} шт.` }}
@@ -124,7 +124,7 @@ defineEmits<{ retry: [] }>();
               <TableCell class="hidden text-right tnum lg:table-cell">{{ row.revenue }}</TableCell>
               <TableCell class="text-right">
                 <span
-                  class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold tnum"
+                  class="inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold tnum"
                   :class="PRODUCT_TONE_PILL[row.tone]"
                 >
                   {{ row.margin ?? '—' }}

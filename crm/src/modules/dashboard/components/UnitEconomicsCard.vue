@@ -112,7 +112,7 @@ defineEmits<{ retry: [] }>();
               <TableCell class="text-right tnum">{{ row.net ?? '—' }}</TableCell>
               <TableCell class="text-right">
                 <span
-                  class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold tnum"
+                  class="inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold tnum"
                   :class="PRODUCT_TONE_PILL[row.tone]"
                 >
                   {{ row.margin ?? '—' }}

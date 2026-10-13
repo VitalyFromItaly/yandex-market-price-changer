@@ -77,7 +77,7 @@ defineEmits<{ retry: [] }>();
               </div>
             </div>
             <span
-              class="inline-flex shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tnum"
+              class="inline-flex shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold tnum"
               :class="PRODUCT_TONE_PILL[row.out ? 'danger' : 'warn']"
             >
               {{ row.out ? 'нет' : `${row.stock} шт.` }}
