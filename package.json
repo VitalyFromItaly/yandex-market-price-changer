@@ -107,6 +107,7 @@
     "dotenv": "^16.4.7",
     "env-cmd": "^10.1.0",
     "express": "^4.21.2",
+    "https-proxy-agent": "^7.0.6",
     "iconv-lite": "^0.6.3",
     "joi": "^17.13.3",
     "lodash": "^4.17.21",

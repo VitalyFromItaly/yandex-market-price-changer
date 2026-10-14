@@ -169,6 +169,11 @@ export class AppConfigService {
     return this.config.get<string>('POLZA_AI_BASE_URL').replace(/\/+$/, '');
   }
 
+  /** HTTP-прокси только для Polza (`http://хост:порт`); undefined — напрямую. */
+  get polzaAiProxyUrl(): string | undefined {
+    return this.config.get<string>('POLZA_AI_PROXY_URL') || undefined;
+  }
+
   /** Модель Polza.ai. Joi требует её, только когда задан токен. */
   get polzaAiModel(): string | undefined {
     return this.config.get<string>('POLZA_AI_MODEL') || undefined;

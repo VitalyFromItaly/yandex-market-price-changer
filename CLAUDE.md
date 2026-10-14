@@ -1236,11 +1236,18 @@ not repeated until the state changes.
     only the warning off. Pure `polzaBalanceStateOf` in `health.domain.ts`.
   - **401 and 402 are `down` with their own reason** («ключ отозван», «нет средств»): different
     causes, one consequence — AI is dead for everybody. The alert carries `POLZA_SCOPE_NOTE` (all
-    sellers, where to go).
-  - **10 s race, not `PING_TIMEOUT_MS`.** The client retries 429/502/503 after 1 and 2 s on its own,
-    so 5 s would cut a good second answer; and the race is mandatory because the client's own
-    timeout is 620 s, sized for a model answer.
-  - **One retry after a network failure or timeout, none after 401/402** — the Yandex rule, and for
+    sellers) plus a **cause-specific** `hint`: `POLZA_ACCOUNT_HINT` («пополнить/проверить ключ») for
+    low balance/401/402, `POLZA_NETWORK_HINT` for timeout/network/429/502/503. On 14-10-2026 two
+    timeouts arrived with «пополнить баланс», which sent the admin to the wrong place.
+  - **The probe calls `balance({signal, retry: false})`.** Without its own retries a 503 reaches the
+    monitor as `HTTP 503 …` instead of hiding behind «нет ответа за 10000 мс» (1+2+4 s of client
+    backoff do not fit in 10 s), and the `AbortController` cancels the abandoned request — a bare
+    race left it hanging up to 620 s, two sockets per check.
+  - **10 s race, not `PING_TIMEOUT_MS`.** Polza answered a single request in 68 s once, so 5 s is
+    too tight; and the race stays as a backstop beside the abort, because the client's own timeout
+    is 620 s, sized for a model answer.
+  - **One retry after a network failure, timeout, 429/408/502/503; none after 401/402 or 400/500**
+    (answers, not hiccups) — the Yandex rule, and for
     the same kind of evidence: on 14-10-2026 the first live balance request took **68 s**, the next
     three 0.3–0.4 s (curl 1.2 s). Without the retry that is an «авария» and a «снова в норме» five
     minutes later. 401/402 are answers, not hiccups; repeating them changes nothing.
@@ -2462,7 +2469,7 @@ list; `.env.example` documents every key. Required: `STOCK_WRITE_ENABLED`, `MONG
 `AI_USER_DAILY_LIMIT_RUB` (50), `POLZA_AI_BALANCE_WARN_RUB` (200).
 Optional: `REDIS_PASSWORD` (empty means "no auth"), `ADMIN_PASSWORD` (empty means "generate one and
 print it once"; when set it overrides the hash in Mongo — see "The admin panel is served by Nest
-itself"), `POLZA_AI_TOKEN` and `POLZA_AI_MODEL` (below).
+itself"), `POLZA_AI_TOKEN`, `POLZA_AI_MODEL` and `POLZA_AI_PROXY_URL` (below).
 
 **Polza.ai (M15, TASK-101).** The owner chose Polza.ai — an OpenAI-compatible aggregator paid in
 roubles and reachable from the Moscow host without a VPN. AI is an add-on, not a condition of the
@@ -2479,6 +2486,15 @@ bot working, so the three variables are shaped around "a deploy without a key mu
   `TELEGRAM_API_URL` rule: the client appends the method path, so a missing segment
   (`https://polza.ai`) or an extra one (`/api/v1`) does not crash anything, it turns every request
   into a silent 404.
+- **`POLZA_AI_PROXY_URL` (optional, `http://host:port`, empty = direct)** exists because the network
+  hosting Polza stopped accepting TCP from the NL prod IP on 14-10-2026 (`curl` timed out at
+  connect, `mtr` died inside the hoster's network, while a KZ node got `401` in 1 s). Not a
+  reverse mirror via `POLZA_AI_BASE_URL` like `TELEGRAM_API_URL`: that would need a domain and a
+  certificate on the relay, otherwise the Bearer key crosses the internet in clear text. A forward
+  proxy needs neither — `https-proxy-agent` tunnels TLS to polza.ai through `CONNECT`, the relay
+  never sees the key. axios's own `proxy` option is avoided (it sends a plain request instead of
+  `CONNECT` for https targets) and set to `false`, so a stray `HTTPS_PROXY` in the environment cannot
+  route Polza — or anything else — implicitly. Only `PolzaClient` uses it; Yandex and Telegram do not.
 - `AppConfigService.polzaAiEnabled` is the single "is AI on" decision; nothing checks the token
   itself. Rules restated in `src/modules/ai/README.md`.
 - **Per seller, AI is the feature `ai` (TASK-102) — a second condition, not a second token check.**

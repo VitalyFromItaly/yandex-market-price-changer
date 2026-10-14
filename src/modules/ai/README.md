@@ -10,6 +10,7 @@
 | `POLZA_AI_TOKEN`            | необязательна                       | ключ Polza.ai. Пусто или нет — **ИИ выключен**, бот стартует и работает как обычно |
 | `POLZA_AI_MODEL`            | обязательна, **если задан токен**   | идентификатор модели. Умолчания нет: выбор модели — выбор цены                     |
 | `POLZA_AI_BASE_URL`         | по умолчанию `https://polza.ai/api` | база API: ровно `<схема>://<хост>[:порт]/api`                                      |
+| `POLZA_AI_PROXY_URL`        | необязательна                       | HTTP-прокси только для Polza, `http://хост:порт`. Пусто — напрямую                 |
 | `AI_USER_DAILY_LIMIT_RUB`   | по умолчанию `50`                   | дневной лимит расхода на продавца, ₽ за московские сутки. `0` — без лимита         |
 | `POLZA_AI_BALANCE_WARN_RUB` | по умолчанию `200`                  | порог самопроверки баланса, ₽: ниже — warn админам. `0` — без warn, ≤ 0 ₽ — авария |
 
@@ -105,7 +106,15 @@ npx ts-node scripts/diagnose-polza.ts --chat --model=z-ai/glm-5.3-flash   # ка
   node -e "fetch((process.env.POLZA_AI_BASE_URL||'https://polza.ai/api')+'/v2/balance',{headers:{Authorization:'Bearer '+process.env.POLZA_AI_TOKEN}}).then(r=>r.text()).then(t=>console.log(t))"
   ```
 
-  Ответ с `available` означает, что Polza доступна.
+  Ответ с `available` означает, что Polza доступна. Этот `fetch` идёт **напрямую**, мимо
+  `POLZA_AI_PROXY_URL`. Если задан прокси, проверка через него с хоста:
+  `curl -x "$POLZA_AI_PROXY_URL" -sS -m 15 -o /dev/null -w '%{http_code}\n' https://polza.ai/api/v2/balance`
+  (`401` без ключа — прокси и Polza отвечают).
+
+- **Прокси — когда сеть хостинга Polza не пускает IP сервера бота** (14-10-2026 с NL-хоста TCP до polza.ai
+  не устанавливался). Прямой прокси, а не зеркало через `POLZA_AI_BASE_URL`: TLS до Polza идёт сквозь
+  `CONNECT`, промежуточный узел ключа не видит, и ему не нужны домен и сертификат. Прокси обязан пускать
+  только IP сервера бота (`Allow` в tinyproxy), иначе это открытый прокси.
 
 ## `AiService`
 

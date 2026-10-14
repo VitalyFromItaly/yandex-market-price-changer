@@ -42,6 +42,8 @@ services:
       - POLZA_AI_TOKEN=${POLZA_AI_TOKEN:-}
       - POLZA_AI_MODEL=${POLZA_AI_MODEL:-}
       - POLZA_AI_BASE_URL=${POLZA_AI_BASE_URL:-https://polza.ai/api}
+      # HTTP-прокси только для Polza; пусто — напрямую.
+      - POLZA_AI_PROXY_URL=${POLZA_AI_PROXY_URL:-}
       # Дневной лимит ИИ на продавца, ₽; 0 — без лимита.
       - AI_USER_DAILY_LIMIT_RUB=${AI_USER_DAILY_LIMIT_RUB:-50}
       # Порог баланса Polza для самопроверки, ₽; 0 — не предупреждать.

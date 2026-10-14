@@ -52,6 +52,17 @@ const requireApiPath: Joi.CustomValidator<string> = (value, helpers) => {
   return value;
 };
 
+const PROXY_URL_HINT = 'POLZA_AI_PROXY_URL: нужен http://хост:порт, например http://194.0.0.1:8888';
+
+/** Прокси — только `http://хост:порт`: путь или query у него выдают опечатку. */
+const requireProxyOrigin: Joi.CustomValidator<string> = (value, helpers) => {
+  const url = new URL(value);
+  if (url.pathname.replace(/\/+$/, '') !== '' || url.search) {
+    return helpers.message({ custom: PROXY_URL_HINT });
+  }
+  return value;
+};
+
 export const envValidationSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
 
@@ -217,6 +228,20 @@ export const envValidationSchema = Joi.object({
     .custom(requireApiPath, 'путь /api')
     .empty('')
     .default('https://polza.ai/api'),
+  // HTTP-прокси только для Polza: `http://хост:порт`, пусто — напрямую. Нужен,
+  // когда сеть хостинга Polza не пускает IP сервера бота (14-10-2026: с NL-хоста
+  // TCP до polza.ai не устанавливался, через KZ-узел — 401 за 1 с). Схема http
+  // и без пути: TLS до самой Polza идёт сквозь CONNECT, прокси ключа не видит.
+  // Яндекс и Telegram этот прокси не касается.
+  POLZA_AI_PROXY_URL: Joi.string()
+    .uri({ scheme: ['http'] })
+    .custom(requireProxyOrigin, 'прокси без пути')
+    .empty('')
+    .optional()
+    .messages({
+      'string.uriCustomScheme': PROXY_URL_HINT,
+      'string.uri': PROXY_URL_HINT,
+    }),
   // Обязательна, только если задан токен. Умолчания нет НАМЕРЕННО: выбор модели
   // — это выбор цены за запрос, и делать его молча за владельца нельзя.
   // Ключ без модели — незаконченная настройка, о ней лучше узнать на старте,

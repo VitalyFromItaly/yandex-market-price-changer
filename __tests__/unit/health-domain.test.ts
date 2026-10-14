@@ -128,6 +128,14 @@ describe('Баланс Polza', () => {
     expect(text).toContain(POLZA_SCOPE_NOTE);
     expect(text).not.toMatch(/[<>]/);
   });
+
+  it('совет печатается строкой после последствий; без него — только последствия', () => {
+    const withHint = problemText({ key: 'polza', state: 'down', detail: 'x', hint: 'СОВЕТ' });
+    expect(withHint.endsWith(`${POLZA_SCOPE_NOTE}\nСОВЕТ`)).toBe(true);
+    const bare = problemText({ key: 'polza', state: 'down', detail: 'x' });
+    expect(bare.endsWith(POLZA_SCOPE_NOTE)).toBe(true);
+    expect(bare).not.toContain('баланс');
+  });
 });
 
 describe('Тексты', () => {
@@ -268,7 +276,9 @@ describe('Причина сетевой ошибки', () => {
   });
 
   it('DNS', () => {
-    const detail = networkErrorDetail(fetchFailed({ code: 'ENOTFOUND', message: 'getaddrinfo ENOTFOUND x' }));
+    const detail = networkErrorDetail(
+      fetchFailed({ code: 'ENOTFOUND', message: 'getaddrinfo ENOTFOUND x' }),
+    );
     expect(detail).toBe('DNS не нашёл адрес (ENOTFOUND)');
   });
 

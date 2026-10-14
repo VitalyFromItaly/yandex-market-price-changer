@@ -328,6 +328,23 @@ describe('envValidationSchema', () => {
       expect(error).toBeUndefined();
     });
 
+    it.each(['', 'http://194.0.0.1:8888', 'http://proxy.example.com:3128/'])(
+      'прокси %s принимается',
+      (url) => {
+        const { error } = envValidationSchema.validate({ ...VALID_ENV, POLZA_AI_PROXY_URL: url });
+        expect(error).toBeUndefined();
+      },
+    );
+
+    it.each(['https://194.0.0.1:8888', 'http://194.0.0.1:8888/api', 'socks5://h:1080', 'h:8888'])(
+      'прокси %s отвергается',
+      (url) => {
+        const { error } = envValidationSchema.validate({ ...VALID_ENV, POLZA_AI_PROXY_URL: url });
+        expect(error).toBeDefined();
+        expect(error!.message).toContain('POLZA_AI_PROXY_URL');
+      },
+    );
+
     it.each([
       'https://polza.ai',
       'https://polza.ai/',

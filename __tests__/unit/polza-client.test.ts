@@ -1,6 +1,7 @@
 import { Global, Logger, Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import axios from 'axios';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { AppConfigService } from '../../src/config/app-config.service';
@@ -62,6 +63,8 @@ const DOC_BALANCE = {
 function stubAxios() {
   const created: Array<Record<string, any>> = [];
   const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+  /** Конфиг запроса (второй аргумент get) — отдельно, чтобы не ломать сверку calls. */
+  const getConfigs: unknown[] = [];
   let queue: Array<() => unknown> = [];
   let onError: (error: unknown) => unknown = (e) => {
     throw e;
@@ -83,7 +86,10 @@ function stubAxios() {
       interceptors: {
         response: { use: (_ok: unknown, err: (e: unknown) => unknown) => (onError = err) },
       },
-      get: (path: string) => record({ method: 'get', path }),
+      get: (path: string, config?: unknown) => {
+        getConfigs.push(config);
+        return record({ method: 'get', path });
+      },
       post: (path: string, body: unknown) => record({ method: 'post', path, body }),
     } as never;
   });
@@ -107,6 +113,7 @@ function stubAxios() {
   return {
     created,
     calls,
+    getConfigs,
     respond(...steps: Array<() => unknown>) {
       queue = steps;
     },
@@ -201,6 +208,34 @@ describe('PolzaClient', () => {
       spentAmount: 349.5,
       updatedAt: '2026-10-14T09:00:00.000Z',
     });
+  });
+
+  it('getBalance({retry: false}) — 503 без повторов, signal уходит в axios', async () => {
+    stub.respond(stub.failure(503, { error: { code: 'SERVICE_UNAVAILABLE', message: 'down' } }));
+    const { client: c, sleep } = client();
+    const controller = new AbortController();
+    await expect(c.getBalance({ signal: controller.signal, retry: false })).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(stub.calls).toHaveLength(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(stub.getConfigs[0]).toEqual({ signal: controller.signal });
+  });
+
+  it('getBalance() по умолчанию повторяет 503, как остальные методы', async () => {
+    stub.respond(stub.failure(503, {}), stub.ok(DOC_BALANCE));
+    const { client: c } = client();
+    await expect(c.getBalance()).resolves.toMatchObject({ available: 1200.25 });
+    expect(stub.calls).toHaveLength(2);
+  });
+
+  it('без proxyUrl агента нет; с ним — HttpsProxyAgent и proxy: false', () => {
+    client();
+    expect(stub.created[0].httpsAgent).toBeUndefined();
+    new PolzaClient({ baseUrl: BASE_URL, token: TOKEN, proxyUrl: 'http://194.0.0.1:8888' });
+    expect(stub.created[1].httpsAgent).toBeInstanceOf(HttpsProxyAgent);
+    expect(String(stub.created[1].httpsAgent.proxy)).toBe('http://194.0.0.1:8888/');
+    expect(stub.created[1].proxy).toBe(false);
   });
 
   it('getBalance без reserved/spent (персональный лимит) — null, а не 0', () => {

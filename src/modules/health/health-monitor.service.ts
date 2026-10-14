@@ -18,7 +18,7 @@ import { AppConfigService } from '../../config/app-config.service';
 import { ActionLogService } from '../../database/services/action-log.service';
 import { HealthSampleService } from '../../database/services/health-sample.service';
 import { AiService } from '../ai/ai.service';
-import { PolzaAuthError, PolzaInsufficientFundsError } from '../ai/polza.errors';
+import { PolzaApiError, PolzaAuthError, PolzaInsufficientFundsError } from '../ai/polza.errors';
 import { ErrorReporter, SYSTEM_USER } from '../errors/error-reporter.service';
 import { QUEUE_NAMES } from '../telegram';
 import { BotRegistry } from '../telegram/bots/bot-registry.service';
@@ -34,6 +34,8 @@ import {
   diskDetail,
   diskStateOf,
   networkErrorDetail,
+  POLZA_ACCOUNT_HINT,
+  POLZA_NETWORK_HINT,
   polzaBalanceDetail,
   polzaBalanceStateOf,
   problemText,
@@ -459,39 +461,74 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
     return { ...second.result, detail: `${second.result.detail} (2 попытки из 2)` };
   }
 
-  /** Один запрос баланса. `retryable` — сбой сети или таймаут, а не ответ Polza по существу. */
+  /** Один запрос баланса. `retryable` — сбой сети, таймаут или 429/5xx, а не ответ Polza по существу. */
   private async probePolza(): Promise<{ result: ICheckResult; retryable: boolean }> {
     const warnRub = this.config.polzaAiBalanceWarnRub;
     const started = Date.now();
+    // Гонка по таймауту не отменяет сам запрос: без abort брошенный запрос висел
+    // бы до таймаута клиента (620 с), и каждая проверка добавляла бы два сокета.
+    const controller = new AbortController();
     try {
-      const balance = await this.withTimeout(this.ai.balance(), POLZA_BALANCE_TIMEOUT_MS);
+      // Без повторов клиента: 503 с его паузами 1+2+4 с не укладывается в 10 с и
+      // читался бы как «нет ответа». Повторяет checkPolza.
+      const balance = await this.withTimeout(
+        this.ai.balance({ signal: controller.signal, retry: false }),
+        POLZA_BALANCE_TIMEOUT_MS,
+      );
+      const state = polzaBalanceStateOf(balance.available, warnRub);
       return {
         retryable: false,
         result: {
           key: 'polza',
-          state: polzaBalanceStateOf(balance.available, warnRub),
+          state,
           detail: polzaBalanceDetail(balance.available, warnRub),
           latencyMs: Date.now() - started,
+          ...(state === 'ok' ? {} : { hint: POLZA_ACCOUNT_HINT }),
         },
       };
     } catch (error) {
+      const account =
+        error instanceof PolzaAuthError || error instanceof PolzaInsufficientFundsError;
+      const retryable = !account && this.isPolzaHiccup(error);
+      const hint = this.polzaHint(account, retryable);
       return {
-        retryable: !(
-          error instanceof PolzaAuthError || error instanceof PolzaInsufficientFundsError
-        ),
+        retryable,
         result: {
           key: 'polza',
           state: 'down',
           detail: this.polzaErrorDetail(error),
           latencyMs: Date.now() - started,
+          ...(hint ? { hint } : {}),
         },
       };
+    } finally {
+      controller.abort();
     }
+  }
+
+  /** Куда идти админу: в кабинет (деньги/ключ), на сеть или никуда (ответ по существу). */
+  private polzaHint(account: boolean, retryable: boolean): string | undefined {
+    if (account) return POLZA_ACCOUNT_HINT;
+    if (retryable) return POLZA_NETWORK_HINT;
+    return undefined;
+  }
+
+  /**
+   * Сбой, который стоит повторить: нет ответа (сеть, наш таймаут) или Polza сама
+   * просит повторить (429/408/502/503). 400/500 — ответ по существу, повтор его
+   * не изменит.
+   */
+  private isPolzaHiccup(error: unknown): boolean {
+    if (!(error instanceof PolzaApiError)) return true;
+    return error.status === 0 || error.retryable;
   }
 
   private polzaErrorDetail(error: unknown): string {
     if (error instanceof PolzaAuthError) return 'ключ отозван или неверен (HTTP 401)';
     if (error instanceof PolzaInsufficientFundsError) return 'нет средств на балансе (HTTP 402)';
+    if (error instanceof PolzaApiError && error.status > 0) {
+      return `HTTP ${error.status}${error.code ? ` ${error.code}` : ''}: ${error.message}`;
+    }
     return this.messageOf(error);
   }
 

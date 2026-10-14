@@ -30,6 +30,7 @@ import { PolzaClient } from './polza.client';
           baseUrl: config.polzaAiBaseUrl,
           token: config.polzaAiToken,
           model: config.polzaAiModel,
+          proxyUrl: config.polzaAiProxyUrl,
         }),
     },
     AiService,

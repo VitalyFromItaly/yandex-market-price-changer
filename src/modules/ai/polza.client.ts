@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import axios, { type AxiosError, type AxiosInstance } from 'axios';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 import { type IRetryOptions, type TSleep, realSleep } from '../yandex/yandex-retry';
 
@@ -25,6 +26,8 @@ import { type PolzaApiError, PolzaDisabledError, toPolzaApiError } from './polza
 /** У Polza потолок запроса 600 с; наш таймаут чуть больше, чтобы ответ сервера пришёл раньше обрыва. */
 export const POLZA_TIMEOUT_MS = 620_000;
 
+const NO_RETRY: IRetryOptions = { ...POLZA_RETRY, attempts: 1 };
+
 export const POLZA_PATHS = {
   chatCompletions: '/v1/chat/completions',
   models: '/v1/models',
@@ -37,12 +40,26 @@ export interface IPolzaCredentials {
   token?: string;
   /** Модель по умолчанию (POLZA_AI_MODEL). */
   model?: string;
+  /** HTTP-прокси (POLZA_AI_PROXY_URL): TLS до Polza идёт сквозь CONNECT. */
+  proxyUrl?: string;
 }
 
 export interface IPolzaClientOptions {
   retry?: IRetryOptions;
   sleep?: TSleep;
   timeoutMs?: number;
+}
+
+/** Параметры одного вызова — для системной пробы баланса. */
+export interface IPolzaCallOptions {
+  /** Обрывает запрос: монитор не должен оставлять висеть брошенный запрос до 620 с. */
+  signal?: AbortSignal;
+  /**
+   * false — без собственных повторов 429/502/503. Монитору нужна причина: с
+   * повторами 1+2+4 с ответ 503 не укладывается в его 10 с и читается как
+   * «нет ответа». Повторяет монитор сам.
+   */
+  retry?: boolean;
 }
 
 export interface IPolzaMessage {
@@ -124,6 +141,12 @@ export class PolzaClient {
     this.http = axios.create({
       baseURL: credentials.baseUrl,
       timeout: options.timeoutMs ?? POLZA_TIMEOUT_MS,
+      // Свой агент, а не `proxy` axios: тот для https-адреса шлёт прокси обычный
+      // HTTP-запрос вместо CONNECT. `proxy: false` — не брать HTTPS_PROXY из env:
+      // прокси Polza задаётся только явно и не касается остального трафика.
+      ...(credentials.proxyUrl
+        ? { httpsAgent: new HttpsProxyAgent(credentials.proxyUrl), proxy: false as const }
+        : {}),
       headers: {
         'Content-Type': 'application/json',
         ...(credentials.token ? { Authorization: `Bearer ${credentials.token}` } : {}),
@@ -155,9 +178,14 @@ export class PolzaClient {
     return mapChatCompletion(data);
   }
 
-  public async getBalance(): Promise<IPolzaBalance> {
+  public async getBalance(options: IPolzaCallOptions = {}): Promise<IPolzaBalance> {
     this.assertEnabled();
-    return mapBalance(await this.call(() => this.http.get(POLZA_PATHS.balance)));
+    const { signal, retry = true } = options;
+    const data = await this.call(
+      () => this.http.get(POLZA_PATHS.balance, signal ? { signal } : undefined),
+      retry ? this.retry : NO_RETRY,
+    );
+    return mapBalance(data);
   }
 
   public async listModels(): Promise<IPolzaModel[]> {
@@ -169,15 +197,14 @@ export class PolzaClient {
     if (!this.enabled) throw new PolzaDisabledError();
   }
 
-  private async call(request: () => Promise<{ data: unknown }>): Promise<unknown> {
-    const response = await withPolzaRetry(
-      request,
-      this.retry,
-      this.sleep,
-      (error, attempt, delay) =>
-        this.logger.warn(
-          `Polza ${error.status} на ${error.request ?? '?'}: повтор ${attempt} через ${delay} мс`,
-        ),
+  private async call(
+    request: () => Promise<{ data: unknown }>,
+    retry: IRetryOptions = this.retry,
+  ): Promise<unknown> {
+    const response = await withPolzaRetry(request, retry, this.sleep, (error, attempt, delay) =>
+      this.logger.warn(
+        `Polza ${error.status} на ${error.request ?? '?'}: повтор ${attempt} через ${delay} мс`,
+      ),
     );
     return response.data;
   }

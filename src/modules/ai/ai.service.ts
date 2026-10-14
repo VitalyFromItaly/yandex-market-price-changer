@@ -1,4 +1,9 @@
-import type { IChatCompletionRequest, IChatCompletionResult, IPolzaBalance } from './polza.client';
+import type {
+  IChatCompletionRequest,
+  IChatCompletionResult,
+  IPolzaBalance,
+  IPolzaCallOptions,
+} from './polza.client';
 import type { IAiUsageRow } from '../../database/services/ai-usage.service';
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -109,9 +114,9 @@ export class AiService {
    * alert: false и шлёт алерт по shouldNotify. Отчёт здесь дал бы вторую
    * запись и алерт мимо этого правила каждые пять минут.
    */
-  public async balance(): Promise<IPolzaBalance> {
+  public async balance(options: IPolzaCallOptions = {}): Promise<IPolzaBalance> {
     if (!this.config.polzaAiEnabled) throw new AiUnavailableError('POLZA_AI_TOKEN не задан');
-    return await this.polza.getBalance();
+    return await this.polza.getBalance(options);
   }
 
   /**
