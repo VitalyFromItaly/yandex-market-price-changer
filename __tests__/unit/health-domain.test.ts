@@ -10,6 +10,7 @@ import {
   diskDetail,
   diskStateOf,
   formatBytes,
+  networkErrorDetail,
   problemText,
   recoveryText,
   shouldNotify,
@@ -204,5 +205,66 @@ describe('Человеческий вид чисел', () => {
     expect(detail).toContain('5%');
     expect(detail).toContain('2,0 ГБ');
     expect(detail).toContain('40,0 ГБ');
+  });
+});
+
+/** Ошибка `fetch` в Node: сообщение «fetch failed», причина — в cause. */
+function fetchFailed(cause: object): Error {
+  return Object.assign(new TypeError('fetch failed'), { cause });
+}
+
+describe('Причина сетевой ошибки', () => {
+  it('ETIMEDOUT при переборе IPv4/IPv6: код по-русски и оба адреса', () => {
+    const cause = Object.assign(new AggregateError([], ''), {
+      code: 'ETIMEDOUT',
+      errors: [
+        { code: 'ETIMEDOUT', address: '93.158.134.216', port: 443 },
+        { code: 'ETIMEDOUT', address: '2a02:6b8::2:216', port: 443 },
+      ],
+    });
+
+    expect(networkErrorDetail(fetchFailed(cause))).toBe(
+      'соединение не установилось по таймауту (ETIMEDOUT) · 93.158.134.216:443, [2a02:6b8::2:216]:443',
+    );
+  });
+
+  it('DNS', () => {
+    const detail = networkErrorDetail(fetchFailed({ code: 'ENOTFOUND', message: 'getaddrinfo ENOTFOUND x' }));
+    expect(detail).toBe('DNS не нашёл адрес (ENOTFOUND)');
+  });
+
+  it('неизвестный код — как есть, с текстом причины', () => {
+    const detail = networkErrorDetail(fetchFailed({ code: 'EWHATEVER', message: 'странное' }));
+    expect(detail).toBe('EWHATEVER: странное');
+  });
+
+  it('ошибка без cause — её собственный текст', () => {
+    expect(networkErrorDetail(new Error('нет ответа за 5000 мс'))).toBe('нет ответа за 5000 мс');
+    expect(networkErrorDetail('строка')).toBe('строка');
+  });
+});
+
+describe('Алерт о Яндексе', () => {
+  const yandex = { key: 'yandex', state: 'down', detail: 'соединение не установилось' } as const;
+
+  it('говорит, что проверялся весь хост, а не метод', () => {
+    const text = problemText(yandex);
+    expect(text).toContain('не конкретный метод');
+    expect(text).toContain('весь API');
+    expect(text).toContain('соединение не установилось');
+  });
+
+  it('Telegram отвечает — сеть сервера жива, дело в пути к Маркету', () => {
+    const text = problemText(yandex, [yandex, { key: 'telegram', state: 'ok', detail: 'ok' }]);
+    expect(text).toContain('Telegram в этот момент отвечает');
+  });
+
+  it('Telegram тоже лежит — вероятно, сеть сервера', () => {
+    const text = problemText(yandex, [yandex, { key: 'telegram', state: 'down', detail: 'x' }]);
+    expect(text).toContain('сеть самого сервера');
+  });
+
+  it('у других проверок пояснения про Маркет нет', () => {
+    expect(problemText({ key: 'mongo', state: 'down', detail: 'x' })).not.toContain('Маркет');
   });
 });

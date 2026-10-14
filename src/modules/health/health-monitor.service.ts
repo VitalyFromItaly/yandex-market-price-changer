@@ -31,6 +31,7 @@ import {
   checkTitle,
   diskDetail,
   diskStateOf,
+  networkErrorDetail,
   problemText,
   recoveryText,
   shouldNotify,
@@ -40,6 +41,13 @@ import {
 
 /** Раздел, который меряем: rootfs контейнера лежит там же, где /var/lib/docker. */
 const DISK_PATH = '/';
+
+/**
+ * Пауза перед повторной попыткой к Яндексу. 13-10-2026 алерт «авария» пришёл
+ * из-за одного ETIMEDOUT соединения: следующий запрос через секунду прошёл, и
+ * следующая проверка — тоже. Аварией считаем только две неудачи подряд.
+ */
+const YANDEX_RETRY_DELAY_MS = 3000;
 
 interface ICheckMemory {
   state: TCheckState;
@@ -139,7 +147,7 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
 
     const now = Date.now();
     for (const result of results) {
-      this.handle(result, now);
+      this.handle(result, now, results);
     }
 
     // История для страницы «Метрики». Не ждём и не боимся сбоя: record сам не
@@ -184,7 +192,7 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
     }
   }
 
-  private handle(result: ICheckResult, now: number): void {
+  private handle(result: ICheckResult, now: number, all: ICheckResult[]): void {
     const previous = this.memory.get(result.key) ?? {
       state: 'ok',
       notifiedAt: null,
@@ -231,14 +239,15 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
       // alert: false — отправкой управляет shouldNotify, а не 15-минутное окно
       // AlertThrottle: оно проглотило бы переход «мало места» → «места нет».
       // Запись в журнал при этом остаётся, и авария видна в админ-панели.
+      const text = problemText(result, all);
       void this.errors.report({
-        error: new HealthCheckError(problemText(result)),
+        error: new HealthCheckError(text),
         source: 'process',
         context: `health:${result.key}`,
         action: 'health-check',
         alert: false,
       });
-      this.errors.notifyAdmins(problemText(result));
+      this.errors.notifyAdmins(text);
     }
 
     next.notifiedAt = now;
@@ -360,6 +369,21 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
    * строится вокруг ключа конкретного продавца, а здесь ключа нет по замыслу.
    */
   private async checkYandex(): Promise<ICheckResult> {
+    const first = await this.probeYandex();
+    if (first.state === 'ok') return first;
+
+    // Разовый сбой соединения — не авария: пробуем ещё раз, а провал первой
+    // попытки оставляем видимым в сводке и консоли.
+    await this.sleep(YANDEX_RETRY_DELAY_MS);
+    const second = await this.probeYandex();
+    if (second.state === 'ok') {
+      return { ...second, detail: `${second.detail}, со второй попытки (первая: ${first.detail})` };
+    }
+    return { ...second, detail: `${second.detail} (2 попытки из 2)` };
+  }
+
+  /** Один запрос без ключа: любой HTTP-ответ — «ок», сетевая ошибка — «down». */
+  private async probeYandex(): Promise<ICheckResult> {
     const url = `${this.config.yandexMarketBaseUrl}/v2/campaigns`;
 
     const started = Date.now();
@@ -399,7 +423,15 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
     }
   }
 
+  /**
+   * У сетевых ошибок `fetch` текст всегда «fetch failed» — причина в `cause`,
+   * её и печатаем. Прочие ошибки — их текстом.
+   */
   private messageOf(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
+    return networkErrorDetail(error);
   }
+
+  /** Поле, а не функция модуля: тест подменяет ожидание. */
+  private readonly sleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, ms));
 }

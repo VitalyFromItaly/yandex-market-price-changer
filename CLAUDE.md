@@ -1198,6 +1198,18 @@ not repeated until the state changes.
     DNS, network and the service are alive; a timeout or a network error proves they are not. This
     is the one hand-built Yandex URL in `src` and it is deliberate — `PriceChanger` is built around
     a specific seller's key, and here there is no key by design.
+  - **One network failure is not an outage: the Yandex probe retries once after 3 s.** On
+    13-10-2026 a single `ETIMEDOUT` while connecting raised «API Яндекс.Маркета: авария». The next
+    request a second later succeeded, and so did the next check. Only two failures in a row count
+    as `down`. A success on the second try is still recorded in the detail line (`со второй
+    попытки (первая: …)`).
+  - **The alert names the cause and the scope.** Node's `fetch` always says «fetch failed» and
+    keeps the reason in `cause`. With IPv4/IPv6 fallback the reason is in `cause.errors`, an
+    AggregateError. `networkErrorDetail` (`health.domain.ts`) turns that into the code in Russian
+    plus the addresses tried, for every network check. The Yandex alert also says that the probe
+    tests the whole host, not one method. It compares with Telegram from the same pass: Telegram
+    up means the problem is on the way to Market, Telegram down means the server's own network.
+    Failures of individual methods arrive as their own alerts with «Запрос: …».
 - **Mongo is checked by `connection.readyState`, deliberately not by a ping.**
   `serverSelectionTimeoutMS` is 30 s, so a ping would hang each check for half a minute exactly
   during the outage — the moment the monitor exists for. Redis _is_ pinged (`queue.client.ping()`,

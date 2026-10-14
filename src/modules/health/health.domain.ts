@@ -223,11 +223,99 @@ export function summaryText(title: string, results: ICheckResult[], stamp: strin
   return [`${title} · ${stamp} МСК`, '', ...lines].join('\n');
 }
 
-/** Сообщение о проблеме. Без разметки — экранирование на отправляющем слое. */
-export function problemText(result: ICheckResult): string {
+/**
+ * Что именно проверяет самопроверка Яндекса. Без этой строки «API Яндекс.Маркета:
+ * авария» читается как «сломался какой-то метод», хотя проверка — сетевая
+ * доступность хоста без ключа, и её провал значит, что не работает ВСЁ.
+ */
+export const YANDEX_SCOPE_NOTE =
+  'Что проверялось: сетевой доступ к API Маркета без ключа — не конкретный метод. ' +
+  'Не отвечает весь хост, значит не работает весь API у всех продавцов. ' +
+  'Ошибки отдельных методов приходят своими алертами со строкой «Запрос: …».';
+
+/**
+ * Где искать причину недоступности Яндекса: Telegram в том же проходе — это
+ * контрольный внешний адрес. Отвечает он — сеть у контейнера есть.
+ */
+function yandexContext(all: readonly ICheckResult[]): string | null {
+  const telegram = all.find((result) => result.key === 'telegram');
+  if (!telegram) return null;
+  return telegram.state === 'ok'
+    ? 'Telegram в этот момент отвечает: интернет у сервера есть, проблема на пути к Маркету или у Маркета.'
+    : 'Telegram тоже недоступен: вероятно, сеть самого сервера.';
+}
+
+/**
+ * Сообщение о проблеме. Без разметки — экранирование на отправляющем слое.
+ *
+ * `all` — весь проход проверок: у Яндекса по соседним результатам видно, лёг ли
+ * Маркет или сеть сервера целиком.
+ */
+export function problemText(result: ICheckResult, all: readonly ICheckResult[] = []): string {
   const mark = result.state === 'down' ? '🚨' : '⚠️';
   const verdict = result.state === 'down' ? 'авария' : 'скоро закончится';
-  return `${mark} ${checkTitle(result.key)}: ${verdict}\n${result.detail}`;
+  const lines = [`${mark} ${checkTitle(result.key)}: ${verdict}`, result.detail];
+  if (result.key === 'yandex') {
+    const context = yandexContext(all);
+    lines.push('', YANDEX_SCOPE_NOTE);
+    if (context) lines.push(context);
+  }
+  return lines.join('\n');
+}
+
+/** Поля сетевой ошибки Node, которые нам нужны; приходят без типов. */
+interface INetworkCause {
+  name?: string;
+  code?: string;
+  message?: string;
+  address?: string;
+  port?: number;
+  errors?: INetworkCause[];
+  cause?: INetworkCause;
+}
+
+const NETWORK_REASON: Array<[RegExp, string]> = [
+  [/^(ENOTFOUND|EAI_AGAIN)$/, 'DNS не нашёл адрес'],
+  [/^(ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT)$/, 'соединение не установилось по таймауту'],
+  [/^ECONNREFUSED$/, 'в соединении отказано'],
+  [/^(ECONNRESET|EPIPE|UND_ERR_SOCKET)$/, 'соединение оборвано'],
+  [/^(ENETUNREACH|EHOSTUNREACH)$/, 'сеть или хост недостижимы'],
+  [/^(CERT_|UNABLE_TO_VERIFY|DEPTH_ZERO|SELF_SIGNED|ERR_TLS)/, 'ошибка TLS-сертификата'],
+];
+
+function hostPort(cause: INetworkCause): string | null {
+  if (!cause.address) return null;
+  const host = cause.address.includes(':') ? `[${cause.address}]` : cause.address;
+  return cause.port ? `${host}:${cause.port}` : host;
+}
+
+/**
+ * Человеческая причина сетевой ошибки.
+ *
+ * У `fetch` в Node сообщение всегда «fetch failed», а настоящая причина — в
+ * `cause` (код и адрес), при переборе IPv4/IPv6 — ещё и в `cause.errors`
+ * (AggregateError). Алерт «fetch failed» не говорил ни что сломалось, ни где:
+ * 13-10-2026 за ним стоял разовый ETIMEDOUT соединения. Ошибку без `cause`
+ * отдаём её текстом, как раньше.
+ */
+export function networkErrorDetail(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const root = error as INetworkCause;
+  if (root.name === 'TimeoutError' || root.name === 'AbortError') {
+    return `нет ответа: ${root.message}`;
+  }
+  const cause = root.cause;
+  if (!cause) return error.message;
+
+  const nested = cause.errors?.length ? cause.errors : [cause];
+  const code = cause.code ?? nested.find((item) => item.code)?.code ?? cause.name;
+  const reason = NETWORK_REASON.find(([pattern]) => code && pattern.test(code))?.[1];
+  const addresses = [...new Set(nested.map(hostPort).filter(Boolean))];
+
+  const head = reason
+    ? `${reason} (${code})`
+    : `${code ?? 'сетевая ошибка'}: ${cause.message || error.message}`;
+  return addresses.length ? `${head} · ${addresses.join(', ')}` : head;
 }
 
 /**
