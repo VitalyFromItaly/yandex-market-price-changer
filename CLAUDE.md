@@ -1203,6 +1203,13 @@ not repeated until the state changes.
     request a second later succeeded, and so did the next check. Only two failures in a row count
     as `down`. A success on the second try is still recorded in the detail line (`со второй
     попытки (первая: …)`).
+  - **The probe waits 10 s (`YANDEX_PROBE_TIMEOUT_MS`), not `PING_TIMEOUT_MS`.** `ETIMEDOUT` with a
+    list of addresses is **not** our timeout firing. Ours reads «нет ответа: …». That error comes from
+    Node's happy eyeballs, which gives each address `setDefaultAutoSelectFamilyAttemptTimeout` before
+    moving on. The default is 250 ms. `main.ts` raised it to 2 s on 25-09-2026 and to 5 s on
+    14-10-2026, after IPv4 `93.158.134.216` still timed out. The 10 s probe fits one slow IPv4 attempt
+    plus the IPv6 fallback. Raising only our timeout would change nothing, because the connection
+    is cut per address first.
   - **The alert names the cause and the scope.** Node's `fetch` always says «fetch failed» and
     keeps the reason in `cause`. With IPv4/IPv6 fallback the reason is in `cause.errors`, an
     AggregateError. `networkErrorDetail` (`health.domain.ts`) turns that into the code in Russian

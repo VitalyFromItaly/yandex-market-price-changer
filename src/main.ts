@@ -16,11 +16,14 @@ import { ErrorReporter } from './modules/errors/error-reporter.service';
  * IPv6 бывает недоступен (ENETUNREACH); если IPv4-рукопожатие дольше 250 мс
  * (замер 25-09-2026: ~280 мс), падают ОБЕ попытки — ETIMEDOUT с пустым текстом,
  * хотя curl в тот же миг получает ответ. Выглядело как «Яндекс лежит» то на
- * минуту, то на час. Две секунды на попытку — запас, а не ожидание: успешное
- * соединение не ждёт таймаута. Ставится до создания приложения — до первого
- * сокета; axios, fetch (undici) и telegraf ходят через net.
+ * минуту, то на час. Две секунды не хватило: 14-10-2026 самопроверка снова
+ * получила ETIMEDOUT по IPv4 93.158.134.216 — поэтому пять. Это запас, а не
+ * ожидание: успешное соединение таймаута не ждёт, а проба Яндекса ждёт 10 с
+ * (YANDEX_PROBE_TIMEOUT_MS), так что IPv4 и откат на IPv6 в неё укладываются.
+ * Ставится до создания приложения — до первого сокета; axios, fetch (undici)
+ * и telegraf ходят через net.
  */
-setDefaultAutoSelectFamilyAttemptTimeout(2000);
+setDefaultAutoSelectFamilyAttemptTimeout(5000);
 
 async function bootstrap() {
   // `import 'dotenv/config'` здесь больше не нужен: загрузку и валидацию

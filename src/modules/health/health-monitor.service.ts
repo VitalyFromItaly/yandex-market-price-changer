@@ -49,6 +49,14 @@ const DISK_PATH = '/';
  */
 const YANDEX_RETRY_DELAY_MS = 3000;
 
+/**
+ * Потолок ожидания пробы Яндекса. Длиннее PING_TIMEOUT_MS: 14-10-2026 «авария»
+ * пришла по ETIMEDOUT соединения с московского хоста, а пять секунд — это одна
+ * медленная попытка по IPv4 и откат на IPv6 (лимит попытки — в main.ts). Худший
+ * цикл с повтором — 10 + 3 + 10 с, на порядок меньше интервала проверок.
+ */
+const YANDEX_PROBE_TIMEOUT_MS = 10_000;
+
 interface ICheckMemory {
   state: TCheckState;
   notifiedAt: number | null;
@@ -389,8 +397,8 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
     const started = Date.now();
     try {
       const response = await this.withTimeout(
-        fetch(url, { method: 'GET', signal: AbortSignal.timeout(PING_TIMEOUT_MS) }),
-        PING_TIMEOUT_MS,
+        fetch(url, { method: 'GET', signal: AbortSignal.timeout(YANDEX_PROBE_TIMEOUT_MS) }),
+        YANDEX_PROBE_TIMEOUT_MS,
       );
       return {
         key: 'yandex',
