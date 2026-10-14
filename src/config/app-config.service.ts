@@ -155,6 +155,43 @@ export class AppConfigService {
     return this.config.get<string>('CRM_INITIAL_PASSWORD');
   }
 
+  /**
+   * Ключ Polza.ai. Пустая строка превращается в undefined по той же причине,
+   * что у `redisPassword`: незаданный ключ — это «ИИ выключен», а не ключ из
+   * нуля символов.
+   */
+  get polzaAiToken(): string | undefined {
+    return this.config.get<string>('POLZA_AI_TOKEN') || undefined;
+  }
+
+  /** База Polza.ai, ровно `<схема>://<хост>/api` (проверено Joi), без хвостового слеша. */
+  get polzaAiBaseUrl(): string {
+    return this.config.get<string>('POLZA_AI_BASE_URL').replace(/\/+$/, '');
+  }
+
+  /** Модель Polza.ai. Joi требует её, только когда задан токен. */
+  get polzaAiModel(): string | undefined {
+    return this.config.get<string>('POLZA_AI_MODEL') || undefined;
+  }
+
+  /**
+   * Включён ли ИИ вообще. Единственная точка этого решения: всё, что зовёт
+   * Polza.ai, спрашивает здесь, а не проверяет токен само.
+   */
+  get polzaAiEnabled(): boolean {
+    return Boolean(this.polzaAiToken);
+  }
+
+  /** Дневной лимит расхода на ИИ на продавца, ₽ за московские сутки. 0 — без лимита. */
+  get aiUserDailyLimitRub(): number {
+    return Number(this.config.get<number>('AI_USER_DAILY_LIMIT_RUB'));
+  }
+
+  /** Порог баланса Polza для самопроверки, ₽: ниже — warn. 0 — не предупреждать. */
+  get polzaAiBalanceWarnRub(): number {
+    return Number(this.config.get<number>('POLZA_AI_BALANCE_WARN_RUB'));
+  }
+
   get yandexMarketBaseUrl(): string {
     return this.config.get<string>('YANDEX_MARKET_BASE_URL');
   }

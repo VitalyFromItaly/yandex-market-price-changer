@@ -5,12 +5,15 @@ import { describe, it, expect } from 'vitest';
 import {
   DISK_CRITICAL_RATIO,
   DISK_WARN_RATIO,
+  POLZA_SCOPE_NOTE,
   REMIND_INTERVAL_MS,
   checkTitle,
   diskDetail,
   diskStateOf,
   formatBytes,
   networkErrorDetail,
+  polzaBalanceDetail,
+  polzaBalanceStateOf,
   problemText,
   recoveryText,
   shouldNotify,
@@ -91,6 +94,42 @@ describe('Правило отправки сообщений', () => {
   });
 });
 
+/**
+ * Баланс Polza убывает постепенно, как диск: предупреждение должно прийти до
+ * того, как каждый ИИ-запрос продавца получит 402.
+ */
+describe('Баланс Polza', () => {
+  it('ноль, минус и нечитаемое число — авария', () => {
+    expect(polzaBalanceStateOf(0, 200)).toBe('down');
+    expect(polzaBalanceStateOf(-3.5, 200)).toBe('down');
+    expect(polzaBalanceStateOf(Number.NaN, 200)).toBe('down');
+  });
+
+  it('ниже порога — предупреждение, на пороге и выше — норма', () => {
+    expect(polzaBalanceStateOf(199.99, 200)).toBe('warn');
+    expect(polzaBalanceStateOf(200, 200)).toBe('ok');
+    expect(polzaBalanceStateOf(5000, 200)).toBe('ok');
+  });
+
+  it('порог 0 выключает предупреждение, но не аварию', () => {
+    expect(polzaBalanceStateOf(0.01, 0)).toBe('ok');
+    expect(polzaBalanceStateOf(0, 0)).toBe('down');
+  });
+
+  it('порог в тексте — только когда он сработал', () => {
+    expect(polzaBalanceDetail(1234.5, 200)).toMatch(/^доступно 1\s234,5 ₽$/);
+    expect(polzaBalanceDetail(150, 200)).toMatch(/доступно 150 ₽ · порог 200 ₽/);
+  });
+
+  it('алерт объясняет последствия и куда идти', () => {
+    const text = problemText({ key: 'polza', state: 'warn', detail: 'доступно 150 ₽' });
+    expect(text).toContain('Polza.ai');
+    expect(text).toContain('⚠️');
+    expect(text).toContain(POLZA_SCOPE_NOTE);
+    expect(text).not.toMatch(/[<>]/);
+  });
+});
+
 describe('Тексты', () => {
   /**
    * Забытый заголовок для нового ключа даёт `undefined` в сообщении админу —
@@ -98,7 +137,7 @@ describe('Тексты', () => {
    * когда ключ добавили вместе с пустой строкой.
    */
   it('называет каждую проверку, включая внешние API', () => {
-    const keys: TCheckKey[] = ['disk', 'mongo', 'redis', 'telegram', 'yandex'];
+    const keys: TCheckKey[] = ['disk', 'mongo', 'redis', 'telegram', 'yandex', 'polza'];
 
     for (const key of keys) {
       expect(checkTitle(key).length).toBeGreaterThan(0);

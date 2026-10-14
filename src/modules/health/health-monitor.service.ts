@@ -17,6 +17,8 @@ import { statfs } from 'node:fs/promises';
 import { AppConfigService } from '../../config/app-config.service';
 import { ActionLogService } from '../../database/services/action-log.service';
 import { HealthSampleService } from '../../database/services/health-sample.service';
+import { AiService } from '../ai/ai.service';
+import { PolzaAuthError, PolzaInsufficientFundsError } from '../ai/polza.errors';
 import { ErrorReporter, SYSTEM_USER } from '../errors/error-reporter.service';
 import { QUEUE_NAMES } from '../telegram';
 import { BotRegistry } from '../telegram/bots/bot-registry.service';
@@ -32,6 +34,8 @@ import {
   diskDetail,
   diskStateOf,
   networkErrorDetail,
+  polzaBalanceDetail,
+  polzaBalanceStateOf,
   problemText,
   recoveryText,
   shouldNotify,
@@ -43,11 +47,20 @@ import {
 const DISK_PATH = '/';
 
 /**
- * Пауза перед повторной попыткой к Яндексу. 13-10-2026 алерт «авария» пришёл
- * из-за одного ETIMEDOUT соединения: следующий запрос через секунду прошёл, и
- * следующая проверка — тоже. Аварией считаем только две неудачи подряд.
+ * Пауза перед повторной попыткой внешней проверки (Яндекс, баланс Polza).
+ * 13-10-2026 алерт «авария» пришёл из-за одного ETIMEDOUT соединения: следующий
+ * запрос через секунду прошёл, и следующая проверка — тоже. Аварией считаем
+ * только две неудачи подряд.
  */
-const YANDEX_RETRY_DELAY_MS = 3000;
+const PROBE_RETRY_DELAY_MS = 3000;
+
+/**
+ * Потолок ожидания баланса Polza. Длиннее PING_TIMEOUT_MS: клиент сам повторяет
+ * 429/502/503 через 1 и 2 с, и пять секунд обрезали бы удачный второй ответ. А
+ * гонка нужна обязательно — таймаут самого клиента 620 с (рассчитан на ответ
+ * модели), без неё проверка подвесила бы проход на десять минут.
+ */
+const POLZA_BALANCE_TIMEOUT_MS = 10_000;
 
 /**
  * Потолок ожидания пробы Яндекса. Длиннее PING_TIMEOUT_MS: 14-10-2026 «авария»
@@ -65,8 +78,8 @@ interface ICheckMemory {
 }
 
 /**
- * Самопроверка окружения: место на диске, MongoDB, Redis, Telegram Bot API и
- * API Яндекс.Маркета.
+ * Самопроверка окружения: место на диске, MongoDB, Redis, Telegram Bot API,
+ * API Яндекс.Маркета и — когда ИИ включён — баланс Polza.ai.
  *
  * Зачем. Раньше об аварии узнавали только от продавца: алерты уходили из
  * telegraf.catch, то есть лишь когда живой человек нажал кнопку и получил
@@ -109,6 +122,7 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
     // падает с UndefinedDependencyException.
     @Inject(forwardRef(() => BotRegistry))
     private readonly registry: BotRegistry,
+    private readonly ai: AiService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -140,13 +154,16 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
   public async collect(): Promise<ICheckResult[]> {
     // Параллельно: две внешние проверки ходят по сети, и последовательный обход
     // растянул бы проход на сумму таймаутов вместо самого долгого из них.
-    return await Promise.all([
+    const checks: Array<Promise<ICheckResult>> = [
       this.checkDisk(),
       Promise.resolve(this.checkMongo()),
       this.checkRedis(),
       this.checkTelegram(),
       this.checkYandex(),
-    ]);
+    ];
+    // Без ключа ИИ выключен по замыслу — это не авария, и строки в сводке нет.
+    if (this.config.polzaAiEnabled) checks.push(this.checkPolza());
+    return await Promise.all(checks);
   }
 
   /** Один проход. Публичный — им же пользуется тест и ручная проверка. */
@@ -382,7 +399,7 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
 
     // Разовый сбой соединения — не авария: пробуем ещё раз, а провал первой
     // попытки оставляем видимым в сводке и консоли.
-    await this.sleep(YANDEX_RETRY_DELAY_MS);
+    await this.sleep(PROBE_RETRY_DELAY_MS);
     const second = await this.probeYandex();
     if (second.state === 'ok') {
       return { ...second, detail: `${second.detail}, со второй попытки (первая: ${first.detail})` };
@@ -414,6 +431,68 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
         latencyMs: Date.now() - started,
       };
     }
+  }
+
+  /**
+   * Баланс Polza.ai — через AiService.balance(), единственную дверь к Polza
+   * (PolzaClient наружу не экспортируется). GET /v2/balance бесплатный, поэтому
+   * раз в пять минут — можно, и строки AiUsage он не пишет.
+   *
+   * Баланс убывает постепенно, как диск: warn ниже POLZA_AI_BALANCE_WARN_RUB
+   * приходит раньше, чем продавцы упрутся в 402. 401 и 402 — авария со своей
+   * причиной: ключ отозван или денег нет, и в обоих случаях ИИ не работает ни
+   * у кого.
+   */
+  private async checkPolza(): Promise<ICheckResult> {
+    const first = await this.probePolza();
+    if (first.result.state !== 'down' || !first.retryable) return first.result;
+
+    // Разовое зависание — не авария: 14-10-2026 первый живой запрос баланса шёл
+    // 68 с, три следующих — по 0,4 с. Тот же довод, что повтор у Яндекса;
+    // запрос бесплатный. 401/402 не повторяем: повтор их не изменит.
+    await this.sleep(PROBE_RETRY_DELAY_MS);
+    const second = await this.probePolza();
+    if (second.result.state !== 'down') {
+      const detail = `${second.result.detail}, со второй попытки (первая: ${first.result.detail})`;
+      return { ...second.result, detail };
+    }
+    return { ...second.result, detail: `${second.result.detail} (2 попытки из 2)` };
+  }
+
+  /** Один запрос баланса. `retryable` — сбой сети или таймаут, а не ответ Polza по существу. */
+  private async probePolza(): Promise<{ result: ICheckResult; retryable: boolean }> {
+    const warnRub = this.config.polzaAiBalanceWarnRub;
+    const started = Date.now();
+    try {
+      const balance = await this.withTimeout(this.ai.balance(), POLZA_BALANCE_TIMEOUT_MS);
+      return {
+        retryable: false,
+        result: {
+          key: 'polza',
+          state: polzaBalanceStateOf(balance.available, warnRub),
+          detail: polzaBalanceDetail(balance.available, warnRub),
+          latencyMs: Date.now() - started,
+        },
+      };
+    } catch (error) {
+      return {
+        retryable: !(
+          error instanceof PolzaAuthError || error instanceof PolzaInsufficientFundsError
+        ),
+        result: {
+          key: 'polza',
+          state: 'down',
+          detail: this.polzaErrorDetail(error),
+          latencyMs: Date.now() - started,
+        },
+      };
+    }
+  }
+
+  private polzaErrorDetail(error: unknown): string {
+    if (error instanceof PolzaAuthError) return 'ключ отозван или неверен (HTTP 401)';
+    if (error instanceof PolzaInsufficientFundsError) return 'нет средств на балансе (HTTP 402)';
+    return this.messageOf(error);
   }
 
   private async withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

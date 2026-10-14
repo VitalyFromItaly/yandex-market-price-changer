@@ -18,6 +18,7 @@ import {
   telegramErrorInfo,
   timelineSlots,
 } from '../../src/modules/metrics/metrics.domain';
+import { MetricsService } from '../../src/modules/metrics/metrics.service';
 import { TelegramApiMetrics } from '../../src/modules/telegram/bots/telegram-api-metrics.service';
 import { markRefused, refusedOf } from '../../src/modules/telegram/bots/shared/action-log.domain';
 
@@ -191,6 +192,30 @@ describe('summarizeProbe', () => {
     expect(summary.maxMs).toBe(5000);
     expect(summary.last).toEqual({ at: 3, state: 'down', latencyMs: 5000 });
     expect(summary.timeline).toEqual([{ at: 0, avgMs: 2600, down: 1 }]);
+  });
+});
+
+describe('MetricsService: карточка Polza', () => {
+  function serviceWith(rows: unknown[]): MetricsService {
+    return new MetricsService(
+      { findSince: async () => [] } as never,
+      { findSince: async () => rows } as never,
+      { findUpdatesSince: async () => [], recentTelegramErrors: async () => [] } as never,
+    );
+  }
+
+  it('без замеров (ИИ выключен) карточки нет, обязательные — есть', async () => {
+    const report = await serviceWith([]).report('24h', HOUR_MS * 48);
+    expect(report.probes.map((probe) => probe.key)).toEqual(['telegram', 'yandex', 'redis']);
+  });
+
+  it('есть замер Polza — карточка появляется', async () => {
+    const at = HOUR_MS * 47;
+    const report = await serviceWith([{ at, key: 'polza', state: 'ok', latencyMs: 300 }]).report(
+      '24h',
+      HOUR_MS * 48,
+    );
+    expect(report.probes.map((probe) => probe.key)).toContain('polza');
   });
 });
 

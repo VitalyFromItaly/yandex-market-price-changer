@@ -17,7 +17,14 @@ import {
 } from './metrics.domain';
 
 /** Сетевые проверки самопроверки, у которых есть задержка. */
-const PROBE_KEYS = ['telegram', 'yandex', 'redis'] as const;
+const PROBE_KEYS = ['telegram', 'yandex', 'redis', 'polza'] as const;
+
+/**
+ * Проверки, которых может не быть вовсе: Polza проверяется, только когда ИИ
+ * включён. Пустая карточка «нет данных» на деплое без ключа читалась бы как
+ * сломанная проверка, поэтому без единого замера в окне её нет.
+ */
+const OPTIONAL_PROBE_KEYS: ReadonlySet<string> = new Set(['polza']);
 
 /** Сколько последних неудачных вызовов Bot API показывать списком. */
 const RECENT_ERRORS_LIMIT = 20;
@@ -82,7 +89,9 @@ export class MetricsService {
           error: row.error ?? '',
         })),
       },
-      probes: PROBE_KEYS.map((key) => summarizeProbe(key, probeRows, slots, step)),
+      probes: PROBE_KEYS.filter(
+        (key) => !OPTIONAL_PROBE_KEYS.has(key) || probeRows.some((row) => row.key === key),
+      ).map((key) => summarizeProbe(key, probeRows, slots, step)),
       bot: summarizeUpdates(updates, slots, step),
     };
   }

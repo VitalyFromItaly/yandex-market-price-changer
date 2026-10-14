@@ -33,6 +33,25 @@ const rejectUrlWithPath: Joi.CustomValidator<string> = (value, helpers) => {
   return value;
 };
 
+/**
+ * База Polza.ai обязана заканчиваться ровно на `/api` — ни больше, ни меньше.
+ * Клиент дописывает к ней путь метода (`/v1/chat/completions`), поэтому лишний
+ * сегмент (`/api/v1`) или пропущенный (`https://polza.ai`) не роняет ничего на
+ * старте, а молча превращает каждый запрос в 404 — та же беда, что у
+ * TELEGRAM_API_URL с путём, только с обратным знаком.
+ */
+const requireApiPath: Joi.CustomValidator<string> = (value, helpers) => {
+  const pathname = new URL(value).pathname.replace(/\/+$/, '');
+  if (pathname !== '/api') {
+    return helpers.message({
+      custom:
+        `${helpers.state.path?.join('.')}: путь должен быть ровно /api (сейчас '${pathname || '/'}') — ` +
+        'например https://polza.ai/api',
+    });
+  }
+  return value;
+};
+
 export const envValidationSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
 
@@ -182,6 +201,49 @@ export const envValidationSchema = Joi.object({
     'string.min': 'CRM_INITIAL_PASSWORD: не короче 8 символов',
     'string.empty':
       'CRM_INITIAL_PASSWORD: не может быть пустым (уберите переменную — будет умолчание)',
+  }),
+
+  // --- Polza.ai (ИИ) ---
+  // ИИ — надстройка, а не условие работы бота: деплой без ключа обязан
+  // стартовать, а ИИ-функции — молча считаться выключенными. Поэтому токен
+  // необязателен, и пустая строка значит «не задан» (прецедент REDIS_PASSWORD):
+  // в .env.example и docker-compose ключ присутствует пустым. empty('') здесь
+  // ещё и для when ниже — без него пустой токен считался бы «заданным» и
+  // требовал модель.
+  POLZA_AI_TOKEN: Joi.string().empty('').optional(),
+  // Только схема + хост + /api, см. requireApiPath. Пусто — умолчание.
+  POLZA_AI_BASE_URL: Joi.string()
+    .uri()
+    .custom(requireApiPath, 'путь /api')
+    .empty('')
+    .default('https://polza.ai/api'),
+  // Обязательна, только если задан токен. Умолчания нет НАМЕРЕННО: выбор модели
+  // — это выбор цены за запрос, и делать его молча за владельца нельзя.
+  // Ключ без модели — незаконченная настройка, о ней лучше узнать на старте,
+  // чем по первому отказу Polza в рантайме.
+  POLZA_AI_MODEL: Joi.string()
+    .empty('')
+    .when('POLZA_AI_TOKEN', { is: Joi.exist(), then: Joi.required(), otherwise: Joi.optional() })
+    .messages({
+      'any.required':
+        'POLZA_AI_MODEL обязателен, когда задан POLZA_AI_TOKEN: идентификатор модели Polza.ai ' +
+        '(или уберите POLZA_AI_TOKEN — ИИ будет выключен)',
+    }),
+  // Дневной лимит расхода на ИИ на одного продавца, в рублях за московские
+  // сутки. Ключ Polza один на всех и платит владелец, поэтому умолчание —
+  // ограничение, а не его отсутствие (решение владельца 2026-10-14: 50 ₽).
+  // 0 — без лимита, это явное решение в env, а не случайность.
+  AI_USER_DAILY_LIMIT_RUB: Joi.number().min(0).empty('').default(50).messages({
+    'number.base': 'AI_USER_DAILY_LIMIT_RUB: число рублей (0 — без лимита)',
+    'number.min': 'AI_USER_DAILY_LIMIT_RUB: не может быть отрицательным (0 — без лимита)',
+  }),
+  // Порог баланса Polza для самопроверки, ₽: ниже — «скоро закончится».
+  // Рубли, а не доля, как у диска: у баланса нет «всего», есть остаток и темп
+  // трат (решение владельца 2026-10-14: 200 ₽). 0 — предупреждение выключено,
+  // но баланс ≤ 0 остаётся аварией: каждый запрос получит 402.
+  POLZA_AI_BALANCE_WARN_RUB: Joi.number().min(0).empty('').default(200).messages({
+    'number.base': 'POLZA_AI_BALANCE_WARN_RUB: число рублей (0 — не предупреждать)',
+    'number.min': 'POLZA_AI_BALANCE_WARN_RUB: не может быть отрицательным (0 — не предупреждать)',
   }),
 
   // --- Yandex Market Partner API ---

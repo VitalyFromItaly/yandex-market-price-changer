@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
 
+import AiPage from './pages/AiPage.vue';
 import HomePage from './pages/HomePage.vue';
 import LogsPage from './pages/LogsPage.vue';
 import MetricsPage from './pages/MetricsPage.vue';
@@ -33,6 +34,7 @@ export const router = createRouter({
     // сканеров (source=scanner). Из основного журнала они скрыты.
     { path: '/junk', name: 'junk', component: LogsPage, props: { junk: true } },
     { path: '/metrics', name: 'metrics', component: MetricsPage },
+    { path: '/ai', name: 'ai', component: AiPage },
     { path: '/queues', name: 'queues', component: QueuesPage },
     { path: '/users', name: 'users', component: UsersPage },
     {

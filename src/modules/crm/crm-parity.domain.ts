@@ -32,6 +32,8 @@ export const FEATURES_WITHOUT_SECTION: Readonly<Partial<Record<TFeatureKey, stri
   [FEATURE.FBY_SUPPLY]: 'Секция внутри «FBY» (ym-fby), читается из снимка features задачи.',
   [FEATURE.HOSTING_REMINDER]:
     'Фоновая рассылка в Telegram в последний день месяца: экрана нет ни в одном канале.',
+  [FEATURE.AI]:
+    'Модификатор, своего экрана нет: флаг читает AiService, вызывающий передаёт готовый boolean.',
 };
 
 export type TBotScreenParity = { section: string } | { botOnly: string };

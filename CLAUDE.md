@@ -33,6 +33,8 @@ npx ts-node scripts/diagnose-returns.ts --user=<telegramUserId> [--list]
 npx ts-node scripts/load-purchase-prices.ts --user=<telegramUserId> --file=stock.xlsx
 # кому и что уйдёт в последний день месяца — предпросмотр рассылки, ничего не отправляет
 npx ts-node scripts/preview-hosting-reminder.ts [--bot=<telegramBotId>]
+# Polza.ai: баланс и цена текущей модели; --models — chat-модели с ценами ₽/1M; --chat/--json — ПЛАТНЫЕ пробы
+npx ts-node scripts/diagnose-polza.ts [--models[=<grep>]] [--chat] [--json] [--model=<id>]
 docker compose up -d mongodb redis   # mongo on :27018, redis on :6379, mongo-express on :8083
 ```
 
@@ -1165,7 +1167,7 @@ out of disk, Mongo went into a `WT_PANIC` crash-loop and the deploy stopped buil
 report came from a seller, because at night nobody presses a button and `telegraf.catch` never runs.
 `HealthMonitorService` (`src/modules/health/`) closes that: every `CHECK_INTERVAL_MS` (5 min) it
 looks at **five** things — free disk space, Mongo, Redis, the Telegram Bot API and the Yandex Market
-API — and messages the admins itself. The message goes out **the moment a problem is found** and is
+API — plus a **sixth**, the Polza.ai balance, when AI is on — and messages the admins itself. The message goes out **the moment a problem is found** and is
 not repeated until the state changes.
 
 - **Disk is the point of the whole thing.** It fills up gradually, so the warning arrives _long
@@ -1217,6 +1219,31 @@ not repeated until the state changes.
     tests the whole host, not one method. It compares with Telegram from the same pass: Telegram
     up means the problem is on the way to Market, Telegram down means the server's own network.
     Failures of individual methods arrive as their own alerts with «Запрос: …».
+- **The Polza balance is the second "runs out gradually" check, after the disk** (TASK-105). The key is
+  shared and the owner pays, so empty money or a revoked key would otherwise be found by a seller
+  pressing an AI button and getting a 402.
+  - **Registered only when `polzaAiEnabled`.** No key means AI is off by design, not an outage: no
+    summary line, no `HealthSample`, and the «Метрики» card is hidden while the window has no Polza
+    samples (`OPTIONAL_PROBE_KEYS`) — an empty «нет данных» card would read as a broken check.
+  - **Through `AiService.balance()`, not `PolzaClient`.** The client stays unexported (the one-door
+    rule). `balance()` is a system call: no seller, no feature, no daily limit, **no `AiUsage` row**
+    (`GET /v2/balance` is free and belongs to nobody), and it does **not** report errors — the
+    monitor judges them and records with `alert: false`. Reporting there too would mean a second row
+    and an alert outside `shouldNotify` every five minutes.
+  - **The threshold is roubles, not a ratio** (`POLZA_AI_BALANCE_WARN_RUB`, default 200 ₽, owner's
+    decision `polza_balance_warn_default`): a balance has no "total" to divide by. `available ≤ 0` or
+    an unreadable number is `down` whatever the threshold — every request will get 402; `0` turns
+    only the warning off. Pure `polzaBalanceStateOf` in `health.domain.ts`.
+  - **401 and 402 are `down` with their own reason** («ключ отозван», «нет средств»): different
+    causes, one consequence — AI is dead for everybody. The alert carries `POLZA_SCOPE_NOTE` (all
+    sellers, where to go).
+  - **10 s race, not `PING_TIMEOUT_MS`.** The client retries 429/502/503 after 1 and 2 s on its own,
+    so 5 s would cut a good second answer; and the race is mandatory because the client's own
+    timeout is 620 s, sized for a model answer.
+  - **One retry after a network failure or timeout, none after 401/402** — the Yandex rule, and for
+    the same kind of evidence: on 14-10-2026 the first live balance request took **68 s**, the next
+    three 0.3–0.4 s (curl 1.2 s). Without the retry that is an «авария» and a «снова в норме» five
+    minutes later. 401/402 are answers, not hiccups; repeating them changes nothing.
 - **Mongo is checked by `connection.readyState`, deliberately not by a ping.**
   `serverSelectionTimeoutMS` is 30 s, so a ping would hang each check for half a minute exactly
   during the outage — the moment the monitor exists for. Redis _is_ pinged (`queue.client.ping()`,
@@ -1472,7 +1499,8 @@ keeps the reasons for the scaffold:
 - **Паритет пинится, а не помнится** (TASK-088, требование владельца «абсолютно весь
   функционал»). `crm-parity.domain.ts`: `FEATURES_WITHOUT_SECTION` — фичи без раздела с причиной
   (`promotion` — блок «Настроек», `deep_history`/`fby_supply` — модификаторы, едут снимком
-  `features`, `hosting_reminder` — рассылка без экрана); `BOT_SCREEN_SECTIONS` — кнопка `MENU` →
+  `features`, `hosting_reminder` — рассылка без экрана, `ai` — модификатор, флаг читает `AiService`);
+  `BOT_SCREEN_SECTIONS` — кнопка `MENU` →
   раздел, полный `Record`. `crm-parity.test.ts` краснеет на фиче без раздела и на кнопке, ведущей
   в раздел, который её фича не открывает. Исключения — `Partial`, **намеренно**: новая фича должна
   ронять тест с именем ключа, а не компиляцию с сообщением про `Record`.
@@ -2094,7 +2122,7 @@ rejected   credentials wiped; 24h during which even entering credentials is refu
 
 ### Per-feature access: approval says _whether_, flags say _what_
 
-`UserAccess.status` is boolean — all or nothing. On top of it sits a registry of 21 features
+`UserAccess.status` is boolean — all or nothing. On top of it sits a registry of 22 features
 (`src/modules/telegram/bots/shared/features.domain.ts`), each switchable **per user** from the admin
 panel. This is not a second access system: `canPass(status, kind)` still answers "may this person
 use the bot", `requiredFeatures(update)` answers "which function is being invoked". Merging the two
@@ -2430,9 +2458,137 @@ the next step — wrapping in `@Injectable()` must not mean rewriting.
 list; `.env.example` documents every key. Required: `STOCK_WRITE_ENABLED`, `MONGODB_URL`,
 `MONGODB_DATABASE`, `REDIS_HOST`,
 `TELEGRAM_TOKEN`, `TELEGRAM_WEBHOOK_URL`, `TELEGRAM_ADMIN_IDS`. Defaulted: `PORT`, `NODE_ENV`,
-`REDIS_PORT`, `YANDEX_MARKET_BASE_URL`, `TELEGRAM_API_URL`, `CRM_INITIAL_PASSWORD`. Optional: `REDIS_PASSWORD` (empty means
-"no auth") and `ADMIN_PASSWORD` (empty means "generate one and print it once"; when set it overrides
-the hash in Mongo — see "The admin panel is served by Nest itself").
+`REDIS_PORT`, `YANDEX_MARKET_BASE_URL`, `TELEGRAM_API_URL`, `CRM_INITIAL_PASSWORD`, `POLZA_AI_BASE_URL`,
+`AI_USER_DAILY_LIMIT_RUB` (50), `POLZA_AI_BALANCE_WARN_RUB` (200).
+Optional: `REDIS_PASSWORD` (empty means "no auth"), `ADMIN_PASSWORD` (empty means "generate one and
+print it once"; when set it overrides the hash in Mongo — see "The admin panel is served by Nest
+itself"), `POLZA_AI_TOKEN` and `POLZA_AI_MODEL` (below).
+
+**Polza.ai (M15, TASK-101).** The owner chose Polza.ai — an OpenAI-compatible aggregator paid in
+roubles and reachable from the Moscow host without a VPN. AI is an add-on, not a condition of the
+bot working, so the three variables are shaped around "a deploy without a key must start":
+
+- `POLZA_AI_TOKEN` is optional and **empty means unset** (`.empty('')`, the `REDIS_PASSWORD`
+  precedent) — the key sits empty in `.env.example` and compose. `.empty('')` also matters for the
+  `when` below: without it an empty token would count as present and demand a model.
+- `POLZA_AI_MODEL` is required **only when the token is set** (Joi `when`, the
+  `TELEGRAM_WEBHOOK_URL` pattern). No default on purpose: choosing a model is choosing a price per
+  request, and that is not ours to pick silently. A key without a model is an unfinished setup and
+  fails startup by name, rather than surfacing as the first refusal at runtime.
+- `POLZA_AI_BASE_URL` must end in **exactly `/api`** (`requireApiPath`) — the mirror image of the
+  `TELEGRAM_API_URL` rule: the client appends the method path, so a missing segment
+  (`https://polza.ai`) or an extra one (`/api/v1`) does not crash anything, it turns every request
+  into a silent 404.
+- `AppConfigService.polzaAiEnabled` is the single "is AI on" decision; nothing checks the token
+  itself. Rules restated in `src/modules/ai/README.md`.
+- **Per seller, AI is the feature `ai` (TASK-102) — a second condition, not a second token check.**
+  `defaultEnabled: false`: there is one key and the owner pays for every request, so AI is opened
+  one seller at a time from the panel, the `warehouses`/`fby` rollout. Like `promotion` and
+  `hosting_reminder` it has **no `MENU` key** and `featureGate` does not know it — no update maps
+  to "AI", it lives inside other screens. The last barrier is `AiService` (below), and it gets
+  the flag as a **ready boolean** from the caller (admin already resolved via
+  `allFeaturesEnabled`) — the `StockUploadPolicyService` argument: `src/modules/ai/` must not
+  import the bot's feature registry. In CRM parity it sits in `FEATURES_WITHOUT_SECTION`.
+
+**`PolzaClient` (TASK-103) — axios, not the OpenAI SDK, and its retry policy is Polza's, not OpenAI's.**
+Two GETs and one POST without streaming do not justify a dependency that brings its own retries.
+
+- **Polza does not bill failed requests, but has no idempotency key.** So only what its docs say to
+  retry is retried: 429, 408, 502, 503 (`Retry-After` when sent, else 1/2/4 s, 4 attempts).
+  402 is never retried, since a retry adds no money. 500 is not retried: the docs say "contact the provider".
+- **A network failure or timeout is not retried either**, unlike Yandex. The request may have reached the
+  model and been paid for, and a second answer costs money. The 620 s timeout would also hold the worker
+  another ten minutes.
+- `Retry-After` over 60 s is not waited out. A worker asleep for minutes over one AI answer blocks its queue.
+- `withPolzaRetry` runs **parallel** to Yandex's `withRetry` and shares only `backoffDelay`/`TSleep`.
+  Generalising `withRetry` would touch every report for the sake of a second client.
+- **The error body is nested**: `{error: {code, message, trace_id}, trace_id}`. The flat shape in the task
+  text was wrong (checked against the docs and live 401s). Live 200s match the doc example, except that
+  `provider` is absent for some models (`gemini-2.5-flash-lite`), so it maps to an empty string. Both are read.
+  `metadata.raw`, the upstream provider's raw answer, is dropped rather than stored.
+- **Nothing masks a Bearer token**: `maskSecrets` and `maskOutgoing` do not catch it. So the client never
+  logs `config.headers`, and a test checks that the key appears nowhere: logs, the error, `ErrorReporter`'s
+  journal row. `ErrorReporter` forces `source: 'polza'` by class, the `yandex` pattern.
+- **`AiModule` exports only `AiService`.** `PolzaClient` is a factory provider inside it, and a test
+  proves a neighbour module cannot inject it.
+
+**`AiService` (TASK-104) is the only door to Polza.** `complete({telegramUserId, aiAllowed, purpose}, request)`.
+Everything that can refuse runs **before** HTTP, in this order: missing `telegramUserId`/`purpose` → plain
+`Error` (a programmer's bug, the `dryRun` argument); `!aiAllowed` → `AiFeatureDisabledError`;
+`!polzaAiEnabled` → `AiUnavailableError`; the daily limit → `AiDailyLimitError`. The barrier sits in the
+service rather than in handlers for the `featureGate` reason: a new handler cannot forget it, because there is
+no other door.
+
+- **Each request, ok or failed, is one `AiUsage` row** (TTL 180 days; `{telegramUserId, createdAt}` serves the
+  daily sum). The key is shared and the owner pays, so spend must be visible per request — and «why does AI
+  not work for this seller» has no answer without the failed rows. **No prompt or answer text is stored**: it is
+  the seller's correspondence and product data, and a second copy of it is the `maskSecrets` argument. A test
+  pins that neither the row nor the schema can carry it.
+- **`costRub` is `usage.cost_rub` as Polza sent it**, never recomputed from tokens: the price list is Polza's,
+  and our own arithmetic would drift from their invoice silently. A failed request writes `costRub: 0` — Polza
+  does not bill failures.
+- The write is `void`-ed and `AiUsageService.record` never throws (the `ActionLogService.record` policy): the
+  answer is already received and paid for, a dead Mongo must not turn it into an error.
+- **The daily limit `AI_USER_DAILY_LIMIT_RUB`** (default **50 ₽**, `0` = none — owner's decision
+  `ai_daily_limit_default`) is checked per Moscow day (`moscowDayStart`) as a sum of `costRub` **before** the
+  request. A default with no limit would mean one runaway loop drains the shared balance. It is a check, not
+  an atomic reservation, so parallel requests of one seller may overshoot by one request — kopecks.
+  **If the sum cannot be read, the request is refused** (`ai_limit_unknown_refuse`): spending someone else's
+  money blind is the "unknown means forbidden" rule of stock writes. `limit = 0` skips the read entirely.
+- **`AiError` subclasses do not extend `PolzaApiError`**: `ErrorReporter` sets `source: 'polza'` by class, and a
+  closed feature or an exhausted limit is not a Polza failure — not a failure at all. Callers show
+  `userMessage` and do not report them.
+- **Polza failures are reported by the service itself** (`context: ai:<purpose>`, `direction: 'out'`) and
+  rethrown unchanged — callers must **not** report a `PolzaApiError` again. The `ErrorReporter` alerts by
+  default and has no 4xx filter, so the decision is explicit in `shouldAlertPolzaError`: everything alerts
+  (402 no money, 401 key revoked, 400 our malformed request, 429 after retries, 5xx, network) **except 403**,
+  moderation rejecting the seller's content — client behaviour. `AlertThrottle` dampens the stream. No retries
+  in the service: the client deliberately does not retry network errors or 500.
+- **`AiService.balance()` (TASK-105) is the second, system door** — for the self-check only: no seller,
+  no feature, no limit, no `AiUsage` row, no report. Why — in "Self-checks".
+- **`scripts/diagnose-polza.ts` (TASK-107) is how a model gets chosen and how prod reachability gets checked.**
+  It goes straight to `PolzaClient`, past `AiService`: the script is not a seller, has no feature flag or
+  daily limit, and must not leave an `AiUsage` row, so it never touches Mongo. No Nest at all, for the
+  `diagnose-*` reason (`AppModule` would re-point the webhook).
+  - **The default run makes only the free GETs** (balance and models). `--chat` and `--json` are paid and
+    opt-in, so a stray run spends nothing. Their `max_tokens` is 16/64, which caps the cost
+    (≈0,0002 ₽ on `gemini-2.5-flash-lite`).
+  - **Prices come from the live `/v1/models`**, i.e. `top_provider.pricing`, ₽ per 1M tokens as 8-digit
+    strings. That is why `mapModels` now returns `pricing`, `type`, `contextLength` and `structuredOutputs`.
+    A model with no per-token price is `pricing: null`, never 0, the `orderPurchase` argument: unknown is
+    not free. On 14-10-2026 that covered 71 of 419 models, all tts/image/video, priced per item. The list
+    mixes every model kind, so `--models` shows `type: 'chat'` only.
+  - **`--json` checks the answer against the probe schema by hand**, without ajv: a two-field schema does
+    not justify a dependency. Being listed with `structured_outputs` is a claim; the probe is the proof.
+  - **The prod image cannot run it**: there is no `scripts/` and no ts-node (`npm ci --omit=dev`). On the
+    prod host, reachability is a `curl` of `/v2/balance`, described in `src/modules/ai/README.md`.
+
+**The «ИИ» page of the admin panel (TASK-106) — `GET /api/ai/usage`, `GET /api/ai/requests`.** One key, the
+owner pays for everything, so «who spends on what» needs an answer that is not a Mongo shell.
+
+- **Sums come from Mongo, one `aggregate` with `$facet`** (`AiUsageService.summary`: totals, by Moscow day,
+  by seller, by `purpose`). Not summed in JS over journal pages: the figure on screen must equal Σ `costRub`
+  in the collection, and paged assembly silently loses everything past the page cap. Days are grouped with
+  `$dateToString … timezone: 'Europe/Moscow'` — the `moscow-day.ts` argument; empty days are filled with
+  zeros in `ai-usage.domain.ts` (`fillDays`), or the bars would shift and «yesterday» would sit in an empty
+  day's slot.
+- **The journal is read with the summary's `since` AND `until`.** `AiService` writes the `AiUsage` row
+  fire-and-forget, so a request finishing after the summary otherwise showed up as «4 rows under a total of
+  3» — found on the live check, not by reading.
+- **Its own module, `AiAdminModule`**, not a controller inside `AiModule`: the latter is imported by the
+  monitor and future handlers, which have no business pulling in the admin guard. `AdminJwtGuard` on the
+  class. The balance goes through `AiService.balance()` — `PolzaClient` stays unexported.
+- **The balance has its own 10 s race** (`AI_BALANCE_TIMEOUT_MS`): the client's timeout is 620 s, sized
+  for a model answer, and one live balance request took 68 s. Any failure — no key, 401, 402, timeout —
+  is `balance: null` plus a reason in words; the page opens regardless and prints «—». The failure is
+  **not** reported: the monitor judges the balance, and a report per page open would be an alert outside
+  `shouldNotify`.
+- **Nicks — one `access.list()` per response**, keyed by `telegramUserId` only (`AiUsage` has no `botId`;
+  the fallback map of `QueuesController.withUsers`). Skipped when there are no rows.
+- `logUserOptions` takes a structural `TRowWho` now, so the AI journal rows feed the seller filter with no
+  adapter. The overview line is fetched outside `Promise.all`, the metrics precedent.
+- **Prompt and answer text are not shown because they do not exist** — the response lists fields
+  explicitly, and a test pins that none of them can carry text.
 
 The two Telegram URLs are opposite directions and must not be swapped: `TELEGRAM_WEBHOOK_URL` is the
 public base Telegram posts updates **to** (ngrok/vk-tunnel in dev), `TELEGRAM_API_URL` is the Bot API

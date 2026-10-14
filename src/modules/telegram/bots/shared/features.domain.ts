@@ -89,6 +89,13 @@ export const FEATURE = {
    * разбирает, флаг читает сам процессор.
    */
   HOSTING_REMINDER: 'hosting_reminder',
+  /**
+   * ИИ-функции через Polza.ai. Кнопки нет (паттерн PROMOTION/HOSTING_REMINDER):
+   * апдейта под фичу нет, гейт её не разбирает — флаг читает последний барьер,
+   * `AiService`, получая от вызывающего уже разрешённый boolean. Глобальный
+   * выключатель — `AppConfigService.polzaAiEnabled`; токен здесь не проверять.
+   */
+  AI: 'ai',
 } as const;
 
 export type TFeatureKey = (typeof FEATURE)[keyof typeof FEATURE];
@@ -124,6 +131,7 @@ const FEATURE_KEY_SET: Record<TFeatureKey, true> = {
   [FEATURE.DEEP_HISTORY]: true,
   [FEATURE.FBY_SUPPLY]: true,
   [FEATURE.HOSTING_REMINDER]: true,
+  [FEATURE.AI]: true,
 };
 
 export const FEATURE_KEYS = Object.keys(FEATURE_KEY_SET) as TFeatureKey[];
@@ -287,6 +295,16 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     // к Partner API; эта не ходит наружу вовсе и нужна как раз всем сразу —
     // закрывается точечно тому, с кем об оплате договорились иначе.
     defaultEnabled: true,
+  },
+  [FEATURE.AI]: {
+    // Inline-only подпись: своего экрана у фичи нет, она открывает ИИ внутри других.
+    label: '🤖 ИИ-функции (Polza.ai)',
+    description:
+      'ИИ-возможности бота и CRM. Запросы идут через ключ Polza.ai владельца ' +
+      'и стоят денег — работают, только если ИИ включён на сервере.',
+    // Выключена: каждый запрос оплачивает владелец из одного общего ключа,
+    // поэтому ИИ открывается продавцам по одному из панели.
+    defaultEnabled: false,
   },
 };
 

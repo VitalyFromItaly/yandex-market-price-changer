@@ -8,6 +8,7 @@ import type { IUserOption } from '../users.domain';
 const SOURCES = [
   { value: '', label: 'любой' },
   { value: 'yandex', label: 'Яндекс.Маркет' },
+  { value: 'polza', label: 'ИИ (Polza.ai)' },
   { value: 'bot', label: 'бот' },
   { value: 'http', label: 'HTTP' },
   { value: 'queue', label: 'очередь' },
@@ -100,7 +101,9 @@ const fromLog = computed(() => props.users.filter((user) => user.fromLog));
     <label>
       Тип
       <select v-model="filters.kind">
-        <option v-for="kind in KINDS" :key="kind.value" :value="kind.value">{{ kind.label }}</option>
+        <option v-for="kind in KINDS" :key="kind.value" :value="kind.value">
+          {{ kind.label }}
+        </option>
       </select>
     </label>
 

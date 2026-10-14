@@ -73,7 +73,7 @@
 
 - ключ `FEATURE` не стоит ни в одном разделе `CRM_SECTIONS` и не записан в
   `FEATURES_WITHOUT_SECTION` с причиной (сейчас там `promotion`, `deep_history`, `fby_supply`,
-  `hosting_reminder`);
+  `hosting_reminder`, `ai`);
 - кнопка `MENU` ведёт в несуществующий раздел или в раздел, не открываемый её же фичей.
 
 Новый ключ `MENU` без строки в `BOT_SCREEN_SECTIONS` не компилируется. «Рассылка» (`ym-schedule`) —

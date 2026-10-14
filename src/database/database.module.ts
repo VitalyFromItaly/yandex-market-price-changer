@@ -6,6 +6,7 @@ import { AppConfigService } from '../config/app-config.service';
 import { DatabaseService } from './database.service';
 import { ActionLog, ActionLogSchema } from './schemas/action-log.schema';
 import { AdminCredential, AdminCredentialSchema } from './schemas/admin-credential.schema';
+import { AiUsage, AiUsageSchema } from './schemas/ai-usage.schema';
 import { Bot, BotSchema } from './schemas/bot.schema';
 import { CrmCredential, CrmCredentialSchema } from './schemas/crm-credential.schema';
 import { CrmJobResult, CrmJobResultSchema } from './schemas/crm-job-result.schema';
@@ -18,6 +19,7 @@ import { User, UserSchema } from './schemas/user.schema';
 import { YandexMarket, YandexMarketSchema } from './schemas/yandex-market.schema';
 import { ActionLogService } from './services/action-log.service';
 import { AdminCredentialService } from './services/admin-credential.service';
+import { AiUsageService } from './services/ai-usage.service';
 import { CrmCredentialService } from './services/crm-credential.service';
 import { CrmJobResultService } from './services/crm-job-result.service';
 import { HealthSampleService } from './services/health-sample.service';
@@ -68,6 +70,7 @@ import { YandexMarketService } from './services/yandex-market.service';
       { name: CrmJobResult.name, schema: CrmJobResultSchema },
       { name: TelegramApiBucket.name, schema: TelegramApiBucketSchema },
       { name: HealthSample.name, schema: HealthSampleSchema },
+      { name: AiUsage.name, schema: AiUsageSchema },
     ]),
   ],
   providers: [
@@ -82,6 +85,7 @@ import { YandexMarketService } from './services/yandex-market.service';
     CrmJobResultService,
     TelegramApiBucketService,
     HealthSampleService,
+    AiUsageService,
   ],
   exports: [
     DatabaseService,
@@ -96,6 +100,7 @@ import { YandexMarketService } from './services/yandex-market.service';
     CrmJobResultService,
     TelegramApiBucketService,
     HealthSampleService,
+    AiUsageService,
   ],
 })
 export class DatabaseModule {}

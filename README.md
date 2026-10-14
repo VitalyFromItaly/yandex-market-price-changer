@@ -87,8 +87,9 @@ npm run tunnel        # vk-tunnel на :3004 (или npm run tunnel:ngrok)
 | `TELEGRAM_ADMIN_IDS` | numeric id администраторов через запятую |
 
 **С значением по умолчанию:** `PORT`, `NODE_ENV`, `REDIS_PORT`, `YANDEX_MARKET_BASE_URL`,
-`TELEGRAM_API_URL`, `TELEGRAM_UPDATE_MODE`. **Необязательные:** `REDIS_PASSWORD` (пусто — без
-авторизации).
+`TELEGRAM_API_URL`, `TELEGRAM_UPDATE_MODE`, `POLZA_AI_BASE_URL` (`https://polza.ai/api`, путь ровно
+`/api`). **Необязательные:** `REDIS_PASSWORD` (пусто — без авторизации), `POLZA_AI_TOKEN` (пусто — ИИ
+выключен) и `POLZA_AI_MODEL` (обязательна, если задан токен).
 
 ## 📜 Журнал действий и админ-панель
 

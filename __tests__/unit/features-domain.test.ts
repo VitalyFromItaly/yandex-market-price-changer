@@ -69,6 +69,7 @@ describe('Реестр возможностей', () => {
       FEATURE.OFFER_CARDS,
       FEATURE.DEEP_HISTORY,
       FEATURE.FBY_SUPPLY,
+      FEATURE.AI,
     ];
     for (const key of FEATURE_KEYS) {
       expect(FEATURE_META[key].defaultEnabled, key).toBe(!DEFAULT_OFF.includes(key));
@@ -251,7 +252,7 @@ describe('Какие возможности нужны апдейту', () => {
     expect(requiredFeatures({ callbackData: 'mkt:xxx' })).toEqual([]);
   });
 
-  it('deep_history, fby_supply и hosting_reminder кнопок не чеканят — гейт их не знает', () => {
+  it('deep_history, fby_supply, hosting_reminder и ai кнопок не чеканят — гейт их не знает', () => {
     // Первые два флага читаются в run/payload (прецедент TARIFF_CALC-строки), а
     // не гейтом: у них нет ни кнопки меню, ни своего callback-префикса.
     expect(MENU_LABELS).not.toContain(FEATURE_META[FEATURE.DEEP_HISTORY].label);
@@ -259,6 +260,15 @@ describe('Какие возможности нужны апдейту', () => {
     // У напоминания об оплате апдейта нет вовсе: это фоновая рассылка, флаг
     // читает её процессор. Кнопка была бы просто нечем.
     expect(MENU_LABELS).not.toContain(FEATURE_META[FEATURE.HOSTING_REMINDER].label);
+    // ИИ — тоже без апдейта: флаг читает AiService, получая готовый boolean.
+    expect(MENU_LABELS).not.toContain(FEATURE_META[FEATURE.AI].label);
+  });
+
+  it('ai по умолчанию закрыт, явное решение открывает', () => {
+    // Запросы оплачивает владелец из одного ключа — открывается по одному продавцу.
+    expect(isFeatureEnabled({}, FEATURE.AI)).toBe(false);
+    expect(isFeatureEnabled(undefined, FEATURE.AI)).toBe(false);
+    expect(isFeatureEnabled({ ai: true }, FEATURE.AI)).toBe(true);
   });
 
   it('документ гейтом не закрывается — решение у stock-upload.handler', () => {

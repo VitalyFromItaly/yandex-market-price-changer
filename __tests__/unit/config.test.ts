@@ -229,6 +229,117 @@ describe('envValidationSchema', () => {
     expect(error).toBeDefined();
     expect(error!.message).toContain('обязателен');
   });
+
+  describe('Polza.ai', () => {
+    it('AI_USER_DAILY_LIMIT_RUB: умолчание 50 ₽, пусто — тоже 50, 0 — без лимита', () => {
+      expect(envValidationSchema.validate(VALID_ENV).value.AI_USER_DAILY_LIMIT_RUB).toBe(50);
+      expect(
+        envValidationSchema.validate({ ...VALID_ENV, AI_USER_DAILY_LIMIT_RUB: '' }).value
+          .AI_USER_DAILY_LIMIT_RUB,
+      ).toBe(50);
+      const zero = envValidationSchema.validate({ ...VALID_ENV, AI_USER_DAILY_LIMIT_RUB: '0' });
+      expect(zero.error).toBeUndefined();
+      expect(zero.value.AI_USER_DAILY_LIMIT_RUB).toBe(0);
+      expect(
+        envValidationSchema.validate({ ...VALID_ENV, AI_USER_DAILY_LIMIT_RUB: '12.5' }).value
+          .AI_USER_DAILY_LIMIT_RUB,
+      ).toBe(12.5);
+    });
+
+    it('AI_USER_DAILY_LIMIT_RUB: отрицательное и не-число отвергаются по имени', () => {
+      for (const bad of ['-1', 'abc']) {
+        const { error } = envValidationSchema.validate({
+          ...VALID_ENV,
+          AI_USER_DAILY_LIMIT_RUB: bad,
+        });
+        expect(error?.message).toContain('AI_USER_DAILY_LIMIT_RUB');
+      }
+    });
+
+    it('POLZA_AI_BALANCE_WARN_RUB: умолчание 200 ₽, пусто — тоже 200, 0 допустим', () => {
+      expect(envValidationSchema.validate(VALID_ENV).value.POLZA_AI_BALANCE_WARN_RUB).toBe(200);
+      expect(
+        envValidationSchema.validate({ ...VALID_ENV, POLZA_AI_BALANCE_WARN_RUB: '' }).value
+          .POLZA_AI_BALANCE_WARN_RUB,
+      ).toBe(200);
+      const zero = envValidationSchema.validate({ ...VALID_ENV, POLZA_AI_BALANCE_WARN_RUB: '0' });
+      expect(zero.error).toBeUndefined();
+      expect(zero.value.POLZA_AI_BALANCE_WARN_RUB).toBe(0);
+    });
+
+    it('POLZA_AI_BALANCE_WARN_RUB: отрицательное и не-число отвергаются по имени', () => {
+      for (const bad of ['-1', 'abc']) {
+        const { error } = envValidationSchema.validate({
+          ...VALID_ENV,
+          POLZA_AI_BALANCE_WARN_RUB: bad,
+        });
+        expect(error?.message).toContain('POLZA_AI_BALANCE_WARN_RUB');
+      }
+    });
+
+    it('без токена и модели стартует — ИИ необязателен', () => {
+      const { error } = envValidationSchema.validate(VALID_ENV);
+      expect(error).toBeUndefined();
+    });
+
+    it('пустой токен без модели — это «не задан», а не ключ без модели', () => {
+      const { error } = envValidationSchema.validate({
+        ...VALID_ENV,
+        POLZA_AI_TOKEN: '',
+        POLZA_AI_MODEL: '',
+      });
+      expect(error).toBeUndefined();
+    });
+
+    it('токен без модели роняет старт с именем переменной', () => {
+      const { error } = envValidationSchema.validate({
+        ...VALID_ENV,
+        POLZA_AI_TOKEN: 'pza_secret',
+      });
+      expect(error).toBeDefined();
+      expect(error!.message).toContain('POLZA_AI_MODEL');
+      expect(error!.message).toContain('обязателен');
+    });
+
+    it('токен с моделью проходит', () => {
+      const { error } = envValidationSchema.validate({
+        ...VALID_ENV,
+        POLZA_AI_TOKEN: 'pza_secret',
+        POLZA_AI_MODEL: 'openai/gpt-4o-mini',
+      });
+      expect(error).toBeUndefined();
+    });
+
+    it('пустой POLZA_AI_BASE_URL подставляет умолчание', () => {
+      const { value, error } = envValidationSchema.validate({
+        ...VALID_ENV,
+        POLZA_AI_BASE_URL: '',
+      });
+      expect(error).toBeUndefined();
+      expect(value.POLZA_AI_BASE_URL).toBe('https://polza.ai/api');
+    });
+
+    it.each([
+      'https://polza.ai/api',
+      'https://polza.ai/api/',
+      'https://mirror.example.com:8443/api',
+    ])('база %s принимается', (url) => {
+      const { error } = envValidationSchema.validate({ ...VALID_ENV, POLZA_AI_BASE_URL: url });
+      expect(error).toBeUndefined();
+    });
+
+    it.each([
+      'https://polza.ai',
+      'https://polza.ai/',
+      'https://polza.ai/api/v1',
+      'https://h.example.com/x',
+    ])('база %s отвергается — путь метода к ней дописывается, и запросы ушли бы в 404', (url) => {
+      const { error } = envValidationSchema.validate({ ...VALID_ENV, POLZA_AI_BASE_URL: url });
+      expect(error).toBeDefined();
+      expect(error!.message).toContain('POLZA_AI_BASE_URL');
+      expect(error!.message).toContain('/api');
+    });
+  });
 });
 
 describe('AppConfigService (smoke: модуль собирается через Test.createTestingModule)', () => {
@@ -264,6 +375,31 @@ describe('AppConfigService (smoke: модуль собирается через 
     // получился бы `https://h//bot…`.
     const config = await build({ ...VALID_ENV, TELEGRAM_API_URL: 'https://mirror.example.com/' });
     expect(config.telegramApiUrl).toBe('https://mirror.example.com');
+  });
+
+  it('без токена Polza ИИ выключен, пустой токен — тоже undefined', async () => {
+    const absent = await build(VALID_ENV);
+    expect(absent.polzaAiEnabled).toBe(false);
+    expect(absent.polzaAiToken).toBeUndefined();
+    expect(absent.polzaAiBaseUrl).toBe('https://polza.ai/api');
+
+    const empty = await build({ ...VALID_ENV, POLZA_AI_TOKEN: '', POLZA_AI_MODEL: '' });
+    expect(empty.polzaAiEnabled).toBe(false);
+    expect(empty.polzaAiToken).toBeUndefined();
+    expect(empty.polzaAiModel).toBeUndefined();
+  });
+
+  it('с токеном и моделью ИИ включён, база без хвостового слеша', async () => {
+    const config = await build({
+      ...VALID_ENV,
+      POLZA_AI_TOKEN: 'pza_secret',
+      POLZA_AI_MODEL: 'openai/gpt-4o-mini',
+      POLZA_AI_BASE_URL: 'https://polza.ai/api/',
+    });
+    expect(config.polzaAiEnabled).toBe(true);
+    expect(config.polzaAiToken).toBe('pza_secret');
+    expect(config.polzaAiModel).toBe('openai/gpt-4o-mini');
+    expect(config.polzaAiBaseUrl).toBe('https://polza.ai/api');
   });
 
   it('пустой пароль Redis превращается в undefined, а не в пустую строку', async () => {

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { ActionLogService } from '../../database/services/action-log.service';
+import { PolzaApiError } from '../ai/polza.errors';
 import { telegramErrorInfo } from '../metrics/metrics.domain';
 import { maskOutgoing, truncate } from '../telegram/bots/shared/action-log.domain';
 import { esc } from '../telegram/formatting/telegram-format';
@@ -13,9 +14,18 @@ import { AlertThrottle } from './alert-throttle';
  * Откуда прилетела ошибка. `scanner` — внешний сканер секретов (404 на
  * несматченный маршрут); такие записи прячутся из основного журнала и живут во
  * вкладке «Мусор» (см. JUNK_SOURCE в action-log.service). `crm` — запросы и
- * ошибки CRM продавцов: в основном журнале видны, помечены в панели.
+ * ошибки CRM продавцов: в основном журнале видны, помечены в панели. `polza` —
+ * ошибки Polza.ai (ИИ), проставляется по классу ошибки, как `yandex`.
  */
-export type TErrorSource = 'bot' | 'http' | 'queue' | 'process' | 'yandex' | 'scanner' | 'crm';
+export type TErrorSource =
+  | 'bot'
+  | 'http'
+  | 'queue'
+  | 'process'
+  | 'yandex'
+  | 'scanner'
+  | 'crm'
+  | 'polza';
 
 /**
  * Владелец записи, когда пользователя нет: ошибка HTTP-слоя, падение процесса,
@@ -125,13 +135,17 @@ export class ErrorReporter {
     try {
       const error = input.error;
       const isYandex = error instanceof YandexApiError;
+      // Ошибка Polza описывает себя сама, как Яндекса: класс решает source,
+      // статус и адрес запроса едут в полях, а не в тексте.
+      const isPolza = error instanceof PolzaApiError;
+      const api = isYandex || isPolza ? error : undefined;
       const report = error instanceof ReportGenerationError ? error : undefined;
 
       const errorType = this.typeOf(error);
       const message = this.messageOf(error);
-      const source = isYandex ? 'yandex' : input.source;
-      const httpStatus = input.httpStatus ?? (isYandex ? error.status : undefined);
-      const requestUrl = input.requestUrl ?? (isYandex ? error.request : report?.request);
+      const source = this.sourceOf(isYandex, isPolza, input.source);
+      const httpStatus = input.httpStatus ?? api?.status;
+      const requestUrl = input.requestUrl ?? api?.request ?? report?.request;
       const details = input.details ?? report?.details;
 
       this.logger.error(
@@ -168,6 +182,13 @@ export class ErrorReporter {
       // но и бросать некуда — вызывающий код уже обрабатывает свою ошибку.
       this.logger.warn(`Не удалось записать ошибку в журнал: ${(failure as Error).message}`);
     }
+  }
+
+  /** Ошибки внешних API несут свой source независимо от слоя, где их поймали — слой остаётся в context. */
+  private sourceOf(isYandex: boolean, isPolza: boolean, fallback: TErrorSource): TErrorSource {
+    if (isYandex) return 'yandex';
+    if (isPolza) return 'polza';
+    return fallback;
   }
 
   /**

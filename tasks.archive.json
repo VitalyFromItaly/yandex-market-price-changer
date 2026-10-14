@@ -2,8 +2,8 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 88,
-    "updated_at": "2026-10-13"
+    "archived_tasks": 95,
+    "updated_at": "2026-10-14"
   },
   "tasks": [
     {
@@ -2154,6 +2154,173 @@
         "Шаг 2: главная глазами"
       ],
       "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-101",
+      "milestone": "M15",
+      "category": "infrastructure",
+      "priority": "high",
+      "description": "Конфиг Polza.ai: POLZA_AI_TOKEN (опционален, пусто = ИИ выключен — прецедент REDIS_PASSWORD), POLZA_AI_BASE_URL (по умолчанию https://polza.ai/api, только scheme+host+/api — по аналогии с проверкой TELEGRAM_API_URL), POLZA_AI_MODEL (обязателен через Joi when, только если токен задан). Правило в env.validation.ts, типизированные геттеры в app-config.service.ts (polzaAiToken, polzaAiBaseUrl, polzaAiModel, polzaAiEnabled), .env.example, docker-compose.yml. ПОЧЕМУ: владелец выбрал Polza.ai (OpenAI-совместимый агрегатор, оплата в рублях, без VPN — доступен с московского хоста). Деплой без ключа не должен падать на старте: ИИ — опциональная надстройка, а не условие работы бота.",
+      "acceptance_criteria": [
+        "Пустой/отсутствующий POLZA_AI_TOKEN — приложение стартует, polzaAiEnabled === false",
+        "Токен задан без POLZA_AI_MODEL — старт падает с русским сообщением, называющим переменную",
+        "Base URL с лишним путём или без /api отвергается на старте",
+        "Никакого process.env и config.get вне app-config.service.ts",
+        "CLAUDE.md (причины) и src/modules/ai/README.md (правила) обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: юнит-тест env-валидации: пустой токен без модели — ок; токен без модели — ошибка; кривой base URL — ошибка",
+        "Шаг 2: npm run dev с токеном и моделью из .env — старт без ошибок",
+        "Шаг 3: npm run dev с закомментированным POLZA_AI_TOKEN — старт без ошибок",
+        "Шаг 4: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-102",
+      "milestone": "M15",
+      "category": "functional",
+      "priority": "high",
+      "description": "Фича ai в реестре features.domain.ts: FEATURE.AI = 'ai', defaultEnabled: false, БЕЗ ключа MENU (паттерн promotion/deep_history — своего экрана нет), подпись в FEATURE_META «🤖 ИИ-функции (Polza.ai)». В crm-parity.domain.ts — в FEATURES_WITHOUT_SECTION с причиной «модификатор, своего экрана нет». Флаг читает последний барьер — AiService (TASK-104), а не featureGate: апдейта под фичу нет. Вызывающий передаёт уже разрешённый boolean с учётом админа (allFeaturesEnabled) — довод StockUploadPolicyService, чтобы модуль ai не импортировал реестр бота. ПОЧЕМУ: требование владельца — весь функционал с API Polza.ai под отдельной фичей; токен один на всех и платит владелец, поэтому ИИ открывается продавцам по одному из панели.",
+      "acceptance_criteria": [
+        "FEATURE.AI в FEATURE_KEYS (через Record), defaultEnabled: false",
+        "Переключатель появляется в карточке продавца админ-панели без правок фронта (метки из FEATURE_META)",
+        "crm-parity.test зелёный, кнопки и раздела у фичи нет",
+        "CLAUDE.md (причины) и src/modules/ai/README.md (правила) обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: юнит-тест: isFeatureEnabled({}, 'ai') === false, явное true — открыто",
+        "Шаг 2: в админ-панели у продавца виден переключатель «ИИ-функции», переключение сохраняется",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-103",
+      "milestone": "M15",
+      "category": "integration",
+      "priority": "high",
+      "description": "PolzaClient в новом AiModule (src/modules/ai/) на axios (OpenAI SDK — лишняя зависимость). Методы: chatCompletion({model?, messages, responseFormat?, maxTokens?, temperature?}) → {content, usage: {promptTokens, completionTokens, totalTokens, cachedTokens, reasoningTokens, costRub}, model, provider, traceId}; getBalance() — GET /v2/balance (amount/available/reservedAmount/spentAmount — строки с 8 знаками → number); listModels() — GET /v1/models. Авторизация Authorization: Bearer. Стриминга нет. Типизированные ошибки через toDomainError + withRequest(method, url) (паттерн YandexApiError): PolzaAuthError 401, PolzaInsufficientFundsError 402, PolzaModerationError 403, PolzaRateLimitError 429 (retryAfter), PolzaApiError прочие (traceId, httpStatus, code из тела {code, message, trace_id, metadata}); без токена — PolzaDisabledError. Повторы по документации Polza: 400/401/403/404/413 и 402 не повторять; 429 с Retry-After — ждать его, без заголовка — backoff 1/2/4 с; 408/502/503 — повтор (503 не раньше Retry-After). Таймаут ≈620 с (лимит запроса у Polza 600 с). Новый TErrorSource 'polza'. ПОЧЕМУ: единый клиент с правильной политикой повторов — сбойные запросы Polza не тарифицирует, но ключа идемпотентности нет, а повтор 402 бессмысленен.",
+      "acceptance_criteria": [
+        "Токен не попадает ни в логи, ни в ActionLog, ни в ErrorReporter (тест)",
+        "Маппинг HTTP-статусов в классы ошибок покрыт тестом",
+        "Политика повторов покрыта тестом с замоканным axios (402 — один вызов, 429 с Retry-After — ждёт, 502 — повторяет)",
+        "Разбор ответа chat/completions и balance — тест по примеру из документации (usage.cost_rub, prompt_tokens_details.cached_tokens, completion_tokens_details.reasoning_tokens)",
+        "Без токена AiModule поднимается, вызов бросает PolzaDisabledError",
+        "PolzaClient не экспортируется из AiModule наружу — только AiService (TASK-104)",
+        "CLAUDE.md (причины) и src/modules/ai/README.md (правила) обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run __tests__/unit/polza*",
+        "Шаг 2: живой вызов getBalance() с токеном из .env через scripts или тест-скрипт — сумма совпадает с дашбордом polza.ai",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-101"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-104",
+      "milestone": "M15",
+      "category": "functional",
+      "priority": "high",
+      "description": "AiService — единственная точка любого ИИ-функционала. complete(ctx: {telegramUserId, aiAllowed, purpose}, request): при !aiAllowed бросает AiFeatureDisabledError ДО любого HTTP; без telegramUserId бросает (довод dryRun в StockSyncService.sync). Каждый запрос, успешный и упавший, — одна строка в новой коллекции AiUsage: telegramUserId, purpose, model (запрошенная), responseModel, provider, promptTokens, completionTokens, totalTokens, cachedTokens, reasoningTokens, costRub (из usage.cost_rub как есть, без пересчёта), durationMs, traceId, status ok|error, httpStatus, errorCode, createdAt. Текст промпта и ответа НЕ хранится. TTL 180 дней, индексы {createdAt:-1} и {telegramUserId:1, createdAt:-1}. Запись не блокирует ответ и не бросает (политика ActionLogService.record). Дневной лимит на продавца AI_USER_DAILY_LIMIT_RUB (env, 0 = без лимита) по московскому дню (moscow-day.ts) — сумма costRub из AiUsage проверяется до запроса, превышение → AiDailyLimitError с понятным продавцу текстом. 402 от Polza → продавцу «ИИ временно недоступен» + алерт админам через ErrorReporter (троттлится AlertThrottle). ПОЧЕМУ: токен один на всех и платит владелец — расход должен быть виден по каждому запросу и ограничен на продавца; барьер фичи в сервисе нельзя забыть в новом хендлере.",
+      "acceptance_criteria": [
+        "Закрытая фича — ноль HTTP-вызовов к Polza (тест)",
+        "AiUsage зарегистрирована в пяти местах (schemas/index.ts, forFeature, providers+exports, services/index.ts) и в MODELS scripts/sync-indexes.ts",
+        "costRub в AiUsage равен usage.cost_rub ответа (тест)",
+        "Упавший запрос тоже пишется: status error, httpStatus, errorCode, traceId",
+        "Превышение дневного лимита — AiDailyLimitError без запроса к Polza (тест)",
+        "Падение Mongo при записи usage не ломает ответ (тест)",
+        "AI_USER_DAILY_LIMIT_RUB — правило в env.validation.ts, геттер, .env.example, docker-compose.yml",
+        "CLAUDE.md (причины) и src/modules/ai/README.md (правила) обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run __tests__/unit/ai-service*",
+        "Шаг 2: npm run db:sync-indexes — индексы ai_usages созданы",
+        "Шаг 3: живой вызов complete() с aiAllowed: true — в Mongo строка AiUsage с costRub > 0 и traceId",
+        "Шаг 4: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-102",
+        "TASK-103"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-105",
+      "milestone": "M15",
+      "category": "infrastructure",
+      "priority": "medium",
+      "description": "Шестая самопроверка HealthMonitorService — Polza.ai, только если токен задан. GET /v2/balance (бесплатный): сеть/5xx/таймаут → down, 401 → down «ключ отозван», available < POLZA_AI_BALANCE_WARN_RUB → warn. latencyMs в HealthSample, строка в /health, стартовой и ежедневной сводке через общий summaryText. Логика порогов — чистая функция в health.domain.ts. Таймаут через Promise.race (как ping Redis). ПОЧЕМУ: кончившиеся деньги или отозванный ключ иначе обнаружит продавец; баланс убывает постепенно — как диск, предупреждение должно прийти заранее.",
+      "acceptance_criteria": [
+        "Без токена проверка не регистрируется и в сводке строки нет",
+        "Пороги покрыты тестом health.domain",
+        "POLZA_AI_BALANCE_WARN_RUB — правило Joi, геттер, .env.example, docker-compose.yml",
+        "Алерты идут по shouldNotify (смена состояния + раз в час), без отдельного троттла",
+        "CLAUDE.md (причины) и src/modules/ai/README.md (правила) обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run __tests__/unit/health*",
+        "Шаг 2: /health в боте под админом — строка Polza.ai с балансом и мс",
+        "Шаг 3: временно порог выше баланса → приходит warn; вернуть — «снова в норме»",
+        "Шаг 4: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-103"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-106",
+      "milestone": "M15",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Расходы на ИИ в админ-панели (web/). Контроллер под AdminJwtGuard на весь класс: GET /api/ai/usage?range=24h|7d|30d — текущий баланс (available/amount), сумма ₽ и число запросов, разбивка по дням, по продавцам (@ник через один access.list()), по purpose, доля ошибок; GET /api/ai/requests?telegramUserId=&purpose=&status=&since=&until=&limit=&skip= — журнал запросов с total, один filterOf на страницу и счётчик (паттерн /api/logs). Новая страница «ИИ» в сайдбаре: сверху баланс и итоги за период, график ₽ по дням (SparkBars), таблица запросов (время, продавец, purpose, модель, токены вход/выход/кэш, ₽, длительность, статус, trace_id) с фильтром по продавцу (logUserOptions). Плюс одна строка на обзоре, запрашивается ВНЕ Promise.all (как метрики). ПОЧЕМУ: владелец платит за все запросы и должен видеть, кто и на что тратит; trace_id нужен для обращения в поддержку Polza.",
+      "acceptance_criteria": [
+        "Сумма ₽ на странице равна сумме costRub в AiUsage за период (агрегация в Mongo, не в JS по страницам)",
+        "Сбой /api/ai/usage не ломает обзор",
+        "Баланс недоступен — страница открывается, баланс «—»",
+        "Ссылка в сайдбаре, hash-роутер, числа с .tnum",
+        "CLAUDE.md (причины) и src/modules/ai/README.md (правила) обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: сделать 2–3 живых запроса через AiService → они видны в таблице с ₽ и trace_id",
+        "Шаг 2: фильтр по продавцу и статусу сужает таблицу, total совпадает",
+        "Шаг 3: баланс на странице совпадает с дашбордом polza.ai",
+        "Шаг 4: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-104",
+        "TASK-105"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-107",
+      "milestone": "M15",
+      "category": "infrastructure",
+      "priority": "low",
+      "description": "scripts/diagnose-polza.ts — read-only по нашей БД, без бутстрапа AppModule (довод diagnose-*: AppModule поднял бы BotRegistry). Печатает баланс (v2), список моделей с ценами с фильтром --grep, один пробный chat/completions с маленьким промптом и max_tokens (стоимость в ₽, латентность, trace_id, фактическая модель и провайдер), --json — проба response_format: json_schema на POLZA_AI_MODEL или --model. ПОЧЕМУ: выбрать POLZA_AI_MODEL по реальным ценам и проверить доступность Polza.ai с прод-хоста (MNOGOWEB-MSK) до включения фичи кому-либо.",
+      "acceptance_criteria": [
+        "Скрипт не пишет в Mongo и не стартует ботов",
+        "Пробный запрос стоит копейки (max_tokens ограничен), стоимость печатается",
+        "Команда добавлена в раздел Commands CLAUDE.md",
+        "CLAUDE.md (причины) и src/modules/ai/README.md (правила) обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: npx ts-node scripts/diagnose-polza.ts — баланс, модели, пробный ответ с ценой",
+        "Шаг 2: npx ts-node scripts/diagnose-polza.ts --json — валидный JSON по схеме",
+        "Шаг 3: тот же скрипт в прод-контейнере — Polza.ai доступна",
+        "Шаг 4: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-103"
+      ],
       "status": "done"
     }
   ]

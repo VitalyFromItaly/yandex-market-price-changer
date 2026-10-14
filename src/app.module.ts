@@ -9,6 +9,8 @@ import { AppConfigService } from './config/app-config.service';
 import { DatabaseModule } from './database/database.module';
 import { AccessModule } from './modules/access/access.module';
 import { AdminAuthModule } from './modules/admin/admin-auth.module';
+import { AiAdminModule } from './modules/ai/ai-admin.module';
+import { AiModule } from './modules/ai/ai.module';
 import { CrmCardsModule } from './modules/crm/cards/crm-cards.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { CrmFbyModule } from './modules/crm/fby/crm-fby.module';
@@ -55,9 +57,13 @@ import { YandexModule } from './modules/yandex/yandex.module';
     }),
     DatabaseModule,
     ErrorsModule,
+    // ИИ: без ключа поднимается и молчит; наружу — только AiService (TASK-104).
+    AiModule,
     AdminAuthModule,
     LogsModule,
     MetricsModule,
+    // Страница «ИИ» в админке: расход по AiUsage и баланс (TASK-106).
+    AiAdminModule,
     AccessModule,
     CrmModule,
     CrmJobsModule,

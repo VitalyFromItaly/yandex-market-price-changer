@@ -1,12 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import {
-  ErrorReporter,
-  SYSTEM_USER,
-} from '../../src/modules/errors/error-reporter.service';
+import { ErrorReporter, SYSTEM_USER } from '../../src/modules/errors/error-reporter.service';
 import { AlertThrottle, ALERT_WINDOW_MS } from '../../src/modules/errors/alert-throttle';
 import { ReportGenerationError } from '../../src/modules/yandex/report-generation.error';
 import { YandexRateLimitError, YandexApiError } from '../../src/modules/yandex/yandex-api.errors';
+import { PolzaInsufficientFundsError } from '../../src/modules/ai/polza.errors';
 
 /**
  * Ловитель ошибок. Проверяется в первую очередь то, что он НЕ должен делать:
@@ -113,6 +111,24 @@ describe('ErrorReporter', () => {
     expect(entry.errorType).toBe('YandexRateLimitError');
     expect(entry.httpStatus).toBe(429);
     expect(entry.requestUrl).toBe('GET v2/campaigns/123/orders');
+  });
+
+  it('ошибка Polza приносит статус, адрес запроса и source polza', async () => {
+    const { reporter, record } = build();
+    const error = new PolzaInsufficientFundsError(
+      'Недостаточно средств',
+      402,
+      'INSUFFICIENT_BALANCE',
+      'trace-1',
+    ).withRequest('post', '/v1/chat/completions');
+
+    await reporter.report({ error, source: 'queue', context: 'ai:complete' });
+
+    const entry = record.mock.calls[0][0];
+    expect(entry.source).toBe('polza');
+    expect(entry.errorType).toBe('PolzaInsufficientFundsError');
+    expect(entry.httpStatus).toBe(402);
+    expect(entry.requestUrl).toBe('POST /v1/chat/completions');
   });
 
   it('вырезает подписанный токен, но НЕ трогает числа', async () => {

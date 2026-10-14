@@ -21,6 +21,7 @@ const PROBE_LABEL: Record<string, string> = {
   telegram: 'Зеркало Telegram (getMe)',
   yandex: 'API Маркета',
   redis: 'Redis',
+  polza: 'Polza.ai (баланс)',
 };
 
 export function probeLabel(key: string): string {

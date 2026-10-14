@@ -39,6 +39,12 @@ export function isApproved(user: IUserRow): boolean {
 }
 
 /** Вариант выпадающего списка «кого показывать» в журнале. */
+/**
+ * Кто в строке — всё, что фильтру нужно от записи. Структурно: строки журнала
+ * действий и журнала ИИ-запросов подходят обе, без адаптеров.
+ */
+export type TRowWho = Pick<IActionLogRow, 'telegramUserId' | 'username' | 'name'>;
+
 export interface IUserOption {
   /** Ровно тот telegramUserId, по которому фильтрует бэкенд. */
   value: string;
@@ -59,7 +65,7 @@ export interface IUserOption {
  */
 export function logUserOptions(
   users: IUserRow[],
-  rows: IActionLogRow[],
+  rows: TRowWho[],
   selected: string,
 ): IUserOption[] {
   const options = new Map<string, IUserOption>();
@@ -97,7 +103,7 @@ function sellerLabel(user: IUserRow): string {
 }
 
 /** Подпись по самой записи журнала: id показывается рядом — ник меняется, id нет. */
-function logLabel(row: IActionLogRow): string {
+function logLabel(row: TRowWho): string {
   const who = row.username ? `@${row.username}` : row.name;
   return who ? `${who} — ${row.telegramUserId}` : row.telegramUserId;
 }

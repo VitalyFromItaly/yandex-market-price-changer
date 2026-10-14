@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 
-import type { IMetricsReport, IUserRow } from '../api';
+import type { IAiUsageReport, IMetricsReport, IUserRow } from '../api';
 
-import { fetchLogs, fetchMetrics, fetchUsers } from '../api';
+import { fetchAiUsage, fetchLogs, fetchMetrics, fetchUsers } from '../api';
 import { describeError, token } from '../auth';
 import { formatCount, formatMs } from '../metrics.domain';
 import { displayName } from '../users.domain';
@@ -15,6 +15,9 @@ const users = ref<IUserRow[]>([]);
 const errors = ref(0);
 /** Сводка метрик за сутки — строка-ссылка; без неё обзор всё равно открывается. */
 const metrics = ref<IMetricsReport | null>(null);
+/** Расход на ИИ за сутки — тоже строка-ссылка и тоже не условие открытия обзора. */
+const ai = ref<IAiUsageReport | null>(null);
+const RUB = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const loading = ref(false);
 const loadError = ref('');
 
@@ -50,6 +53,10 @@ async function load(): Promise<void> {
     void fetchMetrics(token.value, '24h')
       .then((report) => (metrics.value = report))
       .catch(() => (metrics.value = null));
+    // Так же вне Promise.all: Polza или сбой сводки ИИ не должны ронять обзор.
+    void fetchAiUsage(token.value, '24h')
+      .then((report) => (ai.value = report))
+      .catch(() => (ai.value = null));
   } catch (error) {
     loadError.value = describeError(error);
   } finally {
@@ -132,6 +139,16 @@ async function load(): Promise<void> {
     >, p95 {{ formatMs(metrics.telegram.p95) }} · зеркало сейчас
     {{ formatMs(metrics.probes.find((p) => p.key === 'telegram')?.last?.latencyMs) }} ·
     <RouterLink to="/metrics">Метрики</RouterLink>
+  </p>
+
+  <p v-if="ai" class="muted hint tnum">
+    ИИ за сутки: {{ RUB.format(ai.totals.costRub) }} ₽,
+    {{ formatCount(ai.totals.requests) }} запросов<template v-if="ai.totals.errors">
+      ,
+      <span class="bad">{{ formatCount(ai.totals.errors) }} ошибок</span></template
+    >
+    · баланс {{ ai.balance ? `${RUB.format(ai.balance.available)} ₽` : '—' }} ·
+    <RouterLink to="/ai">ИИ</RouterLink>
   </p>
 
   <p class="muted hint">

@@ -84,7 +84,7 @@ export function clearToken(): void {
 }
 
 /** Собирает query, выбрасывая пустые значения: `?kind=` фильтрует по пустой строке. */
-function queryString(query: ILogsQuery | IQueueJobsQuery): string {
+function queryString(query: ILogsQuery | IQueueJobsQuery | IAiRequestsQuery): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined && value !== null && value !== '') {
@@ -487,6 +487,92 @@ export interface IMetricsReport {
 
 export async function fetchMetrics(token: string, range: TMetricsRange): Promise<IMetricsReport> {
   return await request<IMetricsReport>(`/api/metrics?range=${range}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// --- расходы на ИИ -----------------------------------------------------------
+
+export type TAiUsageRange = '24h' | '7d' | '30d';
+
+export interface IAiSpend {
+  costRub: number;
+  requests: number;
+  errors: number;
+}
+
+export interface IPolzaBalance {
+  amount: number;
+  available: number;
+  reservedAmount: number | null;
+  spentAmount: number | null;
+  updatedAt: string | null;
+}
+
+/** Ответ GET /api/ai/usage. Суммы посчитаны в Mongo, страница их не пересчитывает. */
+export interface IAiUsageReport {
+  range: TAiUsageRange;
+  since: number;
+  until: number;
+  /** null — баланс не прочитан (нет ключа, отказ, нет ответа); причина в balanceError. */
+  balance: IPolzaBalance | null;
+  balanceError: string | null;
+  totals: IAiSpend & { promptTokens: number; completionTokens: number; cachedTokens: number };
+  errorShare: number | null;
+  days: (IAiSpend & { day: string })[];
+  users: (IAiSpend & { telegramUserId: string; username?: string; name?: string })[];
+  purposes: (IAiSpend & { purpose: string })[];
+}
+
+export interface IAiRequestRow {
+  createdAt: string;
+  telegramUserId: string;
+  username?: string;
+  name?: string;
+  purpose: string;
+  model: string;
+  responseModel: string;
+  provider: string;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
+  costRub: number;
+  durationMs: number;
+  traceId: string;
+  status: 'ok' | 'error';
+  httpStatus: number | null;
+  errorCode: string | null;
+}
+
+export interface IAiRequestsQuery {
+  telegramUserId?: string;
+  purpose?: string;
+  status?: string;
+  since?: string;
+  until?: string;
+  limit?: number;
+  skip?: number;
+}
+
+export interface IAiRequestsResponse {
+  total: number;
+  limit: number;
+  skip: number;
+  items: IAiRequestRow[];
+}
+
+export async function fetchAiUsage(token: string, range: TAiUsageRange): Promise<IAiUsageReport> {
+  return await request<IAiUsageReport>(`/api/ai/usage?range=${range}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function fetchAiRequests(
+  token: string,
+  query: IAiRequestsQuery,
+): Promise<IAiRequestsResponse> {
+  return await request<IAiRequestsResponse>(`/api/ai/requests${queryString(query)}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 }

@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
+import { AiModule } from '../ai/ai.module';
 import { TelegramModule } from '../telegram/telegram.module';
 
 import { HealthMonitorService } from './health-monitor.service';
@@ -20,10 +21,13 @@ import { HealthMonitorService } from './health-monitor.service';
  * место с опциями очередей. forwardRef — тоже по прецеденту QueuesModule: цикла
  * сейчас нет, но TelegramModule тяжёлый, и защита стоит одной обёртки.
  *
+ * AiModule — ради AiService.balance(): баланс Polza проверяется через
+ * единственную дверь к Polza, PolzaClient наружу не отдаётся.
+ *
  * ErrorReporter и AppConfigService приходят сами: их модули глобальные.
  */
 @Module({
-  imports: [DatabaseModule, forwardRef(() => TelegramModule)],
+  imports: [DatabaseModule, AiModule, forwardRef(() => TelegramModule)],
   providers: [HealthMonitorService],
   // Наружу — ради команды /health: она показывает ровно то, по чему монитор
   // принимает решения, а не считает состояние вторым способом.

@@ -58,13 +58,15 @@ export const PING_TIMEOUT_MS = 5000;
 /**
  * Что проверяем. Две внутренние зависимости (Mongo, Redis), диск под ними и два
  * внешних API, без которых бот бесполезен: Telegram — его единственный способ
- * говорить, Яндекс — единственный источник данных.
+ * говорить, Яндекс — единственный источник данных. Шестая — баланс Polza.ai, и
+ * только когда ИИ включён: без неё о кончившихся деньгах первым узнал бы
+ * продавец.
  */
-export type TCheckKey = 'disk' | 'mongo' | 'redis' | 'telegram' | 'yandex';
+export type TCheckKey = 'disk' | 'mongo' | 'redis' | 'telegram' | 'yandex' | 'polza';
 
 /**
- * `warn` — работает, но скоро сломается (бывает только у диска: Mongo и Redis
- * либо отвечают, либо нет).
+ * `warn` — работает, но скоро сломается (бывает у диска и у баланса Polza —
+ * ресурсов, которые убывают постепенно; Mongo и Redis либо отвечают, либо нет).
  */
 export type TCheckState = 'ok' | 'warn' | 'down';
 
@@ -103,6 +105,7 @@ const CHECK_TITLE: Record<TCheckKey, string> = {
   redis: 'Redis',
   telegram: 'Telegram Bot API',
   yandex: 'API Яндекс.Маркета',
+  polza: 'Polza.ai (ИИ)',
 };
 
 /** Заголовок проверки для сообщения. */
@@ -123,6 +126,34 @@ export function diskStateOf(available: number, total: number): TCheckState {
   if (ratio < DISK_CRITICAL_RATIO) return 'down';
   if (ratio < DISK_WARN_RATIO) return 'warn';
   return 'ok';
+}
+
+/**
+ * Состояние баланса Polza, ₽.
+ *
+ * Рубли, а не доля, как у диска: у баланса нет «всего раздела», есть остаток.
+ * Ноль и меньше — авария: каждый запрос получит 402, предупреждать уже поздно.
+ * Нечитаемое число — тоже авария: «не знаем, есть ли деньги» нельзя показывать
+ * зелёным. `warnRub` 0 — предупреждение выключено, авария при нуле остаётся.
+ */
+export function polzaBalanceStateOf(available: number, warnRub: number): TCheckState {
+  if (!Number.isFinite(available) || available <= 0) return 'down';
+  if (warnRub > 0 && available < warnRub) return 'warn';
+  return 'ok';
+}
+
+/** Рубли по-русски: «1 234,56 ₽». */
+export function formatRub(value: number): string {
+  if (!Number.isFinite(value)) return '—';
+  return `${value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽`;
+}
+
+/** «доступно 150 ₽ · порог 200 ₽» — порог печатаем, только когда он сработал. */
+export function polzaBalanceDetail(available: number, warnRub: number): string {
+  const head = `доступно ${formatRub(available)}`;
+  return polzaBalanceStateOf(available, warnRub) === 'ok'
+    ? head
+    : `${head} · порог ${formatRub(warnRub)}`;
 }
 
 /**
@@ -234,6 +265,14 @@ export const YANDEX_SCOPE_NOTE =
   'Ошибки отдельных методов приходят своими алертами со строкой «Запрос: …».';
 
 /**
+ * Что значит проблема с Polza и что делать. Без неё «Polza.ai: авария» не
+ * говорит ни о последствиях, ни о том, куда идти.
+ */
+export const POLZA_SCOPE_NOTE =
+  'ИИ-функции перестанут работать у всех продавцов: ключ Polza один на всех. ' +
+  'Пополнить баланс или проверить ключ — в кабинете polza.ai.';
+
+/**
  * Где искать причину недоступности Яндекса: Telegram в том же проходе — это
  * контрольный внешний адрес. Отвечает он — сеть у контейнера есть.
  */
@@ -260,6 +299,7 @@ export function problemText(result: ICheckResult, all: readonly ICheckResult[] =
     lines.push('', YANDEX_SCOPE_NOTE);
     if (context) lines.push(context);
   }
+  if (result.key === 'polza') lines.push('', POLZA_SCOPE_NOTE);
   return lines.join('\n');
 }
 

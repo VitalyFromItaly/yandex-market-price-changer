@@ -19,6 +19,7 @@ function setup() {
     {} as never,
     { yandexMarketBaseUrl: 'https://api.example' } as never,
     {} as never,
+    {} as never,
   );
   const sleep = vi.fn(async () => undefined);
   Object.assign(service, { sleep });

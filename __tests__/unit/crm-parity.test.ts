@@ -42,7 +42,7 @@ describe('паритет фич бота и разделов CRM', () => {
   it('исключения перечислены явно', () => {
     // Спрятать фичу в исключения — решение, а не способ позеленить тест.
     expect(Object.keys(FEATURES_WITHOUT_SECTION).sort()).toEqual(
-      ['deep_history', 'fby_supply', 'hosting_reminder', 'promotion'].sort(),
+      ['ai', 'deep_history', 'fby_supply', 'hosting_reminder', 'promotion'].sort(),
     );
   });
 });
