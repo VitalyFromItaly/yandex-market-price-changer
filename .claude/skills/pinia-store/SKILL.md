@@ -1,10 +1,10 @@
 ---
 name: pinia-store
 description: >-
-  Архитектура Pinia-сторов CRM продавца Яндекс.Маркета (crm/src): стор — тонкий
+  Архитектура Pinia-сторов CRM продавца Яндекс.Маркета (web/crm/src): стор — тонкий
   фасад, логика разложена по атомарным композаблам в store/composables/ (одна
   забота — один файл), обязательный reset(). Использовать при создании,
-  расширении или рефакторинге любого стора в crm/src/modules/*/store/.
+  расширении или рефакторинге любого стора в web/crm/src/modules/*/store/.
 ---
 
 # Pinia store — атомарные композаблы (CRM продавца)
@@ -17,7 +17,7 @@ description: >-
 [`frontend-module`](../frontend-module/SKILL.md).
 
 > `useBaseState`, `resettableStoresPlugin` / `resetAllStores` и http-клиент **создаются в
-> TASK-069** (`crm/src/shared/`). Эталонного модуля пока нет: первый стор, написанный по этому скилу
+> TASK-069** (`web/crm/src/shared/`). Эталонного модуля пока нет: первый стор, написанный по этому скилу
 > (`auth` в TASK-071), становится образцом для остальных.
 
 ## Когда применять
@@ -30,7 +30,7 @@ description: >-
 ## Раскладка
 
 ```
-crm/src/modules/<module>/store/
+web/crm/src/modules/<module>/store/
 ├── store.<module>.ts              # тонкий фасад — ТОЛЬКО собирает слайсы
 └── composables/
     ├── use<Concern>.<module>.ts   # одна забота = один атом
@@ -253,7 +253,7 @@ npm run typecheck:crm && npm run lint && npm run test:crm
 Компоненты не импортируют `store/composables`:
 
 ```bash
-rg "store/composables" crm/src/modules --glob '!**/store/**'
+rg "store/composables" web/crm/src/modules --glob '!**/store/**'
 # должно быть пусто
 ```
 

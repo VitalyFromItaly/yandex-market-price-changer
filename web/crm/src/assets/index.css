@@ -1,0 +1,192 @@
+@import '@fontsource-variable/inter';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Токены CRM — HSL-триплеты, чтобы Tailwind умел прозрачность (`bg-primary/10`).
+ *
+ * Палитра — макета MarketHub (решение crm_redesign_markethub_dark, 2026-10-14):
+ * глубокий сине-чёрный канвас, панели чуть светлее с градиентом `card` → `card-2`,
+ * акцент — синий. Жёлтый Маркета остался только в знаке площадки (MarketplaceMark):
+ * синий акцент рядом с жёлтым знаком читается как «кабинет», а не как «сайт
+ * Маркета». `brand` теперь равен акценту — это цвет знака кабинета и активного
+ * пункта меню. Админка `web/admin/` намеренно другая: внутренний инструмент, не витрина.
+ *
+ * Статусы — три смысла: ok (в норме), warn (ждёт человека, не сбой), danger
+ * (сломалось, убыток). У каждого приглушённый фон -subtle для бейджей.
+ *
+ * Тёмная — тема ПО УМОЛЧАНИЮ (useTheme), светлая — переключателем, обе на одном
+ * синем акценте: один продукт в двух режимах. Тема — по атрибуту `data-theme` на
+ * <html>, его ставит useTheme (и инлайн-скрипт в index.html до первой отрисовки).
+ * «Как в системе» разрешается там же через matchMedia — поэтому тёмные значения
+ * живут здесь в ОДНОМ блоке, а не в двух копиях (media + атрибут).
+ */
+@layer base {
+  :root {
+    --background: 216 33% 97%;
+    --foreground: 218 40% 11%;
+    --card: 0 0% 100%;
+    --card-2: 214 45% 98%;
+    --card-foreground: 218 40% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 218 40% 11%;
+    --sidebar: 216 30% 95%;
+    --muted: 214 30% 94%;
+    --muted-foreground: 215 16% 42%;
+    --border: 214 25% 87%;
+    --input: 214 25% 80%;
+    --ring: 215 90% 50%;
+    --primary: 215 90% 50%;
+    --primary-foreground: 0 0% 100%;
+    --primary-subtle: 214 100% 94%;
+    --secondary: 214 30% 93%;
+    --secondary-foreground: 218 40% 11%;
+    --accent: 214 40% 92%;
+    --accent-foreground: 218 40% 11%;
+    --brand: 215 90% 50%;
+    --brand-foreground: 0 0% 100%;
+    --brand-subtle: 214 100% 94%;
+    --link: 215 80% 42%;
+    --destructive: 350 75% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --ok: 155 75% 30%;
+    --ok-subtle: 152 60% 92%;
+    /* На белом жёлтый макета не читается — warn темнее, в тон. */
+    --warn: 32 95% 38%;
+    --warn-subtle: 42 100% 92%;
+    --danger: 350 75% 45%;
+    --danger-subtle: 350 90% 95%;
+
+    /*
+     * Графики — цвета макета: выручка синяя, прибыль зелёная, дальше фиолетовый,
+     * жёлтый. `chart-series` — одиночный ряд, он же акцент. Сетка и оси приглушены.
+     */
+    --chart-1: 215 90% 50%;
+    --chart-2: 155 75% 36%;
+    --chart-3: 268 70% 58%;
+    --chart-4: 40 100% 45%;
+    --chart-5: 338 70% 60%;
+    --chart-6: 190 80% 40%;
+    --chart-series: 215 90% 50%;
+    --chart-grid: 214 25% 90%;
+    --chart-axis: 215 12% 50%;
+
+    --shadow-panel: 0 8px 24px hsl(218 40% 20% / 0.06);
+    --radius: 0.7rem;
+
+    color-scheme: light;
+  }
+
+  :root[data-theme='dark'] {
+    --background: 218 53% 6%;
+    --foreground: 216 100% 97%;
+    --card: 215 45% 11%;
+    --card-2: 213 44% 14%;
+    --card-foreground: 216 100% 97%;
+    --popover: 215 45% 12%;
+    --popover-foreground: 216 100% 97%;
+    --sidebar: 216 48% 9%;
+    --muted: 214 40% 15%;
+    --muted-foreground: 212 22% 64%;
+    --border: 215 32% 21%;
+    --input: 208 35% 31%;
+    --ring: 215 100% 61%;
+    --primary: 215 100% 61%;
+    --primary-foreground: 0 0% 100%;
+    --primary-subtle: 211 57% 21%;
+    --secondary: 212 49% 16%;
+    --secondary-foreground: 216 100% 97%;
+    --accent: 214 41% 18%;
+    --accent-foreground: 216 100% 97%;
+    --brand: 215 100% 61%;
+    --brand-foreground: 0 0% 100%;
+    --brand-subtle: 211 57% 21%;
+    --link: 213 100% 74%;
+    --destructive: 350 100% 70%;
+    --destructive-foreground: 218 53% 6%;
+    --ok: 155 70% 50%;
+    --ok-subtle: 156 51% 17%;
+    --warn: 42 100% 65%;
+    --warn-subtle: 34 40% 15%;
+    --danger: 350 100% 70%;
+    --danger-subtle: 345 43% 20%;
+
+    --chart-1: 215 100% 61%;
+    --chart-2: 155 70% 50%;
+    --chart-3: 268 100% 70%;
+    --chart-4: 42 100% 65%;
+    --chart-5: 338 80% 68%;
+    --chart-6: 190 80% 55%;
+    --chart-series: 215 100% 61%;
+    --chart-grid: 215 32% 18%;
+    --chart-axis: 212 18% 58%;
+
+    --shadow-panel: 0 12px 34px hsl(0 0% 0% / 0.17);
+
+    color-scheme: dark;
+  }
+
+  /*
+   * Unovis читает оформление из своих --vis-* переменных. Они ссылаются на
+   * наши токены, поэтому тема переключается без перерисовки графиков и без
+   * второго блока под тёмную.
+   */
+  :root {
+    --vis-font-family: 'Inter Variable', system-ui, sans-serif;
+    --vis-axis-font-family: 'Inter Variable', system-ui, sans-serif;
+    --vis-axis-tick-label-color: hsl(var(--chart-axis));
+    --vis-axis-tick-label-font-size: 12px;
+    --vis-axis-tick-color: transparent;
+    --vis-axis-domain-color: hsl(var(--border));
+    --vis-axis-grid-color: hsl(var(--chart-grid));
+    --vis-axis-label-color: hsl(var(--muted-foreground));
+    --vis-stacked-bar-hover-stroke-width: 0;
+    --vis-tooltip-background-color: hsl(var(--foreground));
+    --vis-tooltip-text-color: hsl(var(--background));
+    --vis-tooltip-border-color: transparent;
+    --vis-tooltip-border-radius: calc(var(--radius) - 2px);
+    --vis-tooltip-padding: 6px 10px;
+    --vis-tooltip-box-shadow: 0 4px 12px hsl(0 0% 0% / 0.15);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Меняющиеся числа — моноширинными цифрами: иначе прыгают при обновлении. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Тонкая полоса прокрутки в цвет границы — не съедает ширину узких колонок. */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  /* Прокрутка без полосы: колесо и тачпад листают, места полоса не занимает. */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}

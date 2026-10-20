@@ -1,15 +1,15 @@
 ---
 name: frontend-module
-description: Создание или расширение Vue 3-модуля CRM продавца Яндекс.Маркета (crm/src/modules/<module>, именование в стиле NestJS с суффиксом .<module>.ts, типы в <module>.domain.ts, маршруты под /ym/...). Использовать при создании нового модуля фичи CRM или при добавлении store/api/composable/mapper/component в существующий.
+description: Создание или расширение Vue 3-модуля CRM продавца Яндекс.Маркета (web/crm/src/modules/<module>, именование в стиле NestJS с суффиксом .<module>.ts, типы в <module>.domain.ts, маршруты под /ym/...). Использовать при создании нового модуля фичи CRM или при добавлении store/api/composable/mapper/component в существующий.
 ---
 
 # Архитектура фронтового модуля (CRM продавца Яндекс.Маркета)
 
-CRM — вторая SPA рядом с админкой `web/`: исходники в `crm/src`, Nest отдаёт сборку по `/crm/`.
-Код организован **модулями** в `crm/src/modules/`. Один модуль — одна доменная область (`auth`,
+CRM — вторая SPA рядом с админкой `web/admin/`: исходники в `web/crm/src`, Nest отдаёт сборку по `/crm/`.
+Код организован **модулями** в `web/crm/src/modules/`. Один модуль — одна доменная область (`auth`,
 `orders`, `profit`, `settings`, `profile`, …). Следуйте правилам ниже точно.
 
-> Каркас `crm/` — Vite 5, Tailwind, кит примитивов, `crm/src/shared/`, роутер и сайдбар —
+> Каркас `web/crm/` — Vite 5, Tailwind, кит примитивов, `web/crm/src/shared/`, роутер и сайдбар —
 > **создаётся в TASK-069**. Эталонного модуля пока нет: первый модуль, написанный по этому скилу
 > (`auth` в TASK-071), становится образцом для остальных.
 
@@ -27,7 +27,7 @@ null || x === undefined` (или сузьте тип, чтобы хватило 
 ## Раскладка
 
 ```
-crm/src/modules/<module-name>/
+web/crm/src/modules/<module-name>/
 ├── <module-name>.domain.ts     # ОБЯЗАТЕЛЬНО: доменные типы/интерфейсы
 ├── api/                        # ОБЯЗАТЕЛЬНО: запросы к бэкенду
 ├── store/                      # ОБЯЗАТЕЛЬНО: Pinia-стор
@@ -39,7 +39,7 @@ crm/src/modules/<module-name>/
 └── constants/                  # ОПЦИОНАЛЬНО: константы модуля
 ```
 
-## Общие утилиты (`crm/src/shared/`, TASK-069)
+## Общие утилиты (`web/crm/src/shared/`, TASK-069)
 
 Межмодульные хелперы — в `src/shared/`, не внутри модулей:
 
@@ -50,8 +50,8 @@ crm/src/modules/<module-name>/
   ошибки — `ApiError` со статусом и `code` сервера (`PASSWORD_CHANGE_REQUIRED` и т.п.).
 - **`shared/utils/`** — чистые хелперы.
 
-Импорт: `import { useBaseState } from '@/shared/composables'`. Алиас `@` → `crm/src` — только внутри
-`crm/`; бэкенд (`src/`) по-прежнему на относительных импортах.
+Импорт: `import { useBaseState } from '@/shared/composables'`. Алиас `@` → `web/crm/src` — только внутри
+`web/crm/`; бэкенд (`src/`) по-прежнему на относительных импортах.
 
 ## Маршрутизация — страницы в модуле, маршруты собираются
 
@@ -156,7 +156,7 @@ null`), а не ref'ом.
 **При разбиении `aria-label` переезжают дословно** — это доступное имя контрола, и на нём держатся
 тесты компонентов, если они появятся.
 
-**Контроль.** Правила `vue/max-lines-per-block` и `max-lines` для `crm/src/modules/**` заводятся в
+**Контроль.** Правила `vue/max-lines-per-block` и `max-lines` для `web/crm/src/modules/**` заводятся в
 `eslint.config.js` вместе с каркасом (TASK-069) — **предупреждениями**, чтобы долг не блокировал
 несвязанную работу. Предупреждение — повод разделить, а не число для подкрутки: поднять лимит,
 чтобы оно замолчало, — единственный неправильный ответ.
@@ -196,7 +196,7 @@ async function openBreakdown(): Promise<void> {
   отображения, отсутствующие поля → явный `null`, коды статусов → доменные юнионы. Типы ответа
   (`…Response`) и доменные типы — в `<module>.domain.ts`.
 - **`null` — это «неизвестно», а не ноль.** Неизвестная себестоимость, отсутствующая дельта цены —
-  `null` и отдельная строка на экране, никогда `?? 0` (довод `orderPurchase` из CLAUDE.md).
+  `null` и отдельная строка на экране, никогда `?? 0` (довод `orderPurchase` из `src/modules/yandex/README.md`).
 - **api/**: тонкие функции поверх общего HTTP-клиента, возвращают **доменные** типы (маппер
   применяется здесь). `<module>Api.<module>.ts` с сгруппированным объектом.
 - **store/**: Pinia через `defineStore('<module>', …)`; файл `store.<module>.ts`. Архитектура —
@@ -217,7 +217,7 @@ async function openBreakdown(): Promise<void> {
 
 ## Шаги создания модуля
 
-1. `crm/src/modules/<module-name>/`.
+1. `web/crm/src/modules/<module-name>/`.
 2. `<module-name>.domain.ts` — доменный интерфейс и тип ответа API.
 3. `mappers/map<Name>.<module>.ts` — ответ → домен.
 4. `api/<module>Api.<module>.ts` — возвращает доменные типы (через маппер).
@@ -230,7 +230,7 @@ async function openBreakdown(): Promise<void> {
 
 Компоненты и страницы фич (`src/modules/**`) не содержат сырой повторяющейся разметки с классами
 Tailwind (`div`/`ul`/`li`/`span`/`form`/`select`/`p`/`h1` со стилями). Каждый UI-элемент выносится в
-**переиспользуемый примитив** в `crm/src/components/ui/<name>/` (стиль shadcn-vue: копия в проект,
+**переиспользуемый примитив** в `web/crm/src/components/ui/<name>/` (стиль shadcn-vue: копия в проект,
 `cn()`, варианты cva, основа reka-ui) и переиспользуется. В идеале фичи состоят только из
 компонентов.
 
@@ -283,14 +283,14 @@ Tailwind (`div`/`ul`/`li`/`span`/`form`/`select`/`p`/`h1` со стилями). 
 (публичный), подтверждение цены в карантине, запись остатков.
 
 Правила:
-- Перед разметкой в фиче проверьте `crm/src/components/ui` на подходящий примитив; нет — сначала
+- Перед разметкой в фиче проверьте `web/crm/src/components/ui` на подходящий примитив; нет — сначала
   создайте его там. Примитивам HTML можно — они и есть абстракция.
 - Импорт примитивов — из индекса папки: `import { Card } from '@/components/ui/card'`.
 - Стили живут внутри примитивов, чтобы у CRM был один визуальный язык.
 
 ## Чеклист перед завершением
 
-- [ ] Папка — `crm/src/modules/<module>/`.
+- [ ] Папка — `web/crm/src/modules/<module>/`.
 - [ ] Типы — в `<module>.domain.ts`; больше нигде доменные типы не объявляются.
 - [ ] Каждый `.ts` оканчивается на `.<module>.ts` (кроме `pages/routes.ts`).
 - [ ] Компоненты — `PascalCase.vue` в `components/`.

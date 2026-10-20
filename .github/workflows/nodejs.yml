@@ -10,6 +10,27 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # Настоящий Postgres для финансов (решение finance_postgres_tests): локально
+    # тесты репозиториев идут на PGlite, здесь — ещё раз на сервере, где есть
+    # то, чего PGlite не умеет: гонки двух соединений.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: finance
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: finance
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U finance"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_POSTGRES_URL: postgres://finance:secret@localhost:5432/finance
+
     steps:
       - uses: actions/checkout@v4
       - uses: volta-cli/action@v4
@@ -30,6 +51,13 @@ jobs:
 
       - name: Форматирование
         run: npm run prettier:check
+
+      # Те же миграции, что приложение применяет при старте: сломанная миграция
+      # должна ронять CI, а не первый деплой.
+      - name: Миграции Postgres
+        run: npm run db:pg:migrate
+        env:
+          POSTGRES_URL: postgres://finance:secret@localhost:5432/finance
 
       - name: Тесты
         run: npm test

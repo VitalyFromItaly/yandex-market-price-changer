@@ -32,12 +32,14 @@ export default [
       // на них падают с «parserOptions.project: файл не найден в проекте», а
       // расширять include ради линта значит тянуть тесты в сборку.
       "vitest.config.ts",
+      "drizzle.config.ts",
       "scripts/**",
       // Проекция бэклога (tools/backlog.mjs) — ставится копией из ~/.claude.
       "tools/**",
       // Админ-панель: свой тулчейн (vite), свой tsconfig не нужен —
       // тянуть .vue и DOM-типы в сборку бэкенда ради линта незачем.
-      "web/**",
+      // Только web/admin: web/crm линтуется (блок ниже), "web/**" её бы скрыл.
+      "web/admin/**",
       "__tests__/**",
       "**/rust-wasm-libs",
       "**/typedocs",
@@ -179,21 +181,21 @@ export default [
     }
   },
   /*
-   * CRM продавца (crm/) — второй SPA со своим tsconfig. В отличие от web/ она
+   * CRM продавца (web/crm/) — второй SPA со своим tsconfig. В отличие от web/admin/ она
    * линтуется: правила скилов frontend-module (только ===, размер компонента)
    * без линта держались бы на памяти.
    *
    * Типизированные правила здесь ВЫКЛЮЧЕНЫ: `project: true` корня ищет
-   * ближайший tsconfig, а crm/tsconfig.json — бандлерный (Bundler, .vue), и
+   * ближайший tsconfig, а web/crm/tsconfig.json — бандлерный (Bundler, .vue), и
    * type-aware разбор .vue через него — отдельная работа с хрупким парсером.
    * Типы CRM проверяет vue-tsc (`npm run typecheck:crm`), это его работа.
    */
   ...pluginVue.configs["flat/recommended"].map((config) => ({
     ...config,
-    files: ["crm/**/*.vue"]
+    files: ["web/crm/**/*.vue"]
   })),
   {
-    files: ["crm/**/*.ts", "crm/**/*.vue"],
+    files: ["web/crm/**/*.ts", "web/crm/**/*.vue"],
     languageOptions: {
       parser: vueParser,
       parserOptions: {
@@ -225,7 +227,7 @@ export default [
   {
     // Примитивы кита названы как в shadcn-vue (Button, Card, Tooltip) — это
     // словарь, по которому их ищут; префикс ради правила только мешал бы.
-    files: ["crm/src/components/ui/**/*.vue"],
+    files: ["web/crm/src/components/ui/**/*.vue"],
     rules: {
       "vue/multi-word-component-names": "off"
     }
@@ -236,7 +238,7 @@ export default [
      * Предупреждение, а не ошибка: долг не должен блокировать несвязанную
      * работу. Поднять лимит, чтобы замолчало, — единственный неверный ответ.
      */
-    files: ["crm/src/modules/**/*.vue", "crm/src/modules/**/*.ts"],
+    files: ["web/crm/src/modules/**/*.vue", "web/crm/src/modules/**/*.ts"],
     rules: {
       "max-lines": ["warn", { max: 300, skipBlankLines: true, skipComments: true }]
     }
@@ -245,7 +247,7 @@ export default [
     // Правило vue-плагина — только для .vue: плагин объявлен конфигами
     // flat/recommended лишь для них, и на .ts eslint падал бы целиком
     // («Could not find plugin "vue"») — что и случилось на первом модуле.
-    files: ["crm/src/modules/**/*.vue"],
+    files: ["web/crm/src/modules/**/*.vue"],
     rules: {
       "vue/max-lines-per-block": ["warn", { template: 200, script: 200 }]
     }

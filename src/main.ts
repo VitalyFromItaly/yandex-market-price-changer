@@ -1,4 +1,5 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import type { NextFunction, Request, Response } from 'express';
 
 import { NestFactory } from '@nestjs/core';
 import { setDefaultAutoSelectFamilyAttemptTimeout } from 'net';
@@ -25,6 +26,9 @@ import { ErrorReporter } from './modules/errors/error-reporter.service';
  */
 setDefaultAutoSelectFamilyAttemptTimeout(5000);
 
+/** Иконки, которые браузеры запрашивают без ссылки на них (см. bootstrap). */
+const BROWSER_ICON = /^\/(favicon\.ico|apple-touch-icon[\w-]*\.png)$/;
+
 async function bootstrap() {
   // `import 'dotenv/config'` здесь больше не нужен: загрузку и валидацию
   // окружения выполняет ConfigModule внутри AppModule. При отсутствии
@@ -33,7 +37,7 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   /*
-   * Админ-панель (web/) раздаётся тем же приложением: одна репа, одна сборка,
+   * Админ-панель (web/admin/) раздаётся тем же приложением: одна репа, одна сборка,
    * один контейнер. Конфликта с API нет — тот весь под префиксом /api, а
    * панель живёт в корне.
    *
@@ -44,14 +48,36 @@ async function bootstrap() {
    * на неё не срабатывает и логи не засоряются строкой на каждый файл.
    */
   /*
-   * CRM продавца (crm/) — второй SPA, под префиксом /crm, и регистрируется
+   * CRM продавца (web/crm/) — второй SPA, под префиксом /crm, и регистрируется
    * РАНЬШЕ корневой админки: express-static отдаёт первый найденный файл, а
    * у обеих сборок есть index.html и favicon.svg. Vite собирает её с base
    * '/crm/', роутер — на hash, поэтому SPA-fallback не нужен: F5 на
    * /crm/#/ym/orders запрашивает только /crm/.
    */
-  app.useStaticAssets(join(__dirname, '..', 'crm', 'dist'), { prefix: '/crm' });
-  app.useStaticAssets(join(__dirname, '..', 'web', 'dist'));
+  /*
+   * Иконки, которые браузер просит сам, мимо <link rel="icon">: `/favicon.ico`
+   * и iOS-шные `/apple-touch-icon*.png`. Файлов нет намеренно (иконка — один
+   * SVG, без бинарников в репозитории, см. web/admin/index.html), а без этого ответа
+   * каждое открытие панели с телефона давало три 404 во вкладке «Мусор» —
+   * вперемешку со сканерами, которых там и ищут. 204: «иконки нет», без ошибки.
+   */
+  app.use((req: Request, res: Response, next: NextFunction): void => {
+    if (BROWSER_ICON.test(req.path)) res.status(204).end();
+    else next();
+  });
+
+  app.useStaticAssets(join(__dirname, '..', 'web', 'crm', 'dist'), { prefix: '/crm' });
+  app.useStaticAssets(join(__dirname, '..', 'web', 'admin', 'dist'));
+
+  /*
+   * Впереди один прокси — nginx CapRover, он кладёт адрес клиента в
+   * X-Forwarded-For. Без этого req.ip — адрес самого nginx, и в журнале
+   * ошибок (вкладка «Мусор») все сканеры выглядели бы одним источником.
+   * Один хоп, а не `true`: доверять всей цепочке значит брать первый адрес,
+   * который клиент пишет сам. При прямом заходе на порт заголовок всё равно
+   * подделывается — терпимо, IP идёт только в журнал и доступ не решает.
+   */
+  app.set('trust proxy', 1);
 
   app.setGlobalPrefix('/api');
   app.useGlobalInterceptors(new LoggerInterceptor());
