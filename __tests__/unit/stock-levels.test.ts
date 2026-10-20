@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { ymStockLevels } from '../../src/modules/marketplaces/marketplace-stocks';
+
 import { toCrmStocksView } from '../../src/modules/crm/stocks/crm-stocks.domain';
 import {
   fbyStockLevels,
@@ -98,7 +100,7 @@ describe('StockLevelsService', () => {
     expect(fbyStock.safeLoad).toHaveBeenCalledTimes(1);
     expect(client.loadStocks).not.toHaveBeenCalled();
     expect(levels.stocks).toEqual({ F: 4 });
-    expect(toCrmStocksView(levels)).toMatchObject({ fby: true, threshold: 3, problem: null });
+    expect(toCrmStocksView(ymStockLevels(levels))).toMatchObject({ fby: true, threshold: 3, problem: null });
   });
 
   it('FBS по живому placementFor → offers/stocks, запись не трогается', async () => {
@@ -116,7 +118,7 @@ describe('StockLevelsService', () => {
   it('сбой чтения — не падение, а причина текстом', async () => {
     const { service, client } = setup('FBS');
     client.loadStocks.mockRejectedValueOnce(new Error('boom'));
-    const view = toCrmStocksView(await service.levels(STORE as never));
+    const view = toCrmStocksView(ymStockLevels(await service.levels(STORE as never)));
     expect(view.stocks).toBeNull();
     expect(view.problem).toBe('Остатки временно недоступны.');
   });

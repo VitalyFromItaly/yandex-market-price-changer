@@ -1,3 +1,5 @@
+import type { TOrderStage } from '../../../shared/order-stage';
+
 /**
  * ЕДИНСТВЕННЫЙ источник правды о том, какие статусы и какой фильтр даты
  * соответствуют каждому отчёту.
@@ -500,6 +502,58 @@ export const PLACED_DEFINITION: IReportDefinition = {
   dateFilter: 'creationDate',
   usesReturnsApi: false,
 };
+
+/**
+ * Подстатусы сборки (`PROCESSING`), по которым этап заказа уточняется до
+ * «собран» и «передан в доставку». Остальные подстатусы сборки — «ожидает сборки».
+ */
+export const PROCESSING_SUBSTATUS = {
+  STARTED: 'STARTED',
+  READY_TO_SHIP: 'READY_TO_SHIP',
+  SHIPPED: 'SHIPPED',
+} as const;
+
+/**
+ * Статус ЯМ → этап общего набора (ТЗ п.11, TASK-130). `Record` по ПОЛНОМУ enum:
+ * новый статус Partner API не скомпилируется без решения. Подстатус уточняет
+ * этап в `ymOrderStage`, здесь — этап по одному статусу.
+ *
+ * `PICKUP` — «доставлен» (лежит в пункте выдачи), `DELIVERED` — «выкуплен»
+ * (покупатель забрал): у ЯМ это два разных статуса, и ТЗ их различает.
+ */
+export const YM_ORDER_STAGE: Readonly<Record<TOrderStatus, TOrderStage>> = {
+  [ORDER_STATUS.PLACING]: 'new',
+  [ORDER_STATUS.RESERVED]: 'new',
+  [ORDER_STATUS.UNPAID]: 'new',
+  [ORDER_STATUS.PENDING]: 'new',
+  [ORDER_STATUS.PROCESSING]: 'awaiting_assembly',
+  [ORDER_STATUS.DELIVERY]: 'in_transit',
+  [ORDER_STATUS.PICKUP]: 'delivered',
+  [ORDER_STATUS.DELIVERED]: 'redeemed',
+  [ORDER_STATUS.CANCELLED]: 'cancelled',
+  [ORDER_STATUS.PARTIALLY_RETURNED]: 'returned',
+  [ORDER_STATUS.RETURNED]: 'returned',
+  [ORDER_STATUS.UNKNOWN]: 'unknown',
+};
+
+const RETURN_SUBSTATUSES: readonly string[] = Object.values(RETURN_SUBSTATUS);
+
+/**
+ * Этап заказа ЯМ. Подстатус невыкупа (`RETURN_SUBSTATUS` — те же, по которым
+ * собирается «Едет обратно») делает заказ «возвращается» на любом статусе,
+ * кроме уже вернувшегося; подстатус сборки — «собран» или «передан в
+ * доставку». Статус вне enum — `unknown`, а не догадка.
+ */
+export function ymOrderStage(order: { status?: string; substatus?: string }): TOrderStage {
+  const base = YM_ORDER_STAGE[order?.status as TOrderStatus] ?? 'unknown';
+  if (base === 'returned' || base === 'unknown') return base;
+  if (RETURN_SUBSTATUSES.includes(order?.substatus ?? '')) return 'returning';
+  if (order?.status === ORDER_STATUS.PROCESSING) {
+    if (order.substatus === PROCESSING_SUBSTATUS.READY_TO_SHIP) return 'assembled';
+    if (order.substatus === PROCESSING_SUBSTATUS.SHIPPED) return 'handed_over';
+  }
+  return base;
+}
 
 /** Отменён ли заказ. Одна проверка на всех, а не сравнение строк по коду. */
 export function isCancelled(order: { status?: string }): boolean {

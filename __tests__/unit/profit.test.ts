@@ -28,6 +28,7 @@ import {
 import { formatRubles, NBSP } from '../../src/modules/yandex/reports/money';
 import { formatProfitReport } from '../../src/modules/yandex/reports/profit-message';
 import { DEFAULT_PERIOD } from '../../src/modules/yandex/reports/report-period';
+import { unconfirmedOf } from '../../src/shared/profit-confirmation';
 
 /** Заказ на 10 000 ₽ из одной позиции по 5 000 ₽ закупа. */
 const ORDER = {
@@ -195,7 +196,7 @@ describe('Услуги вместо плоской комиссии (экран 
     const totals = profitOf([ORDER], COSTS, DEFAULT_RATES, { services: new Map() });
 
     expect(totals.orders).toBe(0);
-    expect(totals.excludedOrders).toBe(1);
+    expect(totals.unconfirmed.orders).toBe(1);
     expect(totals.commission).toBe(0);
   });
 
@@ -220,11 +221,29 @@ describe('Услуги вместо плоской комиссии (экран 
     });
 
     expect(totals.returnedOrders).toBe(1);
-    expect(totals.excludedOrders).toBe(0);
+    expect(totals.unconfirmed.orders).toBe(0);
   });
 });
 
 describe('Заказы без закупа', () => {
+  it('заказ без закупа не меняет подтверждённую чистую — только признак', () => {
+    const base = profitOf([ORDER], COSTS);
+    const withUnknown = profitOf(
+      [ORDER, { itemsTotal: 7000, items: [{ offerId: 'НЕТ', count: 1 }] }],
+      COSTS,
+    );
+
+    expect(base.unconfirmed.confirmed).toBe(true);
+    expect(withUnknown.net).toBe(base.net);
+    expect(withUnknown.revenue).toBe(base.revenue);
+    expect(withUnknown.unconfirmed).toEqual({
+      confirmed: false,
+      orders: 1,
+      revenueKopecks: 700_000,
+      skus: ['НЕТ'],
+    });
+  });
+
   it('заказ с неизвестной позицией исключается ЦЕЛИКОМ', () => {
     const totals = profitOf(
       [ORDER, { itemsTotal: 7000, items: [{ offerId: 'НЕТ', count: 1 }] }],
@@ -233,9 +252,9 @@ describe('Заказы без закупа', () => {
 
     expect(totals.orders).toBe(1);
     expect(totals.revenue).toBe(10000);
-    expect(totals.excludedOrders).toBe(1);
-    expect(totals.excludedRevenue).toBe(7000);
-    expect(totals.unknownSkus).toEqual(['НЕТ']);
+    expect(totals.unconfirmed.orders).toBe(1);
+    expect(totals.unconfirmed.revenueKopecks).toBe(700_000);
+    expect(totals.unconfirmed.skus).toEqual(['НЕТ']);
   });
 
   it('заказ исключается, даже если известна ЧАСТЬ позиций', () => {
@@ -254,23 +273,23 @@ describe('Заказы без закупа', () => {
     );
 
     expect(totals.orders).toBe(0);
-    expect(totals.excludedOrders).toBe(1);
+    expect(totals.unconfirmed.orders).toBe(1);
     // В список попадает только то, чего действительно нет.
-    expect(totals.unknownSkus).toEqual(['НЕТ']);
+    expect(totals.unconfirmed.skus).toEqual(['НЕТ']);
   });
 
   it('заказ без позиций тоже исключается: считать нечем', () => {
     const totals = profitOf([{ itemsTotal: 500, items: [] }], COSTS);
 
     expect(totals.orders).toBe(0);
-    expect(totals.excludedOrders).toBe(1);
+    expect(totals.unconfirmed.orders).toBe(1);
   });
 
   it('позиция без артикула — это неизвестный закуп, а не нулевой', () => {
     const totals = profitOf([{ itemsTotal: 500, items: [{ count: 1 }] }], COSTS);
 
-    expect(totals.excludedOrders).toBe(1);
-    expect(totals.unknownSkus).toEqual(['(без артикула)']);
+    expect(totals.unconfirmed.orders).toBe(1);
+    expect(totals.unconfirmed.skus).toEqual(['(без артикула)']);
   });
 
   it('orderPurchase возвращает null, а не 0', () => {
@@ -341,8 +360,8 @@ describe('Возвраты', () => {
     );
 
     expect(totals.returnedOrders).toBe(1);
-    expect(totals.excludedOrders).toBe(0);
-    expect(totals.unknownSkus).toEqual([]);
+    expect(totals.unconfirmed.orders).toBe(0);
+    expect(totals.unconfirmed.skus).toEqual([]);
   });
 
   it('пустой набор возвратов ничего не меняет', () => {
@@ -629,6 +648,56 @@ describe('Текст отчёта о прибыли', () => {
     pricesUpdatedAt: new Date('2026-07-29T09:00:00Z'),
     totals: profitOf([ORDER], COSTS),
   };
+
+  it('фактическая чистая (TASK-126): проверено — число журнала рядом с плоской', () => {
+    const now = new Date('2026-07-30T09:00:00Z');
+    const text = formatProfitReport(report, now, {
+      state: 'verified',
+      netKopecks: 154_321,
+      unconfirmed: unconfirmedOf(0, 0, []),
+      from: '2026-06-01',
+      to: '2026-06-30',
+    });
+
+    expect(text).toContain(`Фактическая чистая: <b>${formatRubles(1543.21)}</b>`);
+    expect(text).toContain('весь кабинет');
+    expect(text).toContain(`Чистая: <b>${formatRubles(2000)}</b>`);
+    expect(text).not.toContain('предварительно');
+    expect(text).not.toContain('не подтверждена');
+  });
+
+  it('фактическая чистая с неполным закупом — общая строка «не подтверждена»', () => {
+    const text = formatProfitReport(report, undefined, {
+      state: 'verified',
+      netKopecks: 100_00,
+      unconfirmed: unconfirmedOf(2, 300_00, ['X-1']),
+      from: '2026-06-01',
+      to: '2026-06-30',
+    });
+    expect(text).toContain('Прибыль не подтверждена: 2 заказа');
+  });
+
+  it('не проверено — плоская с пометкой «предварительно» и причиной, фактической нет', () => {
+    const text = formatProfitReport(report, undefined, {
+      state: 'preliminary',
+      reason: 'журнал за период — «Предварительные данные»',
+    });
+    expect(text).toContain(`Чистая: <b>${formatRubles(2000)}</b> · предварительно`);
+    expect(text).toContain('🕒 Чистая — предварительно: журнал за период');
+    expect(text).not.toContain('Фактическая чистая');
+  });
+
+  it('журнал недоступен — тоже «предварительно», со своей причиной', () => {
+    const text = formatProfitReport(report, undefined, { state: 'unavailable', reason: 'нет связи' });
+    expect(text).toContain('· предварительно');
+    expect(text).toContain('нет связи');
+  });
+
+  it('фича закрыта (actual не передан) — текст прежний', () => {
+    const now = new Date('2026-07-30T09:00:00Z');
+    expect(formatProfitReport(report, now)).toBe(formatProfitReport(report, now, undefined));
+    expect(formatProfitReport(report, now)).not.toContain('предварительно');
+  });
 
   it('видны все вычитания, проценты и чистая', () => {
     const text = formatProfitReport(report, new Date('2026-07-30T09:00:00Z'));

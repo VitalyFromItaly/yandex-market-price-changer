@@ -115,6 +115,15 @@ export class YandexMarket {
   @Prop({ type: [Object] })
   stores?: IStoreEntry[];
 
+  /**
+   * Когда токен в последний раз подтвердил Маркет из CRM: смена токена или
+   * «Проверить связь» на «Подключениях» (TASK-161). Пусто — токен ставили в
+   * боте и с тех пор не перепроверяли; статуса у ЯМ нет — записанный токен и
+   * есть проверенный (`connectionsView`).
+   */
+  @Prop({ type: Date })
+  tokenCheckedAt?: Date;
+
   @Prop()
   telegramUserId?: string;
 

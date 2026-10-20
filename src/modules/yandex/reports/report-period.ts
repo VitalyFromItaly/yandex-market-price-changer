@@ -9,6 +9,7 @@ import {
   startOfWeek,
   type ICalendarDate,
 } from './moscow-day';
+import { REPORT } from './report-status-map';
 import { HISTORY_WINDOW_DAYS } from '../yandex-api.paths';
 import { YandexDateRangeError, daysBetween } from '../yandex-date-window';
 
@@ -38,6 +39,13 @@ export const PERIOD = {
   WEEK: 'week',
   /** С первого числа текущего месяца по сегодня. */
   MONTH: 'month',
+  /**
+   * Прошлый календарный месяц целиком. Только у «Прибыли» (TASK-126, решение
+   * `profit_prev_month_period`): «Проверено» у журнала Маркета бывает лишь у
+   * закрытого месяца, и без этого периода «Фактическая чистая» была бы видна
+   * только в «Другом дне». Кнопки — `periodsFor`; в рассылку не входит.
+   */
+  PREV_MONTH: 'prevmonth',
   /**
    * Без ограничения по датам.
    *
@@ -112,6 +120,10 @@ export function periodBounds(period: IReportPeriod, now: Date = new Date()): IPe
       return { from: startOfWeek(today), to: today };
     case PERIOD.MONTH:
       return { from: startOfMonth(today), to: today };
+    case PERIOD.PREV_MONTH: {
+      const last = shiftDays(startOfMonth(today), -1);
+      return { from: startOfMonth(last), to: last };
+    }
     default:
       return { from: today, to: today };
   }
@@ -286,6 +298,8 @@ export function periodButtonLabel(key: TPeriodKey): string {
       return '📆 С начала недели';
     case PERIOD.MONTH:
       return '🗓 С 1 числа месяца';
+    case PERIOD.PREV_MONTH:
+      return '⏮ Прошлый месяц';
     case PERIOD.ALL:
       return '📚 Всего';
     default:
@@ -322,6 +336,27 @@ export function nextSchedulePeriod(current: TPeriodKey): TPeriodKey {
   return SCHEDULE_PERIODS[(index + 1) % SCHEDULE_PERIODS.length];
 }
 
+const PERIOD_TITLE_PREFIX: Partial<Record<TPeriodKey, string>> = {
+  [PERIOD.WEEK]: 'с начала недели',
+  [PERIOD.PREV_MONTH]: 'за прошлый месяц',
+};
+
+/**
+ * Кнопки периода отчёта по рядам — одна точка и для бота, и для проверки
+ * callback. «Прошлый месяц» есть только у «Прибыли» и только когда открыт
+ * (`prevMonth` решает вызывающий: фичи profit_actual и deep_history), — его
+ * начало почти всегда старше 30 дней, и без архива отчёт упал бы.
+ */
+export function periodsFor(reportKey: string, options: { prevMonth: boolean }): TPeriodKey[][] {
+  const rows: TPeriodKey[][] = [
+    [PERIOD.TODAY, PERIOD.DAY],
+    [PERIOD.WEEK, PERIOD.MONTH],
+  ];
+  if (reportKey === REPORT.PROFIT && options.prevMonth) rows.push([PERIOD.PREV_MONTH]);
+  rows.push([PERIOD.ALL]);
+  return rows;
+}
+
 /**
  * Подпись периода в заголовке отчёта.
  *
@@ -340,7 +375,7 @@ export function periodTitle(period: IReportPeriod, now: Date = new Date()): stri
     return period.key === PERIOD.TODAY ? `за сегодня, ${from}` : `за ${from}`;
   }
 
-  const prefix = period.key === PERIOD.WEEK ? 'с начала недели' : 'с начала месяца';
+  const prefix = PERIOD_TITLE_PREFIX[period.key] ?? 'с начала месяца';
   return `${prefix}, ${from} — ${to}`;
 }
 

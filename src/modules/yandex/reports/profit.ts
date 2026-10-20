@@ -40,6 +40,12 @@
  * содержит ни одна.
  */
 
+import {
+  NO_SKU_LABEL,
+  unconfirmedOf,
+  type IUnconfirmedProfit,
+} from '../../../shared/profit-confirmation';
+
 import { brandOf, isBrandKey, type TBrandKey } from './brands';
 import { orderTotals, type IOrderMoney } from './money';
 import { orderDayIso } from './order-day';
@@ -178,15 +184,22 @@ export function brandDiscountOf(config: IDiscountConfig, brand: TBrandKey | null
   return config.brandPercents[brand] ?? config.defaultPercent;
 }
 
-/** Закуп одной позиции по готовому конфигу — общий шаг двух функций ниже. */
-function costAt(row: IPurchaseRow, config: IDiscountConfig): number {
+/**
+ * Закуп одной позиции по готовому конфигу: цена минус скидка её бренда.
+ *
+ * ЕДИНСТВЕННОЕ место, где скидка бренда вычитается из цены. Его зовут
+ * `purchaseCost`/`applyDiscounts` ниже и себестоимость товара
+ * (`productCost` в modules/products): вторая копия правила разошлась бы с
+ * «Прибылью» молча, на первой же правке реестра брендов.
+ */
+export function discountedPurchase(row: IPurchaseRow, config: IDiscountConfig): number {
   const percent = brandDiscountOf(config, brandOf(row));
   return amount(row?.price) * (1 - percent / 100);
 }
 
 /** Закуп одной позиции: цена прайса минус скидка её бренда. */
 export function purchaseCost(row: IPurchaseRow, rates: IProfitRates = DEFAULT_RATES): number {
-  return costAt(row, discountsOf(rates ?? {}));
+  return discountedPurchase(row, discountsOf(rates ?? {}));
 }
 
 /**
@@ -204,7 +217,7 @@ export function applyDiscounts(
   const costs = new Map<string, number>();
 
   for (const [sku, row] of rows) {
-    costs.set(sku, costAt(row, config));
+    costs.set(sku, discountedPurchase(row, config));
   }
 
   return costs;
@@ -342,11 +355,13 @@ export interface IProfitTotals {
   net: number;
   /** Заказов в расчёте. */
   orders: number;
-  /** Заказы, выкинутые из расчёта: закуп известен не по всем позициям. */
-  excludedOrders: number;
-  excludedRevenue: number;
-  /** Артикулы без закупа — их продавцу и надо дозаполнить. */
-  unknownSkus: string[];
+  /**
+   * Прибыль не подтверждена (TASK-119): заказы, выкинутые из расчёта (закуп на
+   * дату известен не по всем позициям или нет услуг калькулятора), их продажи
+   * и артикулы без закупа — их продавцу и надо дозаполнить. Один признак на
+   * все экраны: в чистой этих заказов нет, а сказать о них экран обязан.
+   */
+  unconfirmed: IUnconfirmedProfit;
   /** Заказы с возвратом: исключены целиком — товар вернулся, денег нет. */
   returnedOrders: number;
   returnedRevenue: number;
@@ -419,6 +434,22 @@ export function ratesOf(store: {
   };
 }
 
+/**
+ * Закуп единицы позиции в конкретном заказе. Резолвер, а не карта: с историей
+ * себестоимости (TASK-116) цена зависит от даты заказа — новый прайс не должен
+ * переписывать прошлые месяцы. `undefined` — закуп неизвестен.
+ */
+export type TCostOf = (sku: string, order: IProfitOrder) => number | undefined;
+
+/** Закуп: прежняя карта «артикул → закуп» (одна цена на все даты) или резолвер. */
+export type TCosts = ReadonlyMap<string, number> | TCostOf;
+
+/** Одна форма для обоих видов закупа. */
+export function costLookup(costs: TCosts): TCostOf {
+  if (typeof costs === 'function') return costs;
+  return (sku) => costs?.get(sku);
+}
+
 /** Все артикулы, встречающиеся в позициях заказов. */
 export function orderSkus(orders: readonly IProfitOrder[]): string[] {
   const skus = new Set<string>();
@@ -441,16 +472,18 @@ export function orderSkus(orders: readonly IProfitOrder[]): string[] {
  *
  * Заказ вообще без позиций — тоже `null`: считать по нему прибыль нечем.
  */
-export function orderPurchase(order: IProfitOrder, costs: Map<string, number>): number | null {
+export function orderPurchase(order: IProfitOrder, costs: TCosts): number | null {
   const items = order?.items ?? [];
   if (!items.length) return null;
+
+  const costOf = costLookup(costs);
 
   let purchase = 0;
 
   for (const item of items) {
     const sku = item?.offerId;
     // Позиция без артикула тоже неизвестна: сопоставить её с прайсом нечем.
-    const cost = sku ? costs.get(sku) : undefined;
+    const cost = sku ? costOf(sku, order) : undefined;
     if (cost === undefined) return null;
 
     // Количество по документации обязательно, но ответ бывает неполным. Одна
@@ -489,10 +522,12 @@ function itemName(sku: string, item: IProfitOrderItem, rows?: IProfitOptions['ro
  */
 export function profitOf(
   orders: readonly IProfitOrder[],
-  costs: Map<string, number>,
+  costs: TCosts,
   rates: IProfitRates = DEFAULT_RATES,
   options: IProfitOptions = {},
 ): IProfitTotals {
+  const costOf = costLookup(costs);
+
   // Через ratesOf — один и тот же путь приведения для всех четырёх процентов,
   // включая скидки, которые здесь не считаются, но печатаются в отчёте.
   const normalized = ratesOf(rates ?? {});
@@ -569,8 +604,12 @@ export function profitOf(
     if (resolved === null || orderServices === null) {
       excludedOrders += 1;
       excludedRevenue += orderRevenue;
+      // Только позиции, закупа по которым НА ДАТУ ЭТОГО заказа нет: заказ мог
+      // выпасть из-за услуг, а часть позиций — найтись.
       for (const item of order?.items ?? []) {
-        unknown.add(item?.offerId ?? '(без артикула)');
+        const sku = item?.offerId;
+        if (!sku) unknown.add(NO_SKU_LABEL);
+        else if (costOf(sku, order) === undefined) unknown.add(sku);
       }
       continue;
     }
@@ -621,7 +660,8 @@ export function profitOf(
       const row = skuOf(sku, item);
       row.count += count;
       row.revenue += orderRevenue * shares[index];
-      row.net += netBeforeCosts(shares[index]) - itemPromo[index] - (costs.get(sku) ?? 0) * count;
+      row.net +=
+        netBeforeCosts(shares[index]) - itemPromo[index] - (costOf(sku, order) ?? 0) * count;
     });
 
     const day = orderDayIso(order?.[dayField]);
@@ -650,11 +690,8 @@ export function profitOf(
     purchase,
     net: revenue - commission - tax - promo - purchase,
     orders: counted,
-    excludedOrders,
-    excludedRevenue,
-    // Только те артикулы, закупа по которым действительно нет: в исключённом
-    // заказе часть позиций могла найтись.
-    unknownSkus: [...unknown].filter((sku) => !costs.has(sku)),
+    // Копейки — один раз, на выходе: признак общий с P&L журнала, где деньги целые.
+    unconfirmed: unconfirmedOf(excludedOrders, Math.round(excludedRevenue * 100), [...unknown]),
     returnedOrders,
     returnedRevenue,
     byDay: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)),

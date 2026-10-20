@@ -129,6 +129,25 @@ export class PurchasePriceService {
   }
 
   /**
+   * Все строки закупа продавца — для заполнения базы товаров (`Product`).
+   * Проекция из четырёх полей + lean: строк до двадцати тысяч.
+   */
+  async listForSeed(telegramUserId: string): Promise<IPurchasePriceRow[]> {
+    const documents = await this.model
+      .find({ telegramUserId })
+      .select('sku price name category')
+      .lean()
+      .exec();
+
+    return documents.map((doc) => ({
+      sku: doc.sku,
+      price: doc.price,
+      name: doc.name,
+      category: doc.category,
+    }));
+  }
+
+  /**
    * Название и категория каждой строки закупа — для экрана «Скидки по брендам».
    *
    * НЕ `distinct('category')`: бренд определяется и по названию тоже — строки

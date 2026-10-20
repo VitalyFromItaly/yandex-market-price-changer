@@ -3,29 +3,20 @@ import { Test } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bull';
 import { ReportSchedulerService } from '../../src/modules/telegram/queue/services/report-scheduler.service';
 import { ReportScheduleService } from '../../src/database/services/report-schedule.service';
-import { QUEUE_NAMES } from '../../src/modules/telegram';
+import { JOB_TYPES, QUEUE_NAMES } from '../../src/modules/telegram';
+import { fakeRepeatableQueue } from '../helpers/fake-repeatable-queue';
+import type { TInitialRepeatable } from '../helpers/fake-repeatable-queue';
 import { MOSCOW_TIME_ZONE } from '../../src/modules/yandex/reports/moscow-day';
 
 const KEY = { telegramUserId: '222', botId: '999', reportKey: 'redeemed' };
-const JOB_ID = 'report:999:222:redeemed';
+const JOB_ID = 'report-999-222-redeemed';
+const LEGACY_KEY = `${JOB_TYPES.SEND_SCHEDULED_REPORT}:report:999:222:redeemed::Europe/Moscow:0 9 * * *`;
 
-/** Очередь-заглушка с реалистичным поведением repeatable-задач Bull. */
-function fakeQueue(initial: Array<{ id: string; cron: string; key: string }> = []) {
-  const repeatables = [...initial];
+const NAME = JOB_TYPES.SEND_SCHEDULED_REPORT;
 
-  return {
-    repeatables,
-    add: vi.fn(async (name: string, data: unknown, opts: never) => {
-      const o = opts as { jobId: string; repeat: { cron: string; tz: string } };
-      repeatables.push({ id: o.jobId, cron: o.repeat.cron, key: `${o.jobId}:${o.repeat.cron}` });
-      return { id: o.jobId, name, data };
-    }),
-    getRepeatableJobs: vi.fn(async () => [...repeatables]),
-    removeRepeatableByKey: vi.fn(async (key: string) => {
-      const i = repeatables.findIndex((j) => j.key === key);
-      if (i >= 0) repeatables.splice(i, 1);
-    }),
-  };
+/** Очередь-заглушка, разбирающая ключ по «:», как Bull 4 (TASK-157). */
+function fakeQueue(initial: TInitialRepeatable[] = []) {
+  return fakeRepeatableQueue(initial, NAME);
 }
 
 async function build(queue: ReturnType<typeof fakeQueue>, enabled: unknown[] = []) {
@@ -115,6 +106,17 @@ describe('Создание расписания', () => {
     expect(queue.repeatables).toHaveLength(0);
   });
 
+  it('снятие убирает и задачу старого формата того же ключа', async () => {
+    const other = `${NAME}:report:999:222:returning::Europe/Moscow:0 9 * * *`;
+    queue = fakeQueue([LEGACY_KEY, other]);
+    const scheduler = await build(queue);
+    await scheduler.schedule(KEY, '21:30');
+
+    expect(queue.repeatables.map((j) => j.id)).toEqual(['report', JOB_ID]);
+    expect(queue.keys).toContain(other);
+    expect(queue.keys).not.toContain(LEGACY_KEY);
+  });
+
   it('снятие несуществующей задачи не падает', async () => {
     const scheduler = await build(queue);
     await expect(scheduler.unschedule(KEY)).resolves.toBeUndefined();
@@ -136,7 +138,7 @@ describe('Сверка при старте (TASK-031)', () => {
   });
 
   it('лишняя задача снимается: рассылку выключили', async () => {
-    const queue = fakeQueue([{ id: JOB_ID, cron: '0 9 * * *', key: 'k1' }]);
+    const queue = fakeQueue([{ id: JOB_ID, cron: '0 9 * * *' }]);
     const scheduler = await build(queue, []);
 
     const result = await scheduler.reconcile();
@@ -146,7 +148,7 @@ describe('Сверка при старте (TASK-031)', () => {
   });
 
   it('устаревшее время переносится, дубля не остаётся', async () => {
-    const queue = fakeQueue([{ id: JOB_ID, cron: '0 9 * * *', key: 'k1' }]);
+    const queue = fakeQueue([{ id: JOB_ID, cron: '0 9 * * *' }]);
     const scheduler = await build(queue, [enabledDoc({ time: '21:30' })]);
 
     const result = await scheduler.reconcile();
@@ -158,7 +160,7 @@ describe('Сверка при старте (TASK-031)', () => {
   });
 
   it('совпадающая задача не пересоздаётся', async () => {
-    const queue = fakeQueue([{ id: JOB_ID, cron: '0 9 * * *', key: 'k1' }]);
+    const queue = fakeQueue([{ id: JOB_ID, cron: '0 9 * * *' }]);
     const scheduler = await build(queue, [enabledDoc()]);
 
     const result = await scheduler.reconcile();
@@ -188,6 +190,51 @@ describe('Сверка при старте (TASK-031)', () => {
     await scheduler.reconcile();
 
     expect(queue.repeatables).toHaveLength(0);
+  });
+
+  it('Bull отдаёт новый id и cron целыми — сверка узнаёт свою задачу', async () => {
+    // Сама причина TASK-157: Bull режет ключ по «:», и с id `report:…` он
+    // отдавал id `report`, а cron — кусок id.
+    const queue = fakeQueue();
+    const scheduler = await build(queue, [enabledDoc()]);
+
+    expect(await scheduler.reconcile()).toEqual({ added: 1, removed: 0 });
+    expect(queue.repeatables).toMatchObject([
+      { id: JOB_ID, cron: '0 9 * * *', tz: MOSCOW_TIME_ZONE },
+    ]);
+    expect(await scheduler.reconcile()).toEqual({ added: 0, removed: 0 });
+  });
+
+  it('задача старого формата снимается по key и заводится в новом, без дубля', async () => {
+    const queue = fakeQueue([LEGACY_KEY]);
+    expect(queue.repeatables[0]).toMatchObject({ id: 'report', cron: 'redeemed' });
+    const scheduler = await build(queue, [enabledDoc()]);
+
+    expect(await scheduler.reconcile()).toEqual({ added: 1, removed: 1 });
+    expect(queue.keys).toEqual([`${NAME}:${JOB_ID}::${MOSCOW_TIME_ZONE}:0 9 * * *`]);
+    // Снята до заведения новой: двух задач одной рассылки не было.
+    expect(queue.removeRepeatableByKey.mock.invocationCallOrder[0]).toBeLessThan(
+      queue.add.mock.invocationCallOrder[0],
+    );
+    expect(await scheduler.reconcile()).toEqual({ added: 0, removed: 0 });
+  });
+
+  it('старая задача выключенной рассылки просто снимается', async () => {
+    const queue = fakeQueue([LEGACY_KEY]);
+    const scheduler = await build(queue, []);
+
+    expect(await scheduler.reconcile()).toEqual({ added: 0, removed: 1 });
+    expect(queue.keys).toHaveLength(0);
+  });
+
+  it('чужие задачи очереди не трогаются — напоминание об оплате остаётся', async () => {
+    const queue = fakeQueue([
+      { name: JOB_TYPES.SEND_HOSTING_REMINDER, id: 'hosting-reminder', cron: '0 10 28-31 * *' },
+    ]);
+    const scheduler = await build(queue, []);
+
+    expect(await scheduler.reconcile()).toEqual({ added: 0, removed: 0 });
+    expect(queue.repeatables.map((j) => j.id)).toEqual(['hosting-reminder']);
   });
 
   it('сверка на старте не роняет приложение при недоступном Redis', async () => {

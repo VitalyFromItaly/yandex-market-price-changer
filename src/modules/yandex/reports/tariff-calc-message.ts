@@ -1,5 +1,6 @@
 import type { ITariffCalcReport } from './profit.service';
 
+import { UNCONFIRMED_PROFIT_LABEL } from '../../../shared/profit-confirmation';
 import { b, code, esc } from '../../telegram/formatting/telegram-format';
 
 import { SUBSIDIES_LABEL, formatRubles } from './money';
@@ -160,18 +161,19 @@ export function formatTariffCalcReport(report: ITariffCalcReport, now: Date = ne
   // Причин выпасть из расчёта ДВЕ, и обе называются: нет закупочной цены (это
   // продавец чинит прайсом) или нет категории товара в каталоге Маркета (это
   // чинится в кабинете). Молчать нельзя — иначе часть заказов просто исчезает.
-  if (totals.excludedOrders) {
+  const { unconfirmed } = totals;
+  if (!unconfirmed.confirmed) {
     lines.push(
       '',
-      `⚠️ Не учтено заказов: ${b(totals.excludedOrders)} ` +
-        `на ${b(formatRubles(totals.excludedRevenue))} — ${TARIFF_EXCLUDED_REASON}.`,
+      `⚠️ ${UNCONFIRMED_PROFIT_LABEL}. Не учтено заказов: ${b(unconfirmed.orders)} ` +
+        `на ${b(formatRubles(unconfirmed.revenueKopecks / 100))} — ${TARIFF_EXCLUDED_REASON}.`,
     );
 
-    for (const sku of totals.unknownSkus.slice(0, UNKNOWN_PREVIEW)) {
+    for (const sku of unconfirmed.skus.slice(0, UNKNOWN_PREVIEW)) {
       lines.push(`• ${code(sku)}`);
     }
-    if (totals.unknownSkus.length > UNKNOWN_PREVIEW) {
-      lines.push(`…и ещё ${totals.unknownSkus.length - UNKNOWN_PREVIEW}`);
+    if (unconfirmed.skus.length > UNKNOWN_PREVIEW) {
+      lines.push(`…и ещё ${unconfirmed.skus.length - UNKNOWN_PREVIEW}`);
     }
   }
 

@@ -80,6 +80,11 @@ export interface IOrdersStatsQuery {
   updateTo?: string;
   /** Статусы ИЗ ENUM АРХИВА (OrderStatsStatusType), не статусы getOrders. */
   statuses?: string[];
+  /**
+   * Только эти заказы (`orders` в GetOrdersStatsRequest) — «существует ли
+   * заказ» у сверки финжурнала (TASK-113). Даты при нём не нужны.
+   */
+  orders?: number[];
 }
 
 export interface IOrdersQuery {
@@ -243,6 +248,27 @@ export interface IOfferLogistics {
 }
 
 /**
+ * Товар каталога в объёме, нужном базе товаров (`Product`): идентификаторы
+ * производителя и штрихкоды. По ним TASK-117 сопоставит карточку ЯМ с
+ * карточками Ozon и WB — артикул продавца у трёх площадок может быть разным,
+ * штрихкод и артикул производителя у одной физической модели одни.
+ */
+export interface ICatalogOffer {
+  offerId: string;
+  name?: string;
+  /** Бренд, как его указал продавец в карточке. */
+  vendor?: string;
+  /** Артикул производителя. */
+  vendorCode?: string;
+  /** Пустые строки отброшены; пустой массив, если штрихкодов нет. */
+  barcodes: string[];
+  /** Цена продажи в карточке (`basicPrice.value`), если задана. */
+  basicPrice?: number;
+  /** Валюта цены (`RUR` у российских магазинов). */
+  currencyId?: string;
+}
+
+/**
  * Один товар в запросе калькулятора тарифов. Все поля обязательны по спеке
  * (`exclusiveMinimum: 0` — ноль в любом измерении это 400, а не нулевой тариф).
  */
@@ -279,6 +305,9 @@ export interface ITariffCalculation {
 export type TPaymentFrequency = 'DAILY' | 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY';
 
 /** Статус генерации асинхронного отчёта и ссылка на готовый файл. */
+/** Формат файла асинхронного отчёта: xlsx как есть или ZIP с JSON по листам. */
+export type TReportFormat = 'FILE' | 'JSON';
+
 export interface IReportInfo {
   /** PENDING | PROCESSING | DONE | FAILED — приходит строкой, не валидируем жёстко. */
   status: string;
@@ -547,6 +576,7 @@ export class YandexApiClient {
           updateFrom: query.updateFrom,
           updateTo: query.updateTo,
           statuses: query.statuses,
+          orders: query.orders,
         }),
       );
 
@@ -658,6 +688,44 @@ export class YandexApiClient {
 
     this.logger.log(`Каталог загружен: ${ids.size} артикулов`);
     return ids;
+  }
+
+  /**
+   * Полный обход каталога со штрихкодами и артикулом производителя — для
+   * заполнения базы товаров (`Product`).
+   *
+   * Отдельно от `getOfferMappings`: тот ходит с фильтром `offerIds`, который
+   * несовместим с пагинацией, и весь каталог им не обойти. Здесь — пустое тело
+   * и `page_token`, как у `loadCatalogOfferIds`/`loadCategoryUsage`. Только
+   * чтение: каталог живёт на Маркете, правится там же.
+   */
+  public async loadCatalogProducts(): Promise<ICatalogOffer[]> {
+    const offers: ICatalogOffer[] = [];
+    let pageToken: string | undefined;
+    let page = 0;
+
+    do {
+      const data = await this.post<{
+        result?: {
+          offerMappings?: Array<TRawOfferMapping>;
+          paging?: { nextPageToken?: string };
+        };
+      }>(
+        offerMappingsPath(this.credentials.businessId),
+        { limit: PAGE_LIMITS.offerMappings.default, page_token: pageToken },
+        {},
+      );
+
+      for (const m of data.result?.offerMappings ?? []) {
+        const offer = toCatalogOffer(m);
+        if (offer) offers.push(offer);
+      }
+
+      pageToken = data.result?.paging?.nextPageToken;
+    } while (pageToken && ++page < this.maxPages);
+
+    this.logger.log(`Каталог для базы товаров: ${offers.length} позиций`);
+    return offers;
   }
 
   /**
@@ -1217,12 +1285,19 @@ export class YandexApiClient {
    * Обычный post с повторами: повторный generate безвреден (прецедент
    * generateStocksOnWarehousesReport). 420 доезжает YandexRateLimitError —
    * у части отчётов квота 10/час, и процессор отвечает своим текстом.
+   *
+   * `format: 'JSON'` — для финансовых отчётов: Маркет отдаёт ZIP с JSON на
+   * каждый лист (разбор — report-zip.ts). Умолчание FILE — xlsx как есть.
    */
-  public async generateReport(path: string, body: Record<string, unknown>): Promise<string> {
+  public async generateReport(
+    path: string,
+    body: Record<string, unknown>,
+    format: TReportFormat = 'FILE',
+  ): Promise<string> {
     const data = await this.post<{
       result?: { reportId?: string };
       errors?: Array<{ code?: string; message?: string }>;
-    }>(path, { format: 'FILE' }, body);
+    }>(path, { format }, body);
 
     const reportId = data.result?.reportId;
     if (!reportId) {
@@ -1458,6 +1533,11 @@ function toSupplyRequest(raw: TRawSupplyRequest): IFbySupplyRequest {
 type TRawOfferMapping = {
   offer?: {
     offerId?: string;
+    name?: string;
+    vendor?: string;
+    vendorCode?: string;
+    barcodes?: unknown;
+    basicPrice?: { value?: number; currencyId?: string };
     marketCategoryId?: number;
     weightDimensions?: { length?: number; width?: number; height?: number; weight?: number };
   };
@@ -1476,6 +1556,37 @@ function toOfferLogistics(raw: TRawOfferMapping): IOfferLogistics | null {
     offerId,
     marketCategoryId: raw.offer?.marketCategoryId ?? raw.mapping?.marketCategoryId,
     weightDimensions: raw.offer?.weightDimensions,
+  };
+}
+
+/** Строковое поле карточки без пробелов по краям; пустое — `undefined`. */
+function trimmed(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  return text || undefined;
+}
+
+/**
+ * Товар каталога для базы товаров, либо null без артикула. Штрихкоды —
+ * только непустые строки без дублей: пустой штрихкод в индексе совпал бы у
+ * всех товаров разом и склеил бы их при сопоставлении.
+ */
+function toCatalogOffer(raw: TRawOfferMapping): ICatalogOffer | null {
+  const offerId = trimmed(raw?.offer?.offerId);
+  if (!offerId) return null;
+  const o = raw.offer;
+  const barcodes = Array.isArray(o.barcodes)
+    ? [...new Set(o.barcodes.map(trimmed).filter((b): b is string => !!b))]
+    : [];
+  const price = Number(o.basicPrice?.value);
+  return {
+    offerId,
+    name: trimmed(o.name),
+    vendor: trimmed(o.vendor),
+    vendorCode: trimmed(o.vendorCode),
+    barcodes,
+    basicPrice: Number.isFinite(price) && price > 0 ? price : undefined,
+    currencyId: trimmed(o.basicPrice?.currencyId),
   };
 }
 

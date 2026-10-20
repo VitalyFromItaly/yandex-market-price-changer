@@ -323,6 +323,30 @@ export class UserAccessService {
   }
 
   /**
+   * Черновик ИИ ложится в черновик ответа — только если вопрос всё ещё про тот
+   * же отзыв. Один `findOneAndUpdate` с ожидаемым pending в фильтре: пока
+   * модель думала, продавец мог нажать «Отмена», «Ответить» на другом отзыве
+   * или прислать свой текст, и черновик чужого вопроса тогда не нужен.
+   *
+   * @returns false, если вопрос уже закрыт или сменился.
+   */
+  async setFeedbackDraftIfPending(
+    telegramUserId: string,
+    botId: string,
+    feedbackId: string,
+    draft: string,
+  ): Promise<boolean> {
+    const updated = await this.model
+      .findOneAndUpdate(
+        { telegramUserId, botId, pendingFeedbackReply: feedbackId },
+        { $set: { feedbackDraft: draft } },
+        { new: true },
+      )
+      .exec();
+    return updated !== null;
+  }
+
+  /**
    * Подать заявку: new → pending.
    *
    * Возвращает null, если заявка уже подана. На этом и держится идемпотентность

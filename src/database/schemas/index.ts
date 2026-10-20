@@ -11,6 +11,13 @@ export * from './crm-job-result.schema';
 export * from './telegram-api-bucket.schema';
 export * from './health-sample.schema';
 export * from './ai-usage.schema';
+export * from './ai-turn.schema';
+export * from './product.schema';
+export * from './cost-history.schema';
+export * from './product-card-issue.schema';
+export * from './marketplace-connection.schema';
+export * from './seller-notification-settings.schema';
+export * from './seller-notification.schema';
 
 export interface IYandexMarketSchema {
   telegramUserId: number;

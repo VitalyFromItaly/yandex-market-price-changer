@@ -6,6 +6,7 @@ import { TariffReportProcessor } from '../../src/modules/telegram/queue/processo
 import { DEFAULT_RATES } from '../../src/modules/yandex/reports/profit';
 import { DEFAULT_PERIOD } from '../../src/modules/yandex/reports/report-period';
 import { YandexAuthError } from '../../src/modules/yandex/yandex-api.errors';
+import { unconfirmedOf } from '../../src/shared/profit-confirmation';
 
 /**
  * Экран «Калькулятор» в фоне — по тем же обещаниям, что «Прибыль»: креды из
@@ -35,9 +36,7 @@ describe('TariffReportProcessor', () => {
       purchase: 5000,
       net: 1900,
       orders: 5,
-      excludedOrders: 0,
-      excludedRevenue: 0,
-      unknownSkus: [] as string[],
+      unconfirmed: unconfirmedOf(0, 0, []),
       returnedOrders: 0,
       returnedRevenue: 0,
       rates: DEFAULT_RATES,

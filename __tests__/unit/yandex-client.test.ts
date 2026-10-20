@@ -10,6 +10,7 @@ import {
   ordersPath,
   returnsPath,
   tariffsCalculatePath,
+  unitedMarketplaceServicesGeneratePath,
 } from '../../src/modules/yandex/yandex-api.paths';
 import {
   YandexAuthError,
@@ -277,6 +278,16 @@ describe('YandexApiClient: формирование запроса', () => {
     expect(PAGE_LIMITS.orders.max).toBeLessThan(PAGE_LIMITS.returns.max);
   });
 
+  it('архив заказов по списку id: orders в теле, пустых дат нет (сверка финжурнала)', async () => {
+    axiosStub.setResponse({ result: { orders: [{ id: 7 }] } });
+    const pages: unknown[][] = [];
+    for await (const page of client().iterateOrdersStats({ orders: [7, 8] })) pages.push(page);
+
+    expect(pages).toEqual([[{ id: 7 }]]);
+    expect(axiosStub.calls[0].path).toBe('/v2/campaigns/12345/stats/orders');
+    expect(axiosStub.calls[0].body).toEqual({ orders: [7, 8] });
+  });
+
   it('пустые параметры не уходят в строку запроса', async () => {
     axiosStub.setResponse({ orders: [] });
     await client().getOrders();
@@ -395,6 +406,92 @@ describe('YandexApiClient: логистика каталога (getOfferMappings
     expect(map.get('B-2')?.marketCategoryId).toBe(222);
     expect(map.get('B-2')?.weightDimensions).toBeUndefined();
     expect(map.size).toBe(2);
+  });
+});
+
+describe('YandexApiClient: каталог для базы товаров (loadCatalogProducts)', () => {
+  let axiosStub: ReturnType<typeof stubAxios>;
+
+  beforeEach(() => {
+    axiosStub = stubAxios();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const client = () =>
+    new YandexApiClient(
+      { token: 'ACMA:secret', campaignId: '12345', businessId: '67890' },
+      BASE_URL,
+      { sleep: async () => undefined },
+    );
+
+  it('обходит весь каталог по page_token, без фильтра offerIds', async () => {
+    // getOfferMappings с offerIds пагинацию не умеет — весь каталог им не обойти.
+    axiosStub.setResponses(
+      {
+        result: {
+          offerMappings: [{ offer: { offerId: 'A-1' } }],
+          paging: { nextPageToken: 'p2' },
+        },
+      },
+      { result: { offerMappings: [{ offer: { offerId: 'B-2' } }] } },
+    );
+
+    const offers = await client().loadCatalogProducts();
+
+    expect(offers.map((o) => o.offerId)).toEqual(['A-1', 'B-2']);
+    expect(axiosStub.calls).toHaveLength(2);
+    expect(axiosStub.calls[0].path).toBe('/v2/businesses/67890/offer-mappings');
+    expect(axiosStub.calls[1].params).toEqual({ limit: 200, page_token: 'p2' });
+    expect(axiosStub.calls[0].body).toEqual({});
+  });
+
+  it('штрихкоды, артикул производителя, бренд и цена из offer', async () => {
+    axiosStub.setResponse({
+      result: {
+        offerMappings: [
+          {
+            offer: {
+              offerId: ' GA-2100-1A ',
+              name: 'Часы Casio G-Shock GA-2100-1A',
+              vendor: 'Casio',
+              vendorCode: 'GA-2100-1A',
+              // Пустой штрихкод совпал бы у всех товаров и склеил бы их.
+              barcodes: ['4549526241234', '', '  ', '4549526241234'],
+              basicPrice: { value: 12990, currencyId: 'RUR' },
+            },
+          },
+          // Без артикула позиция не нужна: на неё не сослаться.
+          { offer: { name: 'без артикула' } },
+          // Ничего, кроме артикула: штрихкодов нет — пустой массив, не undefined.
+          { offer: { offerId: 'X', basicPrice: { value: 0 } } },
+        ],
+      },
+    });
+
+    const offers = await client().loadCatalogProducts();
+
+    expect(offers).toEqual([
+      {
+        offerId: 'GA-2100-1A',
+        name: 'Часы Casio G-Shock GA-2100-1A',
+        vendor: 'Casio',
+        vendorCode: 'GA-2100-1A',
+        barcodes: ['4549526241234'],
+        basicPrice: 12990,
+        currencyId: 'RUR',
+      },
+      {
+        offerId: 'X',
+        name: undefined,
+        vendor: undefined,
+        vendorCode: undefined,
+        barcodes: [],
+        basicPrice: undefined,
+        currencyId: undefined,
+      },
+    ]);
   });
 });
 
@@ -597,5 +694,47 @@ describe('YandexApiClient.loadStocks — чтение остатков', () => {
     expect(stub.calls[0].params).toEqual({ limit: PAGE_LIMITS.stocks.default });
     expect(stub.calls[1].params.page_token).toBe('p2');
     expect(stub.calls[0].body).toEqual({});
+  });
+});
+
+describe('YandexApiClient.generateReport — формат файла', () => {
+  let axiosStub: ReturnType<typeof stubAxios>;
+
+  beforeEach(() => {
+    axiosStub = stubAxios();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const client = () =>
+    new YandexApiClient(
+      { token: 'ACMA:secret', campaignId: '12345', businessId: '67890' },
+      BASE_URL,
+      { sleep: async () => undefined },
+    );
+
+  it('по умолчанию FILE — «Отчёты Маркета» получают xlsx как раньше', async () => {
+    axiosStub.setResponse({ result: { reportId: 'r1' } });
+    await client().generateReport('/v2/reports/x/generate', { a: 1 });
+    expect(axiosStub.calls[0].params).toEqual({ format: 'FILE' });
+  });
+
+  it('JSON уходит в query, тело — как передано', async () => {
+    axiosStub.setResponse({ result: { reportId: 'r2' } });
+    const id = await client().generateReport(
+      unitedMarketplaceServicesGeneratePath(),
+      { businessId: 67890, dateFrom: '2026-09-01', dateTo: '2026-09-30' },
+      'JSON',
+    );
+
+    expect(id).toBe('r2');
+    expect(axiosStub.calls[0].path).toBe('/v2/reports/united-marketplace-services/generate');
+    expect(axiosStub.calls[0].params).toEqual({ format: 'JSON' });
+    expect(axiosStub.calls[0].body).toEqual({
+      businessId: 67890,
+      dateFrom: '2026-09-01',
+      dateTo: '2026-09-30',
+    });
   });
 });

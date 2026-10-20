@@ -20,6 +20,7 @@ import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-chan
 import { StorePromptService } from '../../src/modules/telegram/bots/shared/services/store-prompt.service';
 import { AppConfigService } from '../../src/config/app-config.service';
 import { DEFAULT_PERIOD } from '../../src/modules/yandex/reports/report-period';
+import { unconfirmedOf } from '../../src/shared/profit-confirmation';
 
 const STORE = { token: 'ACMA:x', campaign_id: '1', business_id: '2' };
 
@@ -105,9 +106,7 @@ async function build(
             purchase: 5000,
             net: 2000,
             orders: 1,
-            excludedOrders: 0,
-            excludedRevenue: 0,
-            unknownSkus: [],
+            unconfirmed: unconfirmedOf(0, 0, []),
             returnedOrders: 0,
             returnedRevenue: 0,
             rates: {
@@ -534,6 +533,41 @@ describe('Прибыль', () => {
 
     expect(queue.add).not.toHaveBeenCalled();
     expect(ctx.texts().at(-1)).toContain('настройки API');
+  });
+
+  it('profit_actual (TASK-126): админ — открыто, продавцу — по флагу', async () => {
+    const admin = await build();
+    await admin.handler.run(fakeCtx() as never, REPORT.PROFIT, DEFAULT_PERIOD);
+    expect(enqueued(admin.queue)).toMatchObject({ profitActual: true });
+
+    const seller = await build({ features: {} });
+    await seller.handler.run(fakeCtx() as never, REPORT.PROFIT, DEFAULT_PERIOD);
+    expect(enqueued(seller.queue)).toMatchObject({ profitActual: false });
+
+    const open = await build({ features: { finance: true, profit_actual: true } });
+    await open.handler.run(fakeCtx() as never, REPORT.PROFIT, DEFAULT_PERIOD);
+    expect(enqueued(open.queue)).toMatchObject({ profitActual: true });
+  });
+
+  it('кнопка «Прошлый месяц» — только у «Прибыли» и только при profit_actual + deep_history', async () => {
+    const keyboardOf = (ctx: ReturnType<typeof fakeCtx>) =>
+      JSON.stringify(ctx.reply.mock.calls.at(-1)?.[1]);
+
+    const closed = await build({ features: {} });
+    const closedCtx = fakeCtx();
+    await closed.handler.handle(closedCtx as never, REPORT.PROFIT);
+    expect(keyboardOf(closedCtx)).not.toContain('rep:prevmonth');
+
+    const open = await build({
+      features: { finance: true, profit_actual: true, deep_history: true },
+    });
+    const profitCtx = fakeCtx();
+    await open.handler.handle(profitCtx as never, REPORT.PROFIT);
+    expect(keyboardOf(profitCtx)).toContain('rep:prevmonth:profit');
+
+    const redeemedCtx = fakeCtx();
+    await open.handler.handle(redeemedCtx as never, REPORT.REDEEMED);
+    expect(keyboardOf(redeemedCtx)).not.toContain('rep:prevmonth');
   });
 
   it('закрытый отчёт «Прибыль» в очередь не попадает', async () => {

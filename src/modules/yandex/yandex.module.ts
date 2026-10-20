@@ -1,18 +1,23 @@
 import { Module } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
+import { AiModule } from '../ai/ai.module';
+import { ProductsModule } from '../products/products.module';
 
 import { CardsService } from './cards/cards.service';
 import { FbyStockService } from './fby/fby-stock.service';
 import { FbyService } from './fby/fby.service';
+import { FeedbackDraftService } from './feedback/feedback-draft.service';
 import { FeedbackService } from './feedback/feedback.service';
 import { MarketCategoriesService } from './market-reports/market-categories.service';
 import { MarketReportsService } from './market-reports/market-reports.service';
 import { PaymentsReportService } from './payments/payments-report.service';
+import { ProductSeedService } from './products/product-seed.service';
 import { QuarantineService } from './quarantine/quarantine.service';
 import { RecommendationsService } from './recommendations/recommendations.service';
 import { OrderReportsService } from './reports/order-reports.service';
 import { ProfitService } from './reports/profit.service';
+import { TariffQuoteService } from './reports/tariff-quote.service';
 import { StoreSettingsService } from './settings/store-settings.service';
 import { StockLevelsService } from './stocks/stock-levels.service';
 import { StockSyncService } from './stocks/stock-sync.service';
@@ -35,14 +40,18 @@ import { YandexClientFactory } from './yandex-client.factory';
  *
  * DatabaseModule нужен двум вещам: закупочные цены пишутся при загрузке прайса
  * и читаются при расчёте прибыли. Цикла нет — база о Яндексе не знает.
+ *
+ * AiModule — черновику ответа на отзыв (`FeedbackDraftService`); сам он зависит
+ * только от базы, цикла нет.
  */
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, ProductsModule, AiModule],
   providers: [
     YandexClientFactory,
     OrderReportsService,
     ProfitService,
     StockSyncService,
+    ProductSeedService,
     StockLevelsService,
     StockUploadPolicyService,
     WarehousesService,
@@ -55,14 +64,17 @@ import { YandexClientFactory } from './yandex-client.factory';
     StoresService,
     QuarantineService,
     FeedbackService,
+    FeedbackDraftService,
     RecommendationsService,
     CardsService,
+    TariffQuoteService,
   ],
   exports: [
     YandexClientFactory,
     OrderReportsService,
     ProfitService,
     StockSyncService,
+    ProductSeedService,
     StockLevelsService,
     StockUploadPolicyService,
     WarehousesService,
@@ -75,8 +87,10 @@ import { YandexClientFactory } from './yandex-client.factory';
     StoresService,
     QuarantineService,
     FeedbackService,
+    FeedbackDraftService,
     RecommendationsService,
     CardsService,
+    TariffQuoteService,
   ],
 })
 export class YandexModule {}

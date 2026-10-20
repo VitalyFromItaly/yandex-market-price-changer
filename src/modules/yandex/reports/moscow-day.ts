@@ -183,6 +183,14 @@ export function isLastDayOfMonth(date: ICalendarDate): boolean {
   return shiftDays(date, 1).month !== date.month;
 }
 
+/**
+ * Число дней в месяце (month — 1…12). Нулевой день следующего месяца —
+ * последний день этого: високосный год Date учитывает сам.
+ */
+export function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
 /** DD-MM-YYYY — формат fromDate/toDate и supplierShipmentDate. */
 export function calendarDateParam(date: ICalendarDate): string {
   return `${pad(date.day)}-${pad(date.month)}-${date.year}`;

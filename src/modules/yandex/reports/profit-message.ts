@@ -1,7 +1,15 @@
 import type { IProfitReport } from './profit.service';
+import type { IProfitActual } from '../../finance/profit-actual';
 import type { IProfitRates, IProfitTotals } from './profit';
 import type { ITariffEstimate } from './tariff-estimate';
+import type { IUnconfirmedProfit } from '../../../shared/profit-confirmation';
 
+import {
+  mergeUnconfirmed,
+  unconfirmedSummary,
+  UNCONFIRMED_PROFIT_LABEL,
+} from '../../../shared/profit-confirmation';
+import { ACTUAL_NET_LABEL, ACTUAL_SCOPE_NOTE, PRELIMINARY_MARK } from '../../finance/profit-actual';
 import { b, code, esc } from '../../telegram/formatting/telegram-format';
 
 import { BRAND_KEYS, brandTitle } from './brands';
@@ -59,7 +67,7 @@ export const NO_PRICES_TEXT = 'Закупочных цен пока нет — �
 
 /** Есть ли в наборе хоть что-нибудь, о чём стоит сказать. */
 function isEmpty(totals: IProfitTotals): boolean {
-  return !totals?.orders && !totals?.excludedOrders && !totals?.returnedOrders;
+  return !totals?.orders && !totals?.unconfirmed?.orders && !totals?.returnedOrders;
 }
 
 /**
@@ -93,24 +101,12 @@ export function mainTariffEstimate(report: IProfitReport): ITariffEstimate | und
     : undefined;
 }
 
-export interface IProfitExcluded {
-  orders: number;
-  revenue: number;
-  /** Артикулы без закупа — объединение обоих наборов без повторов. */
-  skus: string[];
-}
-
 /**
- * Заказы без закупочной цены — один блок на оба набора: продавцу всё равно
+ * Заказы без закупочной цены — один признак на оба набора: продавцу всё равно
  * грузить их одним прайсом, а два одинаковых списка подряд читаются как ошибка.
  */
-export function profitExcluded(report: IProfitReport): IProfitExcluded {
-  const { placed, totals } = report;
-  return {
-    orders: (placed?.excludedOrders ?? 0) + (totals?.excludedOrders ?? 0),
-    revenue: (placed?.excludedRevenue ?? 0) + (totals?.excludedRevenue ?? 0),
-    skus: [...new Set([...(placed?.unknownSkus ?? []), ...(totals?.unknownSkus ?? [])])],
-  };
+export function profitExcluded(report: IProfitReport): IUnconfirmedProfit {
+  return mergeUnconfirmed(report.placed?.unconfirmed, report.totals?.unconfirmed);
 }
 
 export interface IPurchaseBasis {
@@ -144,7 +140,8 @@ export function purchaseBasisText(pricesUpdatedAt: Date, rates: IProfitRates): s
   const overrides = basis.overrides.map((item) => `${item.title} ${percent(item.percent)}%`);
   return (
     `прайс от ${moscowDateParam(pricesUpdatedAt)} минус ${percent(basis.defaultPercent)}%` +
-    (overrides.length ? ` (${overrides.join(', ')}).` : '.')
+    (overrides.length ? ` (${overrides.join(', ')})` : '') +
+    ', цена на дату заказа.'
   );
 }
 
@@ -199,8 +196,12 @@ function detailedBlock(
   totals: IProfitTotals,
   kind: 'placed' | 'redeemed',
   estimate?: ITariffEstimate,
+  preliminary = false,
 ): string[] {
   const placed = kind === 'placed';
+  // Пометка непроверенного периода (TASK-126) — на самой сумме: рядом с ней
+  // продавец и решает, верить ли числу.
+  const mark = preliminary ? ` · ${PRELIMINARY_MARK}` : '';
 
   const lines = [
     placed ? `🛒 Оформлено: ${b(totals.orders)}` : `📦 Заказов: ${b(totals.orders)}`,
@@ -234,12 +235,37 @@ function detailedBlock(
     ...(totals.promo ? [`➖ Продвижение: ${b(formatRubles(totals.promo))}`] : []),
     `➖ Закуп: ${b(formatRubles(totals.purchase))}`,
     placed
-      ? `${totals.net < 0 ? '🔻' : '📈'} Ожидается чистая: ${b(formatRubles(totals.net))}`
-      : `${totals.net < 0 ? '🔻' : '✅'} Чистая: ${b(formatRubles(totals.net))}`,
+      ? `${totals.net < 0 ? '🔻' : '📈'} Ожидается чистая: ${b(formatRubles(totals.net))}${mark}`
+      : `${totals.net < 0 ? '🔻' : '✅'} Чистая: ${b(formatRubles(totals.net))}${mark}`,
   ];
 }
 
-export function formatProfitReport(report: IProfitReport, now: Date = new Date()): string {
+/**
+ * Строки «Фактической чистой» (TASK-126). Проверенный период — число журнала
+ * рядом с плоской и оговорка «весь кабинет»; неполный закуп — общей строкой
+ * `unconfirmedSummary`, своей формулировки нет. Непроверенный — причина
+ * пометки «предварительно» на плоской.
+ */
+function actualLines(actual: IProfitActual): string[] {
+  if (actual.state !== 'verified') {
+    return [`🕒 Чистая — ${PRELIMINARY_MARK}: ${esc(actual.reason)}.`];
+  }
+  const kopecks = actual.netKopecks;
+  const unconfirmed = unconfirmedSummary(actual.unconfirmed, (k) => formatRubles(k / 100));
+  return [
+    `📒 ${ACTUAL_NET_LABEL}: ${b(formatRubles(kopecks / 100))} — ${ACTUAL_SCOPE_NOTE}.`,
+    ...(unconfirmed ? [`⚠️ ${esc(unconfirmed)}.`] : []),
+  ];
+}
+
+/**
+ * `actual` не передан — фича profit_actual закрыта, и текст ровно прежний.
+ */
+export function formatProfitReport(
+  report: IProfitReport,
+  now: Date = new Date(),
+  actual?: IProfitActual,
+): string {
   const { totals, placed } = report;
   const title = reportDefinition(REPORT.PROFIT).title;
   const header = `💰 ${b(title)} ${esc(periodTitle(report.period, now))}`;
@@ -257,9 +283,10 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
   // калькулятора — только ему же (mainTariffEstimate).
   const placedIsMain = profitMainBlock(report) === 'placed';
   const estimate = mainTariffEstimate(report);
+  const preliminary = !!actual && actual.state !== 'verified';
 
   if (placedIsMain) {
-    lines.push(...detailedBlock(placed, 'placed', estimate), PLACED_IN_TRANSIT_NOTE);
+    lines.push(...detailedBlock(placed, 'placed', estimate, preliminary), PLACED_IN_TRANSIT_NOTE);
   }
 
   // Отменённые в кабинете лежат в общем списке. Промолчав о них, мы получим
@@ -283,9 +310,12 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
         OTHER_ORDERS_NOTE,
       );
     } else {
-      lines.push(...detailedBlock(totals, 'redeemed', estimate));
+      lines.push(...detailedBlock(totals, 'redeemed', estimate, preliminary));
     }
   }
+
+  // Рядом с плоской — сразу под блоками, до возвратов и неучтённых заказов.
+  if (actual) lines.push('', ...actualLines(actual));
 
   if (totals?.returnedOrders) {
     // Возврат исключает заказ ЦЕЛИКОМ: товар вернулся на склад, деньги — покупателю.
@@ -300,14 +330,14 @@ export function formatProfitReport(report: IProfitReport, now: Date = new Date()
   // --- заказы без закупочной цены: один блок на оба набора ------------------
   const excluded = profitExcluded(report);
 
-  if (excluded.orders) {
+  if (!excluded.confirmed) {
     lines.push('');
 
     // Молчать здесь нельзя: без этой строки прибыль по части заказов просто
     // исчезла бы из отчёта, а выглядело бы это как «продали мало».
     lines.push(
-      `⚠️ Не учтено заказов: ${b(excluded.orders)} ` +
-        `на ${b(formatRubles(excluded.revenue))} — нет закупочной цены.`,
+      `⚠️ ${UNCONFIRMED_PROFIT_LABEL}. Не учтено заказов: ${b(excluded.orders)} ` +
+        `на ${b(formatRubles(excluded.revenueKopecks / 100))} — нет закупочной цены.`,
     );
 
     for (const sku of excluded.skus.slice(0, UNKNOWN_PREVIEW)) {

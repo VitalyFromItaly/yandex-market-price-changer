@@ -81,3 +81,16 @@ export function botStoreAfterToken(
   const current = stores.find((store) => store.campaignId === currentCampaignId);
   return current ? { store: current, changed: false } : { store: stores[0], changed: true };
 }
+
+/**
+ * Магазины кабинета из кэша `stores`, каждый — перекрытый `scopeStore`
+ * документ. Кэша нет (старый документ) — один активный магазин. Для kind-ов
+ * уровня аккаунта, которым нужен срез по всем магазинам («Обзор», «Прогнозы»).
+ */
+export function accountStores(doc: YandexMarketDocument): YandexMarketDocument[] {
+  const scoped = (doc.stores ?? [])
+    .filter((entry) => entry?.campaignId)
+    .map((entry) => scopeStore(doc, entry.campaignId))
+    .filter((store): store is YandexMarketDocument => store !== null);
+  return scoped.length ? scoped : [doc];
+}

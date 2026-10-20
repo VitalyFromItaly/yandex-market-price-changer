@@ -16,6 +16,13 @@ function fakePurchasePrices() {
 
   return {
     saved,
+    // Закуп ДО загрузки — последний сохранённый; материал истории себестоимости.
+    findBySkus: vi.fn(async (_user: string, skus: string[]) => {
+      const last = new Map<string, { price: number }>();
+      for (const batch of saved)
+        for (const row of batch.rows) last.set(row.sku, { price: row.price });
+      return new Map([...last].filter(([sku]) => skus.includes(sku)));
+    }),
     upsertMany: vi.fn(async (user: string, rows: Array<{ sku: string; price: number }>) => {
       saved.push({ user, rows });
       return rows.length;
@@ -74,12 +81,42 @@ function serviceWith(
   client: ReturnType<typeof fakeClient>,
   prices: ReturnType<typeof fakePurchasePrices> = fakePurchasePrices(),
   stockWriteEnabled = true,
+  products: ReturnType<typeof fakeProducts> = fakeProducts(),
+  errors: { report: ReturnType<typeof vi.fn> } = { report: vi.fn(async () => undefined) },
+  costHistory: ReturnType<typeof fakeCostHistory> = fakeCostHistory(),
 ) {
   return new StockSyncService(
     { forTenant: () => client } as never,
     prices as never,
     { stockWriteEnabled } as never,
+    products as never,
+    errors as never,
+    costHistory as never,
   );
+}
+
+/** История себестоимости — заглушка: видно, что и с каким «прежним» закупом ушло. */
+function fakeCostHistory(fail = false) {
+  return {
+    recordPriceList: vi.fn(async () => {
+      if (fail) throw new Error('Mongo down');
+      return 0;
+    }),
+  };
+}
+
+/** База товаров — заглушка: тот же закуп уходит и туда (product_sync_on_price_upload). */
+function fakeProducts(fail = false) {
+  return {
+    upsertFromPriceList: vi.fn(async (_user: string, rows: unknown[]) => {
+      if (fail) throw new Error('Mongo down');
+      return { inserted: rows.length, matched: 0 };
+    }),
+    setStockFromPriceList: vi.fn(async (_user: string, rows: unknown[]) => {
+      if (fail) throw new Error('Mongo down');
+      return { inserted: 0, matched: rows.length };
+    }),
+  };
 }
 
 describe('StockSyncService', () => {
@@ -219,6 +256,128 @@ describe('StockSyncService: запрет записи на FBY', () => {
     expect(result.purchasePricesSaved).toBeGreaterThan(0);
     // Файл разобран целиком: отказ касается только записи в Яндекс.
     expect(result.matched).toBeGreaterThan(0);
+  });
+
+  it('тот же закуп уходит в базу товаров — и в dryRun тоже', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const prices = fakePurchasePrices();
+    const products = fakeProducts();
+    await serviceWith(client, prices, true, products).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+      dryRun: true,
+    });
+
+    expect(products.upsertFromPriceList).toHaveBeenCalledTimes(1);
+    const [user, rows] = products.upsertFromPriceList.mock.calls[0];
+    expect(user).toBe(USER);
+    expect((rows as Array<{ sku: string }>).map((r) => r.sku)).toEqual(
+      prices.saved[0].rows.map((r) => r.sku),
+    );
+  });
+
+  it('свой склад: количество каждой разобранной строки уходит в товары — и в dryRun тоже (TASK-142)', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const products = fakeProducts();
+    const result = await serviceWith(client, fakePurchasePrices(), true, products).sync(
+      CREDENTIALS,
+      file,
+      { telegramUserId: USER, dryRun: true },
+    );
+
+    expect(products.setStockFromPriceList).toHaveBeenCalledTimes(1);
+    const [user, rows] = products.setStockFromPriceList.mock.calls[0] as unknown as [
+      string,
+      Array<{ sku: string; quantity: number }>,
+    ];
+    expect(user).toBe(USER);
+    // И найденные в каталоге, и нет: у второй — тот же ключ, что у закупа.
+    expect(rows.some((row) => row.sku === 'FAA02006M')).toBe(true);
+    expect(rows.length).toBeGreaterThan(result.matched);
+    expect(rows.every((row) => Number.isInteger(row.quantity) && row.quantity >= 0)).toBe(true);
+  });
+
+  it('свой склад пишется и при выключенном закупе — это другой вопрос', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const products = fakeProducts();
+    await serviceWith(client, fakePurchasePrices(), true, products).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+      dryRun: true,
+      savePurchasePrices: false,
+    });
+
+    expect(products.upsertFromPriceList).not.toHaveBeenCalled();
+    expect(products.setStockFromPriceList).toHaveBeenCalledTimes(1);
+  });
+
+  it('сбой базы товаров не роняет загрузку, но и не глотается', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const errors = { report: vi.fn(async () => undefined) };
+    const result = await serviceWith(
+      client,
+      fakePurchasePrices(),
+      true,
+      fakeProducts(true),
+      errors,
+    ).sync(CREDENTIALS, file, { telegramUserId: USER });
+
+    expect(result.purchasePricesSaved).toBeGreaterThan(0);
+    expect(result.updated).toBeGreaterThan(0);
+    expect(errors.report).toHaveBeenCalledWith(
+      expect.objectContaining({ context: 'products:price-list', telegramUserId: USER }),
+    );
+  });
+
+  it('история себестоимости получает ПРЕЖНИЙ закуп — прочитанный до записи нового', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const prices = fakePurchasePrices();
+    prices.saved.push({ user: USER, rows: [{ sku: 'FAA02006M', price: 1 }] });
+    const history = fakeCostHistory();
+    await serviceWith(client, prices, true, fakeProducts(), undefined, history).sync(
+      CREDENTIALS,
+      file,
+      { telegramUserId: USER, dryRun: true },
+    );
+
+    expect(history.recordPriceList).toHaveBeenCalledTimes(1);
+    const [user, rows, previous] = history.recordPriceList.mock.calls[0] as unknown as [
+      string,
+      Array<{ sku: string }>,
+      Map<string, { price: number }>,
+    ];
+    expect(user).toBe(USER);
+    expect(rows.some((row) => row.sku === 'FAA02006M')).toBe(true);
+    expect(previous.get('FAA02006M')).toEqual({ price: 1 });
+  });
+
+  it('сбой истории себестоимости не роняет загрузку, но и не глотается', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const errors = { report: vi.fn(async () => undefined) };
+    const result = await serviceWith(
+      client,
+      fakePurchasePrices(),
+      true,
+      fakeProducts(),
+      errors,
+      fakeCostHistory(true),
+    ).sync(CREDENTIALS, file, { telegramUserId: USER });
+
+    expect(result.purchasePricesSaved).toBeGreaterThan(0);
+    expect(result.updated).toBeGreaterThan(0);
+    expect(errors.report).toHaveBeenCalledWith(
+      expect.objectContaining({ context: 'products:cost-history', telegramUserId: USER }),
+    );
+  });
+
+  it('закуп не записался — в товары не пишем: они не должны знать цену, которой нет у «Прибыли»', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const prices = fakePurchasePrices();
+    prices.upsertMany.mockRejectedValueOnce(new Error('Mongo down'));
+    const products = fakeProducts();
+    await serviceWith(client, prices, true, products).sync(CREDENTIALS, file, {
+      telegramUserId: USER,
+    });
+
+    expect(products.upsertFromPriceList).not.toHaveBeenCalled();
   });
 
   it('запрет — это НЕ dryRun: поводы разные, и отчёт обязан их различать', async () => {

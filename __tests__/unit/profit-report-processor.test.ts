@@ -5,6 +5,7 @@ import type { IProfitReportJob } from '../../src/modules/telegram/queue/processo
 import { ProfitReportProcessor } from '../../src/modules/telegram/queue/processors/profit-report.processor';
 import { DEFAULT_PERIOD } from '../../src/modules/yandex/reports/report-period';
 import { YandexAuthError } from '../../src/modules/yandex/yandex-api.errors';
+import { unconfirmedOf } from '../../src/shared/profit-confirmation';
 
 /**
  * «Прибыль» в фоне: самый дорогой отчёт больше не держит цикл апдейтов
@@ -18,6 +19,7 @@ describe('ProfitReportProcessor', () => {
   let findByTelegramId: ReturnType<typeof vi.fn>;
   let sendMessage: ReturnType<typeof vi.fn>;
   let report: ReturnType<typeof vi.fn>;
+  let actualNet: ReturnType<typeof vi.fn>;
   let processor: ProfitReportProcessor;
 
   const PROFIT_RESULT = {
@@ -30,9 +32,7 @@ describe('ProfitReportProcessor', () => {
       purchase: 5000,
       net: 2000,
       orders: 1,
-      excludedOrders: 0,
-      excludedRevenue: 0,
-      unknownSkus: [],
+      unconfirmed: unconfirmedOf(0, 0, []),
       returnedOrders: 0,
       returnedRevenue: 0,
       rates: {
@@ -61,11 +61,19 @@ describe('ProfitReportProcessor', () => {
     sendMessage = vi.fn(async () => undefined);
     findByTelegramId = vi.fn(() => ({ telegraf: { telegram: { sendMessage } } }));
     report = vi.fn(async () => undefined);
+    actualNet = vi.fn(async () => ({
+      state: 'verified',
+      netKopecks: 123_456,
+      unconfirmed: unconfirmedOf(0, 0, []),
+      from: '2026-09-01',
+      to: '2026-09-30',
+    }));
 
     processor = new ProfitReportProcessor(
       { findByTelegramId } as never,
       { findByTelegramUser } as never,
       { build } as never,
+      { actualNet } as never,
       { report } as never,
     );
   });
@@ -93,6 +101,22 @@ describe('ProfitReportProcessor', () => {
       tariffEstimate: true,
       deepHistory: false,
     });
+  });
+
+  it('profit_actual из джобы — фактическая чистая из журнала в тексте (TASK-126)', async () => {
+    await processor.run(jobWith({ period: { key: 'prevmonth' } as never, profitActual: true }));
+
+    expect(actualNet).toHaveBeenCalledWith('222', { key: 'prevmonth' }, expect.any(Date));
+    const text = String(sendMessage.mock.calls[0][1]);
+    expect(text).toContain('Фактическая чистая');
+    expect(text).toContain('1\u00A0235\u00A0₽');
+  });
+
+  it('без profit_actual (и в старых джобах) журнал не читается, текст прежний', async () => {
+    await processor.run(jobWith());
+
+    expect(actualNet).not.toHaveBeenCalled();
+    expect(String(sendMessage.mock.calls[0][1])).not.toContain('Фактическая чистая');
   });
 
   it('нет кред — продавцу говорят, расчёт не запускается', async () => {

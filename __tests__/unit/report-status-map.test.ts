@@ -17,7 +17,10 @@ import {
   RETURN_ACTIVE_STATUSES,
   RETURN_SHIPMENT_STATUSES,
   returnStage,
+  YM_ORDER_STAGE,
+  ymOrderStage,
 } from '../../src/modules/yandex/reports/report-status-map';
+import { ORDER_STAGES } from '../../src/shared/order-stage';
 
 /**
  * Маппинг статусов — знание предметной области. Ошибка здесь не роняет ничего:
@@ -413,5 +416,36 @@ describe('Стадии возврата', () => {
     ]) {
       expect(RETURN_SHIPMENT_STATUSES).not.toContain(status);
     }
+  });
+});
+
+describe('ymOrderStage — статусы ЯМ → этапы ТЗ п.11 (TASK-130)', () => {
+  it('таблица покрывает полный enum и ведёт только в этапы общего набора', () => {
+    expect(Object.keys(YM_ORDER_STAGE).sort()).toEqual(Object.values(ORDER_STATUS).sort());
+    for (const stage of Object.values(YM_ORDER_STAGE)) expect(ORDER_STAGES).toContain(stage);
+  });
+
+  it('подстатус сборки уточняет этап; PICKUP — доставлен, DELIVERED — выкуплен', () => {
+    const P = ORDER_STATUS.PROCESSING;
+    expect(ymOrderStage({ status: P, substatus: 'STARTED' })).toBe('awaiting_assembly');
+    expect(ymOrderStage({ status: P, substatus: 'READY_TO_SHIP' })).toBe('assembled');
+    expect(ymOrderStage({ status: P, substatus: 'SHIPPED' })).toBe('handed_over');
+    expect(ymOrderStage({ status: ORDER_STATUS.DELIVERY })).toBe('in_transit');
+    expect(ymOrderStage({ status: ORDER_STATUS.PICKUP })).toBe('delivered');
+    expect(ymOrderStage({ status: ORDER_STATUS.DELIVERED })).toBe('redeemed');
+    expect(ymOrderStage({ status: ORDER_STATUS.CANCELLED })).toBe('cancelled');
+    expect(ymOrderStage({ status: ORDER_STATUS.RETURNED })).toBe('returned');
+  });
+
+  it('невыкуп — «возвращается» по тем же подстатусам, что «Едет обратно»; мусор — unknown', () => {
+    for (const substatus of Object.values(RETURN_SUBSTATUS)) {
+      expect(ymOrderStage({ status: ORDER_STATUS.CANCELLED, substatus })).toBe('returning');
+      expect(ymOrderStage({ status: ORDER_STATUS.DELIVERY, substatus })).toBe('returning');
+    }
+    expect(
+      ymOrderStage({ status: ORDER_STATUS.RETURNED, substatus: RETURN_SUBSTATUS.FULL_NOT_RANSOM }),
+    ).toBe('returned');
+    expect(ymOrderStage({ status: 'TELEPORTED' })).toBe('unknown');
+    expect(ymOrderStage({})).toBe('unknown');
   });
 });

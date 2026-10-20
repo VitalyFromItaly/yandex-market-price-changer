@@ -38,6 +38,7 @@ export interface UpdateYandexMarketDto {
   discountPercent?: number;
   name?: string;
   stores?: IStoreEntry[];
+  tokenCheckedAt?: Date;
 }
 
 @Injectable()

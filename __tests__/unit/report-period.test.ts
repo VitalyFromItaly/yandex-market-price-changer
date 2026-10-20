@@ -16,6 +16,7 @@ import {
   isUnbounded,
   withinPeriod,
   periodButtonLabel,
+  periodsFor,
 } from '../../src/modules/yandex/reports/report-period';
 import { YandexDateRangeError } from '../../src/modules/yandex/yandex-date-window';
 
@@ -397,5 +398,46 @@ describe('withinPeriod', () => {
   it('дата отсутствует или битая — ВНЕ периода', () => {
     expect(withinPeriod(bounds, undefined)).toBe(false);
     expect(withinPeriod(bounds, 'не дата')).toBe(false);
+  });
+});
+
+describe('PERIOD.PREV_MONTH — «Прошлый месяц» «Прибыли» (TASK-126)', () => {
+  // 17-10-2026 12:00 МСК.
+  const NOW = new Date('2026-10-17T09:00:00Z');
+
+  it('границы — прошлый календарный месяц целиком, и через год тоже', () => {
+    expect(periodBounds({ key: PERIOD.PREV_MONTH }, NOW)).toEqual({
+      from: { year: 2026, month: 9, day: 1 },
+      to: { year: 2026, month: 9, day: 30 },
+    });
+    expect(periodBounds({ key: PERIOD.PREV_MONTH }, new Date('2026-01-10T09:00:00Z'))).toEqual({
+      from: { year: 2025, month: 12, day: 1 },
+      to: { year: 2025, month: 12, day: 31 },
+    });
+  });
+
+  it('заголовок и кнопка', () => {
+    expect(periodTitle({ key: PERIOD.PREV_MONTH }, NOW)).toBe(
+      'за прошлый месяц, 01-09-2026 — 30-09-2026',
+    );
+    expect(periodButtonLabel(PERIOD.PREV_MONTH)).toBe('⏮ Прошлый месяц');
+  });
+
+  it('кнопка есть только у «Прибыли» и только когда открыта; «Всего» — последней', () => {
+    const flat = (rows: string[][]) => rows.flat();
+    expect(flat(periodsFor('profit', { prevMonth: true }))).toEqual([
+      'today',
+      'day',
+      'week',
+      'month',
+      'prevmonth',
+      'all',
+    ]);
+    expect(flat(periodsFor('profit', { prevMonth: false }))).not.toContain('prevmonth');
+    expect(flat(periodsFor('redeemed', { prevMonth: true }))).not.toContain('prevmonth');
+  });
+
+  it('в рассылку не входит', () => {
+    expect(SCHEDULE_PERIODS).not.toContain(PERIOD.PREV_MONTH);
   });
 });

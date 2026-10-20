@@ -29,6 +29,11 @@ export type TStoreListResult =
   | { ok: false; reason: 'auth'; message: string }
   | { ok: false; reason: 'unavailable' };
 
+export type TRecheckTokenResult =
+  | { ok: true; stores: IStoreEntry[]; checkedAt: Date }
+  | { ok: false; reason: 'auth'; message: string }
+  | { ok: false; reason: 'unavailable' | 'empty' | 'no-store' };
+
 export type TReplaceTokenResult =
   | { ok: true; stores: IStoreEntry[]; botStore: IStoreEntry | null }
   | { ok: false; reason: 'auth'; message: string }
@@ -139,6 +144,7 @@ export class StoresService {
     await this.yandexMarket.updateByTelegramUser(telegramUserId, {
       token,
       stores: listed.stores,
+      tokenCheckedAt: new Date(),
       ...(pick.changed
         ? {
             campaign_id: pick.store.campaignId,
@@ -149,5 +155,30 @@ export class StoresService {
     });
 
     return { ok: true, stores: listed.stores, botStore: pick.changed ? pick.store : null };
+  }
+
+  /**
+   * «Проверить связь» (TASK-161): записанный токен ещё раз спрашивает Маркет.
+   * Токен и активный магазин бота не трогаются ни в одном исходе — проверка
+   * не замена. Успех обновляет кэш магазинов (список мог измениться) и
+   * `tokenCheckedAt`; отказ и недоступность ничего не пишут.
+   */
+  async recheckToken(
+    telegramUserId: string,
+    origin: IStoreCallOrigin,
+    now: Date = new Date(),
+  ): Promise<TRecheckTokenResult> {
+    const doc = await this.yandexMarket.findByTelegramUser(telegramUserId);
+    if (!doc?.token) return { ok: false, reason: 'no-store' };
+
+    const listed = await this.listByToken(doc.token, origin);
+    if (listed.ok === false) return listed;
+    if (!listed.stores.length) return { ok: false, reason: 'empty' };
+
+    await this.yandexMarket.updateByTelegramUser(telegramUserId, {
+      stores: listed.stores,
+      tokenCheckedAt: now,
+    });
+    return { ok: true, stores: listed.stores, checkedAt: now };
   }
 }

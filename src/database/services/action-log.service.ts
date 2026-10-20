@@ -1,3 +1,4 @@
+import type { IJunkRow } from '../../modules/logs/junk.domain';
 import type { IUpdateRow } from '../../modules/metrics/metrics.domain';
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -31,6 +32,9 @@ export interface IActionLogEntry {
   context?: string;
   /** Плоские подробности ошибки (reportId, времена Маркета) — для модалки админки. */
   details?: Record<string, string | number>;
+  /** Адрес и User-Agent клиента — у HTTP-ошибок, см. AllExceptionsFilter. */
+  ip?: string;
+  userAgent?: string;
 }
 
 /** Фильтр выборки для админского API. */
@@ -151,6 +155,21 @@ export class ActionLogService {
         refusedBy: 1,
       })
       .lean<IUpdateRow[]>()
+      .exec();
+  }
+
+  /**
+   * Записи сканеров за окно — только поля сводки «кто сканирует» (junk.domain).
+   * Потолок — чтобы залп в сотни тысяч запросов не вытащил коллекцию в память:
+   * для сводки по источникам свежих строк хватает с запасом.
+   */
+  async findJunkSince(since: Date, limit: number): Promise<IJunkRow[]> {
+    return await this.model
+      .find({ source: JUNK_SOURCE, createdAt: { $gte: since } })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select({ _id: 0, createdAt: 1, ip: 1, userAgent: 1, requestUrl: 1 })
+      .lean<IJunkRow[]>()
       .exec();
   }
 

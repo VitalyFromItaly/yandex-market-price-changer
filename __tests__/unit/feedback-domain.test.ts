@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import {
   FB_CB_CANCEL,
+  fbDraftCallback,
   fbReplyCallback,
   fbSendCallback,
   fbSkipCallback,
@@ -43,6 +44,11 @@ describe('Отзывы: кодек кнопок', () => {
     expect(parseFbCallback(fbSendCallback(9))).toEqual({ action: 'send', feedbackId: 9 });
   });
 
+  it('ai — «✨ Предложить ответ» несёт feedbackId и влезает в callback_data', () => {
+    expect(parseFbCallback(fbDraftCallback(9))).toEqual({ action: 'ai', feedbackId: 9 });
+    expect(Buffer.byteLength(fbDraftCallback(Number.MAX_SAFE_INTEGER))).toBeLessThanOrEqual(64);
+  });
+
   it('cancel — без идентификатора', () => {
     expect(parseFbCallback(FB_CB_CANCEL)).toEqual({ action: 'cancel' });
   });
@@ -50,6 +56,7 @@ describe('Отзывы: кодек кнопок', () => {
   it('мусор не разбирается', () => {
     expect(parseFbCallback('fb:re:abc')).toBeNull();
     expect(parseFbCallback('fb:xxx')).toBeNull();
+    expect(parseFbCallback('fb:ai:abc')).toBeNull();
     expect(parseFbCallback(undefined)).toBeNull();
   });
 });

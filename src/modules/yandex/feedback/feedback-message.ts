@@ -1,10 +1,11 @@
-import type { IGoodsFeedback } from './feedback.domain';
+import type { IGoodsFeedback, TFeedbackReplyProblem } from './feedback.domain';
 
 import { b, esc, i } from '../../telegram/formatting/telegram-format';
 
 import {
   FB_CB_CANCEL,
   FEEDBACK_REPLY_MAX_LENGTH,
+  fbDraftCallback,
   fbReplyCallback,
   fbSendCallback,
   fbSkipCallback,
@@ -108,18 +109,64 @@ export function feedbackAskReplyText(): string {
   ].join('\n');
 }
 
+// --- «✨ Предложить ответ»: черновик от ИИ ------------------------------------
+
+export const FEEDBACK_DRAFT_BUTTON = '✨ Предложить ответ';
+
+/** Модель могла увидеть только текст отзыва — проверить черновик обязан человек. */
+export const FEEDBACK_DRAFT_CHECK_NOTE =
+  'Это черновик ИИ: проверьте его перед публикацией — опубликует только ваша кнопка.';
+
+/** Что сказать о черновике, который нельзя показать превью. Общая на оба канала. */
+export function feedbackDraftProblemPlain(problem: TFeedbackReplyProblem): string {
+  if (problem === 'too-long') {
+    return (
+      `Черновик длиннее ${FEEDBACK_REPLY_MAX_LENGTH} символов — ` +
+      'сократите его или попросите предложить ещё раз.'
+    );
+  }
+  return 'ИИ не предложил текст — попросите ещё раз или напишите ответ сами.';
+}
+
+/** Отзыва нет среди ждущих ответа, пока модель думала. */
+export const FEEDBACK_DRAFT_GONE_PLAIN = 'На этот отзыв уже ответили или пропустили его.';
+
+/** Кнопка под вопросом «пришлите текст» — только если фича открыта. */
+export function feedbackDraftButtons(
+  feedbackId: number,
+): Array<{ text: string; callback_data: string }> {
+  return [{ text: FEEDBACK_DRAFT_BUTTON, callback_data: fbDraftCallback(feedbackId) }];
+}
+
+export function feedbackDraftQueuedText(): string {
+  return '✨ Готовлю черновик ответа — пришлю, как будет готов. Бот пока отвечает на другие кнопки.';
+}
+
+export function feedbackDraftBusyText(): string {
+  return '⏳ Черновик уже готовится — дождитесь его.';
+}
+
+/**
+ * Черновик есть, но превью невозможно (длинный): показываем текст и
+ * оставляем вопрос открытым — продавец пришлёт свой вариант.
+ */
+export function feedbackDraftProblemText(problem: TFeedbackReplyProblem, draft: string): string {
+  const lines = [`⚠️ ${feedbackDraftProblemPlain(problem)}`];
+  if (draft) lines.push('', `«${esc(draft)}»`);
+  lines.push('', 'Пришлите свой текст ответа — или нажмите кнопку ещё раз.');
+  return lines.join('\n');
+}
+
 /**
  * Превью черновика с кнопками «Отправить/Отмена». Публикует только кнопка:
  * ответ — публичный текст на Маркете, случайное сообщение не должно улетать.
  */
-export function feedbackPreviewText(draft: string): string {
-  return [
-    '📝 Вот что будет опубликовано в ответ на отзыв:',
-    '',
-    `«${esc(draft)}»`,
-    '',
-    'Отправить?',
-  ].join('\n');
+export function feedbackPreviewText(draft: string, fromAi = false): string {
+  const lines = ['📝 Вот что будет опубликовано в ответ на отзыв:', '', `«${esc(draft)}»`, ''];
+  if (fromAi)
+    lines.push(i(FEEDBACK_DRAFT_CHECK_NOTE), 'Хотите изменить — пришлите свой текст.', '');
+  lines.push('Отправить?');
+  return lines.join('\n');
 }
 
 export function feedbackPreviewButtons(

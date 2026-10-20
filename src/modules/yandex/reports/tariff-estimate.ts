@@ -117,6 +117,32 @@ function rowKeyOf(sku: string, price: number): string {
 }
 
 /**
+ * Параметры калькулятора для одного товара по цене (рубли): категория из
+ * каталога, габариты — каталожные или фолбэк. null — посчитать нельзя: товара
+ * нет в каталоге, у него нет категории или цена не положительна. Одна функция
+ * на «Прибыль» и калькулятор цен (TASK-139).
+ */
+export function tariffParamsOf(
+  found: IOfferLogistics | undefined,
+  price: number,
+): ITariffOfferParams | null {
+  if (!found?.marketCategoryId || !(price > 0)) return null;
+
+  const d = found.weightDimensions ?? {};
+  const real =
+    Number(d.length) > 0 && Number(d.width) > 0 && Number(d.height) > 0 && Number(d.weight) > 0;
+
+  return {
+    categoryId: found.marketCategoryId,
+    price,
+    length: real ? Number(d.length) : DEFAULT_DIMENSION_CM,
+    width: real ? Number(d.width) : DEFAULT_DIMENSION_CM,
+    height: real ? Number(d.height) : DEFAULT_DIMENSION_CM,
+    weight: real ? Number(d.weight) : DEFAULT_WEIGHT_KG,
+  };
+}
+
+/**
  * Строки запроса калькулятора по набору заказов: уникальные пары
  * (артикул, цена) с габаритами из каталога либо фолбэком.
  *
@@ -135,31 +161,16 @@ export function buildTariffRows(
       const sku = item.offerId;
       if (!sku) continue;
 
-      const found = logistics.get(sku);
       const price = tariffPriceOf(item);
-      if (!found?.marketCategoryId || price <= 0) {
+      const params = tariffParamsOf(logistics.get(sku), price);
+      if (!params) {
         uncovered.add(sku);
         continue;
       }
 
       const key = rowKeyOf(sku, price);
       if (rows.has(key)) continue;
-
-      const d = found.weightDimensions ?? {};
-      const real =
-        Number(d.length) > 0 && Number(d.width) > 0 && Number(d.height) > 0 && Number(d.weight) > 0;
-
-      rows.set(key, {
-        key,
-        params: {
-          categoryId: found.marketCategoryId,
-          price,
-          length: real ? Number(d.length) : DEFAULT_DIMENSION_CM,
-          width: real ? Number(d.width) : DEFAULT_DIMENSION_CM,
-          height: real ? Number(d.height) : DEFAULT_DIMENSION_CM,
-          weight: real ? Number(d.weight) : DEFAULT_WEIGHT_KG,
-        },
-      });
+      rows.set(key, { key, params });
     }
   }
 

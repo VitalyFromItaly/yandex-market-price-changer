@@ -49,6 +49,17 @@ export class FeedbackReplyInvalidError extends Error {
   }
 }
 
+/**
+ * Отзыва больше нет среди ждущих реакции: на него ответили или его пропустили
+ * (в другом магазине кабинета, в кабинете Маркета). Черновик к нему не нужен.
+ */
+export class FeedbackGoneError extends Error {
+  constructor(public readonly feedbackId: number) {
+    super(`Отзыв ${feedbackId} уже не ждёт ответа`);
+    this.name = 'FeedbackGoneError';
+  }
+}
+
 /** Сырой отзыв из ответа Partner API. */
 export type TRawGoodsFeedback = {
   feedbackId?: number;
@@ -79,15 +90,16 @@ export function parseGoodsFeedback(raw: TRawGoodsFeedback): IGoodsFeedback | nul
 // --- кодек inline-кнопок ------------------------------------------------------
 //
 // `re` открывает вопрос «пришлите текст ответа», `skip` помечает прочитанным,
-// `send`/`cancel` — кнопки превью черновика. Публикует ТОЛЬКО `send`: ответ на
+// `send`/`cancel` — кнопки превью черновика, `ai` — «✨ Предложить ответ»
+// (черновик от ИИ, своя фича). Публикует ТОЛЬКО `send`: ответ на
 // отзыв — публичный текст на Маркете, и без явного подтверждения любое
 // случайное сообщение после «Ответить» улетало бы наружу (довод dryRun).
 
-export const FB_CB_PATTERN = /^fb:(re|skip|send):\d+$|^fb:cancel$/;
+export const FB_CB_PATTERN = /^fb:(re|skip|send|ai):\d+$|^fb:cancel$/;
 
-export type TFbCallback =
-  | { action: 're' | 'skip' | 'send'; feedbackId: number }
-  | { action: 'cancel' };
+type TFbIdAction = 're' | 'skip' | 'send' | 'ai';
+
+export type TFbCallback = { action: TFbIdAction; feedbackId: number } | { action: 'cancel' };
 
 export function fbReplyCallback(feedbackId: number): string {
   return `fb:re:${feedbackId}`;
@@ -101,6 +113,11 @@ export function fbSendCallback(feedbackId: number): string {
   return `fb:send:${feedbackId}`;
 }
 
+/** «✨ Предложить ответ»: черновик от ИИ — НЕ публикация, дальше прежнее превью. */
+export function fbDraftCallback(feedbackId: number): string {
+  return `fb:ai:${feedbackId}`;
+}
+
 export const FB_CB_CANCEL = 'fb:cancel';
 
 export function parseFbCallback(data: string | undefined): TFbCallback | null {
@@ -109,5 +126,5 @@ export function parseFbCallback(data: string | undefined): TFbCallback | null {
   if (value === FB_CB_CANCEL) return { action: 'cancel' };
 
   const [, action, id] = value.split(':');
-  return { action: action as 're' | 'skip' | 'send', feedbackId: Number(id) };
+  return { action: action as TFbIdAction, feedbackId: Number(id) };
 }

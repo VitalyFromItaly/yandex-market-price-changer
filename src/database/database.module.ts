@@ -6,25 +6,45 @@ import { AppConfigService } from '../config/app-config.service';
 import { DatabaseService } from './database.service';
 import { ActionLog, ActionLogSchema } from './schemas/action-log.schema';
 import { AdminCredential, AdminCredentialSchema } from './schemas/admin-credential.schema';
+import { AiTurn, AiTurnSchema } from './schemas/ai-turn.schema';
 import { AiUsage, AiUsageSchema } from './schemas/ai-usage.schema';
 import { Bot, BotSchema } from './schemas/bot.schema';
+import { CostHistory, CostHistorySchema } from './schemas/cost-history.schema';
 import { CrmCredential, CrmCredentialSchema } from './schemas/crm-credential.schema';
 import { CrmJobResult, CrmJobResultSchema } from './schemas/crm-job-result.schema';
 import { HealthSample, HealthSampleSchema } from './schemas/health-sample.schema';
+import {
+  MarketplaceConnection,
+  MarketplaceConnectionSchema,
+} from './schemas/marketplace-connection.schema';
+import { ProductCardIssue, ProductCardIssueSchema } from './schemas/product-card-issue.schema';
+import { Product, ProductSchema } from './schemas/product.schema';
 import { PurchasePrice, PurchasePriceSchema } from './schemas/purchase-price.schema';
 import { ReportSchedule, ReportScheduleSchema } from './schemas/report-schedule.schema';
+import {
+  SellerNotificationSettings,
+  SellerNotificationSettingsSchema,
+} from './schemas/seller-notification-settings.schema';
+import { SellerNotification, SellerNotificationSchema } from './schemas/seller-notification.schema';
 import { TelegramApiBucket, TelegramApiBucketSchema } from './schemas/telegram-api-bucket.schema';
 import { UserAccess, UserAccessSchema } from './schemas/user-access.schema';
 import { User, UserSchema } from './schemas/user.schema';
 import { YandexMarket, YandexMarketSchema } from './schemas/yandex-market.schema';
 import { ActionLogService } from './services/action-log.service';
 import { AdminCredentialService } from './services/admin-credential.service';
+import { AiTurnService } from './services/ai-turn.service';
 import { AiUsageService } from './services/ai-usage.service';
+import { CostHistoryService } from './services/cost-history.service';
 import { CrmCredentialService } from './services/crm-credential.service';
 import { CrmJobResultService } from './services/crm-job-result.service';
 import { HealthSampleService } from './services/health-sample.service';
+import { MarketplaceConnectionService } from './services/marketplace-connection.service';
+import { ProductCardIssueService } from './services/product-card-issue.service';
+import { ProductService } from './services/product.service';
 import { PurchasePriceService } from './services/purchase-price.service';
 import { ReportScheduleService } from './services/report-schedule.service';
+import { SellerNotificationSettingsService } from './services/seller-notification-settings.service';
+import { SellerNotificationService } from './services/seller-notification.service';
 import { TelegramApiBucketService } from './services/telegram-api-bucket.service';
 import { UserAccessService } from './services/user-access.service';
 import { YandexMarketService } from './services/yandex-market.service';
@@ -71,6 +91,13 @@ import { YandexMarketService } from './services/yandex-market.service';
       { name: TelegramApiBucket.name, schema: TelegramApiBucketSchema },
       { name: HealthSample.name, schema: HealthSampleSchema },
       { name: AiUsage.name, schema: AiUsageSchema },
+      { name: AiTurn.name, schema: AiTurnSchema },
+      { name: Product.name, schema: ProductSchema },
+      { name: CostHistory.name, schema: CostHistorySchema },
+      { name: ProductCardIssue.name, schema: ProductCardIssueSchema },
+      { name: MarketplaceConnection.name, schema: MarketplaceConnectionSchema },
+      { name: SellerNotificationSettings.name, schema: SellerNotificationSettingsSchema },
+      { name: SellerNotification.name, schema: SellerNotificationSchema },
     ]),
   ],
   providers: [
@@ -86,6 +113,13 @@ import { YandexMarketService } from './services/yandex-market.service';
     TelegramApiBucketService,
     HealthSampleService,
     AiUsageService,
+    AiTurnService,
+    ProductService,
+    CostHistoryService,
+    ProductCardIssueService,
+    MarketplaceConnectionService,
+    SellerNotificationSettingsService,
+    SellerNotificationService,
   ],
   exports: [
     DatabaseService,
@@ -101,6 +135,13 @@ import { YandexMarketService } from './services/yandex-market.service';
     TelegramApiBucketService,
     HealthSampleService,
     AiUsageService,
+    AiTurnService,
+    ProductService,
+    CostHistoryService,
+    ProductCardIssueService,
+    MarketplaceConnectionService,
+    SellerNotificationSettingsService,
+    SellerNotificationService,
   ],
 })
 export class DatabaseModule {}

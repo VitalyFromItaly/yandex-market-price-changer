@@ -1,3 +1,4 @@
+import type { TAiPurpose } from '../../modules/ai/ai-purpose';
 import type { TAiUsageStatus } from '../schemas/ai-usage.schema';
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -38,6 +39,13 @@ export interface IAiUsageQuery {
 
 /** Потолок страницы: без него `?limit=1000000` выгребает коллекцию в память. */
 export const MAX_AI_PAGE_SIZE = 100;
+
+/**
+ * purpose контрольного набора вопросов к ИИ-аналитику (`scripts/eval-ai-analyst.ts`,
+ * TASK-169): строки пишутся — стоимость прогона видна на странице «ИИ», — но в
+ * дневной лимит продавца не входят (`spentRubSince`).
+ */
+export const AI_EVAL_PURPOSE: TAiPurpose = 'eval';
 const DEFAULT_AI_PAGE_SIZE = 50;
 
 export interface IAiSpend {
@@ -105,6 +113,9 @@ export class AiUsageService {
   /**
    * Сколько рублей продавец потратил на ИИ с момента `since`.
    *
+   * Без контрольного набора (`AI_EVAL_PURPOSE`): его запускает владелец за свой
+   * счёт, и прогон на журнале продавца не должен съедать продавцу дневной лимит.
+   *
    * Бросает: что делать, если сумму не узнать, решает AiService (отказ — решение
    * владельца `ai_limit_unknown_refuse`).
    */
@@ -113,7 +124,13 @@ export class AiUsageService {
       .aggregate<{
         total: number;
       }>([
-        { $match: { telegramUserId, createdAt: { $gte: since } } },
+        {
+          $match: {
+            telegramUserId,
+            purpose: { $ne: AI_EVAL_PURPOSE },
+            createdAt: { $gte: since },
+          },
+        },
         { $group: { _id: null, total: { $sum: '$costRub' } } },
       ])
       .exec();

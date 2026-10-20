@@ -4,6 +4,8 @@ import { BotSchema } from '../src/database/schemas/bot.schema';
 import { UserSchema } from '../src/database/schemas/user.schema';
 import { UserAccessSchema } from '../src/database/schemas/user-access.schema';
 import { ReportScheduleSchema } from '../src/database/schemas/report-schedule.schema';
+import { SellerNotificationSettingsSchema } from '../src/database/schemas/seller-notification-settings.schema';
+import { SellerNotificationSchema } from '../src/database/schemas/seller-notification.schema';
 import { PurchasePriceSchema } from '../src/database/schemas/purchase-price.schema';
 import { YandexMarketSchema } from '../src/database/schemas/yandex-market.schema';
 import { ActionLogSchema } from '../src/database/schemas/action-log.schema';
@@ -12,7 +14,12 @@ import { CrmCredentialSchema } from '../src/database/schemas/crm-credential.sche
 import { CrmJobResultSchema } from '../src/database/schemas/crm-job-result.schema';
 import { TelegramApiBucketSchema } from '../src/database/schemas/telegram-api-bucket.schema';
 import { HealthSampleSchema } from '../src/database/schemas/health-sample.schema';
+import { AiTurnSchema } from '../src/database/schemas/ai-turn.schema';
 import { AiUsageSchema } from '../src/database/schemas/ai-usage.schema';
+import { ProductSchema } from '../src/database/schemas/product.schema';
+import { CostHistorySchema } from '../src/database/schemas/cost-history.schema';
+import { MarketplaceConnectionSchema } from '../src/database/schemas/marketplace-connection.schema';
+import { ProductCardIssueSchema } from '../src/database/schemas/product-card-issue.schema';
 
 /**
  * Приведение индексов существующей базы к схемам.
@@ -45,6 +52,13 @@ const MODELS = [
   { name: 'TelegramApiBucket', schema: TelegramApiBucketSchema },
   { name: 'HealthSample', schema: HealthSampleSchema },
   { name: 'AiUsage', schema: AiUsageSchema },
+  { name: 'AiTurn', schema: AiTurnSchema },
+  { name: 'Product', schema: ProductSchema },
+  { name: 'CostHistory', schema: CostHistorySchema },
+  { name: 'ProductCardIssue', schema: ProductCardIssueSchema },
+  { name: 'MarketplaceConnection', schema: MarketplaceConnectionSchema },
+  { name: 'SellerNotificationSettings', schema: SellerNotificationSettingsSchema },
+  { name: 'SellerNotification', schema: SellerNotificationSchema },
 ];
 
 async function main(): Promise<void> {

@@ -1,11 +1,20 @@
 import type { IPurchasePriceRow } from '../../../database/services/purchase-price.service';
+import type { IProductPriceRow } from '../../products/product.domain';
+import type { IPurchaseRow } from '../reports/profit';
 import type { IYandexTenantCredentials, IStockUpdate } from '../yandex-api.client';
 import type { TWriteSkipReason } from './stock-upload-policy';
 
 import { Injectable, Logger } from '@nestjs/common';
 
 import { AppConfigService } from '../../../config/app-config.service';
+import { CostHistoryService } from '../../../database/services/cost-history.service';
+import { ProductService } from '../../../database/services/product.service';
 import { PurchasePriceService } from '../../../database/services/purchase-price.service';
+import { ErrorReporter } from '../../errors/error-reporter.service';
+import {
+  productRowsFromPriceList,
+  productStockRowsFromPriceList,
+} from '../../products/product.domain';
 import { STOCKS_BATCH_SIZE } from '../yandex-api.paths';
 import { YandexClientFactory } from '../yandex-client.factory';
 
@@ -70,6 +79,21 @@ export interface IStockSyncResult {
   writeSkipReason?: TWriteSkipReason;
 }
 
+/**
+ * Итог записи готовых остатков (`writeStocks`) — для путей, где остатки
+ * посчитаны не из файла, а планом «Передачи остатков» (TASK-143).
+ */
+export interface IStockWriteResult {
+  /** Фактически записано в Яндекс. */
+  written: number;
+  /** Батчи, которые Partner API отверг. */
+  errors: IStockSyncResult['errors'];
+  /** Почему не писали ничего. Отсутствует — запись была (или писать было нечего). */
+  skipReason?: TWriteSkipReason;
+  /** Модель кампании по живому ответу Маркета; undefined — не выяснена. */
+  placementType?: string;
+}
+
 /** Повод не писать остатки — правило живёт в stock-upload-policy.ts, общее с ранним слоем. */
 export type { TWriteSkipReason };
 
@@ -95,9 +119,16 @@ export interface ISyncOptions {
 /**
  * Обновление остатков из прайс-листа.
  *
- * ЕДИНСТВЕННОЕ место во всём приложении, которое пишет в Partner API. Всё
- * остальное — отчёты — работает только на чтение.
+ * Единственное место, которое пишет ОСТАТКИ в Partner API: из прайса (`sync`)
+ * и из плана «Передачи остатков» (`writeStocks`, TASK-143) — оба через
+ * `writeInBatches` с его последним рубежом.
  */
+/** Что нужно `writeInBatches` от итога: повод не писать и куда класть отказы батчей. */
+interface IWriteHolder {
+  writeSkipReason?: TWriteSkipReason;
+  errors: IStockSyncResult['errors'];
+}
+
 @Injectable()
 export class StockSyncService {
   private readonly logger = new Logger(StockSyncService.name);
@@ -106,6 +137,9 @@ export class StockSyncService {
     private readonly clients: YandexClientFactory,
     private readonly purchasePrices: PurchasePriceService,
     private readonly config: AppConfigService,
+    private readonly products: ProductService,
+    private readonly errors: ErrorReporter,
+    private readonly costHistory: CostHistoryService,
   ) {}
 
   /**
@@ -179,6 +213,9 @@ export class StockSyncService {
 
     const updates: IStockUpdate[] = [];
     const purchases: IPurchasePriceRow[] = [];
+    // Свой склад (TASK-142): количество каждой разобранной строки, под тем же
+    // ключом, что закуп. Пишется в Product независимо от записи на Маркет.
+    const ownStock: { sku: string; quantity: number }[] = [];
     const matchedBy: Record<string, number> = {};
 
     for (const row of rows) {
@@ -212,6 +249,7 @@ export class StockSyncService {
          * а между собой кандидаты «без бренда» на всех 19 143 наименованиях
          * файла уникальны (см. sku-resolver).
          */
+        ownStock.push({ sku: stripBrand(row.name), quantity: row.quantity });
         if (row.price !== null) {
           purchases.push({
             sku: stripBrand(row.name),
@@ -226,6 +264,7 @@ export class StockSyncService {
 
       matchedBy[how] = (matchedBy[how] ?? 0) + 1;
       updates.push({ sku, count: row.quantity });
+      ownStock.push({ sku, quantity: row.quantity });
 
       // Закупочная цена. Колонка «Цена» разбиралась и раньше, но никем не
       // читалась — именно из неё и считается прибыль. Ключ — разрешённый по
@@ -273,6 +312,10 @@ export class StockSyncService {
       result.purchasePricesSkipped = true;
     }
 
+    // После закупа: новый товар заводит он, остаток ложится в уже заведённый.
+    // Это наша Mongo, поэтому и в «проверке» — как закуп.
+    await this.saveOwnStock(options.telegramUserId, ownStock);
+
     if (dryRun) {
       this.logger.log(`Сухой прогон: ${updates.length} из ${rows.length} нашлись, записи НЕ было`);
       return result;
@@ -297,6 +340,41 @@ export class StockSyncService {
 
     result.updated = await this.writeInBatches(client, updates, result);
     return result;
+  }
+
+  /**
+   * Запись УЖЕ посчитанных остатков на склад продавца кампании (TASK-143).
+   *
+   * Второй путь к `writeInBatches`, и барьеры он проходит те же, а не свои:
+   * `STOCK_WRITE_ENABLED` и модель по ЖИВОМУ `listStores()` выясняются здесь
+   * же, не принимаются от вызывающего (довод `sync`: переданное можно не
+   * передать). Последний рубеж — внутри `writeInBatches`, вплотную к
+   * `updateStocks`. Фичу продавца проверяет вызывающий: у сервиса нет доступа
+   * к `UserAccess`, и это ровно довод `stockWriteAllowed`.
+   */
+  public async writeStocks(
+    credentials: IYandexTenantCredentials,
+    updates: readonly IStockUpdate[],
+    options: { telegramUserId: string },
+  ): Promise<IStockWriteResult> {
+    if (!options?.telegramUserId) {
+      throw new Error('writeStocks: нужен telegramUserId — запись журналируется по продавцу');
+    }
+    const client = this.clients.forTenant(credentials);
+    const writeEnabled = this.config.stockWriteEnabled;
+    const placementType = writeEnabled
+      ? await this.resolvePlacement(client, credentials.campaignId)
+      : undefined;
+    const skipReason = skipReasonOf(writeEnabled, true, placementType);
+    const holder: IWriteHolder = { writeSkipReason: skipReason, errors: [] };
+
+    if (skipReason) {
+      this.logger.warn(this.skipLogLine(skipReason, placementType, credentials.campaignId));
+      return { written: 0, errors: [], skipReason, placementType };
+    }
+
+    const written = await this.writeInBatches(client, [...updates], holder);
+    return { written, errors: holder.errors, placementType };
   }
 
   /** Строка лога о пропущенной записи — по одному предложению на каждый повод. */
@@ -357,11 +435,101 @@ export class StockSyncService {
     telegramUserId: string,
     purchases: readonly IPurchasePriceRow[],
   ): Promise<number> {
+    let saved: number;
+    let previous: Map<string, IPurchaseRow>;
     try {
-      return await this.purchasePrices.upsertMany(telegramUserId, purchases);
+      // Закуп ДО записи — материал стартовой записи истории себестоимости: после
+      // upsert старой цены уже не прочитать, а без неё новая стала бы стартовой
+      // и переписала прошлые месяцы.
+      previous = await this.purchasePrices.findBySkus(
+        telegramUserId,
+        purchases.map((row) => row.sku),
+      );
+      saved = await this.purchasePrices.upsertMany(telegramUserId, purchases);
     } catch (error) {
       this.logger.error(`Не удалось сохранить закупочные цены: ${String(error)}`);
       return 0;
+    }
+
+    const rows = productRowsFromPriceList(purchases);
+    await this.saveProducts(telegramUserId, rows);
+    await this.saveCostHistory(telegramUserId, rows, previous);
+    return saved;
+  }
+
+  /**
+   * История себестоимости (TASK-116): запись только при изменении цены, после
+   * товаров — история принадлежит товару, и новому товару нужен его id.
+   *
+   * Сбой не роняет загрузку, но и не глотается. Цена в `PurchasePrice` к этому
+   * моменту уже новая, так что у товара без истории она станет стартовой — то
+   * есть прошлое пересчитается, как до TASK-116 (known-gaps).
+   */
+  private async saveCostHistory(
+    telegramUserId: string,
+    rows: readonly IProductPriceRow[],
+    previous: ReadonlyMap<string, IPurchaseRow>,
+  ): Promise<void> {
+    try {
+      await this.costHistory.recordPriceList(telegramUserId, rows, previous);
+    } catch (error) {
+      this.logger.error(`Не удалось записать историю себестоимости: ${String(error)}`);
+      void this.errors.report({
+        error,
+        source: 'queue',
+        context: 'products:cost-history',
+        telegramUserId,
+      });
+    }
+  }
+
+  /**
+   * Тот же закуп — в базу товаров (`Product`), сразу за `PurchasePrice`
+   * (решение `product_sync_on_price_upload`): иначе Product устарел бы с первого
+   * же нового прайса. Только после успешной записи закупа — товары не должны
+   * знать цену, которой нет у «Прибыли».
+   *
+   * Сбой НЕ роняет загрузку (остатки и закуп уже записаны) и не глотается:
+   * уходит в журнал ошибок; товары догоняются `scripts/seed-products.ts`.
+   */
+  private async saveProducts(
+    telegramUserId: string,
+    rows: readonly IProductPriceRow[],
+  ): Promise<void> {
+    try {
+      await this.products.upsertFromPriceList(telegramUserId, rows);
+    } catch (error) {
+      this.logger.error(`Не удалось обновить товары из прайса: ${String(error)}`);
+      void this.errors.report({
+        error,
+        source: 'queue',
+        context: 'products:price-list',
+        telegramUserId,
+      });
+    }
+  }
+
+  /**
+   * Свой склад товаров из прайса (раздел «Склад», TASK-142). Сбой не роняет
+   * загрузку — остатки Маркета и закуп важнее, — но уходит в журнал ошибок.
+   */
+  private async saveOwnStock(
+    telegramUserId: string,
+    rows: readonly { sku: string; quantity: number }[],
+  ): Promise<void> {
+    try {
+      await this.products.setStockFromPriceList(
+        telegramUserId,
+        productStockRowsFromPriceList(rows),
+      );
+    } catch (error) {
+      this.logger.error(`Не удалось записать свой склад товаров: ${String(error)}`);
+      void this.errors.report({
+        error,
+        source: 'queue',
+        context: 'products:own-stock',
+        telegramUserId,
+      });
     }
   }
 
@@ -373,7 +541,7 @@ export class StockSyncService {
   private async writeInBatches(
     client: ReturnType<YandexClientFactory['forTenant']>,
     updates: IStockUpdate[],
-    result: IStockSyncResult,
+    result: IWriteHolder,
   ): Promise<number> {
     if (!updates.length) return 0;
 
@@ -396,6 +564,18 @@ export class StockSyncService {
           'остатки не отправлены',
       );
       return 0;
+    }
+
+    /**
+     * Отрицательный или нечисловой остаток не уходит никуда: такой PUT Маркет
+     * либо отвергнет батчем, либо — хуже — примет как ноль. Отказ целиком, а
+     * не пропуск строки: число из ниоткуда значит, что сломан расчёт выше.
+     */
+    const broken = updates.find((u) => !Number.isFinite(u.count) || u.count < 0);
+    if (broken) {
+      throw new Error(
+        `Остаток «${broken.sku}» = ${broken.count}: запись остатков отменена целиком`,
+      );
     }
 
     const warehouseId = await client.getWarehouseId();

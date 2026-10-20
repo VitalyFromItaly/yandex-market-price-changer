@@ -1,5 +1,6 @@
-import type { YandexApiClient } from './yandex-api.client';
+import type { IReportInfo, YandexApiClient } from './yandex-api.client';
 
+import { ReportGenerationError } from './report-generation.error';
 import { realSleep, type TSleep } from './yandex-retry';
 
 /**
@@ -31,6 +32,11 @@ const DEFAULT_MAX_ATTEMPTS = 72;
 /**
  * Ссылка на готовый файл, либо null — DONE без файла означает «данных за
  * период нет» (substatus NO_DATA), это ответ, а не сбой.
+ *
+ * FAILED и таймаут бросают `ReportGenerationError`, а не голый Error: текст
+ * тот же, но журнал получает reportId, subStatus и времена Маркета — без них
+ * «почему отчёт не сгенерировался» снова решался бы через docker logs и curl
+ * (урок fby-stock, 12–13-10-2026).
  */
 export async function pollReportFile(
   client: YandexApiClient,
@@ -41,12 +47,23 @@ export async function pollReportFile(
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
 
+  const startedAt = Date.now();
+  let last: IReportInfo | undefined;
+
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const info = await client.getReportInfo(reportId);
-    if (info.status === 'DONE') return info.fileUrl ?? null;
-    if (info.status === 'FAILED') throw new Error(options.failedError);
+    last = await client.getReportInfo(reportId);
+    if (last.status === 'DONE') return last.fileUrl ?? null;
+    if (last.status === 'FAILED') {
+      const reason = last.subStatus ? ` (Маркет: ${last.subStatus})` : '';
+      throw new ReportGenerationError(
+        `${options.failedError}${reason}`,
+        reportId,
+        last,
+        Date.now() - startedAt,
+      );
+    }
     await sleep(intervalMs);
   }
 
-  throw new Error(options.notReadyError);
+  throw new ReportGenerationError(options.notReadyError, reportId, last, Date.now() - startedAt);
 }

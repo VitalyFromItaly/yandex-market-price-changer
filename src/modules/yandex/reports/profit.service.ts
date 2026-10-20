@@ -6,12 +6,14 @@ import type { IReportPeriod } from './report-period';
 
 import { Injectable, Logger } from '@nestjs/common';
 
+import { CostHistoryService } from '../../../database/services/cost-history.service';
 import { PurchasePriceService } from '../../../database/services/purchase-price.service';
 import { ErrorReporter } from '../../errors/error-reporter.service';
+import { datedCosts } from '../../products/cost-history.domain';
 import { YandexClientFactory } from '../yandex-client.factory';
 
 import { OrderReportsService } from './order-reports.service';
-import { applyDiscounts, orderPurchase, orderSkus, profitOf, ratesOf } from './profit';
+import { orderPurchase, orderSkus, profitOf, ratesOf } from './profit';
 import { buildTariffRows, estimateOf, orderServices, unitCostsOf } from './tariff-estimate';
 import { DEFAULT_PERIOD } from './report-period';
 import { REPORT } from './report-status-map';
@@ -94,6 +96,7 @@ export class ProfitService {
     private readonly purchasePrices: PurchasePriceService,
     private readonly clients: YandexClientFactory,
     private readonly errors: ErrorReporter,
+    private readonly costHistory: CostHistoryService,
   ) {}
 
   public async build(
@@ -119,12 +122,16 @@ export class ProfitService {
     // два запроса на один отчёт означали бы двойной проход по коллекции в
     // 4100 документов ради того же результата.
     const skus = orderSkus([...result.orders, ...placedOrders.orders]);
-    const rows = await this.purchasePrices.findBySkus(store.telegramUserId, skus);
+    const [rows, histories] = await Promise.all([
+      this.purchasePrices.findBySkus(store.telegramUserId, skus),
+      this.costHistory.findForSkus(store.telegramUserId, skus),
+    ]);
 
     // В базе лежит цена ПРАЙСА; закуп получается вычетом скидки — своей у
     // «Востока», своей у остального. Поэтому смена процента действует сразу, без
-    // перезагрузки файла.
-    const costs = applyDiscounts(rows, rates);
+    // перезагрузки файла. Цена — НА ДАТУ ЗАКАЗА по истории себестоимости
+    // (TASK-116): новый прайс не переписывает прошлые месяцы.
+    const costs = datedCosts(rows, histories, rates);
 
     // Возвраты запрашиваются ОДИН раз на оба расчёта: список общий, а метод
     // возвратов — самый дорогой запрос отчёта. `rows` — те же строки закупа:
@@ -142,8 +149,8 @@ export class ProfitService {
     this.logger.log(
       `Прибыль для ${store.telegramUserId}: выкуплено ${totals.orders}, ` +
         `оформлено ${placed.orders} (отменено ${placedOrders.cancelled.length}), ` +
-        `исключено ${totals.excludedOrders}/${placed.excludedOrders}, ` +
-        `возвращено ${totals.returnedOrders}, закуп известен по ${costs.size} из ${skus.length}`,
+        `исключено ${totals.unconfirmed.orders}/${placed.unconfirmed.orders}, ` +
+        `возвращено ${totals.returnedOrders}, закуп в прайсе по ${rows.size} из ${skus.length}, с историей ${histories.size}`,
     );
 
     // Оценка по калькулятору — для того набора, чей блок печатает комиссию:
@@ -200,12 +207,13 @@ export class ProfitService {
     // Закуп — из нашей Mongo, ровно как в «Прибыли»: цена прайса минус скидка
     // бренда. Другого источника нет, Partner API себестоимость не отдаёт.
     const skus = orderSkus(orders);
-    const [purchaseRows, logistics, returned] = await Promise.all([
+    const [purchaseRows, histories, logistics, returned] = await Promise.all([
       this.purchasePrices.findBySkus(store.telegramUserId, skus),
+      this.costHistory.findForSkus(store.telegramUserId, skus),
       this.clients.forStore(store).getOfferMappings(skus),
       this.returnedOrderIds(store),
     ]);
-    const costs = applyDiscounts(purchaseRows, rates);
+    const costs = datedCosts(purchaseRows, histories, rates);
 
     const { rows } = buildTariffRows(orders, logistics);
     const calculations = rows.length

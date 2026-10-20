@@ -187,6 +187,26 @@ export function unitedNettingGeneratePath(): string {
   return `/${API_VERSIONS.reports}/reports/united-netting/generate`;
 }
 
+// --- финансовые отчёты (M16, журнал операций) -------------------------------
+//
+// Асинхронные, как united-netting. Заказываются в format=JSON — ZIP с JSON на
+// каждый лист (report-zip.ts). Лимит у всех 100/час.
+
+/** Отчёт по стоимости услуг Маркета (начисления и удержания по услугам). */
+export function unitedMarketplaceServicesGeneratePath(): string {
+  return `/${API_VERSIONS.reports}/reports/united-marketplace-services/generate`;
+}
+
+/** Отчёт по заказам (united-orders) — заказы с деньгами за период. */
+export function unitedOrdersGeneratePath(): string {
+  return `/${API_VERSIONS.reports}/reports/united-orders/generate`;
+}
+
+/** Отчёт по невыкупам и возвратам (united-returns). */
+export function unitedReturnsGeneratePath(): string {
+  return `/${API_VERSIONS.reports}/reports/united-returns/generate`;
+}
+
 // --- шесть отчётов раздела «📈 Отчёты Маркета» -------------------------------
 //
 // Все асинхронные (generate → reports/info → файл), все на версии reports.

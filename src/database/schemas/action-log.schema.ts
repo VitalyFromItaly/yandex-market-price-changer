@@ -138,6 +138,19 @@ export class ActionLog {
   @Prop({ type: MongooseSchema.Types.Mixed })
   details?: Record<string, string | number>;
 
+  /**
+   * Адрес клиента у HTTP-ошибок (`req.ip` за nginx CapRover, см. trust proxy в
+   * main.ts). Ради вкладки «Мусор»: кто именно сканирует и с какой частотой.
+   * Только для чтения глазами — ни на какое решение доступа не влияет, поэтому
+   * подделка `X-Forwarded-For` при прямом заходе на порт ничего не ломает.
+   */
+  @Prop({ type: String })
+  ip?: string;
+
+  /** User-Agent того же запроса, обрезанный: сканер это, браузер или curl. */
+  @Prop({ type: String })
+  userAgent?: string;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -159,6 +172,9 @@ ActionLogSchema.index({ telegramUserId: 1, createdAt: -1 });
 // Окно страницы «Метрики»: все входящие за сутки/неделю. Направление здесь
 // ведёт, потому что выборка — по диапазону времени ВНУТРИ одного направления.
 ActionLogSchema.index({ direction: 1, createdAt: -1 });
+
+// Вкладка «Мусор»: записи сканеров за окно — и лента, и сводка по IP.
+ActionLogSchema.index({ source: 1, createdAt: -1 });
 
 /*
  * TTL: Mongo удаляет записи сама.

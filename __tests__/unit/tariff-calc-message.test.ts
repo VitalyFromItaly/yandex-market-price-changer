@@ -4,6 +4,7 @@ import type { ITariffCalcReport } from '../../src/modules/yandex/reports/profit.
 import { formatRubles } from '../../src/modules/yandex/reports/money';
 import { DEFAULT_RATES } from '../../src/modules/yandex/reports/profit';
 import { formatTariffCalcReport } from '../../src/modules/yandex/reports/tariff-calc-message';
+import { unconfirmedOf } from '../../src/shared/profit-confirmation';
 
 /** Расчёт на 10 000 ₽ продаж: услуги 2400, налог 700, закуп 5000 → чистая 1900. */
 const TOTALS = {
@@ -15,9 +16,7 @@ const TOTALS = {
   purchase: 5000,
   net: 1900,
   orders: 5,
-  excludedOrders: 0,
-  excludedRevenue: 0,
-  unknownSkus: [] as string[],
+  unconfirmed: unconfirmedOf(0, 0, []),
   returnedOrders: 0,
   returnedRevenue: 0,
   rates: DEFAULT_RATES,
@@ -89,9 +88,7 @@ describe('Экран «Калькулятор Маркета»', () => {
 
   it('исключённые заказы называют ОБЕ причины: закуп и категорию', () => {
     const text = withTotals({
-      excludedOrders: 3,
-      excludedRevenue: 7000,
-      unknownSkus: ['A-1', 'B-2'],
+      unconfirmed: unconfirmedOf(3, 700000, ['A-1', 'B-2']),
     });
 
     expect(text).toContain('Не учтено заказов: <b>3</b>');
@@ -132,8 +129,7 @@ describe('Экран «Калькулятор Маркета»', () => {
       tax: 0,
       purchase: 0,
       net: 0,
-      excludedOrders: 5,
-      excludedRevenue: 12_000,
+      unconfirmed: unconfirmedOf(5, 1200000, []),
     });
 
     expect(text).toContain('Посчитать не удалось ни одного заказа');
