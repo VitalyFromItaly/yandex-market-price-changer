@@ -10,6 +10,7 @@ import {
   scheduleCallback,
 } from '../../src/modules/telegram/bots/price-changer-bot/report-buttons';
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
+import { withRequires } from '../helpers/feature-requires';
 import { PERIOD } from '../../src/modules/yandex/reports/report-period';
 import { REPORT } from '../../src/modules/yandex/reports/report-status-map';
 
@@ -78,6 +79,28 @@ describe('FeatureGateHandler', () => {
     await middleware!(ctx, next);
     return { ctx, next };
   }
+
+  it('кнопка фичи с закрытой зависимостью отбивается, открытая зависимость пропускает', async () => {
+    // TASK-153: «Прибыль» на время теста требует ИИ (default off).
+    const restore = withRequires(FEATURE.REPORT_PROFIT, [FEATURE.AI]);
+    try {
+      features = { [FEATURE.REPORT_PROFIT]: true };
+      const closed = await run({ text: MENU.PROFIT });
+      expect(closed.next).not.toHaveBeenCalled();
+      expect(closed.ctx.reply).toHaveBeenCalled();
+
+      features = { [FEATURE.REPORT_PROFIT]: true, [FEATURE.AI]: true };
+      const open = await run({ text: MENU.PROFIT });
+      expect(open.next).toHaveBeenCalled();
+
+      // Админ — по правилу allFeaturesEnabled: зависимости открыты.
+      features = undefined;
+      const admin = await run({ text: MENU.PROFIT, fromId: ADMIN_ID });
+      expect(admin.next).toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
 
   it('администратор проходит при любых флагах', async () => {
     // Записи доступа у администратора нет вовсе — флагов для него не

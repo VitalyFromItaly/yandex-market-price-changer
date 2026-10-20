@@ -17,7 +17,14 @@ import { AllExceptionsFilter } from '../../src/common/filters/all-exceptions.fil
 describe('AllExceptionsFilter', () => {
   function run(
     exception: unknown,
-    request: { method: string; url: string; route?: { path: string }; crmUser?: object },
+    request: {
+      method: string;
+      url: string;
+      route?: { path: string };
+      crmUser?: object;
+      ip?: string;
+      headers?: Record<string, string>;
+    },
   ) {
     const report = vi.fn().mockResolvedValue(undefined);
     const filter = new AllExceptionsFilter({ report } as never);
@@ -30,7 +37,7 @@ describe('AllExceptionsFilter', () => {
     };
     const host = {
       switchToHttp: () => ({
-        getRequest: () => request,
+        getRequest: () => ({ headers: {}, ...request }),
         getResponse: () => response,
       }),
     } as unknown as ArgumentsHost;
@@ -52,6 +59,21 @@ describe('AllExceptionsFilter', () => {
     expect(entry.alert).toBe(false);
     // Клиенту всё равно отвечаем 404.
     expect(response.status).toHaveBeenCalledWith(404);
+  });
+
+  it('адрес и User-Agent клиента едут в журнал (сводка «Мусора» по IP)', () => {
+    const { report } = run(new NotFoundException('Cannot POST /'), {
+      method: 'POST',
+      url: '/',
+      ip: '203.0.113.7',
+      headers: { 'user-agent': 'zgrab/0.x' },
+    });
+
+    expect(report.mock.calls[0][0]).toMatchObject({
+      source: 'scanner',
+      ip: '203.0.113.7',
+      userAgent: 'zgrab/0.x',
+    });
   });
 
   it('404 из реального контроллера (маршрут сматчился) — обычный source http', () => {

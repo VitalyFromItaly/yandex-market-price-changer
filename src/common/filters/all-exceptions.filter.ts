@@ -70,6 +70,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
       action: target,
       httpStatus: status,
       requestUrl: target,
+      // Кто прислал: для «Мусора» это главный вопрос (см. junk.domain), для
+      // остальных ошибок — подсказка при разборе. За nginx CapRover req.ip
+      // берётся из X-Forwarded-For (trust proxy в main.ts).
+      ip: request.ip,
+      userAgent: request.headers['user-agent'],
       alert: serverFault,
     });
 

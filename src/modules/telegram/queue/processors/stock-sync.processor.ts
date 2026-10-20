@@ -2,9 +2,15 @@ import { OnQueueFailed, Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
 
+import { ActionLogService } from '../../../../database/services/action-log.service';
 import { CrmJobResultService } from '../../../../database/services/crm-job-result.service';
 import { YandexMarketService } from '../../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../../errors/error-reporter.service';
+import {
+  STOCK_PUSH_SCHEDULE_LOG_KIND,
+  StockPushPlanChangedError,
+  StockPushService,
+} from '../../../stock-push/stock-push.service';
 import {
   formatStockReport,
   toCrmStockView,
@@ -16,6 +22,7 @@ import { scopeStore } from '../../../yandex/stores/stores.domain';
 import { BotRegistry } from '../../bots/bot-registry.service';
 import { htmlOptions } from '../../formatting/telegram-format';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
+import { StockPushScheduler } from '../services/stock-push.scheduler';
 
 /** Общее для обоих источников: чей файл и что с ним делать. */
 interface IStockSyncJobBase {
@@ -60,7 +67,40 @@ export interface ICrmStockSyncJob extends IStockSyncJobBase {
   campaignId?: string;
 }
 
-export type IStockSyncJob = ITelegramStockSyncJob | ICrmStockSyncJob;
+/**
+ * Запись плана «Передачи остатков» (TASK-143). Та же очередь и тот же
+ * `@Process`, что у прайса: запись остатков — одна за раз на оба канала, а
+ * второй обработчик сложил бы параллелизм очереди (урок TASK-080). Файла нет —
+ * план пересчитывается в процессоре и пишется, только если совпал `planHash`.
+ */
+export interface IStockPushJob {
+  source: 'push';
+  /** Он же `CrmJobResult.jobId` и jobId в Bull. */
+  jobId: string;
+  telegramUserId: string;
+  planHash: string;
+  /** Снимок фич продавца на момент нажатия (у админа записи доступа нет). */
+  features: Record<string, boolean>;
+}
+
+/**
+ * Проход «Передачи остатков» по расписанию (TASK-176) или разовый — кнопкой
+ * панели. Та же очередь и тот же `@Process` (довод `IStockPushJob`). Фич в
+ * payload нет: у повторяемой задачи он заморожен на момент заведения, поэтому
+ * фичи перечитываются в момент прохода.
+ */
+export interface IScheduledStockPushJob {
+  source: 'schedule';
+  telegramUserId: string;
+  /** Поставлен кнопкой «Запустить сейчас» панели. */
+  manual?: boolean;
+}
+
+export type IStockSyncJob =
+  | ITelegramStockSyncJob
+  | ICrmStockSyncJob
+  | IStockPushJob
+  | IScheduledStockPushJob;
 
 const CRM_NO_STORE_TEXT = 'Магазин не подключён — файл не обработан. Подключите его в боте.';
 const CRM_NO_FILE_TEXT = 'Файл не найден — загрузите его ещё раз.';
@@ -93,6 +133,9 @@ export class StockSyncProcessor {
     private readonly stocks: StockSyncService,
     private readonly errors: ErrorReporter,
     private readonly crmJobs: CrmJobResultService,
+    private readonly stockPush: StockPushService,
+    private readonly pushSchedule: StockPushScheduler,
+    private readonly actionLog: ActionLogService,
   ) {}
 
   /**
@@ -118,7 +161,9 @@ export class StockSyncProcessor {
     });
 
     if (!isOurs || !job?.data) return;
-    if (job.data.source === 'crm') {
+    // Ждать итога некому: строка журнала ошибок выше — и есть ответ.
+    if (job.data.source === 'schedule') return;
+    if (job.data.source === 'crm' || job.data.source === 'push') {
       // Без этого замок задачи в CRM висел бы до TTL, а веб ждал бы вечно.
       void this.crmJobs.finishFailed(job.data.jobId, uploadErrorText(error)).catch(() => undefined);
       return;
@@ -129,6 +174,14 @@ export class StockSyncProcessor {
 
   @Process(JOB_TYPES.SYNC_STOCKS)
   async run(job: Job<IStockSyncJob>): Promise<void> {
+    if (job.data.source === 'schedule') {
+      await this.runScheduled(job.data);
+      return;
+    }
+    if (job.data.source === 'push') {
+      await this.runPush(job.data);
+      return;
+    }
     if (job.data.source === 'crm') {
       await this.runCrm(job.data);
       return;
@@ -230,6 +283,73 @@ export class StockSyncProcessor {
         action: `загрузка остатков из CRM (${data.fileName})`,
       });
       await this.crmJobs.finishFailed(jobId, uploadErrorText(error)).catch(() => undefined);
+    }
+  }
+
+  /** План «Передачи остатков» → запись на площадки; итог — в `CrmJobResult`. */
+  private async runPush(data: IStockPushJob): Promise<void> {
+    const { jobId, telegramUserId } = data;
+    try {
+      await this.crmJobs.markActive(jobId);
+      const result = await this.stockPush.apply(telegramUserId, data.features, data.planHash);
+      await this.crmJobs.finishDone(jobId, { writes: result.writes }, null);
+    } catch (error) {
+      if (error instanceof StockPushPlanChangedError) {
+        await this.crmJobs.finishFailed(jobId, error.userMessage).catch(() => undefined);
+        return;
+      }
+      void this.errors.report({
+        error,
+        source: 'crm',
+        context: 'stock-push',
+        telegramUserId,
+        action: 'передача остатков на площадки',
+      });
+      await this.crmJobs.finishFailed(jobId, uploadErrorText(error)).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Проход по расписанию: фичи — свежие из строки доступа (закрыли после
+   * заведения задачи — не пишем); план, барьеры, запись, алерты и журнал — в
+   * `StockPushService.runScheduled`. Ошибку не пробрасываем: attempts=1, а
+   * следующий проход через 30 минут пересчитает план заново.
+   */
+  private async runScheduled(data: IScheduledStockPushJob): Promise<void> {
+    const { telegramUserId } = data;
+    try {
+      const features = await this.pushSchedule.featuresFor(telegramUserId);
+      if (!features) {
+        void this.actionLog.record({
+          telegramUserId,
+          botId: 'schedule',
+          direction: 'out',
+          kind: STOCK_PUSH_SCHEDULE_LOG_KIND,
+          action: 'передача остатков по расписанию: пропущено — расписание или запись закрыты',
+          status: 'ok',
+          context: 'stock-push:schedule',
+        });
+        return;
+      }
+      await this.stockPush.runScheduled(telegramUserId, features);
+    } catch (error) {
+      void this.errors.report({
+        error,
+        source: 'queue',
+        context: 'stock-push:schedule',
+        telegramUserId,
+        action: 'передача остатков по расписанию',
+      });
+      void this.actionLog.record({
+        telegramUserId,
+        botId: 'schedule',
+        direction: 'out',
+        kind: STOCK_PUSH_SCHEDULE_LOG_KIND,
+        action: 'передача остатков по расписанию: сбой прохода, ничего не записано',
+        status: 'error',
+        error: uploadErrorText(error),
+        context: 'stock-push:schedule',
+      });
     }
   }
 

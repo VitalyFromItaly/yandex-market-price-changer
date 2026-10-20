@@ -145,7 +145,7 @@ describe('Тексты', () => {
    * когда ключ добавили вместе с пустой строкой.
    */
   it('называет каждую проверку, включая внешние API', () => {
-    const keys: TCheckKey[] = ['disk', 'mongo', 'redis', 'telegram', 'yandex', 'polza'];
+    const keys: TCheckKey[] = ['disk', 'mongo', 'postgres', 'redis', 'telegram', 'yandex', 'polza'];
 
     for (const key of keys) {
       expect(checkTitle(key).length).toBeGreaterThan(0);

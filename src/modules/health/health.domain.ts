@@ -62,7 +62,7 @@ export const PING_TIMEOUT_MS = 5000;
  * только когда ИИ включён: без неё о кончившихся деньгах первым узнал бы
  * продавец.
  */
-export type TCheckKey = 'disk' | 'mongo' | 'redis' | 'telegram' | 'yandex' | 'polza';
+export type TCheckKey = 'disk' | 'mongo' | 'postgres' | 'redis' | 'telegram' | 'yandex' | 'polza';
 
 /**
  * `warn` — работает, но скоро сломается (бывает у диска и у баланса Polza —
@@ -107,6 +107,7 @@ export class HealthCheckError extends Error {
 const CHECK_TITLE: Record<TCheckKey, string> = {
   disk: 'Место на диске',
   mongo: 'MongoDB',
+  postgres: 'Postgres (финансы)',
   redis: 'Redis',
   telegram: 'Telegram Bot API',
   yandex: 'API Яндекс.Маркета',

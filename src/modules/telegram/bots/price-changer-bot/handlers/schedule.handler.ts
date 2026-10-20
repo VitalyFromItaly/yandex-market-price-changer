@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Context } from 'telegraf';
 
 import { ReportScheduleService } from '../../../../../database/services/report-schedule.service';
+import { SellerNotificationSettingsService } from '../../../../../database/services/seller-notification-settings.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import {
   nextSchedulePeriod,
@@ -13,10 +14,14 @@ import {
   reportDefinition,
   type TReportKey,
 } from '../../../../../modules/yandex/reports/report-status-map';
-import { DEFAULT_SCHEDULE_TIME } from '../../../../../modules/yandex/reports/schedule-time';
+import {
+  DEFAULT_SCHEDULE_TIME,
+  parseScheduleTime,
+} from '../../../../../modules/yandex/reports/schedule-time';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { ReportSchedulerService } from '../../../queue/services/report-scheduler.service';
+import { SellerNotificationsScheduler } from '../../../queue/services/seller-notifications.scheduler';
 import {
   FEATURE,
   enabledReports,
@@ -25,7 +30,14 @@ import {
 } from '../../shared/features.domain';
 import { MENU } from '../menu.constants';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
-import { SCHEDULE_CB_PATTERN, scheduleCallback } from '../report-buttons';
+import {
+  NOTIFY_CB_PATTERN,
+  NOTIFY_PENDING_KEY,
+  SCHEDULE_CB_PATTERN,
+  notifyCallback,
+  parseNotifyCallback,
+  scheduleCallback,
+} from '../report-buttons';
 
 /**
  * Настройка ежедневной рассылки.
@@ -43,6 +55,8 @@ export class ScheduleHandler {
     private readonly schedules: ReportScheduleService,
     private readonly scheduler: ReportSchedulerService,
     private readonly access: UserAccessService,
+    private readonly notificationSettings: SellerNotificationSettingsService,
+    private readonly notificationsScheduler: SellerNotificationsScheduler,
   ) {}
 
   public register(bot: TTelegrafBot) {
@@ -68,6 +82,19 @@ export class ScheduleHandler {
         }
       } catch (error) {
         this.logger.error('Ошибка в настройках рассылки', error as Error);
+        await ctx.answerCbQuery('Не удалось изменить настройку', { show_alert: true });
+      }
+    });
+
+    // Ряд «🔔 Уведомления» (TASK-152). Гейт `notifications_telegram` — в featureGate
+    // по префиксу `ntf:`; сюда закрытая фича не доходит.
+    bot.action(NOTIFY_CB_PATTERN, async (ctx) => {
+      const action = parseNotifyCallback((ctx.callbackQuery as { data?: string }).data);
+      try {
+        if (action === 'time') await this.askNotifyTime(ctx);
+        else await this.toggleNotify(ctx, action === 'on');
+      } catch (error) {
+        this.logger.error('Ошибка в настройках уведомлений', error as Error);
         await ctx.answerCbQuery('Не удалось изменить настройку', { show_alert: true });
       }
     });
@@ -140,6 +167,19 @@ export class ScheduleHandler {
       }
     }
 
+    // Уведомления — тем же рядом «вкл | время», что отчёты (TASK-152, решение
+    // `notifications_daily_seller_time`); только при открытой отправке в Telegram.
+    if (isFeatureEnabled(account?.features, FEATURE.NOTIFICATIONS_TELEGRAM)) {
+      const notify = await this.notificationSettings.get(telegramUserId);
+      rows.push([
+        {
+          text: `${notify.telegram ? '✅' : '⬜'} 🔔 Уведомления`,
+          callback_data: notifyCallback(notify.telegram ? 'off' : 'on'),
+        },
+        { text: `🕒 ${notify.time}`, callback_data: notifyCallback('time') },
+      ]);
+    }
+
     rows.push([{ text: MENU.MAIN, callback_data: 'main_menu' }]);
 
     const keyboard = await this.keyboard.createInlineKeyboardMatrix(rows);
@@ -202,6 +242,67 @@ export class ScheduleHandler {
     await this.showMenu(ctx, true);
   }
 
+  private async toggleNotify(ctx: Context, enabled: boolean): Promise<void> {
+    const telegramUserId = ctx.from.id.toString();
+    const settings = await this.notificationSettings.update(telegramUserId, { telegram: enabled });
+    await ctx.answerCbQuery(
+      enabled ? `Уведомления — в ${settings.time} МСК` : 'Уведомления в Telegram выключены',
+    );
+    await this.showMenu(ctx, true);
+  }
+
+  private async askNotifyTime(ctx: Context): Promise<void> {
+    await this.access.setPendingSchedule(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+      NOTIFY_PENDING_KEY,
+    );
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      [
+        '🕒 Во сколько проверять и присылать уведомления?',
+        '',
+        'Пришлите время <b>по Москве</b> — например <code>09:00</code> или <code>21:30</code>.',
+      ].join('\n'),
+      htmlOptions(),
+    );
+  }
+
+  /**
+   * Ответ на вопрос про время уведомлений: тот же разбор, что у отчётов
+   * (`parseScheduleTime`), запись в настройки и пересверка расписания.
+   */
+  private async handleNotifyTime(
+    ctx: Context,
+    text: string,
+    features: Record<string, boolean> | undefined,
+  ): Promise<boolean> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+    if (!isFeatureEnabled(features, FEATURE.NOTIFICATIONS_TELEGRAM)) {
+      await this.access.setPendingSchedule(telegramUserId, botId, null);
+      await ctx.reply('🔒 Уведомления в Telegram сейчас недоступны.', htmlOptions());
+      return true;
+    }
+
+    const parsed = parseScheduleTime(text);
+    if (!parsed.ok) {
+      await ctx.reply(`❌ ${esc(parsed.error)}\n\nПопробуйте ещё раз.`, htmlOptions());
+      return true;
+    }
+
+    await this.access.setPendingSchedule(telegramUserId, botId, null);
+    await this.notificationSettings.update(telegramUserId, { time: parsed.time.value });
+    // Время — это cron повторяемой задачи: пересверка переставит её сейчас.
+    await this.notificationsScheduler.refresh();
+    await ctx.reply(
+      `✅ Уведомления — в <b>${esc(parsed.time.value)}</b> по Москве.`,
+      htmlOptions(),
+    );
+    await this.showMenu(ctx);
+    return true;
+  }
+
   private async askTime(ctx: Context, reportKey: TReportKey): Promise<void> {
     await this.access.setPendingSchedule(
       ctx.from.id.toString(),
@@ -233,6 +334,7 @@ export class ScheduleHandler {
     const account = await this.access.findByUserAndBot(telegramUserId, botId);
     const reportKey = account?.pendingScheduleReport;
     if (!reportKey) return false;
+    if (reportKey === NOTIFY_PENDING_KEY) return this.handleNotifyTime(ctx, text, account.features);
 
     // Пока вопрос про время оставался открытым, доступ могли закрыть. Ответ на
     // него приходит обычным текстом — то есть мимо гейта фич, который видит

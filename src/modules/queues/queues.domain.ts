@@ -1,6 +1,8 @@
+import type { IReportJobKey } from '../telegram/queue/services/report-schedule-id';
 import type { IReportDefinition } from '../yandex/reports/report-status-map';
 
 import { QUEUE_NAMES } from '../telegram';
+import { parseReportJobId } from '../telegram/queue/services/report-schedule-id';
 import { REPORT_DEFINITIONS } from '../yandex/reports/report-status-map';
 
 /**
@@ -88,24 +90,12 @@ export function userIdOf(data: Record<string, string | number>): string {
   return value === undefined ? '' : String(value);
 }
 
-export interface IParsedReportJobId {
-  botId: string;
-  telegramUserId: string;
-  reportKey: string;
-}
-
 /**
- * Обратная к ReportSchedulerService.jobId(): `report:<botId>:<userId>:<key>`.
- * Не подходящие под формат идентификаторы — не ошибка, а чужие задачи.
+ * Формат id рассылки и его разбор живут рядом с планировщиком, который их
+ * собирает (report-schedule-id.ts): одна пара функций, а не две копии формата.
  */
-export function parseReportJobId(id: unknown): IParsedReportJobId | null {
-  if (typeof id !== 'string') return null;
-  const parts = id.split(':');
-  if (parts.length !== 4 || parts[0] !== 'report') return null;
-  const [, botId, telegramUserId, reportKey] = parts;
-  if (!botId || !telegramUserId || !reportKey) return null;
-  return { botId, telegramUserId, reportKey };
-}
+export type IParsedReportJobId = IReportJobKey;
+export { parseReportJobId };
 
 /**
  * Обратная к toCron() из schedule-time.ts: `30 9 * * *` → «09:30».

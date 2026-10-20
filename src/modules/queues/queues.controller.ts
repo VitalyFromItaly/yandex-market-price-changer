@@ -10,12 +10,20 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
+import { FinanceDiscrepancyRepository } from '../../database/postgres/repositories/finance-discrepancy.repository';
+import { FinancePeriodRepository } from '../../database/postgres/repositories/finance-period.repository';
 import { ActionLogService } from '../../database/services/action-log.service';
 import { UserAccessService } from '../../database/services/user-access.service';
 import { YandexMarketService } from '../../database/services/yandex-market.service';
 import { AdminJwtGuard } from '../admin/admin-jwt.guard';
+import { FINANCE_PERIOD_STATUS_LABEL } from '../finance/finance-period-status';
+import { STOCK_PUSH_SCHEDULE_LOG_KIND } from '../stock-push/stock-push.service';
 import { HOSTING_REMINDER_LOG_KIND } from '../telegram/queue/processors/hosting-reminder.processor';
+import { WEEKLY_DIGEST_LOG_KIND } from '../telegram/queue/processors/weekly-digest.processor';
+import { FinanceImportScheduler } from '../telegram/queue/services/finance-import.scheduler';
 import { HostingReminderService } from '../telegram/queue/services/hosting-reminder.service';
+import { StockPushScheduler } from '../telegram/queue/services/stock-push.scheduler';
+import { WeeklyDigestScheduler } from '../telegram/queue/services/weekly-digest.scheduler';
 
 import {
   FILTER_ALL,
@@ -23,6 +31,7 @@ import {
   isQueueName,
   JOB_STATES,
   QUEUE_LIST,
+  cronToTime,
   reportTitleOf,
   userIdOf,
 } from './queues.domain';
@@ -56,6 +65,11 @@ export class QueuesController {
     private readonly stores: YandexMarketService,
     private readonly hostingReminder: HostingReminderService,
     private readonly actionLog: ActionLogService,
+    private readonly financeSchedule: FinanceImportScheduler,
+    private readonly financePeriods: FinancePeriodRepository,
+    private readonly financeDiscrepancies: FinanceDiscrepancyRepository,
+    private readonly digestSchedule: WeeklyDigestScheduler,
+    private readonly pushSchedule: StockPushScheduler,
   ) {}
 
   @Get()
@@ -148,6 +162,183 @@ export class QueuesController {
         };
       }),
     };
+  }
+
+  /**
+   * Загрузка финансов по расписанию (TASK-112): кому заведена ночная задача,
+   * когда следующая, когда грузили последний раз и чем кончилось, статусы
+   * месяцев.
+   *
+   * Строки — по ЗАВЕДЁННЫМ задачам, а не по флагам в Mongo: карточка отвечает
+   * «что на самом деле стоит в Redis», и расхождение со списком в доступе —
+   * ровно то, что админ должен увидеть. Статусы из Postgres берутся отдельно и
+   * падение базы карточку не роняет: расписание живёт в Redis и видно и так.
+   */
+  @Get('finance-import')
+  async financeImportCard() {
+    const jobs = await this.financeSchedule.jobs();
+    const ids = [...new Set(jobs.map((job) => job.telegramUserId))];
+
+    let periods: Awaited<ReturnType<FinancePeriodRepository['listByUsers']>> = [];
+    let actMismatches: Awaited<ReturnType<FinanceDiscrepancyRepository['listByKind']>> = [];
+    let periodsError: string | null = null;
+    try {
+      [periods, actMismatches] = await Promise.all([
+        this.financePeriods.listByUsers(ids),
+        // Какой акт не сошёлся с отчётом услуг (TASK-158) — строкой под статусом.
+        this.financeDiscrepancies.listByKind(ids, 'act_mismatch'),
+      ]);
+    } catch (error) {
+      periodsError = (error as Error)?.message ?? String(error);
+    }
+    const actsBy = new Map<string, string[]>();
+    for (const f of actMismatches) {
+      const key = `${f.telegramUserId}:${f.periodKey}`;
+      actsBy.set(key, [...(actsBy.get(key) ?? []), f.detail]);
+    }
+
+    const [users, stores] = ids.length
+      ? await Promise.all([this.access.list(), this.stores.findByTelegramUsers(ids)])
+      : [[], []];
+    // Ключ — только telegramUserId: задача загрузки не знает бота (журнал
+    // ключуется продавцом), у админа записи доступа нет вовсе.
+    const userBy = new Map(users.map((user) => [user.telegramUserId, user]));
+    const storeBy = new Map(stores.map((store) => [store.telegramUserId, store]));
+
+    return {
+      periodsError,
+      items: jobs.map((job) => {
+        const user = userBy.get(job.telegramUserId);
+        const own = periods.filter((p) => p.telegramUserId === job.telegramUserId);
+        // Последняя загрузка — по самому свежему периоду: ночной проход
+        // пишет каждый месяц отдельно.
+        const last = own.reduce<(typeof own)[number] | null>(
+          (max, p) => (!max || p.checkedAt > max.checkedAt ? p : max),
+          null,
+        );
+        return {
+          telegramUserId: job.telegramUserId,
+          username: user?.username,
+          firstName: user?.firstName,
+          lastName: user?.lastName,
+          // Идентификаторы магазина в ответ не попадают — правило панели.
+          storeName: storeBy.get(job.telegramUserId)?.name,
+          time: cronToTime(job.cron),
+          tz: job.tz,
+          next: job.next,
+          last: last ? { at: last.checkedAt, outcome: last.lastOutcome } : null,
+          periods: own.map((p) => ({
+            periodFrom: p.periodFrom,
+            periodTo: p.periodTo,
+            status: p.status,
+            statusLabel: FINANCE_PERIOD_STATUS_LABEL[p.status],
+            lastOutcome: p.lastOutcome,
+            documentVersion: p.documentVersion,
+            unknownCount: p.unknownCount,
+            changedCount: p.changedCount,
+            removedCount: p.removedCount,
+            discrepancyCount: p.discrepancyCount,
+            reconcileState: p.reconcileState,
+            reconcileNote: p.reconcileNote,
+            actMismatches: actsBy.get(`${p.telegramUserId}:${p.periodKey}`) ?? [],
+            error: p.error,
+            checkedAt: p.checkedAt,
+          })),
+        };
+      }),
+    };
+  }
+
+  /**
+   * ИИ-сводка недели (TASK-168): кому заведена задача, когда следующая и чем
+   * кончился последний запуск — строкой журнала процессора («отправлено 1 из 1»,
+   * «пропущено: нет данных», «лимит ИИ»). Без неё на вопрос «ушла ли сводка»
+   * отвечал бы только продавец (урок hosting-reminder).
+   *
+   * Строки — по ЗАВЕДЁННЫМ задачам (довод `financeImportCard`).
+   */
+  @Get('weekly-digest')
+  async weeklyDigestCard() {
+    return {
+      items: await this.scheduleRows(await this.digestSchedule.jobs(), WEEKLY_DIGEST_LOG_KIND),
+    };
+  }
+
+  /**
+   * «Передача остатков» по расписанию (TASK-176): кому заведён проход, когда
+   * следующий и итог последнего — строкой журнала прохода («записано 3 из 3»,
+   * «Ozon: несколько складов…»). Строки — по ЗАВЕДЁННЫМ задачам (довод
+   * `financeImportCard`).
+   */
+  @Get('stock-push-schedule')
+  async stockPushScheduleCard() {
+    return {
+      items: await this.scheduleRows(await this.pushSchedule.jobs(), STOCK_PUSH_SCHEDULE_LOG_KIND),
+    };
+  }
+
+  /**
+   * Проход «Передачи остатков» прямо сейчас — реальная запись на площадки.
+   * Право перепроверяет процессор тем же правилом, что расписание: без фичи
+   * расписания и записи проход только оставит строку «пропущено».
+   */
+  @Post('stock-push-schedule/:telegramUserId/run')
+  async runStockPushSchedule(@Param('telegramUserId') telegramUserId: string) {
+    if (!/^\d+$/.test(telegramUserId)) throw new BadRequestException('telegramUserId — число');
+    await this.pushSchedule.sendNow(telegramUserId);
+    return { queued: true };
+  }
+
+  /**
+   * Строки карточки расписания на продавца: кто, магазин, cron, следующий
+   * запуск и последняя строка журнала своего kind.
+   */
+  private async scheduleRows(
+    jobs: { telegramUserId: string; cron: string; tz: string; next: number }[],
+    logKind: string,
+  ) {
+    const ids = [...new Set(jobs.map((job) => job.telegramUserId))];
+    const [users, stores, runs] = ids.length
+      ? await Promise.all([
+          this.access.list(),
+          this.stores.findByTelegramUsers(ids),
+          // Свежие сверху: первая строка продавца — его последний запуск.
+          this.actionLog.list({ kind: logKind, limit: 200 }),
+        ])
+      : [[], [], []];
+    const userBy = new Map(users.map((user) => [user.telegramUserId, user]));
+    const storeBy = new Map(stores.map((store) => [store.telegramUserId, store]));
+    const lastBy = new Map<string, (typeof runs)[number]>();
+    for (const run of runs)
+      if (!lastBy.has(run.telegramUserId)) lastBy.set(run.telegramUserId, run);
+
+    return jobs.map((job) => {
+      const user = userBy.get(job.telegramUserId);
+      const last = lastBy.get(job.telegramUserId);
+      return {
+        telegramUserId: job.telegramUserId,
+        username: user?.username,
+        firstName: user?.firstName,
+        lastName: user?.lastName,
+        storeName: storeBy.get(job.telegramUserId)?.name,
+        cron: job.cron,
+        tz: job.tz,
+        next: job.next,
+        last: last ? { at: last.createdAt, action: last.action, status: last.status } : null,
+      };
+    });
+  }
+
+  /**
+   * Отправить сводку продавцу (или себе, админу) прямо сейчас. Право
+   * перепроверяет процессор — тем же правилом, что расписание; админ без
+   * строки доступа получает её в личку первого бота.
+   */
+  @Post('weekly-digest/:telegramUserId/run')
+  async runWeeklyDigest(@Param('telegramUserId') telegramUserId: string) {
+    if (!/^\d+$/.test(telegramUserId)) throw new BadRequestException('telegramUserId — число');
+    await this.digestSchedule.sendNow(telegramUserId);
+    return { queued: true };
   }
 
   /**

@@ -67,6 +67,9 @@ export class QueuesService {
     @InjectQueue(QUEUE_NAMES.NOTIFICATIONS) notifications: Queue,
     @InjectQueue(QUEUE_NAMES.REPORTS) private readonly reports: Queue,
     @InjectQueue(QUEUE_NAMES.CRM_JOBS) crmJobs: Queue,
+    @InjectQueue(QUEUE_NAMES.FINANCE_IMPORT) financeImport: Queue,
+    @InjectQueue(QUEUE_NAMES.SELLER_NOTIFICATIONS) sellerNotifications: Queue,
+    @InjectQueue(QUEUE_NAMES.AI_WEEKLY_DIGEST) aiWeeklyDigest: Queue,
   ) {
     this.queues = new Map([
       [QUEUE_NAMES.FILE_PROCESSING, fileProcessing],
@@ -74,6 +77,9 @@ export class QueuesService {
       [QUEUE_NAMES.NOTIFICATIONS, notifications],
       [QUEUE_NAMES.REPORTS, this.reports],
       [QUEUE_NAMES.CRM_JOBS, crmJobs],
+      [QUEUE_NAMES.FINANCE_IMPORT, financeImport],
+      [QUEUE_NAMES.SELLER_NOTIFICATIONS, sellerNotifications],
+      [QUEUE_NAMES.AI_WEEKLY_DIGEST, aiWeeklyDigest],
     ]);
   }
 
@@ -125,7 +131,7 @@ export class QueuesService {
    * Расписание напоминания об оплате хостинга.
    *
    * Отдельно от `digests()` намеренно: та разбирает id вида
-   * `report:<botId>:<userId>:<reportKey>` и всё остальное МОЛЧА пропускает —
+   * `report-<botId>-<userId>-<reportKey>` и всё остальное МОЛЧА пропускает —
    * из-за чего глобальную рассылку в панели не было видно вовсе. Строкой в ту
    * таблицу она и не годится: там колонки «кто» и «какой отчёт», а получатель
    * здесь не один.

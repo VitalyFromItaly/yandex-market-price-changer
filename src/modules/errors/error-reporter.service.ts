@@ -3,8 +3,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ActionLogService } from '../../database/services/action-log.service';
 import { PolzaApiError } from '../ai/polza.errors';
 import { telegramErrorInfo } from '../metrics/metrics.domain';
+import { OzonApiError } from '../ozon/ozon.errors';
 import { maskOutgoing, truncate } from '../telegram/bots/shared/action-log.domain';
 import { esc } from '../telegram/formatting/telegram-format';
+import { WbApiError } from '../wb/wb.errors';
 import { ReportGenerationError } from '../yandex/report-generation.error';
 import { YandexApiError } from '../yandex/yandex-api.errors';
 
@@ -15,7 +17,8 @@ import { AlertThrottle } from './alert-throttle';
  * несматченный маршрут); такие записи прячутся из основного журнала и живут во
  * вкладке «Мусор» (см. JUNK_SOURCE в action-log.service). `crm` — запросы и
  * ошибки CRM продавцов: в основном журнале видны, помечены в панели. `polza` —
- * ошибки Polza.ai (ИИ), проставляется по классу ошибки, как `yandex`.
+ * ошибки Polza.ai (ИИ), проставляется по классу ошибки, как `yandex`. `ozon` —
+ * ошибки Ozon Seller API, так же по классу.
  */
 export type TErrorSource =
   | 'bot'
@@ -25,7 +28,11 @@ export type TErrorSource =
   | 'yandex'
   | 'scanner'
   | 'crm'
-  | 'polza';
+  | 'polza'
+  | 'ozon'
+  | 'wb'
+  /** Инструменты ИИ (TASK-147): сбой чтения данных продавца, а не самой Polza. */
+  | 'ai';
 
 /**
  * Владелец записи, когда пользователя нет: ошибка HTTP-слоя, падение процесса,
@@ -39,6 +46,9 @@ export const SYSTEM_USER = 'system';
 
 /** Сколько символов стека хранить: полный стек Node — это килобайты на запись. */
 const MAX_STACK_LENGTH = 2000;
+
+/** User-Agent сканеров бывает мусорным и длинным — для разбора хватает начала. */
+const MAX_USER_AGENT_LENGTH = 300;
 
 export interface IErrorReport {
   error: unknown;
@@ -68,6 +78,9 @@ export interface IErrorReport {
    * т. п. У ReportGenerationError заполняются сами.
    */
   details?: Record<string, string | number>;
+  /** Адрес и User-Agent клиента — у HTTP-ошибок (AllExceptionsFilter). */
+  ip?: string;
+  userAgent?: string;
 }
 
 /** Как отправить алерт. Подставляется телеграм-слоем, см. ErrorAlertBridge. */
@@ -134,16 +147,20 @@ export class ErrorReporter {
   public async report(input: IErrorReport): Promise<void> {
     try {
       const error = input.error;
-      const isYandex = error instanceof YandexApiError;
-      // Ошибка Polza описывает себя сама, как Яндекса: класс решает source,
-      // статус и адрес запроса едут в полях, а не в тексте.
-      const isPolza = error instanceof PolzaApiError;
-      const api = isYandex || isPolza ? error : undefined;
+      // Ошибки внешних API (Яндекс, Polza, Ozon, WB) описывают себя сами: класс
+      // решает source, статус и адрес запроса едут в полях, а не в тексте.
+      const api =
+        error instanceof YandexApiError ||
+        error instanceof PolzaApiError ||
+        error instanceof OzonApiError ||
+        error instanceof WbApiError
+          ? error
+          : undefined;
       const report = error instanceof ReportGenerationError ? error : undefined;
 
       const errorType = this.typeOf(error);
       const message = this.messageOf(error);
-      const source = this.sourceOf(isYandex, isPolza, input.source);
+      const source = this.sourceOf(error, input.source);
       const httpStatus = input.httpStatus ?? api?.status;
       const requestUrl = input.requestUrl ?? api?.request ?? report?.request;
       const details = input.details ?? report?.details;
@@ -172,6 +189,8 @@ export class ErrorReporter {
         context: input.context,
         durationMs: input.durationMs,
         details,
+        ip: input.ip,
+        userAgent: input.userAgent ? truncate(input.userAgent, MAX_USER_AGENT_LENGTH) : undefined,
       });
 
       if (input.alert !== false) {
@@ -185,9 +204,11 @@ export class ErrorReporter {
   }
 
   /** Ошибки внешних API несут свой source независимо от слоя, где их поймали — слой остаётся в context. */
-  private sourceOf(isYandex: boolean, isPolza: boolean, fallback: TErrorSource): TErrorSource {
-    if (isYandex) return 'yandex';
-    if (isPolza) return 'polza';
+  private sourceOf(error: unknown, fallback: TErrorSource): TErrorSource {
+    if (error instanceof YandexApiError) return 'yandex';
+    if (error instanceof PolzaApiError) return 'polza';
+    if (error instanceof OzonApiError) return 'ozon';
+    if (error instanceof WbApiError) return 'wb';
     return fallback;
   }
 

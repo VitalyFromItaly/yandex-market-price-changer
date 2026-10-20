@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
+import { PostgresModule } from '../../database/postgres/postgres.module';
 import { AdminAuthModule } from '../admin/admin-auth.module';
 import { TelegramModule } from '../telegram/telegram.module';
 
@@ -19,7 +20,7 @@ import { QueuesService } from './queues.service';
  * TelegramModule тяжёлый, и защита от будущего цикла стоит одной обёртки.
  */
 @Module({
-  imports: [DatabaseModule, AdminAuthModule, forwardRef(() => TelegramModule)],
+  imports: [DatabaseModule, PostgresModule, AdminAuthModule, forwardRef(() => TelegramModule)],
   controllers: [QueuesController],
   providers: [QueuesService],
 })

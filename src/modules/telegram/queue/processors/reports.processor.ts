@@ -9,6 +9,7 @@ import { ReportScheduleService } from '../../../../database/services/report-sche
 import { UserAccessService } from '../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../../errors/error-reporter.service';
+import { FinanceService } from '../../../finance/finance.service';
 import {
   OrderReportsService,
   type IReportExport,
@@ -41,6 +42,7 @@ export class ReportsProcessor {
     private readonly yandexMarketService: YandexMarketService,
     private readonly reports: OrderReportsService,
     private readonly profit: ProfitService,
+    private readonly finance: FinanceService,
     private readonly schedules: ReportScheduleService,
     private readonly errors: ErrorReporter,
   ) {}
@@ -160,17 +162,14 @@ export class ReportsProcessor {
         return;
       }
 
-      // Прибыль — своим сервисом и своим текстом, ровно как по кнопке: и флаг
-      // калькулятора проверяется так же, иначе кнопка и рассылка разойдутся —
-      // тот самый известный источник жалоб. Запись доступа здесь есть всегда
-      // (проверена выше), фолбэк «нет записи = админ» не нужен.
+      // Прибыль — своим сервисом и своим текстом, ровно как по кнопке: и флаги
+      // калькулятора и фактической чистой проверяются так же, иначе кнопка и
+      // рассылка разойдутся — тот самый известный источник жалоб. Запись
+      // доступа здесь есть всегда (проверена выше), фолбэк «нет записи = админ»
+      // не нужен.
       const text =
         key === REPORT.PROFIT
-          ? formatProfitReport(
-              await this.profit.build(store, period, new Date(), {
-                tariffEstimate: isFeatureEnabled(account.features, FEATURE.TARIFF_CALC),
-              }),
-            )
+          ? await this.profitText(store, period, telegramUserId, account.features)
           : formatReport(await this.reports.build(store, key, new Date(), period));
 
       await bot.telegraf.telegram.sendMessage(account.telegramChatId, text, htmlOptions());
@@ -189,6 +188,25 @@ export class ReportsProcessor {
         action: `рассылка отчёта ${reportKey}`,
       });
     }
+  }
+
+  /** «Прибыль» рассылки — те же сервисы и флаги, что у ProfitReportProcessor. */
+  private async profitText(
+    store: YandexMarketDocument,
+    period: IReportPeriod,
+    telegramUserId: string,
+    features: Parameters<typeof isFeatureEnabled>[0],
+  ): Promise<string> {
+    const now = new Date();
+    const [result, actual] = await Promise.all([
+      this.profit.build(store, period, now, {
+        tariffEstimate: isFeatureEnabled(features, FEATURE.TARIFF_CALC),
+      }),
+      isFeatureEnabled(features, FEATURE.PROFIT_ACTUAL)
+        ? this.finance.actualNet(telegramUserId, period, now)
+        : undefined,
+    ]);
+    return formatProfitReport(result, now, actual);
   }
 
   /**

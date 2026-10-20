@@ -6,6 +6,7 @@ import {
 } from '../../src/modules/telegram/bots/price-changer-bot/menu.constants';
 import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
 import { FEATURE, type TFeatureMap } from '../../src/modules/telegram/bots/shared/features.domain';
+import { withRequires } from '../helpers/feature-requires';
 
 /**
  * Главное меню обязано зависеть от подключённого магазина.
@@ -121,6 +122,25 @@ describe('FBY-only кнопки в главном меню', () => {
     // админа не читает.
     const closed: TFeatureMap = { [FEATURE.FBY]: false };
     expect(await labels(true, closed, 'FBY')).toContain(MENU.FBY);
+  });
+});
+
+describe('Кнопка фичи с зависимостью (requires, TASK-153)', () => {
+  const keyboard = new PriceChangerKeyboard();
+  const labels = async (isAdmin: boolean, features?: TFeatureMap): Promise<string[]> => {
+    const kb = await keyboard.buildMainKeyboard(true, isAdmin, features, false, 'FBS');
+    return (kb.reply_markup.keyboard as string[][]).flat();
+  };
+
+  it('пропадает при закрытой зависимости и возвращается с ней; админ видит', async () => {
+    const restore = withRequires(FEATURE.REPORT_PROFIT, [FEATURE.AI]);
+    try {
+      expect(await labels(false, {})).not.toContain(MENU.PROFIT);
+      expect(await labels(false, { [FEATURE.AI]: true })).toContain(MENU.PROFIT);
+      expect(await labels(true, undefined)).toContain(MENU.PROFIT);
+    } finally {
+      restore();
+    }
   });
 });
 

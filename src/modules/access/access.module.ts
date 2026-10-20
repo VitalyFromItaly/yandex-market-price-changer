@@ -3,6 +3,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { DatabaseModule } from '../../database/database.module';
 import { AdminAuthModule } from '../admin/admin-auth.module';
 import { CrmModule } from '../crm/crm.module';
+import { ProductsModule } from '../products/products.module';
 import { TelegramModule } from '../telegram/telegram.module';
 
 import { AccessNotifierService } from './access-notifier.service';
@@ -27,7 +28,13 @@ import { AccessController } from './access.controller';
  * пароль + сдвиг версии» живёт в CrmAuthService, второй копии в панели нет.
  */
 @Module({
-  imports: [DatabaseModule, AdminAuthModule, CrmModule, forwardRef(() => TelegramModule)],
+  imports: [
+    DatabaseModule,
+    AdminAuthModule,
+    CrmModule,
+    ProductsModule,
+    forwardRef(() => TelegramModule),
+  ],
   controllers: [AccessController],
   providers: [AccessNotifierService],
 })

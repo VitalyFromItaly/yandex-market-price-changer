@@ -1,8 +1,9 @@
 /**
  * Модель Mongoose в памяти — ровно в том объёме, который используют сервисы:
  * findOne / find / findOneAndUpdate (с $set, $setOnInsert, $unset и upsert) /
- * create / updateOne / deleteOne / deleteMany / countDocuments / bulkWrite, сортировка в
- * findOne, оператор $in в фильтре, плюс `new Model(doc).save()`.
+ * create / insertMany / updateOne / updateMany / deleteOne / deleteMany /
+ * countDocuments / bulkWrite, сортировка в findOne и find (плюс skip/limit),
+ * операторы $in, $or и $and в фильтре, плюс `new Model(doc).save()`.
  *
  * Зачем не mongodb-memory-server и не живая Mongo: сквозной тест должен идти
  * из `npm test` на любой машине, без Docker и без сети. Настоящая база здесь
@@ -14,7 +15,12 @@ type TDoc = Record<string, any>;
 
 function matches(doc: TDoc, filter: TDoc): boolean {
   return Object.entries(filter ?? {}).every(([field, expected]) => {
-    const actual = doc[field];
+    // Поиск товара (`ProductService.search`): каждое слово — `$and`, поля слова — `$or`.
+    if (field === '$or') return (expected as TDoc[]).some((part) => matches(doc, part));
+    if (field === '$and') return (expected as TDoc[]).every((part) => matches(doc, part));
+
+    // Точечный путь (`marketplaceSkus.ym`) читается по вложенности, как в Mongo.
+    const actual = readPath(doc, field);
 
     // Регэксп в фильтре — так ищется ник без учёта регистра (findByLogin).
     if (expected instanceof RegExp) return typeof actual === 'string' && expected.test(actual);
@@ -27,8 +33,22 @@ function matches(doc: TDoc, filter: TDoc): boolean {
       if ('$in' in expected) return (expected.$in as unknown[]).includes(actual);
     }
 
+    // `{field: null}` в Mongo находит и null, и отсутствующее поле — так
+    // финансовый журнал ищет неснятые операции (`supersededAt: null`).
+    if (expected === null) return actual == null;
+
     return actual === expected;
   });
+}
+
+/** Значение по точечному пути; `undefined`, если по дороге нет объекта. */
+function readPath(doc: TDoc, path: string): any {
+  let cursor: any = doc;
+  for (const part of path.split('.')) {
+    if (cursor == null || typeof cursor !== 'object') return undefined;
+    cursor = cursor[part];
+  }
+  return cursor;
 }
 
 /**
@@ -87,8 +107,13 @@ export interface IInMemoryModel {
     exec(): Promise<TDoc | null>;
   };
   find(filter?: TDoc): { exec(): Promise<TDoc[]> };
+  insertMany(docs: TDoc[]): Promise<TDoc[]>;
+  updateMany(
+    filter: TDoc,
+    update: TDoc,
+  ): { exec(): Promise<{ matchedCount: number; modifiedCount: number }> };
   countDocuments(filter?: TDoc): { exec(): Promise<number> };
-  bulkWrite(operations: IBulkOperation[]): Promise<{ upsertedCount: number }>;
+  bulkWrite(operations: IBulkOperation[]): Promise<{ upsertedCount: number; matchedCount: number }>;
   findOneAndUpdate(
     filter: TDoc,
     update: TDoc,
@@ -161,6 +186,8 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
             .map((part) => part.slice(1));
           return chain;
         },
+        // lean — no-op: документы в памяти и так простые объекты.
+        lean: () => chain,
         exec: async () => project(found()[0]),
         /** Только по одному полю — больше сервисам и не нужно. */
         sort(spec: Record<string, 1 | -1>) {
@@ -184,12 +211,61 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
     static find(filter: TDoc = {}) {
       // select/lean — no-op'ы: проекция здесь экономила бы память, которой в
       // тесте нет, а вернуть больше полей безопасно — сервис берёт нужные.
+      let order: [string, 1 | -1] | undefined;
+      let from = 0;
+      let count = Infinity;
       const chain = {
         select: () => chain,
         lean: () => chain,
-        exec: async () => documents.filter((d) => matches(d, filter)),
+        /** Только по одному полю, как в findOne. */
+        sort(spec: Record<string, 1 | -1>) {
+          order = Object.entries(spec)[0];
+          return chain;
+        },
+        skip(n: number) {
+          from = n;
+          return chain;
+        },
+        limit(n: number) {
+          count = n;
+          return chain;
+        },
+        exec: async () => {
+          const found = documents.filter((d) => matches(d, filter));
+          if (order) {
+            const [field, direction] = order;
+            found.sort((a, b) => {
+              const left = a[field] ?? 0;
+              const right = b[field] ?? 0;
+              if (left === right) return 0;
+              return (left < right ? -1 : 1) * (direction === -1 ? -1 : 1);
+            });
+          }
+          return found.slice(from, from + count);
+        },
       };
       return chain;
+    }
+
+    static async insertMany(docs: TDoc[]): Promise<TDoc[]> {
+      const created: TDoc[] = [];
+      for (const doc of docs) created.push(await Model.create(doc));
+      return created;
+    }
+
+    static updateMany(filter: TDoc, update: TDoc) {
+      return {
+        exec: async () => {
+          const found = documents.filter((d) => matches(d, filter));
+          for (const doc of found) {
+            for (const [path, value] of Object.entries(update.$set ?? {})) {
+              assign(doc, path, value);
+            }
+            for (const path of Object.keys(update.$unset ?? {})) unset(doc, path);
+          }
+          return { matchedCount: found.length, modifiedCount: found.length };
+        },
+      };
     }
 
     static countDocuments(filter: TDoc = {}) {
@@ -202,6 +278,7 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
      */
     static async bulkWrite(operations: IBulkOperation[]) {
       let created = 0;
+      let matched = 0;
 
       for (const operation of operations) {
         const { filter, update, upsert } = operation.updateOne;
@@ -209,20 +286,36 @@ export function inMemoryModel(seed: TDoc[] = []): IInMemoryModel {
 
         if (!doc) {
           if (!upsert) continue;
-          doc = { ...stripOperators(filter), createdAt: new Date() };
+          // $setOnInsert — только при вставке: финансовый журнал пишет им
+          // неизменяемые поля операции, и повтор не должен их перетирать.
+          // `_id` — как у create: по нему ссылаются на документ (история
+          // себестоимости хранит id товара).
+          doc = {
+            ...stripOperators(filter),
+            _id: String(documents.length + 1),
+            createdAt: new Date(),
+          };
+          // Через assign, а не спредом: путь `marketplaceSkus.ym` в Mongo — это
+          // вложенное поле, а спред завёл бы буквальный ключ с точкой.
+          for (const [path, value] of Object.entries(update.$setOnInsert ?? {})) {
+            assign(doc, path, value);
+          }
           documents.push(doc);
           created += 1;
+        } else {
+          matched += 1;
         }
 
         for (const [path, value] of Object.entries(update.$set ?? {})) {
           assign(doc, path, value);
         }
+        for (const path of Object.keys(update.$unset ?? {})) unset(doc, path);
         // timestamps: true — mongoose обновляет updatedAt сам; отчёт печатает
         // именно эту дату, поэтому в памяти её тоже надо ставить.
         doc.updatedAt = new Date();
       }
 
-      return { upsertedCount: created };
+      return { upsertedCount: created, matchedCount: matched };
     }
 
     static findOneAndUpdate(filter: TDoc, update: TDoc, options: { upsert?: boolean } = {}) {

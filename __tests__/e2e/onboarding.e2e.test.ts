@@ -53,7 +53,9 @@ import { FallbackHandler } from '../../src/modules/telegram/bots/price-changer-b
 import { PriceChangerKeyboard } from '../../src/modules/telegram/bots/price-changer-bot/price-changer.keyboard';
 import { AdminNotifierService } from '../../src/modules/telegram/bots/shared/services/admin-notifier.service';
 import { StorePromptService } from '../../src/modules/telegram/bots/shared/services/store-prompt.service';
+import { SellerNotificationSettingsService } from '../../src/database/services/seller-notification-settings.service';
 import { ReportSchedulerService } from '../../src/modules/telegram/queue/services/report-scheduler.service';
+import { SellerNotificationsScheduler } from '../../src/modules/telegram/queue/services/seller-notifications.scheduler';
 
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { ReportScheduleService } from '../../src/database/services/report-schedule.service';
@@ -65,7 +67,9 @@ import { AppConfigService } from '../../src/config/app-config.service';
 import { YandexClientFactory } from '../../src/modules/yandex/yandex-client.factory';
 import { OrderReportsService } from '../../src/modules/yandex/reports/order-reports.service';
 import { ProfitService } from '../../src/modules/yandex/reports/profit.service';
+import { FinanceService } from '../../src/modules/finance/finance.service';
 import { StoreSettingsService } from '../../src/modules/yandex/settings/store-settings.service';
+import { CostHistoryService } from '../../src/database/services/cost-history.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { PurchasePrice } from '../../src/database/schemas/purchase-price.schema';
 import { formatAdminCallback } from '../../src/modules/telegram/bots/shared/access.domain';
@@ -301,7 +305,15 @@ describe('Онбординг: от /start до отчёта', () => {
         YandexClientFactory,
         OrderReportsService,
         ProfitService,
+        // Журнала нет: «Фактическая чистая» по умолчанию закрыта, а у админа
+        // строка — «журнал недоступен», что текст о прибыли не меняет по сути.
+        {
+          provide: FinanceService,
+          useValue: { actualNet: async () => ({ state: 'unavailable', reason: 'нет журнала' }) },
+        },
         PurchasePriceService,
+        // Истории нет — закуп из прайса действует «с начала времён» (TASK-116).
+        { provide: CostHistoryService, useValue: { findForSkus: async () => new Map() } },
         StoreSettingsService,
         { provide: getModelToken(ActionLog.name), useValue: logsModel },
         { provide: getModelToken(UserAccess.name), useValue: accessModel },
@@ -309,6 +321,14 @@ describe('Онбординг: от /start до отчёта', () => {
         { provide: getModelToken(YandexMarket.name), useValue: marketModel },
         { provide: getModelToken(PurchasePrice.name), useValue: pricesModel },
         { provide: ReportSchedulerService, useValue: scheduler },
+        {
+          provide: SellerNotificationSettingsService,
+          useValue: {
+            get: vi.fn(async () => ({ telegram: true, time: '09:00' })),
+            update: vi.fn(),
+          },
+        },
+        { provide: SellerNotificationsScheduler, useValue: { refresh: vi.fn() } },
         {
           provide: AppConfigService,
           useValue: {

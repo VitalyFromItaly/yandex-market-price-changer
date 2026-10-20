@@ -1,6 +1,7 @@
 import type { TPeriodKey } from '../../../yandex/reports/report-period';
 import type { TReportKey } from '../../../yandex/reports/report-status-map';
 
+import { PERIOD } from '../../../yandex/reports/report-period';
 import { REPORT } from '../../../yandex/reports/report-status-map';
 
 import { MENU } from './menu.constants';
@@ -40,7 +41,7 @@ export function isReportKey(value: string | undefined): value is TReportKey {
 // Лимит Telegram на callback_data — 64 байта; самое длинное здесь
 // `rep:month:shipped_today` — 23.
 
-export const REPORT_CB_PATTERN = /^rep:(today|day|week|month|all):([a-z_]+)$/;
+export const REPORT_CB_PATTERN = /^rep:(today|day|week|month|prevmonth|all):([a-z_]+)$/;
 
 export function reportCallback(period: TPeriodKey, reportKey: TReportKey): string {
   return `rep:${period}:${reportKey}`;
@@ -51,6 +52,9 @@ export function parseReportCallback(
 ): { period: TPeriodKey; reportKey: TReportKey } | null {
   const match = REPORT_CB_PATTERN.exec(data ?? '');
   if (!match || !isReportKey(match[2])) return null;
+  // «Прошлый месяц» есть только у «Прибыли» (periodsFor): у остальных отчётов
+  // такой кнопки не рисуется, и подделанный callback — не их период.
+  if (match[1] === PERIOD.PREV_MONTH && match[2] !== REPORT.PROFIT) return null;
   return { period: match[1] as TPeriodKey, reportKey: match[2] };
 }
 
@@ -63,6 +67,31 @@ export const SCHEDULE_CB_PATTERN = /^sch:(menu|on|off|time|period):([a-z_]*)$/;
 export function scheduleCallback(action: TScheduleAction, reportKey = ''): string {
   return `sch:${action}:${reportKey}`;
 }
+
+// --- ряд «🔔 Уведомления» в разделе рассылки (TASK-152) ------------------------
+
+export type TNotifyAction = 'on' | 'off' | 'time';
+
+/**
+ * Свой префикс, а не `sch:`: у `sch:` гейт — фича рассылки и отчёта, а ряд
+ * уведомлений закрыт своей фичей `notifications_telegram`.
+ */
+export const NOTIFY_CB_PATTERN = /^ntf:(on|off|time)$/;
+
+export function notifyCallback(action: TNotifyAction): string {
+  return `ntf:${action}`;
+}
+
+export function parseNotifyCallback(data: string | undefined): TNotifyAction | null {
+  const match = NOTIFY_CB_PATTERN.exec(data ?? '');
+  return match ? (match[1] as TNotifyAction) : null;
+}
+
+/**
+ * Значение `pendingScheduleReport`, означающее «ждём время уведомлений». Ключей
+ * отчётов с таким именем нет, так что вопрос про время отчёта с ним не спутать.
+ */
+export const NOTIFY_PENDING_KEY = 'notifications';
 
 /**
  * Разбор кнопки рассылки. `reportKey` может отсутствовать: `sch:menu:` — это

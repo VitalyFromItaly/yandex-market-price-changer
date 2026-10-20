@@ -7,6 +7,8 @@ import { MOSCOW_TIME_ZONE } from '../../../yandex/reports/moscow-day';
 import { toCron } from '../../../yandex/reports/schedule-time';
 import { QUEUE_NAMES, JOB_TYPES } from '../../index';
 
+import { isLegacyReportJobKey, parseReportJobId, reportJobId } from './report-schedule-id';
+
 export interface IScheduleKey {
   telegramUserId: string;
   botId: string;
@@ -37,12 +39,11 @@ export class ReportSchedulerService implements OnApplicationBootstrap {
   ) {}
 
   /**
-   * Идентификатор задачи выводится из пользователя, бота и отчёта — он
-   * стабилен между запусками. Случайный id означал бы, что повторное включение
-   * добавляет ВТОРУЮ задачу и отчёт начинает приходить дважды в день.
+   * Идентификатор задачи — `report-<bot>-<user>-<report>`, стабилен между
+   * запусками. Почему дефис, а не двоеточие, — в report-schedule-id.ts.
    */
   public static jobId(key: IScheduleKey): string {
-    return `report:${key.botId}:${key.telegramUserId}:${key.reportKey}`;
+    return reportJobId(key);
   }
 
   /**
@@ -79,6 +80,20 @@ export class ReportSchedulerService implements OnApplicationBootstrap {
     let removed = 0;
 
     for (const job of existing) {
+      // Старый формат `report:…` (TASK-157): снимаем, а ключ остаётся в
+      // wanted и заводится ниже в новом. Снятие идёт ДО добавления, так что
+      // двух задач на одну рассылку не бывает ни на миг.
+      if (isLegacyReportJobKey(job.key)) {
+        await this.queue.removeRepeatableByKey(job.key);
+        removed += 1;
+        continue;
+      }
+
+      // Чужие задачи очереди — не наше дело. Прежде сверка снимала всё, чего
+      // нет в wanted, включая напоминание об оплате хостинга, если его хук
+      // отработал раньше этого.
+      if (!parseReportJobId(job.id)) continue;
+
       const target = wanted.get(job.id);
 
       if (target && job.cron === toCron(target.time)) {
@@ -137,7 +152,11 @@ export class ReportSchedulerService implements OnApplicationBootstrap {
     const jobs = await this.queue.getRepeatableJobs();
 
     for (const job of jobs) {
-      if (job.id === id) await this.queue.removeRepeatableByKey(job.key);
+      // Старую задачу того же ключа тоже: иначе перенос времени до первой
+      // сверки оставил бы её рядом с новой, и отчёт пришёл бы дважды.
+      if (job.id === id || isLegacyReportJobKey(job.key, key)) {
+        await this.queue.removeRepeatableByKey(job.key);
+      }
     }
   }
 }

@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
+import { PostgresModule } from '../../database/postgres/postgres.module';
 import { AiModule } from '../ai/ai.module';
 import { TelegramModule } from '../telegram/telegram.module';
 
@@ -24,10 +25,13 @@ import { HealthMonitorService } from './health-monitor.service';
  * AiModule — ради AiService.balance(): баланс Polza проверяется через
  * единственную дверь к Polza, PolzaClient наружу не отдаётся.
  *
+ * PostgresModule — ради пула: финансовый журнал живёт в Postgres, и его
+ * недоступность монитор обязан увидеть сам, а не по жалобе на «Финансы».
+ *
  * ErrorReporter и AppConfigService приходят сами: их модули глобальные.
  */
 @Module({
-  imports: [DatabaseModule, AiModule, forwardRef(() => TelegramModule)],
+  imports: [DatabaseModule, PostgresModule, AiModule, forwardRef(() => TelegramModule)],
   providers: [HealthMonitorService],
   // Наружу — ради команды /health: она показывает ровно то, по чему монитор
   // принимает решения, а не считает состояние вторым способом.

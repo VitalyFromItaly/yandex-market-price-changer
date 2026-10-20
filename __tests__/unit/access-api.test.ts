@@ -3,22 +3,25 @@ import { Test } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 import { ActionLogService } from '../../src/database/services/action-log.service';
+import { CostHistoryService } from '../../src/database/services/cost-history.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { ReportScheduleService } from '../../src/database/services/report-schedule.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
+import { FinanceImportScheduler } from '../../src/modules/telegram/queue/services/finance-import.scheduler';
+import { SellerNotificationsScheduler } from '../../src/modules/telegram/queue/services/seller-notifications.scheduler';
+import { StockPushScheduler } from '../../src/modules/telegram/queue/services/stock-push.scheduler';
+import { WeeklyDigestScheduler } from '../../src/modules/telegram/queue/services/weekly-digest.scheduler';
 import { AccessNotifierService } from '../../src/modules/access/access-notifier.service';
 import {
   AccessController,
   CRM_PASSWORD_RESET_KIND,
 } from '../../src/modules/access/access.controller';
+import { ProductMatchService } from '../../src/modules/products/product-match.service';
 import { AdminAuthService } from '../../src/modules/admin/admin-auth.service';
 import { AdminJwtGuard } from '../../src/modules/admin/admin-jwt.guard';
 import { CrmAuthService } from '../../src/modules/crm/crm-auth.service';
-import {
-  FEATURE,
-  FEATURE_KEYS,
-} from '../../src/modules/telegram/bots/shared/features.domain';
+import { FEATURE, FEATURE_KEYS } from '../../src/modules/telegram/bots/shared/features.domain';
 
 /**
  * HTTP-поверхность пофичного доступа.
@@ -47,6 +50,9 @@ describe('AccessController', () => {
   };
 
   let list: ReturnType<typeof vi.fn>;
+  let financeRefresh: ReturnType<typeof vi.fn>;
+  let digestRefresh: ReturnType<typeof vi.fn>;
+  let pushRefresh: ReturnType<typeof vi.fn>;
   let setFeature: ReturnType<typeof vi.fn>;
   let setApproved: ReturnType<typeof vi.fn>;
   let findByUserAndBot: ReturnType<typeof vi.fn>;
@@ -56,6 +62,8 @@ describe('AccessController', () => {
   let deleteByUserAndBot: ReturnType<typeof vi.fn>;
   let deleteByTelegramUser: ReturnType<typeof vi.fn>;
   let deletePricesForUser: ReturnType<typeof vi.fn>;
+  let deleteProductsForUser: ReturnType<typeof vi.fn>;
+  let deleteHistoryForUser: ReturnType<typeof vi.fn>;
   let deleteSchedulesForUser: ReturnType<typeof vi.fn>;
   let crmState: ReturnType<typeof vi.fn>;
   let resetPassword: ReturnType<typeof vi.fn>;
@@ -79,10 +87,15 @@ describe('AccessController', () => {
     deleteByUserAndBot = vi.fn(async () => true);
     deleteByTelegramUser = vi.fn(async () => true);
     deletePricesForUser = vi.fn(async () => 4100);
+    deleteProductsForUser = vi.fn(async () => 5600);
+    deleteHistoryForUser = vi.fn(async () => 12);
     deleteSchedulesForUser = vi.fn(async () => 2);
     crmState = vi.fn(async () => CRM);
     resetPassword = vi.fn(async () => ({ ...CRM, mustChangePassword: true }));
     record = vi.fn(async () => undefined);
+    financeRefresh = vi.fn(async () => undefined);
+    digestRefresh = vi.fn(async () => undefined);
+    pushRefresh = vi.fn(async () => undefined);
 
     const moduleRef = await Test.createTestingModule({
       controllers: [AccessController],
@@ -96,10 +109,16 @@ describe('AccessController', () => {
           useValue: { findByTelegramUsers, findByTelegramUser, deleteByTelegramUser },
         },
         { provide: PurchasePriceService, useValue: { deleteForUser: deletePricesForUser } },
+        { provide: ProductMatchService, useValue: { deleteForUser: deleteProductsForUser } },
+        { provide: CostHistoryService, useValue: { deleteForUser: deleteHistoryForUser } },
         { provide: ReportScheduleService, useValue: { deleteForUser: deleteSchedulesForUser } },
         { provide: AccessNotifierService, useValue: { notify } },
         { provide: CrmAuthService, useValue: { crmState, resetPassword } },
         { provide: ActionLogService, useValue: { record } },
+        { provide: FinanceImportScheduler, useValue: { refresh: financeRefresh } },
+        { provide: SellerNotificationsScheduler, useValue: { refresh: vi.fn() } },
+        { provide: WeeklyDigestScheduler, useValue: { refresh: digestRefresh } },
+        { provide: StockPushScheduler, useValue: { refresh: pushRefresh } },
         // Гвард висит на классе, поэтому Nest поднимает его вместе с
         // контроллером. Здесь проверяется НАЛИЧИЕ гварда, а его собственная
         // логика — в admin-auth.test.ts.
@@ -123,6 +142,22 @@ describe('AccessController', () => {
       expect(item.label).toBeTruthy();
       expect(typeof item.defaultEnabled).toBe('boolean');
     }
+  });
+
+  it('реестр отдаёт зависимости фич — панель пишет «Требует: …»', () => {
+    const { items } = controller.features();
+    const unit = items.find((i) => i.key === FEATURE.UNIT_ECONOMICS);
+    expect(unit?.requires).toEqual([FEATURE.FINANCE]);
+    expect(items.find((i) => i.key === FEATURE.REPORT_PROFIT)?.requires).toEqual([]);
+  });
+
+  it('тумблер — собственный флаг, действующее значение — с зависимостями', async () => {
+    // Покажи панель действующее значение, тумблер «Unit-экономики» при закрытых
+    // «Финансах» не сдвигался бы с места после щелчка.
+    list.mockResolvedValueOnce([{ ...USER, features: { [FEATURE.UNIT_ECONOMICS]: true } }]);
+    const { items } = await controller.users();
+    expect(items[0].features[FEATURE.UNIT_ECONOMICS]).toBe(true);
+    expect(items[0].effectiveFeatures[FEATURE.UNIT_ECONOMICS]).toBe(false);
   });
 
   it('список отдаёт разрешённые значения ВСЕХ флагов, а не только явные', () => {
@@ -167,6 +202,55 @@ describe('AccessController', () => {
 
     expect(setFeature).toHaveBeenCalledWith('222', '999', FEATURE.REPORT_PROFIT, true);
     expect(row.features[FEATURE.REPORT_PROFIT]).toBe(true);
+  });
+
+  it('фича finance пересверяет ночную загрузку сразу, без рестарта; прочие — нет', async () => {
+    await controller.setFeature('222', {
+      botId: '999',
+      feature: FEATURE.REPORT_PROFIT,
+      enabled: true,
+    });
+    expect(financeRefresh).not.toHaveBeenCalled();
+
+    await controller.setFeature('222', { botId: '999', feature: FEATURE.FINANCE, enabled: true });
+    expect(financeRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('ai_weekly_digest, ai и finance пересверяют ИИ-сводку недели; прочие — нет', async () => {
+    await controller.setFeature('222', {
+      botId: '999',
+      feature: FEATURE.REPORT_PROFIT,
+      enabled: true,
+    });
+    expect(digestRefresh).not.toHaveBeenCalled();
+
+    for (const feature of [FEATURE.AI_WEEKLY_DIGEST, FEATURE.AI, FEATURE.FINANCE]) {
+      await controller.setFeature('222', { botId: '999', feature, enabled: true });
+    }
+    expect(digestRefresh).toHaveBeenCalledTimes(3);
+  });
+
+  it('фичи расписания и записи «Передачи остатков» пересверяют её расписание; прочие — нет', async () => {
+    await controller.setFeature('222', {
+      botId: '999',
+      feature: FEATURE.REPORT_PROFIT,
+      enabled: true,
+    });
+    expect(pushRefresh).not.toHaveBeenCalled();
+
+    const keys = [
+      FEATURE.STOCK_PUSH_SCHEDULE,
+      FEATURE.STOCK_PUSH,
+      FEATURE.STOCK_PUSH_WRITE_YM,
+      FEATURE.STOCK_PUSH_WRITE_OZON,
+      FEATURE.STOCK_PUSH_WRITE_WB,
+      FEATURE.OZON,
+      FEATURE.WB,
+    ];
+    for (const feature of keys) {
+      await controller.setFeature('222', { botId: '999', feature, enabled: true });
+    }
+    expect(pushRefresh).toHaveBeenCalledTimes(keys.length);
   });
 
   it('ключ вне реестра отвергается — он попадает в путь $set', async () => {
@@ -292,6 +376,8 @@ describe('AccessController', () => {
 
       expect(setApproved).toHaveBeenCalledWith('222', '999', true, { id: '309809755' });
       expect(row.status).toBe('approved');
+      // Доступ решает и ночную загрузку финансов — сверка сразу.
+      expect(financeRefresh).toHaveBeenCalled();
     });
 
     it('продавца уведомляют о смене доступа', async () => {
@@ -311,9 +397,9 @@ describe('AccessController', () => {
     });
 
     it('без botId отвергается', async () => {
-      await expect(
-        controller.setStatus('222', { approved: true }, req),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(controller.setStatus('222', { approved: true }, req)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
 
     it('неизвестный пользователь — 404, и уведомления не будет', async () => {
@@ -332,6 +418,8 @@ describe('AccessController', () => {
       expect(deleteByUserAndBot).toHaveBeenCalledWith('222', '999');
       expect(deleteByTelegramUser).toHaveBeenCalledWith('222');
       expect(deletePricesForUser).toHaveBeenCalledWith('222');
+      expect(deleteProductsForUser).toHaveBeenCalledWith('222');
+      expect(deleteHistoryForUser).toHaveBeenCalledWith('222');
       // Расписания — по паре с botId, как и запись доступа.
       expect(deleteSchedulesForUser).toHaveBeenCalledWith('222', '999');
       expect(result).toEqual({ ok: true });
@@ -349,6 +437,8 @@ describe('AccessController', () => {
       await expect(controller.remove('404', '999')).rejects.toBeInstanceOf(NotFoundException);
       expect(deleteByTelegramUser).not.toHaveBeenCalled();
       expect(deletePricesForUser).not.toHaveBeenCalled();
+      expect(deleteProductsForUser).not.toHaveBeenCalled();
+      expect(deleteHistoryForUser).not.toHaveBeenCalled();
       expect(deleteSchedulesForUser).not.toHaveBeenCalled();
     });
 

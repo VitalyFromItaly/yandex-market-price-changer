@@ -3,6 +3,15 @@ import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/
 import { ActionLogService, MAX_PAGE_SIZE } from '../../database/services/action-log.service';
 import { AdminJwtGuard } from '../admin/admin-jwt.guard';
 
+import { summarizeJunk } from './junk.domain';
+
+/** Окно сводки «Мусора» по умолчанию и потолок: TTL журнала всё равно 90 дней. */
+const JUNK_DEFAULT_DAYS = 7;
+const JUNK_MAX_DAYS = 90;
+/** Сколько строк читать в сводку и сколько источников отдавать. */
+const JUNK_ROW_CAP = 20_000;
+const JUNK_TOP_SOURCES = 50;
+
 /**
  * Чтение журнала действий. Только для администраторов — весь контроллер
  * закрыт AdminJwtGuard, а не отдельные методы: незакрытым останется ровно тот
@@ -48,6 +57,24 @@ export class LogsController {
       limit: Math.min(query.limit ?? 100, MAX_PAGE_SIZE),
       skip: query.skip ?? 0,
       items,
+    };
+  }
+
+  /**
+   * Сводка вкладки «Мусор»: источники сканов по IP за последние `days` дней.
+   * `capped` — окно упёрлось в потолок строк, счётчики занижены.
+   */
+  @Get('junk-sources')
+  async junkSources(@Query('days') days?: string) {
+    const window = Math.min(this.numberOf(days, 'days') || JUNK_DEFAULT_DAYS, JUNK_MAX_DAYS);
+    const since = new Date(Date.now() - window * 24 * 60 * 60 * 1000);
+    const rows = await this.logs.findJunkSince(since, JUNK_ROW_CAP);
+
+    return {
+      days: window,
+      total: rows.length,
+      capped: rows.length >= JUNK_ROW_CAP,
+      sources: summarizeJunk(rows, JUNK_TOP_SOURCES),
     };
   }
 

@@ -6,6 +6,7 @@ import { Job } from 'bull';
 
 import { YandexMarketService } from '../../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../../errors/error-reporter.service';
+import { FinanceService } from '../../../finance/finance.service';
 import { formatProfitReport } from '../../../yandex/reports/profit-message';
 import { ProfitService } from '../../../yandex/reports/profit.service';
 import { reportErrorText } from '../../../yandex/reports/report-message';
@@ -37,6 +38,11 @@ export interface IProfitReportJob {
    * Старые джобы без поля деградируют в «выключено» — безопасно.
    */
   deepHistory?: boolean;
+  /**
+   * «Фактическая чистая» (profit_actual, TASK-126) — тем же способом: решает
+   * хендлер, админ без записи → открыто. Старые джобы без поля — выключено.
+   */
+  profitActual?: boolean;
 }
 
 /**
@@ -63,12 +69,14 @@ export class ProfitReportProcessor {
     private readonly registry: BotRegistry,
     private readonly yandexMarketService: YandexMarketService,
     private readonly profit: ProfitService,
+    private readonly finance: FinanceService,
     private readonly errors: ErrorReporter,
   ) {}
 
   @Process(JOB_TYPES.SEND_PROFIT_REPORT)
   async run(job: Job<IProfitReportJob>): Promise<void> {
-    const { botId, chatId, telegramUserId, period, tariffEstimate, deepHistory } = job.data;
+    const { botId, chatId, telegramUserId, period, tariffEstimate, deepHistory, profitActual } =
+      job.data;
 
     const bot = this.registry.findByTelegramId(botId);
     if (!bot) {
@@ -89,11 +97,21 @@ export class ProfitReportProcessor {
         return;
       }
 
-      const result = await this.profit.build(store, period, new Date(), {
-        tariffEstimate,
-        deepHistory: deepHistory ?? false,
-      });
-      await bot.telegraf.telegram.sendMessage(chatId, formatProfitReport(result), htmlOptions());
+      const now = new Date();
+      // Журнал — параллельно с плоской: actualNet не бросает (сбой базы —
+      // `unavailable`), так что упасть отчёт может только по-старому.
+      const [result, actual] = await Promise.all([
+        this.profit.build(store, period, now, {
+          tariffEstimate,
+          deepHistory: deepHistory ?? false,
+        }),
+        profitActual ? this.finance.actualNet(telegramUserId, period, now) : undefined,
+      ]);
+      await bot.telegraf.telegram.sendMessage(
+        chatId,
+        formatProfitReport(result, now, actual),
+        htmlOptions(),
+      );
     } catch (error) {
       // Ошибку гасим, НЕ пробрасываем (attempts: 1) — но продавец ждёт отчёт,
       // молчать нельзя.

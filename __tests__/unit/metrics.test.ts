@@ -206,7 +206,12 @@ describe('MetricsService: карточка Polza', () => {
 
   it('без замеров (ИИ выключен) карточки нет, обязательные — есть', async () => {
     const report = await serviceWith([]).report('24h', HOUR_MS * 48);
-    expect(report.probes.map((probe) => probe.key)).toEqual(['telegram', 'yandex', 'redis']);
+    expect(report.probes.map((probe) => probe.key)).toEqual([
+      'telegram',
+      'yandex',
+      'redis',
+      'postgres',
+    ]);
   });
 
   it('есть замер Polza — карточка появляется', async () => {

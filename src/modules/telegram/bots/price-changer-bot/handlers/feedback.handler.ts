@@ -1,4 +1,8 @@
+import type { IFeedbackDraftJob } from '../../../queue/processors/feedback-draft.processor';
+
+import { InjectQueue } from '@nestjs/bull';
 import { Injectable } from '@nestjs/common';
+import { Queue } from 'bull';
 import { Context } from 'telegraf';
 
 import { UserAccessService } from '../../../../../database/services/user-access.service';
@@ -9,7 +13,10 @@ import {
   feedbackCancelledText,
   feedbackCardButtons,
   feedbackCardText,
+  feedbackDraftBusyText,
+  feedbackDraftButtons,
   feedbackDraftLostText,
+  feedbackDraftQueuedText,
   feedbackEmptyText,
   feedbackErrorText,
   feedbackHeaderText,
@@ -28,6 +35,9 @@ import {
 import { FeedbackService } from '../../../../yandex/feedback/feedback.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { htmlOptions } from '../../../formatting/telegram-format';
+import { JOB_TYPES, QUEUE_NAMES } from '../../../index';
+import { isQueuedFor } from '../../../queue/queued-for-user';
+import { FEATURE, isFeatureEnabled } from '../../shared/features.domain';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 
@@ -53,6 +63,7 @@ export class FeedbackHandler {
     private readonly keyboard: PriceChangerKeyboard,
     private readonly storePrompt: StorePromptService,
     private readonly errors: ErrorReporter,
+    @InjectQueue(QUEUE_NAMES.REPORTS) private readonly queue: Queue,
   ) {}
 
   /** Кнопка меню: показать отзывы без ответа. */
@@ -110,6 +121,9 @@ export class FeedbackHandler {
           case 'send':
             await this.send(ctx, parsed.feedbackId);
             return;
+          case 'ai':
+            await this.suggest(ctx, parsed.feedbackId);
+            return;
           case 'cancel':
             await this.cancel(ctx);
             return;
@@ -151,14 +165,57 @@ export class FeedbackHandler {
     return true;
   }
 
-  /** «✍️ Ответить»: открыть вопрос. Сброс других pending — внутри сеттера. */
+  /**
+   * «✍️ Ответить»: открыть вопрос. Сброс других pending — внутри сеттера.
+   * С открытой `feedback_ai_reply` под вопросом — «✨ Предложить ответ».
+   */
   private async askReply(ctx: Context, feedbackId: number): Promise<void> {
-    await this.access.setPendingFeedbackReply(
+    const account = await this.access.setPendingFeedbackReply(
       ctx.from.id.toString(),
       ctx.botInfo.id.toString(),
       String(feedbackId),
     );
+    // Записи нет — админ (гейт его пропустил): у него открыто всё.
+    if (!account || isFeatureEnabled(account.features, FEATURE.FEEDBACK_AI_REPLY)) {
+      const keyboard = await this.keyboard.createInlineButtons(feedbackDraftButtons(feedbackId));
+      await ctx.reply(feedbackAskReplyText(), { reply_markup: keyboard.reply_markup });
+      return;
+    }
     await ctx.reply(feedbackAskReplyText());
+  }
+
+  /**
+   * «✨ Предложить ответ»: только ставит задачу в очередь reports — модель
+   * думает до минуты, в хендлере это заморозило бы polling для всех. Черновик
+   * придёт прежним превью; публикует по-прежнему только «✅ Отправить».
+   */
+  private async suggest(ctx: Context, feedbackId: number): Promise<void> {
+    const telegramUserId = ctx.from.id.toString();
+    const botId = ctx.botInfo.id.toString();
+
+    // Кнопка — под СВОИМ вопросом: после «Отмена» или «Ответить» на другом
+    // отзыве старая «✨» не должна звать модель впустую.
+    const account = await this.access.findByUserAndBot(telegramUserId, botId);
+    if (account && account.pendingFeedbackReply !== String(feedbackId)) {
+      await ctx.reply(feedbackDraftLostText());
+      return;
+    }
+
+    const jobs = await this.queue.getJobs(['waiting', 'active']);
+    if (isQueuedFor(jobs, JOB_TYPES.SEND_FEEDBACK_DRAFT, telegramUserId)) {
+      await ctx.reply(feedbackDraftBusyText());
+      return;
+    }
+
+    const payload: IFeedbackDraftJob = {
+      botId: ctx.botInfo.id,
+      chatId: ctx.chat.id.toString(),
+      telegramUserId,
+      feedbackId,
+      aiAllowed: account ? isFeatureEnabled(account.features, FEATURE.AI) : true,
+    };
+    await this.queue.add(JOB_TYPES.SEND_FEEDBACK_DRAFT, payload);
+    await ctx.reply(feedbackDraftQueuedText());
   }
 
   /** «✅ Прочитано»: skip-reaction, вопросов не открывает. */

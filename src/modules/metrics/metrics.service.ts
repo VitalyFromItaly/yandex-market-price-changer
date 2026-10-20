@@ -17,7 +17,7 @@ import {
 } from './metrics.domain';
 
 /** Сетевые проверки самопроверки, у которых есть задержка. */
-const PROBE_KEYS = ['telegram', 'yandex', 'redis', 'polza'] as const;
+const PROBE_KEYS = ['telegram', 'yandex', 'redis', 'postgres', 'polza'] as const;
 
 /**
  * Проверки, которых может не быть вовсе: Polza проверяется, только когда ИИ

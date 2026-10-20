@@ -69,10 +69,27 @@ describe('Разбор идентификатора рассылки', () => {
     expect(parseReportJobId(ReportSchedulerService.jobId(key))).toEqual(key);
   });
 
+  it('формат без «:» — Bull режет ключ повторяемой задачи по нему (TASK-157)', () => {
+    const id = ReportSchedulerService.jobId({
+      botId: '999',
+      telegramUserId: '222',
+      reportKey: 'in_transit',
+    });
+    expect(id).toBe('report-999-222-in_transit');
+    expect(id).not.toContain(':');
+  });
+
+  it('бот с дефисом в id разбирается целиком', () => {
+    const key = { botId: 'no-database', telegramUserId: '222', reportKey: REPORT.RETURNING };
+    expect(parseReportJobId(ReportSchedulerService.jobId(key))).toEqual(key);
+  });
+
   it('чужие идентификаторы пропускаются, а не ломают выдачу', () => {
     expect(parseReportJobId('repeat:abc123:1754000000000')).toBeNull();
-    expect(parseReportJobId('report:999:222')).toBeNull();
-    expect(parseReportJobId('report:999:222:profit:extra')).toBeNull();
+    expect(parseReportJobId('hosting-reminder')).toBeNull();
+    expect(parseReportJobId('finance-111')).toBeNull();
+    expect(parseReportJobId('report-999-222')).toBeNull();
+    expect(parseReportJobId('report:999:222:profit')).toBeNull();
     expect(parseReportJobId(undefined)).toBeNull();
   });
 });

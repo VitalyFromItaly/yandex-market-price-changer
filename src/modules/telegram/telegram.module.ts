@@ -2,7 +2,12 @@ import { BullModule } from '@nestjs/bull';
 import { Module, forwardRef } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
+import { AiAnalystModule } from '../ai-analyst/ai-analyst.module';
+import { FinanceModule } from '../finance/finance.module';
 import { HealthModule } from '../health/health.module';
+import { MarketplacesModule } from '../marketplaces/marketplaces.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { StockPushModule } from '../stock-push/stock-push.module';
 import { YandexModule } from '../yandex/yandex.module';
 
 import { BotRegistry } from './bots/bot-registry.service';
@@ -38,6 +43,8 @@ import { BotCommandsService } from './bots/shared/services/bot-commands.service'
 import { StorePromptService } from './bots/shared/services/store-prompt.service';
 import { TelegramApiMetrics } from './bots/telegram-api-metrics.service';
 import { FbyOverviewProcessor } from './queue/processors/fby-overview.processor';
+import { FeedbackDraftProcessor } from './queue/processors/feedback-draft.processor';
+import { FinanceImportProcessor } from './queue/processors/finance-import.processor';
 import { HostingReminderProcessor } from './queue/processors/hosting-reminder.processor';
 import { MarketReportProcessor } from './queue/processors/market-report.processor';
 import { NotificationsProcessor } from './queue/processors/notifications.processor';
@@ -46,14 +53,20 @@ import { PaymentsReportProcessor } from './queue/processors/payments-report.proc
 import { PriceRecommendationsProcessor } from './queue/processors/price-recommendations.processor';
 import { ProfitReportProcessor } from './queue/processors/profit-report.processor';
 import { ReportsProcessor } from './queue/processors/reports.processor';
+import { SellerNotificationsProcessor } from './queue/processors/seller-notifications.processor';
 import { StockSyncProcessor } from './queue/processors/stock-sync.processor';
 import { TariffReportProcessor } from './queue/processors/tariff-report.processor';
 import { WarehousesOverviewProcessor } from './queue/processors/warehouses-overview.processor';
+import { WeeklyDigestProcessor } from './queue/processors/weekly-digest.processor';
 import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
 import { FileProcessingService } from './queue/services/file-processing.service';
+import { FinanceImportScheduler } from './queue/services/finance-import.scheduler';
 import { HostingReminderScheduler } from './queue/services/hosting-reminder.scheduler';
 import { HostingReminderService } from './queue/services/hosting-reminder.service';
 import { ReportSchedulerService } from './queue/services/report-scheduler.service';
+import { SellerNotificationsScheduler } from './queue/services/seller-notifications.scheduler';
+import { StockPushScheduler } from './queue/services/stock-push.scheduler';
+import { WeeklyDigestScheduler } from './queue/services/weekly-digest.scheduler';
 import { FileDataProcessorService } from './services/file-data-processor.service';
 import { TelegramApiService } from './services/telegram.api.service';
 import { TelegramController } from './telegram.controller';
@@ -65,6 +78,12 @@ import { QUEUE_NAMES } from './index';
   imports: [
     DatabaseModule,
     YandexModule,
+    FinanceModule,
+    NotificationsModule,
+    // ИИ-сводка недели (TASK-168): WeeklyDigestService — факты из финансов и AiService.
+    AiAnalystModule,
+    MarketplacesModule,
+    StockPushModule,
     // Цикл настоящий и обоюдный: HealthModule берёт отсюда очередь reports (ради
     // клиента Redis) и BotRegistry, а команда /health смотрит обратно, в
     // HealthMonitorService. forwardRef с обеих сторон — единственный способ.
@@ -111,6 +130,34 @@ import { QUEUE_NAMES } from './index';
           removeOnFail: 50,
           // Одна попытка, довод `reports`: повтор жжёт квоту Partner API, а
           // продавец видит failed и сам нажмёт ещё раз.
+          attempts: 1,
+        },
+      },
+      {
+        name: QUEUE_NAMES.FINANCE_IMPORT,
+        defaultJobOptions: {
+          removeOnComplete: 20,
+          removeOnFail: 50,
+          // Одна попытка: у united-netting квота 100 генераций в час, а
+          // расписание (TASK-112) всё равно повторит период в следующий проход.
+          attempts: 1,
+        },
+      },
+      {
+        name: QUEUE_NAMES.SELLER_NOTIFICATIONS,
+        defaultJobOptions: {
+          removeOnComplete: 20,
+          removeOnFail: 50,
+          // Одна попытка: завтра проверка повторится сама, а повтор ходит в API площадок.
+          attempts: 1,
+        },
+      },
+      {
+        name: QUEUE_NAMES.AI_WEEKLY_DIGEST,
+        defaultJobOptions: {
+          removeOnComplete: 20,
+          removeOnFail: 50,
+          // Одна попытка: повтор — второй платный запрос к Polza и, возможно, второе сообщение.
           attempts: 1,
         },
       },
@@ -185,14 +232,22 @@ import { QUEUE_NAMES } from './index';
     WarehousesOverviewProcessor,
     ProfitReportProcessor,
     TariffReportProcessor,
+    FeedbackDraftProcessor,
     PaymentsReportProcessor,
     PriceRecommendationsProcessor,
     OfferCardsProcessor,
     MarketReportProcessor,
     HostingReminderProcessor,
+    FinanceImportProcessor,
     ReportSchedulerService,
     HostingReminderScheduler,
     HostingReminderService,
+    FinanceImportScheduler,
+    SellerNotificationsProcessor,
+    SellerNotificationsScheduler,
+    WeeklyDigestProcessor,
+    WeeklyDigestScheduler,
+    StockPushScheduler,
   ],
   // PriceChangerKeyboard наружу — веб-панель, открывая доступ, шлёт продавцу
   // то же сообщение с тем же меню, что и кнопка «Одобрить» в Telegram.
@@ -210,6 +265,15 @@ import { QUEUE_NAMES } from './index';
     // Панель очередей показывает, кому уйдёт напоминание об оплате, — и обязана
     // спрашивать это у того же сервиса, что и сама рассылка.
     HostingReminderService,
+    // Панель очередей показывает расписание загрузки финансов, панель доступа
+    // пересверяет его после правки флага — у того же планировщика.
+    FinanceImportScheduler,
+    // Панель доступа пересверяет расписание уведомлений, CRM ставит проверку по кнопке.
+    SellerNotificationsScheduler,
+    // Панель доступа пересверяет расписание ИИ-сводки, панель очередей шлёт её по кнопке.
+    WeeklyDigestScheduler,
+    // Панель доступа пересверяет расписание «Передачи остатков», панель очередей запускает проход.
+    StockPushScheduler,
     BullModule,
   ],
 })

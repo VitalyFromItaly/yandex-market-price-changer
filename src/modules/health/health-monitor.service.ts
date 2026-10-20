@@ -13,8 +13,10 @@ import { InjectConnection } from '@nestjs/mongoose';
 import { Queue } from 'bull';
 import { Connection } from 'mongoose';
 import { statfs } from 'node:fs/promises';
+import { Pool } from 'pg';
 
 import { AppConfigService } from '../../config/app-config.service';
+import { POSTGRES_POOL } from '../../database/postgres/postgres.module';
 import { ActionLogService } from '../../database/services/action-log.service';
 import { HealthSampleService } from '../../database/services/health-sample.service';
 import { AiService } from '../ai/ai.service';
@@ -125,6 +127,7 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
     @Inject(forwardRef(() => BotRegistry))
     private readonly registry: BotRegistry,
     private readonly ai: AiService,
+    @Inject(POSTGRES_POOL) private readonly postgres: Pool,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -159,6 +162,7 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
     const checks: Array<Promise<ICheckResult>> = [
       this.checkDisk(),
       Promise.resolve(this.checkMongo()),
+      this.checkPostgres(),
       this.checkRedis(),
       this.checkTelegram(),
       this.checkYandex(),
@@ -317,6 +321,32 @@ export class HealthMonitorService implements OnApplicationBootstrap, OnApplicati
       state: ready ? 'ok' : 'down',
       detail: ready ? 'соединение установлено' : `readyState=${this.connection.readyState}`,
     };
+  }
+
+  /**
+   * Postgres финансов — пингом `SELECT 1`, а не флагом готовности: пул ленивый,
+   * своего «соединено» у него нет. Гонка с PING_TIMEOUT_MS — довод Redis: пул
+   * ждёт соединения до своих 10 с, и проход проверки не должен висеть на нём.
+   * Упавший Postgres бьёт только по финансам — бот и отчёты живут в Mongo.
+   */
+  private async checkPostgres(): Promise<ICheckResult> {
+    const started = Date.now();
+    try {
+      await this.withTimeout(this.postgres.query('SELECT 1'), PING_TIMEOUT_MS);
+      return {
+        key: 'postgres',
+        state: 'ok',
+        detail: 'отвечает на SELECT 1',
+        latencyMs: Date.now() - started,
+      };
+    } catch (error) {
+      return {
+        key: 'postgres',
+        state: 'down',
+        detail: this.messageOf(error),
+        latencyMs: Date.now() - started,
+      };
+    }
   }
 
   private async checkRedis(): Promise<ICheckResult> {

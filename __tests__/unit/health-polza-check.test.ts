@@ -35,6 +35,7 @@ function setup(balance: () => Promise<unknown>, enabled = true) {
     { polzaAiEnabled: enabled, polzaAiBalanceWarnRub: 200 } as never,
     {} as never,
     ai as never,
+    {} as never,
   );
   const sleep = vi.fn(async () => undefined);
   Object.assign(service, { sleep });
@@ -46,6 +47,7 @@ function stubOtherChecks(service: HealthMonitorService): void {
   const ok = (key: string) => async () => ({ key, state: 'ok', detail: '' });
   Object.assign(service, {
     checkDisk: ok('disk'),
+    checkPostgres: ok('postgres'),
     checkRedis: ok('redis'),
     checkTelegram: ok('telegram'),
     checkYandex: ok('yandex'),
@@ -171,6 +173,6 @@ describe('HealthMonitorService: баланс Polza', () => {
     const { service } = setup(async () => ({ available: 1500 }));
     stubOtherChecks(service);
     const keys = (await service.collect()).map((result) => result.key);
-    expect(keys).toEqual(['disk', 'mongo', 'redis', 'telegram', 'yandex', 'polza']);
+    expect(keys).toEqual(['disk', 'mongo', 'postgres', 'redis', 'telegram', 'yandex', 'polza']);
   });
 });

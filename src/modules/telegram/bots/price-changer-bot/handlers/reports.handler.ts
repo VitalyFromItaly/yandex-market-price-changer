@@ -20,6 +20,7 @@ import {
   PERIOD,
   parseDayInput,
   periodButtonLabel,
+  periodsFor,
   type IReportPeriod,
 } from '../../../../../modules/yandex/reports/report-period';
 import {
@@ -32,7 +33,12 @@ import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
 import { JOB_TYPES, QUEUE_NAMES } from '../../../index';
-import { FEATURE, isFeatureEnabled, isReportEnabled } from '../../shared/features.domain';
+import {
+  FEATURE,
+  isFeatureEnabled,
+  isPrevMonthOpen,
+  isReportEnabled,
+} from '../../shared/features.domain';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
 import { REPORT_CB_PATTERN, parseReportCallback, reportCallback } from '../report-buttons';
@@ -180,14 +186,15 @@ export class ReportsHandler {
   }
 
   private async askPeriod(ctx: Context, key: TReportKey): Promise<void> {
-    const rows = [
-      [PERIOD.TODAY, PERIOD.DAY],
-      [PERIOD.WEEK, PERIOD.MONTH],
-      // «Всего» отдельным рядом и последним: это не ещё один календарный
-      // период, а его отсутствие, и в паре с «месяцем» читалось бы как один из
-      // равных вариантов.
-      [PERIOD.ALL],
-    ].map((row) =>
+    // Ряды — из periodsFor: «Всего» отдельным рядом и последним (это не ещё
+    // один календарный период, а его отсутствие), «Прошлый месяц» — только у
+    // «Прибыли» и только при открытых фичах. Нет записи доступа — админ.
+    const account = await this.access.findByUserAndBot(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+    );
+    const prevMonth = account ? isPrevMonthOpen(account.features) : true;
+    const rows = periodsFor(key, { prevMonth }).map((row) =>
       row.map((period) => ({
         text: periodButtonLabel(period),
         callback_data: reportCallback(period, key),
@@ -262,6 +269,7 @@ export class ReportsHandler {
           period,
           tariffEstimate: account ? isFeatureEnabled(account.features, FEATURE.TARIFF_CALC) : true,
           deepHistory,
+          profitActual: account ? isFeatureEnabled(account.features, FEATURE.PROFIT_ACTUAL) : true,
         };
         await this.queue.add(JOB_TYPES.SEND_PROFIT_REPORT, payload);
         await ctx.reply('⏳ Считаю прибыль, пришлю, как будет готово…');

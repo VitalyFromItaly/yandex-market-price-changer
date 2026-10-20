@@ -11,7 +11,13 @@ import { AdminJwtGuard } from '../../src/modules/admin/admin-jwt.guard';
 import { QueuesController } from '../../src/modules/queues/queues.controller';
 import { QueuesService } from '../../src/modules/queues/queues.service';
 import { QUEUE_NAMES } from '../../src/modules/telegram';
+import { FinanceImportScheduler } from '../../src/modules/telegram/queue/services/finance-import.scheduler';
+import { FinanceDiscrepancyRepository } from '../../src/database/postgres/repositories/finance-discrepancy.repository';
+import { FinancePeriodRepository } from '../../src/database/postgres/repositories/finance-period.repository';
 import { HostingReminderService } from '../../src/modules/telegram/queue/services/hosting-reminder.service';
+import { StockPushScheduler } from '../../src/modules/telegram/queue/services/stock-push.scheduler';
+import { WeeklyDigestScheduler } from '../../src/modules/telegram/queue/services/weekly-digest.scheduler';
+import { STOCK_PUSH_SCHEDULE_LOG_KIND } from '../../src/modules/stock-push/stock-push.service';
 
 /**
  * HTTP-поверхность страницы очередей. Проверяется то, что не ловится
@@ -62,6 +68,13 @@ describe('QueuesController', () => {
   let findByTelegramUsers: ReturnType<typeof vi.fn>;
   let reminderRecipients: ReturnType<typeof vi.fn>;
   let logList: ReturnType<typeof vi.fn>;
+  let financeJobs: ReturnType<typeof vi.fn>;
+  let financePeriods: ReturnType<typeof vi.fn>;
+  let actMismatches: ReturnType<typeof vi.fn>;
+  let digestJobs: ReturnType<typeof vi.fn>;
+  let digestSendNow: ReturnType<typeof vi.fn>;
+  let pushJobs: ReturnType<typeof vi.fn>;
+  let pushSendNow: ReturnType<typeof vi.fn>;
   let controller: QueuesController;
 
   beforeEach(async () => {
@@ -86,6 +99,13 @@ describe('QueuesController', () => {
       { botId: '999', telegramUserId: '222', telegramChatId: '333' },
     ]);
     logList = vi.fn(async () => []);
+    financeJobs = vi.fn(async () => []);
+    financePeriods = vi.fn(async () => []);
+    actMismatches = vi.fn(async () => []);
+    digestJobs = vi.fn(async () => []);
+    digestSendNow = vi.fn(async () => undefined);
+    pushJobs = vi.fn(async () => []);
+    pushSendNow = vi.fn(async () => undefined);
 
     const moduleRef = await Test.createTestingModule({
       controllers: [QueuesController],
@@ -99,6 +119,11 @@ describe('QueuesController', () => {
         { provide: YandexMarketService, useValue: { findByTelegramUsers } },
         { provide: HostingReminderService, useValue: { recipients: reminderRecipients } },
         { provide: ActionLogService, useValue: { list: logList } },
+        { provide: FinanceImportScheduler, useValue: { jobs: financeJobs } },
+        { provide: FinancePeriodRepository, useValue: { listByUsers: financePeriods } },
+        { provide: FinanceDiscrepancyRepository, useValue: { listByKind: actMismatches } },
+        { provide: WeeklyDigestScheduler, useValue: { jobs: digestJobs, sendNow: digestSendNow } },
+        { provide: StockPushScheduler, useValue: { jobs: pushJobs, sendNow: pushSendNow } },
         // Гвард висит на классе; его собственная логика — в admin-auth.test.ts.
         { provide: AdminAuthService, useValue: { verify: async () => '1' } },
       ],
@@ -153,8 +178,8 @@ describe('QueuesController', () => {
         expect(queue.getJobs).toHaveBeenCalledWith(['failed'], 0, 49);
         expect(queue.getJobs).toHaveBeenCalledWith(['completed'], 0, 49);
       }
-      // total — сумма по всем парам (очередь, состояние): 5 × 5 × 3.
-      expect(result.total).toBe(75);
+      // total — сумма по всем парам (очередь, состояние): 8 очередей × 5 × 3.
+      expect(result.total).toBe(120);
     });
 
     it('одна очередь + состояние all — пять запросов только к ней', async () => {
@@ -177,12 +202,15 @@ describe('QueuesController', () => {
       queues[QUEUE_NAMES.NOTIFICATIONS].getJobs.mockResolvedValue([]);
       queues[QUEUE_NAMES.REPORTS].getJobs.mockResolvedValue([]);
       queues[QUEUE_NAMES.CRM_JOBS].getJobs.mockResolvedValue([]);
+      queues[QUEUE_NAMES.FINANCE_IMPORT].getJobs.mockResolvedValue([]);
+      queues[QUEUE_NAMES.SELLER_NOTIFICATIONS].getJobs.mockResolvedValue([]);
+      queues[QUEUE_NAMES.AI_WEEKLY_DIGEST].getJobs.mockResolvedValue([]);
 
       const result = await controller.jobs('all', 'failed', '2', '1');
 
       expect(queues[QUEUE_NAMES.FILE_PROCESSING].getJobs).toHaveBeenCalledWith(['failed'], 0, 2);
       expect(result.items.map((item) => item.id)).toEqual(['c', 'b']);
-      expect(result.total).toBe(15); // по 3 failed в каждой из пяти очередей
+      expect(result.total).toBe(24); // по 3 failed в каждой из восьми очередей
     });
 
     it('строка обогащается ником: в payload только числовой id', async () => {
@@ -248,7 +276,7 @@ describe('QueuesController', () => {
       queues[QUEUE_NAMES.REPORTS].getRepeatableJobs.mockResolvedValue([
         {
           key: 'k1',
-          id: 'report:999:222:profit',
+          id: 'report-999-222-profit',
           cron: '0 9 * * *',
           tz: 'Europe/Moscow',
           next: 1754031600000,
@@ -287,6 +315,119 @@ describe('QueuesController', () => {
     });
   });
 
+  describe('загрузка финансов', () => {
+    const PERIOD = {
+      telegramUserId: '222',
+      periodFrom: '2026-09-01',
+      periodTo: '2026-09-30',
+      status: 'discrepancy',
+      lastOutcome: 'unchanged',
+      documentVersion: 2,
+      unknownCount: 0,
+      changedCount: 0,
+      removedCount: 1,
+      discrepancyCount: 2,
+      reconcileState: 'checked',
+      reconcileNote: null,
+      error: null,
+      checkedAt: new Date('2026-10-15T01:07:00Z'),
+    };
+
+    it('строка на заведённую задачу: ник, магазин, следующая и последняя загрузка, статусы', async () => {
+      financeJobs.mockResolvedValue([
+        { telegramUserId: '222', cron: '7 4 * * *', tz: 'Europe/Moscow', next: 1792040820000 },
+      ]);
+      financePeriods.mockResolvedValue([
+        PERIOD,
+        {
+          ...PERIOD,
+          periodFrom: '2026-10-01',
+          periodTo: '2026-10-31',
+          status: 'preliminary',
+          lastOutcome: 'imported',
+          removedCount: 0,
+          checkedAt: new Date('2026-10-15T01:08:00Z'),
+        },
+      ]);
+
+      const card = await controller.financeImportCard();
+
+      expect(financePeriods).toHaveBeenCalledWith(['222']);
+      expect(card.periodsError).toBeNull();
+      expect(card.items).toHaveLength(1);
+      expect(card.items[0]).toMatchObject({
+        telegramUserId: '222',
+        username: 'vasya',
+        storeName: 'Всё для часов',
+        time: '04:07',
+        last: { outcome: 'imported' },
+      });
+      expect(card.items[0].periods[0]).toMatchObject({
+        status: 'discrepancy',
+        statusLabel: 'Есть расхождения',
+        removedCount: 1,
+        discrepancyCount: 2,
+        reconcileState: 'checked',
+      });
+    });
+
+    it('какой акт не сошёлся с отчётом услуг — строкой у своего месяца (TASK-158)', async () => {
+      financeJobs.mockResolvedValue([
+        { telegramUserId: '222', cron: '7 4 * * *', tz: 'Europe/Moscow', next: 1 },
+      ]);
+      financePeriods.mockResolvedValue([
+        { ...PERIOD, periodKey: 'united-netting:2026-09-01:2026-09-30' },
+        {
+          ...PERIOD,
+          periodFrom: '2026-10-01',
+          periodKey: 'united-netting:2026-10-01:2026-10-31',
+        },
+      ]);
+      actMismatches.mockResolvedValue([
+        {
+          telegramUserId: '222',
+          periodKey: 'united-netting:2026-09-01:2026-09-30',
+          detail: 'Акт 30.09.2026: услуги 1,00 ₽, удержано по журналу 0,00 ₽, разница 1,00 ₽',
+        },
+      ]);
+
+      const card = await controller.financeImportCard();
+
+      expect(actMismatches).toHaveBeenCalledWith(['222'], 'act_mismatch');
+      expect(card.items[0].periods.map((p) => p.actMismatches)).toEqual([
+        ['Акт 30.09.2026: услуги 1,00 ₽, удержано по журналу 0,00 ₽, разница 1,00 ₽'],
+        [],
+      ]);
+    });
+
+    it('Postgres упал — расписание всё равно видно, статусов нет и сказано почему', async () => {
+      financeJobs.mockResolvedValue([
+        { telegramUserId: '222', cron: '7 4 * * *', tz: 'Europe/Moscow', next: 1 },
+      ]);
+      financePeriods.mockRejectedValue(new Error('connect ECONNREFUSED'));
+
+      const card = await controller.financeImportCard();
+      expect(card.periodsError).toMatch(/ECONNREFUSED/);
+      expect(card.items[0]).toMatchObject({ telegramUserId: '222', periods: [], last: null });
+    });
+
+    it('задач нет — пустой список без похода в Mongo', async () => {
+      const card = await controller.financeImportCard();
+      expect(card.items).toEqual([]);
+      expect(list).not.toHaveBeenCalled();
+    });
+
+    it('идентификаторы магазина и токен в карточку не попадают', async () => {
+      financeJobs.mockResolvedValue([
+        { telegramUserId: '222', cron: '7 4 * * *', tz: 'Europe/Moscow', next: 1 },
+      ]);
+      const raw = JSON.stringify(await controller.financeImportCard());
+      expect(raw).not.toContain('campaign');
+      expect(raw).not.toContain('business');
+      expect(raw).not.toContain('token');
+    });
+  });
+
   describe('напоминание об оплате хостинга', () => {
     const scheduled = {
       key: 'hk',
@@ -320,7 +461,7 @@ describe('QueuesController', () => {
     it('задачи нет — schedule: null, это диагноз «развёрнут код без рассылки»', async () => {
       // Персональные рассылки в очереди есть, а нашей задачи нет.
       queues[QUEUE_NAMES.REPORTS].getRepeatableJobs.mockResolvedValue([
-        { key: 'k1', id: 'report:999:222:profit', cron: '0 9 * * *', tz: 'Europe/Moscow', next: 1 },
+        { key: 'k1', id: 'report-999-222-profit', cron: '0 9 * * *', tz: 'Europe/Moscow', next: 1 },
       ]);
 
       const card = await controller.hostingReminderCard();
@@ -393,6 +534,58 @@ describe('QueuesController', () => {
     it('псевдоочередь all для ретрая не годится — нужна настоящая', async () => {
       // Кнопка «Повторить» берёт очередь из самой строки, а не из фильтра.
       await expect(controller.retry('all', '42')).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('«Передача остатков» по расписанию', () => {
+    it('строка на заведённую задачу: продавец, магазин, следующий запуск и итог последнего прохода', async () => {
+      pushJobs.mockResolvedValue([
+        {
+          telegramUserId: '222',
+          cron: '*/30 * * * *',
+          tz: 'Europe/Moscow',
+          next: 1_700_000_000_000,
+        },
+      ]);
+      logList.mockResolvedValue([
+        {
+          telegramUserId: '222',
+          createdAt: new Date('2026-10-19T10:30:00Z'),
+          action: 'новый',
+          status: 'ok',
+        },
+        {
+          telegramUserId: '222',
+          createdAt: new Date('2026-10-19T10:00:00Z'),
+          action: 'старый',
+          status: 'error',
+        },
+      ]);
+
+      const { items } = await controller.stockPushScheduleCard();
+
+      expect(logList).toHaveBeenCalledWith({ kind: STOCK_PUSH_SCHEDULE_LOG_KIND, limit: 200 });
+      expect(items).toEqual([
+        expect.objectContaining({
+          telegramUserId: '222',
+          username: 'vasya',
+          storeName: 'Всё для часов',
+          cron: '*/30 * * * *',
+          last: expect.objectContaining({ action: 'новый', status: 'ok' }),
+        }),
+      ]);
+      // Токен магазина в ответ панели не попадает.
+      expect(JSON.stringify(items)).not.toContain('ACMA');
+    });
+
+    it('«Запустить сейчас» ставит разовый проход; не число — 400 до очереди', async () => {
+      await expect(controller.runStockPushSchedule('222')).resolves.toEqual({ queued: true });
+      expect(pushSendNow).toHaveBeenCalledWith('222');
+
+      await expect(controller.runStockPushSchedule('2:2')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(pushSendNow).toHaveBeenCalledTimes(1);
     });
   });
 });

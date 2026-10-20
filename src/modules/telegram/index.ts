@@ -9,6 +9,27 @@ export const QUEUE_NAMES = {
    * `@OnQueueFailed` уже занят ReportsProcessor.
    */
   CRM_JOBS: 'crm-jobs',
+  /**
+   * Импорт финансового журнала площадок (united-netting ЯМ): заказ отчёта,
+   * минуты ожидания, разбор десятков тысяч строк. Своя очередь с одним
+   * обработчиком на concurrency 1: две загрузки одного периода упёрлись бы в
+   * уникальный индекс версии FinanceDocument.
+   */
+  FINANCE_IMPORT: 'finance-import',
+  /**
+   * Проверка уведомлений продавцу (TASK-152): правила по журналу, аномалиям,
+   * налогу и складу (остатки — живые вызовы площадок), сводка в Telegram.
+   * Своя очередь (решение `notifications_own_queue`): `notifications` занята
+   * прогрессом загрузки прайса, а на `reports` сверка ReportScheduler снимает
+   * чужие повторяемые задачи.
+   */
+  SELLER_NOTIFICATIONS: 'seller-notifications',
+  /**
+   * Еженедельная ИИ-сводка в Telegram (TASK-168). Своя очередь по доводу
+   * `notifications_own_queue`: на `reports` сверка ReportScheduler снимает
+   * чужие повторяемые задачи, а `@OnQueueFailed` там уже у ReportsProcessor.
+   */
+  AI_WEEKLY_DIGEST: 'ai-weekly-digest',
 } as const;
 
 export const JOB_TYPES = {
@@ -63,6 +84,11 @@ export const JOB_TYPES = {
    */
   SEND_MARKET_REPORT: 'send-market-report',
   /**
+   * «✨ Предложить ответ» на отзыв: один запрос к Polza, ответ бывал 68 с — в
+   * хендлере это держало бы polling-цикл telegraf для всех.
+   */
+  SEND_FEEDBACK_DRAFT: 'send-feedback-draft',
+  /**
    * Напоминание об оплате хостинга — единственная рассылка «всем сразу», а не
    * ответ на действие пользователя. Задача повторяемая (28–31 числа), последний
    * ли это день месяца, решает процессор: cron такого не выражает.
@@ -70,6 +96,12 @@ export const JOB_TYPES = {
   SEND_HOSTING_REMINDER: 'send-hosting-reminder',
   /** Любая фоновая задача CRM; что именно считать — `kind` в payload. */
   RUN_CRM_JOB: 'run-crm-job',
+  /** Импорт журнала ЯМ за период; payload — продавец и даты, без токена. */
+  IMPORT_FINANCE: 'import-finance',
+  /** Проверка уведомлений продавца; payload — продавец и вид запуска, без токена. */
+  CHECK_SELLER_NOTIFICATIONS: 'check-seller-notifications',
+  /** Еженедельная ИИ-сводка продавцу; payload — продавец и вид запуска, без токена. */
+  SEND_AI_WEEKLY_DIGEST: 'send-ai-weekly-digest',
   PROCESS_FILE: 'process-file',
   PARSE_FILE: 'parse-file',
   COMPARE_DATA: 'compare-data',
