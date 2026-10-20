@@ -7,7 +7,7 @@ import {
   AiUsage,
   AiUsageSchema,
 } from '../../src/database/schemas/ai-usage.schema';
-import { AiUsageService } from '../../src/database/services/ai-usage.service';
+import { AI_EVAL_PURPOSE, AiUsageService } from '../../src/database/services/ai-usage.service';
 import type { IAiUsageRow } from '../../src/database/services/ai-usage.service';
 
 const ROW: IAiUsageRow = {
@@ -66,11 +66,18 @@ describe('AiUsageService', () => {
     await expect(service.record(ROW)).resolves.toBeUndefined();
   });
 
-  it('spentRubSince суммирует costRub продавца с начала окна', async () => {
+  it('spentRubSince суммирует costRub продавца с начала окна, без контрольного набора', async () => {
     const since = new Date('2026-10-13T21:00:00Z');
     await expect(service.spentRubSince('42', since)).resolves.toBe(12.5);
     const [pipeline] = aggregate.mock.calls[0];
-    expect(pipeline[0]).toEqual({ $match: { telegramUserId: '42', createdAt: { $gte: since } } });
+    expect(pipeline[0]).toEqual({
+      $match: {
+        telegramUserId: '42',
+        purpose: { $ne: AI_EVAL_PURPOSE },
+        createdAt: { $gte: since },
+      },
+    });
+    expect(AI_EVAL_PURPOSE).toBe('eval');
     expect(pipeline[1].$group.total).toEqual({ $sum: '$costRub' });
   });
 

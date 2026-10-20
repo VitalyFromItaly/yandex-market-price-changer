@@ -1,8 +1,16 @@
 import type {
+  IAiToolbox,
+  IAiToolInvocation,
+  IAiToolResult,
+  IAiToolsCompletion,
+} from './ai-tools.types';
+import type {
   IChatCompletionRequest,
   IChatCompletionResult,
   IPolzaBalance,
   IPolzaCallOptions,
+  IPolzaMessage,
+  IPolzaToolCall,
 } from './polza.client';
 import type { IAiUsageRow } from '../../database/services/ai-usage.service';
 
@@ -21,6 +29,27 @@ import {
 } from './ai.errors';
 import { PolzaClient } from './polza.client';
 import { PolzaApiError } from './polza.errors';
+
+/**
+ * Раундов с инструментами до принудительного текстового ответа. Каждый раунд —
+ * оплаченный запрос; модель, которая зовёт инструменты по кругу, иначе тратила
+ * бы деньги владельца без ответа продавцу.
+ */
+export const MAX_TOOL_ROUNDS = 4;
+/** Вызовов в одном раунде; лишним уходит ошибка, а не исполнение. */
+export const MAX_TOOL_CALLS_PER_ROUND = 8;
+/**
+ * Потолок времени инструментов одного раунда (TASK-166, решение
+ * `ai_tool_round_timeout`). Журнальные инструменты укладываются в доли секунды,
+ * а живые (`getStocks`, `getReturns`) ходят в Partner API: отчёт FBY ждётся до
+ * минут, квота отвечает паузой. Продавец ждёт ответа в чате, поэтому сверх
+ * потолка модель получает честный отказ, а не висящий ход. Сам запрос не
+ * отменяется: мемо и single-flight `FbyStockService` подхватят его при повторе.
+ */
+export const AI_TOOL_ROUND_TIMEOUT_MS = 60_000;
+export const TOOL_TIMEOUT_TEXT =
+  `Нет ответа за ${AI_TOOL_ROUND_TIMEOUT_MS / 1000} с — данные сейчас недоступны, ` +
+  'скажи об этом и предложи повторить вопрос позже';
 
 export interface IAiContext {
   telegramUserId: string;
@@ -72,12 +101,18 @@ export class AiService {
     const base = {
       telegramUserId: ctx.telegramUserId,
       purpose: ctx.purpose,
-      model: request.model ?? this.config.polzaAiModel ?? '',
+      // Модель по назначению (POLZA_AI_MODELS) поверх модели по умолчанию.
+      model: request.model ?? this.config.polzaAiModelFor(ctx.purpose) ?? '',
     };
     const started = Date.now();
 
     try {
-      const result = await this.polza.chatCompletion(request);
+      // Модель уходит явно: подстановка по умолчанию внутри PolzaClient не знает
+      // purpose, и AiUsage.model разошлась бы с тем, чем реально ушёл запрос.
+      const result = await this.polza.chatCompletion({
+        ...request,
+        model: base.model || undefined,
+      });
       void this.usage.record({
         ...base,
         ...result.usage,
@@ -104,6 +139,71 @@ export class AiService {
       });
       throw error;
     }
+  }
+
+  /**
+   * Диалог с инструментами (TASK-147): модель просит данные, инструменты их
+   * отдают, модель отвечает. Каждый раунд — обычный `complete`: та же фича,
+   * лимит и строка AiUsage, второй двери к Polza нет.
+   *
+   * Набор инструментов собран на одного продавца, и он обязан совпасть с тем,
+   * на кого пишется учёт: разъехались — ошибка программиста, а не продавца.
+   * Закрытая фича или лимит отказывают на первом раунде — до HTTP и до любого
+   * инструмента.
+   */
+  public async completeWithTools(
+    ctx: IAiContext,
+    request: IChatCompletionRequest,
+    toolbox: IAiToolbox,
+    now: Date = new Date(),
+  ): Promise<IAiToolsCompletion> {
+    if (!toolbox) throw new Error('AiService.completeWithTools: не передан набор инструментов');
+    if (toolbox.telegramUserId !== ctx?.telegramUserId) {
+      throw new Error('AiService.completeWithTools: инструменты собраны на другого продавца');
+    }
+
+    const messages: IPolzaMessage[] = [...request.messages];
+    const toolResults: IAiToolInvocation[] = [];
+    let costRub = 0;
+
+    for (let round = 1; round <= MAX_TOOL_ROUNDS + 1; round++) {
+      // Последний раунд — без инструментов: продавцу нужен ответ, а не ещё один вызов.
+      const last = round > MAX_TOOL_ROUNDS;
+      const result = await this.complete(
+        ctx,
+        {
+          ...request,
+          messages,
+          tools: toolbox.definitions,
+          toolChoice: last ? 'none' : (request.toolChoice ?? 'auto'),
+        },
+        now,
+      );
+      costRub += result.usage.costRub;
+      if (last || !result.toolCalls.length) {
+        return { ...result, toolResults, rounds: round, costRub };
+      }
+
+      messages.push({
+        role: 'assistant',
+        content: result.content || null,
+        toolCalls: result.toolCalls,
+      });
+      // Вызовы раунда идут по очереди и делят один потолок времени.
+      const deadline = Date.now() + AI_TOOL_ROUND_TIMEOUT_MS;
+      for (const [index, call] of result.toolCalls.entries()) {
+        const invocation = await invokeTool(toolbox, call, index, deadline - Date.now());
+        toolResults.push(invocation);
+        // На каждый вызов — ответ с его id: без пары следующий запрос Polza отклонит.
+        messages.push({
+          role: 'tool',
+          toolCallId: call.id,
+          content: JSON.stringify(invocation.result),
+        });
+      }
+    }
+    // Недостижимо: последний раунд возвращает всегда.
+    throw new Error('AiService.completeWithTools: цикл без ответа');
   }
 
   /**
@@ -144,6 +244,35 @@ export class AiService {
     }
     if (spent >= limit) throw new AiDailyLimitError(spent, limit);
   }
+}
+
+async function invokeTool(
+  toolbox: IAiToolbox,
+  call: IPolzaToolCall,
+  index: number,
+  remainingMs: number,
+): Promise<IAiToolInvocation> {
+  let result: IAiToolResult;
+  if (index >= MAX_TOOL_CALLS_PER_ROUND) {
+    result = { ok: false, error: `Не больше ${MAX_TOOL_CALLS_PER_ROUND} вызовов за раз` };
+  } else if (remainingMs <= 0) {
+    // Потолок раунда уже съеден предыдущими вызовами — этот не запускается вовсе.
+    result = { ok: false, error: TOOL_TIMEOUT_TEXT };
+  } else {
+    let timer: NodeJS.Timeout | undefined;
+    const guard = new Promise<IAiToolResult>((resolve) => {
+      timer = setTimeout(() => resolve({ ok: false, error: TOOL_TIMEOUT_TEXT }), remainingMs);
+    });
+    try {
+      result = await Promise.race([toolbox.call(call.name, call.arguments), guard]);
+    } catch (error) {
+      // Контракт — не бросать; если реализация всё же бросила, модель получает отказ, а не обрыв диалога.
+      result = { ok: false, error: `Инструмент не ответил: ${(error as Error).message}` };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  return { name: call.name, arguments: call.arguments, result };
 }
 
 function failedRow(

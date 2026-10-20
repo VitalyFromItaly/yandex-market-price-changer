@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+import { AiTurnService } from '../../src/database/services/ai-turn.service';
 import { AiUsageService } from '../../src/database/services/ai-usage.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { AdminAuthService } from '../../src/modules/admin/admin-auth.service';
@@ -45,6 +46,7 @@ describe('AiAdminController', () => {
   let summary: ReturnType<typeof vi.fn>;
   let list: ReturnType<typeof vi.fn>;
   let count: ReturnType<typeof vi.fn>;
+  let quality: ReturnType<typeof vi.fn>;
   let controller: AiAdminController;
 
   beforeEach(async () => {
@@ -71,11 +73,17 @@ describe('AiAdminController', () => {
     }));
     list = vi.fn(async () => [ROW, { ...ROW, telegramUserId: '777' }]);
     count = vi.fn(async () => 2);
+    const counts = { turns: 4, withUnconfirmed: 1, asksBackNoTools: 2, rated: 0, down: 0 };
+    quality = vi.fn(async () => ({
+      byPurpose: [{ purpose: 'analyst', ...counts }],
+      byDay: [{ day: '2026-10-14', purpose: 'analyst', ...counts }],
+    }));
 
     const moduleRef = await Test.createTestingModule({
       controllers: [AiAdminController],
       providers: [
         { provide: AiUsageService, useValue: { summary, list, count } },
+        { provide: AiTurnService, useValue: { quality } },
         { provide: UserAccessService, useValue: { list: accessList } },
         { provide: AiService, useValue: { balance } },
         { provide: AdminAuthService, useValue: { verify: async () => '1' } },
@@ -112,6 +120,21 @@ describe('AiAdminController', () => {
     // Нет в списке доступа (админ) — строка остаётся, просто без ника.
     expect(report.users[1]).toMatchObject({ telegramUserId: '777' });
     expect(report.users[1].username).toBeUndefined();
+  });
+
+  it('качество ответов: счётчики из одного aggregate за то же окно, доли — от ходов и оценённых (TASK-170)', async () => {
+    const report = await controller.report('7d');
+    expect(quality).toHaveBeenCalledTimes(1);
+    expect(quality.mock.calls[0]).toEqual(summary.mock.calls[0]);
+    expect(report.quality.purposes[0]).toMatchObject({
+      purpose: 'analyst',
+      turns: 4,
+      unconfirmedShare: 0.25,
+      asksBackShare: 0.5,
+      // Ни одного оценённого — делить не на что, а не 0 %.
+      downShare: null,
+    });
+    expect(report.quality.days[0]).toMatchObject({ day: '2026-10-14', purpose: 'analyst' });
   });
 
   it('без ключа — страница открывается, баланс null с причиной', async () => {

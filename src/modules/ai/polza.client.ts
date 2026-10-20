@@ -62,10 +62,35 @@ export interface IPolzaCallOptions {
   retry?: boolean;
 }
 
-export interface IPolzaMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+/** Вызов функции, который попросила модель (TASK-147). */
+export interface IPolzaToolCall {
+  /** id вызова — ответ инструмента возвращается с ним же. */
+  id: string;
+  name: string;
+  /** Аргументы — сырой строкой, как прислала модель: разбирает и проверяет исполнитель. */
+  arguments: string;
 }
+
+/** Описание функции для модели — формат OpenAI `tools[]`, параметры — JSON Schema. */
+export interface IPolzaTool {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+/**
+ * Сообщение диалога. Поля — camelCase, в тело уходят в snake_case
+ * (`toWireMessage`): `tool_calls`, `tool_call_id`.
+ */
+export type IPolzaMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string | null; toolCalls?: IPolzaToolCall[] }
+  | { role: 'tool'; toolCallId: string; content: string };
+
+export type TPolzaToolChoice = 'auto' | 'none' | 'required';
 
 export interface IChatCompletionRequest {
   model?: string;
@@ -74,6 +99,8 @@ export interface IChatCompletionRequest {
   responseFormat?: Record<string, unknown>;
   maxTokens?: number;
   temperature?: number;
+  tools?: IPolzaTool[];
+  toolChoice?: TPolzaToolChoice;
 }
 
 export interface IPolzaUsage {
@@ -87,7 +114,12 @@ export interface IPolzaUsage {
 }
 
 export interface IChatCompletionResult {
+  /** Пустая строка, если модель вместо текста попросила инструменты. */
   content: string;
+  /** Пусто — инструменты не просились. */
+  toolCalls: IPolzaToolCall[];
+  /** `stop`, `tool_calls`, `length`…; пустая строка — поле не пришло. */
+  finishReason: string;
   usage: IPolzaUsage;
   model: string;
   provider: string;
@@ -123,6 +155,8 @@ export interface IPolzaModel {
   pricing: IPolzaModelPricing | null;
   /** В `supported_parameters` есть `structured_outputs` — `response_format: json_schema` модель держит. */
   structuredOutputs: boolean;
+  /** В `supported_parameters` есть `tools` — модель заявляет вызов функций (TASK-147). */
+  tools: boolean;
 }
 
 export class PolzaClient {
@@ -168,9 +202,11 @@ export class PolzaClient {
     this.assertEnabled();
     const body: Record<string, unknown> = {
       model: request.model ?? this.credentials.model,
-      messages: request.messages,
+      messages: request.messages.map(toWireMessage),
     };
     if (request.responseFormat) body.response_format = request.responseFormat;
+    if (request.tools?.length) body.tools = request.tools;
+    if (request.toolChoice) body.tool_choice = request.toolChoice;
     if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens;
     if (request.temperature !== undefined) body.temperature = request.temperature;
 
@@ -244,13 +280,54 @@ const numOrNull = (value: unknown): number | null => {
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '');
 
+/** Сообщение в форме тела OpenAI: snake_case, у ассистента без вызовов поля `tool_calls` нет. */
+export function toWireMessage(message: IPolzaMessage): Record<string, unknown> {
+  if (message.role === 'tool') {
+    return { role: 'tool', tool_call_id: message.toolCallId, content: message.content };
+  }
+  if (message.role === 'assistant' && message.toolCalls?.length) {
+    return {
+      role: 'assistant',
+      content: message.content,
+      tool_calls: message.toolCalls.map((call) => ({
+        id: call.id,
+        type: 'function',
+        function: { name: call.name, arguments: call.arguments },
+      })),
+    };
+  }
+  return { role: message.role, content: message.content };
+}
+
+interface IRawToolCall {
+  id?: unknown;
+  function?: { name?: unknown; arguments?: unknown };
+}
+
+/** Вызовы без имени отбрасываются: исполнить их нечем. Аргументы-объект (бывает у провайдеров) — в строку. */
+function mapToolCalls(raw: unknown): IPolzaToolCall[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((call: IRawToolCall): IPolzaToolCall => {
+      const args = call?.function?.arguments;
+      let text = '';
+      if (typeof args === 'string') text = args;
+      else if (args) text = JSON.stringify(args);
+      return { id: str(call?.id), name: str(call?.function?.name), arguments: text };
+    })
+    .filter((call) => call.name);
+}
+
 /** Разбор ответа chat/completions. Отсутствующие счётчики — 0, а не NaN. */
 export function mapChatCompletion(raw: unknown): IChatCompletionResult {
   const data = (raw ?? {}) as {
     id?: unknown;
     model?: unknown;
     provider?: unknown;
-    choices?: Array<{ message?: { content?: unknown } }>;
+    choices?: Array<{
+      message?: { content?: unknown; tool_calls?: unknown };
+      finish_reason?: unknown;
+    }>;
     usage?: {
       prompt_tokens?: unknown;
       completion_tokens?: unknown;
@@ -261,9 +338,12 @@ export function mapChatCompletion(raw: unknown): IChatCompletionResult {
     };
   };
   const usage = data.usage ?? {};
+  const choice = data.choices?.[0];
 
   return {
-    content: str(data.choices?.[0]?.message?.content),
+    content: str(choice?.message?.content),
+    toolCalls: mapToolCalls(choice?.message?.tool_calls),
+    finishReason: str(choice?.finish_reason),
     usage: {
       promptTokens: num(usage.prompt_tokens),
       completionTokens: num(usage.completion_tokens),
@@ -331,6 +411,7 @@ export function mapModels(raw: unknown): IPolzaModel[] {
         contextLength: numOrNull(m?.context_length ?? provider?.context_length),
         pricing: mapModelPricing(provider?.pricing),
         structuredOutputs: params.includes('structured_outputs'),
+        tools: params.includes('tools'),
       };
     })
     .filter((m) => m.id);

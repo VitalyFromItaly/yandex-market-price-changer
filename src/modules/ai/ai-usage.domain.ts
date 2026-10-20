@@ -67,3 +67,26 @@ export function fillDays(days: readonly string[], spent: readonly IDaySpend[]): 
 export function errorShare(errors: number, requests: number): number | null {
   return requests > 0 ? errors / requests : null;
 }
+
+/** Счётчики качества ходов ИИ одного разреза (`AiTurnService.quality`). */
+export interface IQualityCounts {
+  turns: number;
+  withUnconfirmed: number;
+  asksBackNoTools: number;
+  rated: number;
+  down: number;
+}
+
+/**
+ * Доли качества (TASK-170) поверх счётчиков из Mongo: неподтверждённые и
+ * уточняющие — от всех ходов, 👎 — от оценённых (неоценённый ход — не «хорошо»).
+ * null — делить не на что, а не 0 %.
+ */
+export function qualityShares<T extends IQualityCounts>(row: T) {
+  return {
+    ...row,
+    unconfirmedShare: errorShare(row.withUnconfirmed, row.turns),
+    asksBackShare: errorShare(row.asksBackNoTools, row.turns),
+    downShare: errorShare(row.down, row.rated),
+  };
+}

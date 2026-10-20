@@ -4,6 +4,7 @@ import type { IAiUsageQuery } from '../../database/services/ai-usage.service';
 
 import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
 
+import { AiTurnService } from '../../database/services/ai-turn.service';
 import { AiUsageService, MAX_AI_PAGE_SIZE } from '../../database/services/ai-usage.service';
 import { UserAccessService } from '../../database/services/user-access.service';
 import { AdminJwtGuard } from '../admin/admin-jwt.guard';
@@ -14,6 +15,7 @@ import {
   fillDays,
   isAiUsageRange,
   moscowDays,
+  qualityShares,
 } from './ai-usage.domain';
 import { AiUnavailableError } from './ai.errors';
 import { AiService } from './ai.service';
@@ -45,6 +47,7 @@ interface IWho {
 export class AiAdminController {
   constructor(
     private readonly usage: AiUsageService,
+    private readonly turns: AiTurnService,
     private readonly access: UserAccessService,
     private readonly ai: AiService,
   ) {}
@@ -59,8 +62,9 @@ export class AiAdminController {
 
     // Баланс параллельно и с поглощённым сбоем: страница о расходах открывается
     // и без Polza — нет ключа, ключ отозван или ответа нет.
-    const [summary, balance] = await Promise.all([
+    const [summary, quality, balance] = await Promise.all([
       this.usage.summary(since, until),
+      this.turns.quality(since, until),
       this.balance(),
     ]);
     const who = await this.whoOf(summary.byUser.map((row) => row.telegramUserId));
@@ -75,6 +79,11 @@ export class AiAdminController {
       days: fillDays(moscowDays(since, until), summary.byDay),
       users: summary.byUser.map((row) => ({ ...row, ...who(row.telegramUserId) })),
       purposes: summary.byPurpose,
+      // Качество ответов (TASK-170): счётчики — один aggregate по AiTurn, здесь только доли.
+      quality: {
+        purposes: quality.byPurpose.map(qualityShares),
+        days: quality.byDay.map(qualityShares),
+      },
     };
   }
 

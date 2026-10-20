@@ -177,6 +177,8 @@ describe('PolzaClient', () => {
     });
     expect(result).toEqual({
       content: 'Привет!',
+      toolCalls: [],
+      finishReason: 'stop',
       usage: {
         promptTokens: 25,
         completionTokens: 150,
@@ -189,6 +191,83 @@ describe('PolzaClient', () => {
       provider: 'OpenAI',
       traceId: 'gen_581761234567890123',
     });
+  });
+
+  it('tools: описания, tool_choice и диалог с вызовом уходят в snake_case (TASK-147)', async () => {
+    stub.respond(stub.ok(DOC_COMPLETION));
+    const tool = {
+      type: 'function' as const,
+      function: { name: 'getPnl', description: 'P&L', parameters: { type: 'object' } },
+    };
+    await client().client.chatCompletion({
+      messages: [
+        { role: 'user', content: 'Сколько заработал?' },
+        {
+          role: 'assistant',
+          content: null,
+          toolCalls: [{ id: 'call_1', name: 'getPnl', arguments: '{"from":"2026-09-01"}' }],
+        },
+        { role: 'tool', toolCallId: 'call_1', content: '{"ok":true}' },
+        { role: 'assistant', content: 'Готово' },
+      ],
+      tools: [tool],
+      toolChoice: 'auto',
+    });
+    expect(stub.calls[0].body).toEqual({
+      model: 'google/gemini-2.5-flash-lite',
+      messages: [
+        { role: 'user', content: 'Сколько заработал?' },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'getPnl', arguments: '{"from":"2026-09-01"}' },
+            },
+          ],
+        },
+        { role: 'tool', tool_call_id: 'call_1', content: '{"ok":true}' },
+        { role: 'assistant', content: 'Готово' },
+      ],
+      tools: [tool],
+      tool_choice: 'auto',
+    });
+  });
+
+  it('ответ с tool_calls: content null → пусто, аргументы строкой, вызов без имени отброшен', () => {
+    const result = mapChatCompletion({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: { name: 'getPnl', arguments: '{"from":"2026-09-01","to":"2026-09-30"}' },
+              },
+              // Бывает у провайдеров: аргументы объектом, а не строкой.
+              {
+                id: 'call_2',
+                type: 'function',
+                function: { name: 'listAnomalies', arguments: { month: '2026-09' } },
+              },
+              { id: 'call_3', type: 'function', function: { arguments: '{}' } },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    });
+    expect(result.content).toBe('');
+    expect(result.finishReason).toBe('tool_calls');
+    expect(result.toolCalls).toEqual([
+      { id: 'call_1', name: 'getPnl', arguments: '{"from":"2026-09-01","to":"2026-09-30"}' },
+      { id: 'call_2', name: 'listAnomalies', arguments: '{"month":"2026-09"}' },
+    ]);
   });
 
   it('модель из запроса важнее умолчания; лишних полей нет', async () => {
@@ -248,7 +327,14 @@ describe('PolzaClient', () => {
   it('listModels: {data: [...]} и голый массив', async () => {
     stub.respond(stub.ok({ data: [{ id: 'a/b', name: 'B' }, { id: '' }] }));
     expect(await client().client.listModels()).toEqual([
-      { id: 'a/b', name: 'B', contextLength: null, pricing: null, structuredOutputs: false },
+      {
+        id: 'a/b',
+        name: 'B',
+        contextLength: null,
+        pricing: null,
+        structuredOutputs: false,
+        tools: false,
+      },
     ]);
     expect(stub.calls[0].path).toBe('/v1/models');
     expect(mapModels([{ id: 'x/y' }]).map((m) => m.id)).toEqual(['x/y']);
@@ -265,7 +351,7 @@ describe('PolzaClient', () => {
           context_length: 1048576,
           top_provider: {
             name: 'google-ai-studio/flex',
-            supported_parameters: ['structured_outputs', 'response_format', 'max_tokens'],
+            supported_parameters: ['structured_outputs', 'response_format', 'max_tokens', 'tools'],
             pricing: {
               prompt_per_million: '5.94980000',
               completion_per_million: '23.79920000',
@@ -282,6 +368,7 @@ describe('PolzaClient', () => {
       contextLength: 1048576,
       pricing: { promptPerMillionRub: 5.9498, completionPerMillionRub: 23.7992 },
       structuredOutputs: true,
+      tools: true,
     });
   });
 

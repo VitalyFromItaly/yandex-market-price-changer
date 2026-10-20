@@ -4,6 +4,7 @@ import {
   type IChatCompletionRequest,
   type IChatCompletionResult,
   type IPolzaModel,
+  type IPolzaTool,
   PolzaClient,
 } from '../src/modules/ai/polza.client';
 
@@ -26,7 +27,8 @@ import {
  *   npx ts-node scripts/diagnose-polza.ts --models[=flash] — chat-модели с ценами, фильтр по id/имени
  *   npx ts-node scripts/diagnose-polza.ts --chat           — ПЛАТНО: один короткий запрос (доли копейки)
  *   npx ts-node scripts/diagnose-polza.ts --json           — ПЛАТНО: проба response_format json_schema
- *   … --model=<id>                                         — другая модель для --chat/--json
+ *   npx ts-node scripts/diagnose-polza.ts --tools          — ПЛАТНО: проба tool-calling (два запроса)
+ *   … --model=<id>                                         — другая модель для --chat/--json/--tools
  *
  * Платное включается только флагом: случайный запуск не должен тратить деньги
  * владельца. max_tokens у обеих проб маленький — цена ограничена сверху.
@@ -39,6 +41,27 @@ const RULE = '─'.repeat(72);
 
 const CHAT_MAX_TOKENS = 16;
 const JSON_MAX_TOKENS = 64;
+const TOOLS_MAX_TOKENS = 64;
+
+/**
+ * Игрушечная функция пробы --tools (TASK-147): схема той же формы, что у
+ * инструментов ИИ — объект, required, без лишних полей. Данных продавца в пробе
+ * нет: проверяется протокол, а не финансы.
+ */
+const PROBE_TOOL: IPolzaTool = {
+  type: 'function',
+  function: {
+    name: 'get_city_population',
+    description: 'Население города в миллионах человек',
+    parameters: {
+      type: 'object',
+      properties: { city: { type: 'string', description: 'Название города' } },
+      required: ['city'],
+      additionalProperties: false,
+    },
+  },
+};
+const PROBE_TOOL_ANSWER = { ok: true, data: { city: 'Москва', population_mln: 13.1 } };
 
 /** Схема пробы: маленькая, но с обоими типами и required — проверяется ровно то, что нужно отчётам. */
 const PROBE_SCHEMA = {
@@ -125,17 +148,19 @@ function printModels(
   console.log(RULE);
   console.log(
     `Chat-моделей${needle ? ` по «${needle}»` : ''}: ${rows.length}. ₽ за 1M токенов, по цене выхода. ` +
-      'JSON — держит json_schema.',
+      'JSON — держит json_schema, TOOLS — вызов функций.',
   );
   console.log(RULE);
-  console.log('       вход     выход контекст      модель');
+  console.log('       вход     выход контекст            модель');
   for (const m of rows) {
     const mark = m.id === current ? '▶' : ' ';
     const price = m.pricing
       ? `${m.pricing.promptPerMillionRub.toFixed(2).padStart(9)} ${m.pricing.completionPerMillionRub.toFixed(2).padStart(9)}`
       : '        —         —';
     const ctx = m.contextLength ? `${Math.round(m.contextLength / 1000)}k`.padStart(6) : '     —';
-    console.log(`${mark} ${price} ${ctx} ${m.structuredOutputs ? 'JSON' : '    '}  ${m.id}`);
+    console.log(
+      `${mark} ${price} ${ctx} ${m.structuredOutputs ? 'JSON' : '    '} ${m.tools ? 'TOOLS' : '     '}  ${m.id}`,
+    );
   }
 }
 
@@ -182,7 +207,9 @@ async function main(): Promise<void> {
     const found = models.find((m) => m.id === id);
     console.log(
       found
-        ? `  ${id}: ${priceText(found)}${found.structuredOutputs ? ', json_schema держит' : ', json_schema НЕ заявлен'}`
+        ? `  ${id}: ${priceText(found)}` +
+            (found.structuredOutputs ? ', json_schema держит' : ', json_schema НЕ заявлен') +
+            (found.tools ? ', tools держит' : ', tools НЕ заявлен')
         : `  ${id}: ❌ нет в списке моделей`,
     );
   }
@@ -190,7 +217,7 @@ async function main(): Promise<void> {
   const modelsFilter = flag('models');
   if (modelsFilter !== undefined) printModels(models, modelsFilter, model);
 
-  if (!flag('chat') && !flag('json')) return;
+  if (!flag('chat') && !flag('json') && !flag('tools')) return;
   if (!model) {
     console.log('Модель не задана: нужна POLZA_AI_MODEL или --model=<id>.');
     process.exitCode = 1;
@@ -221,6 +248,61 @@ async function main(): Promise<void> {
     });
     console.log(`Схема:      ${schemaVerdict(result.content)}`);
   }
+
+  if (flag('tools')) await probeTools(client, model);
+}
+
+/** Вердикт по вызову: модель попросила нашу функцию с валидными аргументами. */
+function toolCallVerdict(result: IChatCompletionResult): string {
+  const [call] = result.toolCalls;
+  if (!call) return `❌ вызова нет (finish_reason ${result.finishReason || '—'})`;
+  if (call.name !== PROBE_TOOL.function.name) return `❌ чужая функция: ${call.name}`;
+  try {
+    const args = JSON.parse(call.arguments) as Record<string, unknown>;
+    return typeof args.city === 'string'
+      ? `✅ ${call.name}(${call.arguments})`
+      : `❌ аргументы не по схеме: ${call.arguments}`;
+  } catch {
+    return `❌ аргументы не JSON: ${call.arguments}`;
+  }
+}
+
+/**
+ * Два раунда, как в AiService.completeWithTools: запрос с функцией → вызов →
+ * ответ функции с id вызова → текст. Второй раунд проверяет, что роль `tool`
+ * и `tool_call_id` Polza принимает, а не только отдаёт вызов.
+ */
+async function probeTools(client: PolzaClient, model: string): Promise<void> {
+  const question = {
+    role: 'user' as const,
+    content: 'Сколько людей живёт в Москве? Узнай функцией.',
+  };
+  const first = await probe(client, 'Проба tool-calling, раунд 1', {
+    model,
+    messages: [question],
+    tools: [PROBE_TOOL],
+    toolChoice: 'auto',
+    maxTokens: TOOLS_MAX_TOKENS,
+    temperature: 0,
+  });
+  console.log(`Вызов:      ${toolCallVerdict(first)}`);
+  const [call] = first.toolCalls;
+  if (!call) return;
+
+  const second = await probe(client, 'Проба tool-calling, раунд 2 (ответ функции)', {
+    model,
+    messages: [
+      question,
+      { role: 'assistant', content: first.content || null, toolCalls: first.toolCalls },
+      { role: 'tool', toolCallId: call.id, content: JSON.stringify(PROBE_TOOL_ANSWER) },
+    ],
+    tools: [PROBE_TOOL],
+    maxTokens: TOOLS_MAX_TOKENS,
+    temperature: 0,
+  });
+  console.log(
+    `Итог:       ${second.content.includes('13') ? '✅ ответ опирается на результат функции' : '⚠️ в ответе нет числа из функции'}`,
+  );
 }
 
 main().catch((error: Error) => {
