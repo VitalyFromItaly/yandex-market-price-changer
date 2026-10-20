@@ -1,0 +1,1 @@
+CREATE INDEX "finance_operations_user_order_idx" ON "finance_operations" USING btree ("telegram_user_id","marketplace","order_id") WHERE "finance_operations"."superseded_at" IS NULL;

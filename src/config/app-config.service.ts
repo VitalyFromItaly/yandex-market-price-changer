@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { parseAiModelOverrides } from '../modules/ai/ai-purpose';
+
 /**
  * Типизированный доступ к конфигурации.
  *
@@ -16,6 +18,7 @@ import { ConfigService } from '@nestjs/config';
 export class AppConfigService {
   /** Разобранный TELEGRAM_ADMIN_IDS — см. геттер telegramAdminIds. */
   private adminIds?: number[];
+  private aiModels?: ReadonlyMap<string, string>;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -50,6 +53,11 @@ export class AppConfigService {
 
   get mongoDatabase(): string {
     return this.config.get<string>('MONGODB_DATABASE');
+  }
+
+  /** Postgres финансового журнала (M16–M25); остальное — в Mongo. */
+  get postgresUrl(): string {
+    return this.config.get<string>('POSTGRES_URL');
   }
 
   get redisHost(): string {
@@ -180,6 +188,24 @@ export class AppConfigService {
   }
 
   /**
+   * Переопределения модели по назначению из POLZA_AI_MODELS. Разбор кэшируется
+   * (образец telegramAdminIds): спрашивается на каждом запросе к ИИ, а формат
+   * уже проверен Joi.
+   */
+  get polzaAiModels(): ReadonlyMap<string, string> {
+    this.aiModels ??= (() => {
+      const parsed = parseAiModelOverrides(this.config.get<string>('POLZA_AI_MODELS'));
+      return 'models' in parsed ? parsed.models : new Map<string, string>();
+    })();
+    return this.aiModels;
+  }
+
+  /** Модель для назначения: переопределение из POLZA_AI_MODELS или POLZA_AI_MODEL. */
+  polzaAiModelFor(purpose: string): string | undefined {
+    return this.polzaAiModels.get(purpose) ?? this.polzaAiModel;
+  }
+
+  /**
    * Включён ли ИИ вообще. Единственная точка этого решения: всё, что зовёт
    * Polza.ai, спрашивает здесь, а не проверяет токен само.
    */
@@ -199,5 +225,10 @@ export class AppConfigService {
 
   get yandexMarketBaseUrl(): string {
     return this.config.get<string>('YANDEX_MARKET_BASE_URL');
+  }
+
+  /** База Ozon Seller API, только `<схема>://<хост>` (проверено Joi), без хвостового слеша. */
+  get ozonSellerApiUrl(): string {
+    return this.config.get<string>('OZON_SELLER_API_URL').replace(/\/+$/, '');
   }
 }

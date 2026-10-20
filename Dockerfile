@@ -15,10 +15,8 @@ RUN npm ci
 
 COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
-# Админ-панель собирается тем же `npm run build` (nest build && vite build).
+# Все веб-приложения (web/admin, web/crm, …) собираются тем же `npm run build`.
 COPY web ./web
-# CRM продавца — второй SPA, собирается тем же `npm run build` (build:crm).
-COPY crm ./crm
 
 RUN npm run build
 
@@ -34,10 +32,14 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
-# Собранная панель; main.ts раздаёт её из ../web/dist относительно dist/.
-COPY --from=builder /app/web/dist ./web/dist
-# Собранная CRM; main.ts раздаёт её из ../crm/dist под префиксом /crm.
-COPY --from=builder /app/crm/dist ./crm/dist
+# Собранная панель; main.ts раздаёт её из ../web/admin/dist относительно dist/.
+COPY --from=builder /app/web/admin/dist ./web/admin/dist
+# Собранная CRM; main.ts раздаёт её из ../web/crm/dist под префиксом /crm.
+COPY --from=builder /app/web/crm/dist ./web/crm/dist
+
+# Миграции Postgres (финансы): приложение применяет их само при старте
+# (PostgresModule) и ищет каталог рядом с dist — /app/drizzle.
+COPY drizzle ./drizzle
 
 # Каталог для временных файлов загрузок; в compose поверх монтируется том.
 RUN mkdir -p static/temp

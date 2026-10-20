@@ -1,0 +1,1 @@
+ALTER TABLE "finance_documents" ADD COLUMN "source" text DEFAULT 'api' NOT NULL;

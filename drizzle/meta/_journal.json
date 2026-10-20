@@ -1,0 +1,90 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792048746424,
+      "tag": "0000_finance_journal",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792051407374,
+      "tag": "0001_finance_periods",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792053958953,
+      "tag": "0002_finance_reconcile",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792062252678,
+      "tag": "0003_finance_expenses",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792069912764,
+      "tag": "0004_finance_tax_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792073498265,
+      "tag": "0005_finance_purchases",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792144891305,
+      "tag": "0006_finance_anomalies",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792233279691,
+      "tag": "0007_finance_document_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792244325138,
+      "tag": "0008_finance_tax_year",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792284009087,
+      "tag": "0009_finance_operation_breakdown",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792287666361,
+      "tag": "0010_finance_act_services",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792330547132,
+      "tag": "0011_finance_operations_order_idx",
+      "breakpoints": true
+    }
+  ]
+}

@@ -9,6 +9,7 @@ const VALID_ENV = {
   STOCK_WRITE_ENABLED: 'false',
   MONGODB_URL: 'mongodb://root:secret@localhost:27018/',
   MONGODB_DATABASE: 'yandex-market-price-changer',
+  POSTGRES_URL: 'postgres://finance:secret@localhost:5433/finance',
   REDIS_HOST: 'localhost',
   TELEGRAM_TOKEN: '123456:AAbbCC',
   TELEGRAM_WEBHOOK_URL: 'https://example.ngrok-free.app',
@@ -25,6 +26,7 @@ describe('envValidationSchema', () => {
     'STOCK_WRITE_ENABLED',
     'MONGODB_URL',
     'MONGODB_DATABASE',
+    'POSTGRES_URL',
     'REDIS_HOST',
     'TELEGRAM_TOKEN',
     'TELEGRAM_WEBHOOK_URL',
@@ -44,6 +46,15 @@ describe('envValidationSchema', () => {
     );
     expect(error).toBeDefined();
     expect(error!.details.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('POSTGRES_URL — только postgres:// или postgresql://', () => {
+    for (const bad of ['mongodb://root:secret@localhost:27018/', 'localhost:5432']) {
+      const { error } = envValidationSchema.validate({ ...VALID_ENV, POSTGRES_URL: bad });
+      expect(error?.message).toContain('POSTGRES_URL');
+    }
+    const ok = 'postgresql://u:p@db:5432/finance';
+    expect(envValidationSchema.validate({ ...VALID_ENV, POSTGRES_URL: ok }).error).toBeUndefined();
   });
 
   it('STOCK_WRITE_ENABLED не имеет умолчания — среда обязана заявить решение', () => {
@@ -121,6 +132,23 @@ describe('envValidationSchema', () => {
       expect(error).toBeUndefined();
     },
   );
+
+  it('OZON_SELLER_API_URL: умолчание, пусто — умолчание, путь отвергается', () => {
+    expect(envValidationSchema.validate(VALID_ENV).value.OZON_SELLER_API_URL).toBe(
+      'https://api-seller.ozon.ru',
+    );
+    expect(
+      envValidationSchema.validate({ ...VALID_ENV, OZON_SELLER_API_URL: '' }).value
+        .OZON_SELLER_API_URL,
+    ).toBe('https://api-seller.ozon.ru');
+    // Клиент дописывает путь метода от корня: /v1 в базе превратил бы /v1/roles в 404.
+    const { error } = envValidationSchema.validate({
+      ...VALID_ENV,
+      OZON_SELLER_API_URL: 'https://api-seller.ozon.ru/v1',
+    });
+    expect(error!.message).toContain('OZON_SELLER_API_URL');
+    expect(error!.message).toContain('префикс пути');
+  });
 
   it('пустой REDIS_PASSWORD допустим — redis в compose поднят без auth', () => {
     const { error } = envValidationSchema.validate({ ...VALID_ENV, REDIS_PASSWORD: '' });
@@ -310,6 +338,33 @@ describe('envValidationSchema', () => {
       expect(error).toBeUndefined();
     });
 
+    it('POLZA_AI_MODELS: пусто и отсутствие — без переопределений, пары с пробелами проходят', () => {
+      expect(envValidationSchema.validate(VALID_ENV).error).toBeUndefined();
+      expect(
+        envValidationSchema.validate({ ...VALID_ENV, POLZA_AI_MODELS: '' }).error,
+      ).toBeUndefined();
+      const { error } = envValidationSchema.validate({
+        ...VALID_ENV,
+        POLZA_AI_MODELS: ' feedback-reply = cheap/model , analyst=strong/model,',
+      });
+      expect(error).toBeUndefined();
+    });
+
+    it('POLZA_AI_MODELS: незнакомый purpose, кривая пара и повтор роняют старт по имени', () => {
+      const cases: [string, string][] = [
+        ['chat=strong/model', "неизвестное назначение 'chat'"],
+        ['analyst', 'purpose=модель'],
+        ['analyst=', 'purpose=модель'],
+        ['=strong/model', 'purpose=модель'],
+        ['analyst=a,analyst=b', 'дважды'],
+      ];
+      for (const [raw, reason] of cases) {
+        const { error } = envValidationSchema.validate({ ...VALID_ENV, POLZA_AI_MODELS: raw });
+        expect(error?.message, raw).toContain('POLZA_AI_MODELS');
+        expect(error?.message, raw).toContain(reason);
+      }
+    });
+
     it('пустой POLZA_AI_BASE_URL подставляет умолчание', () => {
       const { value, error } = envValidationSchema.validate({
         ...VALID_ENV,
@@ -377,10 +432,34 @@ describe('AppConfigService (smoke: модуль собирается через 
     return moduleRef.get(AppConfigService);
   }
 
+  it('polzaAiModelFor: переопределение по назначению, иначе POLZA_AI_MODEL', async () => {
+    const config = await build({
+      ...VALID_ENV,
+      POLZA_AI_TOKEN: 'pza_secret',
+      POLZA_AI_MODEL: 'default/model',
+      POLZA_AI_MODELS: 'feedback-reply=cheap/model,analyst=strong/model',
+    });
+    expect(config.polzaAiModelFor('feedback-reply')).toBe('cheap/model');
+    expect(config.polzaAiModelFor('analyst')).toBe('strong/model');
+    expect(config.polzaAiModelFor('weekly-digest')).toBe('default/model');
+    expect([...config.polzaAiModels.keys()]).toEqual(['feedback-reply', 'analyst']);
+  });
+
+  it('polzaAiModels: без переменной — пустая карта, модель по умолчанию для всех', async () => {
+    const config = await build({
+      ...VALID_ENV,
+      POLZA_AI_TOKEN: 'pza_secret',
+      POLZA_AI_MODEL: 'default/model',
+    });
+    expect(config.polzaAiModels.size).toBe(0);
+    expect(config.polzaAiModelFor('analyst')).toBe('default/model');
+  });
+
   it('DI резолвится и отдаёт типизированные значения', async () => {
     const config = await build(VALID_ENV);
     expect(config.mongoUrl).toBe(VALID_ENV.MONGODB_URL);
     expect(config.mongoDatabase).toBe(VALID_ENV.MONGODB_DATABASE);
+    expect(config.postgresUrl).toBe(VALID_ENV.POSTGRES_URL);
     expect(config.redisHost).toBe('localhost');
     expect(config.redisPort).toBe(6379);
     expect(config.port).toBe(3000);
@@ -417,6 +496,11 @@ describe('AppConfigService (smoke: модуль собирается через 
     expect(config.polzaAiToken).toBe('pza_secret');
     expect(config.polzaAiModel).toBe('openai/gpt-4o-mini');
     expect(config.polzaAiBaseUrl).toBe('https://polza.ai/api');
+  });
+
+  it('база Ozon — без хвостового слеша', async () => {
+    const config = await build({ ...VALID_ENV, OZON_SELLER_API_URL: 'https://ozon.example.com/' });
+    expect(config.ozonSellerApiUrl).toBe('https://ozon.example.com');
   });
 
   it('пустой пароль Redis превращается в undefined, а не в пустую строку', async () => {

@@ -18,6 +18,8 @@ services:
       - STOCK_WRITE_ENABLED=${STOCK_WRITE_ENABLED:?нужно задать STOCK_WRITE_ENABLED в .env (true в проде, false локально)}
       - MONGODB_URL=mongodb://root:secret@mongodb:27017/
       - MONGODB_DATABASE=${MONGODB_DATABASE:-yandex-market-price-changer}
+      # Postgres — только финансовый журнал (решение finance_postgres).
+      - POSTGRES_URL=postgres://finance:secret@postgres:5432/finance
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       # REDIS_PASSWORD намеренно не задан: redis ниже поднимается без пароля,
@@ -41,6 +43,8 @@ services:
       # Без `:?`: модель обязательна только вместе с токеном — это проверяет Joi.
       - POLZA_AI_TOKEN=${POLZA_AI_TOKEN:-}
       - POLZA_AI_MODEL=${POLZA_AI_MODEL:-}
+      # Модель по назначению (purpose=модель через запятую); пусто — везде POLZA_AI_MODEL.
+      - POLZA_AI_MODELS=${POLZA_AI_MODELS:-}
       - POLZA_AI_BASE_URL=${POLZA_AI_BASE_URL:-https://polza.ai/api}
       # HTTP-прокси только для Polza; пусто — напрямую.
       - POLZA_AI_PROXY_URL=${POLZA_AI_PROXY_URL:-}
@@ -49,8 +53,10 @@ services:
       # Порог баланса Polza для самопроверки, ₽; 0 — не предупреждать.
       - POLZA_AI_BALANCE_WARN_RUB=${POLZA_AI_BALANCE_WARN_RUB:-200}
       - YANDEX_MARKET_BASE_URL=${YANDEX_MARKET_BASE_URL:-https://api.partner.market.yandex.ru}
+      - OZON_SELLER_API_URL=${OZON_SELLER_API_URL:-https://api-seller.ozon.ru}
     depends_on:
       - mongodb
+      - postgres
       - redis
     networks:
       - net
@@ -67,6 +73,21 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: secret
+    networks:
+      - net
+
+  # Финансовый журнал (M16–M25). Остальные данные — в mongodb.
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    volumes:
+      - "./volumes/common/postgres_data:/var/lib/postgresql/data"
+    environment:
+      POSTGRES_USER: finance
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: finance
     networks:
       - net
 

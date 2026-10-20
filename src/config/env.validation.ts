@@ -1,5 +1,7 @@
 import * as Joi from 'joi';
 
+import { parseAiModelOverrides } from '../modules/ai/ai-purpose';
+
 /**
  * Схема валидации переменных окружения.
  *
@@ -63,6 +65,17 @@ const requireProxyOrigin: Joi.CustomValidator<string> = (value, helpers) => {
   return value;
 };
 
+/** `purpose=модель` через запятую; незнакомое назначение — опечатка, а не пропуск. */
+const requireModelOverrides: Joi.CustomValidator<string> = (value, helpers) => {
+  const parsed = parseAiModelOverrides(value);
+  if ('error' in parsed) {
+    return helpers.message({
+      custom: `POLZA_AI_MODELS: ${parsed.error} (формат: feedback-reply=модель,analyst=модель)`,
+    });
+  }
+  return value;
+};
+
 export const envValidationSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
 
@@ -103,6 +116,21 @@ export const envValidationSchema = Joi.object({
   MONGODB_DATABASE: Joi.string().required().messages({
     'any.required': 'MONGODB_DATABASE обязателен: имя базы данных',
   }),
+
+  // --- Postgres (только финансы, M16–M25: решение finance_postgres) ---
+  // Mongo прода — один узел без replica set, транзакций там нет, а замена версии
+  // финансового отчёта обязана быть атомарной. Обязателен без умолчания: тихий
+  // localhost внутри контейнера означал бы «сам в себя» (довод REDIS_HOST).
+  POSTGRES_URL: Joi.string()
+    .uri({ scheme: ['postgres', 'postgresql'] })
+    .required()
+    .messages({
+      'any.required':
+        'POSTGRES_URL обязателен: строка подключения к Postgres для финансов, ' +
+        'например postgres://finance:secret@localhost:5433/finance',
+      'string.uri': 'POSTGRES_URL должен начинаться с postgres:// или postgresql://',
+      'string.uriCustomScheme': 'POSTGRES_URL должен начинаться с postgres:// или postgresql://',
+    }),
 
   // --- Redis (очереди Bull) ---
   // Без явного хоста Bull молча уходит на localhost:6379, что внутри
@@ -254,6 +282,11 @@ export const envValidationSchema = Joi.object({
         'POLZA_AI_MODEL обязателен, когда задан POLZA_AI_TOKEN: идентификатор модели Polza.ai ' +
         '(или уберите POLZA_AI_TOKEN — ИИ будет выключен)',
     }),
+  // Модель по назначению (TASK-171): `purpose=модель` через запятую поверх
+  // POLZA_AI_MODEL — дешёвая для черновиков и сводки, сильнее для чата. Пусто —
+  // все назначения идут моделью по умолчанию. Список назначений закрытый
+  // (ai-purpose.ts): опечатка в purpose иначе молча оставила бы дорогую модель.
+  POLZA_AI_MODELS: Joi.string().empty('').optional().custom(requireModelOverrides),
   // Дневной лимит расхода на ИИ на одного продавца, в рублях за московские
   // сутки. Ключ Polza один на всех и платит владелец, поэтому умолчание —
   // ограничение, а не его отсутствие (решение владельца 2026-10-14: 50 ₽).
@@ -275,6 +308,17 @@ export const envValidationSchema = Joi.object({
   // Токен продавца здесь НЕ хранится: каждый пользователь вводит свой через
   // бота, и он лежит в БД, скоупленный по telegramUserId.
   YANDEX_MARKET_BASE_URL: Joi.string().uri().default('https://api.partner.market.yandex.ru'),
+
+  // --- Ozon Seller API ---
+  // Ключи продавца (Client-Id + Api-Key) здесь НЕ хранятся: они вводятся в CRM
+  // и лежат в MarketplaceConnection. Только схема + хост: клиент дописывает путь
+  // метода от корня (`/v1/roles`), и префикс пути в базе молча превратил бы каждый
+  // запрос в 404 — та же беда, что у TELEGRAM_API_URL.
+  OZON_SELLER_API_URL: Joi.string()
+    .uri()
+    .custom(rejectUrlWithPath, 'без пути')
+    .empty('')
+    .default('https://api-seller.ozon.ru'),
 })
   // Неизвестные переменные пропускаем: в окружении полно посторонних (PATH,
   // HOME и прочее), плюс в .env остались неиспользуемые ключи от прежних задач.

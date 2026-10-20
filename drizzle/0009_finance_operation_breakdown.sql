@@ -1,0 +1,1 @@
+ALTER TABLE "finance_operations" ADD COLUMN "breakdown" jsonb;
