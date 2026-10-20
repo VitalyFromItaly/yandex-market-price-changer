@@ -2,8 +2,8 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 95,
-    "updated_at": "2026-10-14"
+    "archived_tasks": 164,
+    "updated_at": "2026-10-20"
   },
   "tasks": [
     {
@@ -2321,6 +2321,1578 @@
       "dependencies": [
         "TASK-103"
       ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-154",
+      "milestone": "M14",
+      "category": "ui",
+      "priority": "high",
+      "description": "Редизайн CRM продавца по HTML-макету MarketHub (решение crm_redesign_markethub_dark): тёмная тема по умолчанию с палитрой макета, светлая — переключателем; оболочка (сайдбар с брендом MarketHub, активный пункт с синей полосой, карточка «Площадки», шапка страницы), кит (карточки с градиентом и тенью, KPI с вариантом good, чипы фильтров, таблицы, графики синий/зелёный), раскладка главной как в макете. Логика и данные не меняются. ПОЧЕМУ: владелец прислал макет и хочет, чтобы кабинет выглядел так.",
+      "acceptance_criteria": [
+        "Токены тёмной темы = палитра макета в HSL (index.css), новые card-2, sidebar, shadow-panel; литералов цвета в фич-коде нет",
+        "Без сохранённого выбора тема тёмная (useTheme + инлайн-скрипт index.html, без вспышки); светлая работает переключателем",
+        "Сайдбар: бренд MarketHub, активный пункт — синяя подкраска + полоса слева, карточка площадок из MARKETPLACES, свёрнутый режим сохранён",
+        "Главная: KPI до 8 в ряд на широком экране, график | unit-экономика, нижний ряд из трёх блоков; телефон без горизонтального скролла",
+        "Все разделы CRM и вход читаются в обеих темах",
+        "frontend-design SKILL.md, CLAUDE.md и crm/README.md обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run dev + npm run dev:crm — главная, отчёты, Прайс, Настройки, вход в тёмной (чистый localStorage) и светлой",
+        "Шаг 2: ширина 375px — без горизонтального скролла; свёрнутый сайдбар",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run lint && npm test && npm run build"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-108",
+      "milestone": "M16",
+      "category": "integration",
+      "priority": "critical",
+      "description": "Разведка финансовых отчётов ЯМ на живых данных: scripts/diagnose-finance.ts (read-only, без Nest-AppModule — паттерн diagnose-*) генерирует united-marketplace-services, united-netting, united-orders, united-returns (и goods-realization) в format=JSON (ZIP с JSON по листам) за прошлый месяц, печатает листы, колонки, все встречающиеся типы услуг/операций, наличие уникального id строки, связку с orderId/offerId, суммы со знаком. ПОЧЕМУ: фактическая прибыль строится из журнала операций (решение finance_actual_beside_flat), и без реальной карты статей схема журнала и классификатор будут выдуманы — прецедент «форма ответа отличается между методами» на возвратах.",
+      "acceptance_criteria": [
+        "Скрипт ничего не пишет ни в Mongo, ни в Partner API; квоты отчётов учтены (паузы, один прогон)",
+        "В reference.decisions или docs записана карта: отчёт → лист → колонки → тип услуги → кандидат-статья ТЗ",
+        "Установлено, есть ли у строк стабильный идентификатор для дедупа; если нет — какой набор полей уникален",
+        "Сверено: Σ united-netting за месяц vs Σ начислений/удержаний services — расхождение объяснено",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: npx ts-node scripts/diagnose-finance.ts --user=<id владельца> --month=<прошлый> — отработал, вывел листы и типы услуг",
+        "Шаг 2: повторный запуск даёт те же id строк (дедуп-ключ стабилен)",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-109",
+      "milestone": "M16",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "Схемы финансового журнала: FinanceOperation (marketplace, telegramUserId, campaignId, идемпотентный ключ = id строки площадки или хеш набора полей из TASK-108, статья (enum статей ТЗ п.3 + unknown), направление доход/расход, сумма, orderId, sku/offerId, дата начисления, дата выплаты, documentId, сырая строка) и FinanceDocument (тип отчёта, период, хеш содержимого, версия, оригинал файла, статус загрузки). ПОЧЕМУ: ТЗ требует не учитывать операцию дважды при повторной загрузке и хранить оригиналы и историю изменений. Новая сущность — пять регистраций (schemas/index.ts, forFeature, providers+exports, services/index.ts, MODELS в scripts/sync-indexes.ts) + npm run db:sync-indexes.",
+      "acceptance_criteria": [
+        "Уникальный индекс (marketplace, telegramUserId, operationKey) — повторный upsert не создаёт дубль",
+        "Оригинал документа хранится (GridFS или Binary с потолком — решение обосновано в коммите)",
+        "Деньги хранятся в копейках/целых или Decimal — без float-дрейфа, тест",
+        "Статьи — Record<TFinanceArticle, meta>, полнота типа пиннится компилятором (довод DRAFT_FIELD_SET)",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: юнит — двойной upsert одной операции даёт одну запись",
+        "Шаг 2: npm run db:sync-indexes на локальной базе — индексы созданы",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-108"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-115",
+      "milestone": "M17",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "Единая база товаров Product (на продавца, master SKU): бренд (brands.ts), модель, артикул производителя, внутренний SKU, штрихкод(ы), артикулы площадок {ym, ozon, wb}, закупочная цена + валюта + доп. закупочные расходы → итоговая себестоимость (с учётом скидки бренда — applyDiscounts, без второй копии правила), остаток, цены продажи по площадкам. Начальное заполнение — из PurchasePrice (+ name/category) и getOfferMappings ЯМ (штрихкоды, vendorCode). PurchasePrice не удаляется: Product его надстраивает, прибыль бота не ломается. ПОЧЕМУ: ТЗ п.6 — одна физическая модель с тремя карточками должна быть одним товаром. Новая сущность — пять регистраций (schemas/index.ts, forFeature, providers+exports, services/index.ts, MODELS в scripts/sync-indexes.ts) + npm run db:sync-indexes.",
+      "acceptance_criteria": [
+        "Уникальность (telegramUserId, internalSku); ym-артикул ищется индексом",
+        "Миграция идемпотентна, ~4100 позиций владельца заводятся за один прогон",
+        "Себестоимость = закуп×курс − скидка бренда + доп. расходы — одна функция, тест",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: скрипт заполнения на живых данных владельца — число Product ≈ PurchasePrice",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-110",
+      "milestone": "M16",
+      "category": "functional",
+      "priority": "high",
+      "description": "Чистый классификатор статей ЯМ (finance/ym-articles.ts, лист без импортов): тип услуги/операции из отчётов → статья: продажи, возвраты, компенсации, субсидии, прочие начисления; комиссия, логистика до покупателя, обратная логистика, эквайринг, хранение, приёмка, обработка, продвижение, платные опции, штрафы, удержания, прочие услуги. Нераспознанный тип → unknown, ErrorReporter (алерт с троттлингом). ПОЧЕМУ: ТЗ — «расшифровывать каждую операцию и распределять по категориям»; молча сваленное в «прочее» прячет подозрительные удержания.",
+      "acceptance_criteria": [
+        "Все типы из живой карты TASK-108 покрыты, тест на каждый",
+        "unknown никогда не теряется: попадает в журнал и в отчёт отдельной строкой",
+        "Сторно/восстановление комиссии классифицируется в ту же статью с обратным знаком, а не в доход",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run __tests__/unit/ym-articles.test.ts",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-108"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-156",
+      "milestone": "M16",
+      "category": "infrastructure",
+      "priority": "critical",
+      "description": "Postgres для финансового модуля (решение finance_postgres, 2026-10-15): финансы M16–M25 — в Postgres, остальное в Mongo. Postgres в docker-compose + POSTGRES_URL (Joi, AppConfigService, .env.example), Drizzle + drizzle-kit миграции, Nest-модуль подключения; схемы TASK-109 (FinanceOperation, FinanceDocument) и FinanceCorrection из TASK-111 → таблицы с уникальным (marketplace, telegram_user_id, operation_key), bigint копейки, jsonb raw; репозитории с API нынешних Mongo-сервисов, замена версии документа в одной транзакции; Postgres в самопроверке и в CI; финансовые Mongo-схемы убрать из DatabaseModule и sync-indexes. ПОЧЕМУ: у Mongo прода один узел без replica set — замену версии отчёта нельзя сделать атомарно, а финдвижку нужны SUM/GROUP BY по десяткам тысяч операций. Делается ПЕРЕД TASK-111; незакоммиченный код TASK-111 (импорт, очередь finance-import, корректировки) лежит в рабочем дереве и после этой задачи переводится на репозитории.",
+      "acceptance_criteria": [
+        "docker compose up -d postgres поднимает базу; POSTGRES_URL обязателен (Joi), без него старт падает с русским сообщением",
+        "Миграции drizzle-kit в репозитории, применяются командой npm-скрипта; таблицы finance_operations / finance_documents / finance_corrections",
+        "Уникальный индекс (marketplace, telegram_user_id, operation_key); копейки — bigint; raw — jsonb",
+        "Репозитории повторяют API Mongo-сервисов (upsertMany с неизменяемыми/изменяемыми полями, registerVersion, latest, markImported/markFailed, corrections record/list)",
+        "Замена версии документа периода — одна транзакция (регистрация версии, upsert, снятие старых операций, корректировки)",
+        "HealthMonitor проверяет Postgres; CI поднимает postgres service и прогоняет миграции/тесты",
+        "FinanceOperation/FinanceDocument убраны из DatabaseModule, schemas/index, services/index и scripts/sync-indexes",
+        "CLAUDE.md: раздел «Postgres для финансов» — правила и причины"
+      ],
+      "test_steps": [
+        "Шаг 1: docker compose up -d postgres && npm run db:pg:migrate — таблицы созданы",
+        "Шаг 2: тесты репозиториев на живом локальном Postgres: двойной upsert — одна строка, повтор файла — та же версия, откат транзакции при сбое",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-111",
+      "milestone": "M16",
+      "category": "integration",
+      "priority": "high",
+      "description": "Импорт финансов ЯМ: FinanceImportService — generateReport(JSON) → pollReportFile → распаковка ZIP → строки → классификатор → upsert FinanceOperation; FinanceDocument с оригиналом и хешем. Повторная загрузка того же периода: неизменённые строки не трогаются, изменённые — новая версия + запись корректировки (что было/что стало). Запуск — kind фоновой задачи и/или очередь finance-import (concurrency 1 на продавца, attempts по доводу квот). ПОЧЕМУ: ядро ТЗ п.4 — автоматическая загрузка, без дублей, с историей изменений.",
+      "acceptance_criteria": [
+        "Двойной импорт одного месяца: число операций не меняется, документ версии 1",
+        "Изменённая площадкой строка → версия 2 и запись корректировки, видимая в API",
+        "Токен в payload не едет; креды из Mongo",
+        "Сбой отчёта (FAILED) — ReportGenerationError с деталями в журнале, не тихий ноль",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: импорт прошлого месяца на живом магазине владельца — операции в Mongo, Σ сходится с TASK-108",
+        "Шаг 2: повторный импорт — 0 новых операций",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-109",
+        "TASK-110"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-112",
+      "milestone": "M16",
+      "category": "functional",
+      "priority": "high",
+      "description": "Расписание загрузки и статус периода: заказы — несколько раз в день, начисления — ежедневно, итоговые отчёты — после публикации, закрытые периоды — повторная сверка (раз в неделю за прошлые 2 месяца). Статус периода (день/месяц) — «Предварительные данные» / «Проверено» / «Есть расхождения». Repeatable-jobs с детерминированным jobId (довод ReportSchedulerService/HostingReminderScheduler), только продавцам с фичей finance. ПОЧЕМУ: ТЗ п.4 «Периодичность» и обязательные статусы.",
+      "acceptance_criteria": [
+        "Рестарт не плодит вторую repeatable-job",
+        "Период без опубликованного отчёта — «Предварительные данные»; после импорта и чистой сверки — «Проверено»",
+        "Карточка в админке «Очереди» показывает следующую загрузку и последнюю (паттерн hosting-reminder)",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: поднять локально, в Redis одна repeatable на продавца",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-111"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-113",
+      "milestone": "M16",
+      "category": "functional",
+      "priority": "high",
+      "description": "Сверка начислений с заказами: заказ выкуплен, а начислений нет; начисление по заказу, которого нет; Σ операций периода ≠ выплата united-netting; unknown-статьи. Результат — список расхождений с причиной и ссылками на операции; любой пункт переводит период в «Есть расхождения». ПОЧЕМУ: ТЗ — «предупреждать об ошибках и расхождениях», «несоответствие финансового отчёта заказам».",
+      "acceptance_criteria": [
+        "Чистая логика сверки (pure) с тестами на каждый вид расхождения",
+        "Допуск округления явный и задокументирован",
+        "Расхождение не блокирует показ цифр, но помечает их",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: сверка прошлого месяца живого магазина — список расхождений осмыслен",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-111"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-116",
+      "milestone": "M17",
+      "category": "functional",
+      "priority": "high",
+      "description": "История себестоимости: CostHistory (productId, validFrom, закуп, валюта, доп. расходы, источник — прайс/ручная правка). Загрузка прайса пишет запись только при изменении. Финансовый движок и «Прибыль» берут себестоимость на дату продажи, а не текущую. ПОЧЕМУ: ТЗ — «при изменении закупочной цены сохранять историю»; пересчёт прошлого месяца по новой цене искажает прибыль.",
+      "acceptance_criteria": [
+        "Повторная загрузка того же прайса не создаёт записей",
+        "costAt(product, date) — pure, тест на границу дня (МСК)",
+        "Нет записи до даты продажи → себестоимость неизвестна (null, не текущая)",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: загрузить прайс дважды с разной ценой одной позиции — две записи истории",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-115"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-117",
+      "milestone": "M17",
+      "category": "functional",
+      "priority": "high",
+      "description": "Сопоставление карточек площадок с Product: автоматически по штрихкоду, затем артикулу производителя, затем stripBrand/sku-resolver; конфликт (два кандидата) — не автоматом, а в очередь. Ручная привязка/отвязка в API. Очередь «не сопоставлено» с причиной. ПОЧЕМУ: ТЗ п.6 — объединять карточки; без этого сравнение площадок по товару невозможно.",
+      "acceptance_criteria": [
+        "Правило матчинга — pure с тестами на каждый уровень и на конфликт",
+        "Ручная привязка не перетирается следующим автоматическим проходом",
+        "Каждая карточка площадки привязана максимум к одному Product",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: прогон по каталогу ЯМ владельца — процент сопоставленных выведен",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-115"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-121",
+      "milestone": "M18",
+      "category": "functional",
+      "priority": "high",
+      "description": "Операционные расходы бизнеса на продавца: категории (доставка от поставщика, упаковка, содержание склада, зарплаты, аренда, прочее + свои), записи разовые (дата) и периодические (месяц, с датой начала/конца), распределение на произвольный период (пропорционально дням). API CRUD + блок в CRM. ПОЧЕМУ: ТЗ п.3 «Расходы бизнеса» — без них операционная прибыль не считается. Новая сущность — пять регистраций (schemas/index.ts, forFeature, providers+exports, services/index.ts, MODELS в scripts/sync-indexes.ts) + npm run db:sync-indexes.",
+      "acceptance_criteria": [
+        "allocate(expenses, period) — pure, тест на месяц, неделю, пересечение границы",
+        "Изменение расхода сразу отражается в P&L",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: завести аренду 30 000 ₽/мес — за неделю в P&L ≈ 7 000 ₽",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-123",
+      "milestone": "M18",
+      "category": "functional",
+      "priority": "high",
+      "description": "Налоговые настройки продавца: режим (УСН «Доходы», УСН «Доходы минус расходы», ОСНО/НПД — как минимум первые два), ставка, база дохода — доход продавца по реализации (не перечисления площадки после комиссий), дата признания. Значения по умолчанию для ALL BEST WATCH — УСН «Доходы» 6 % (решение finance_per_seller). Плоская ставка taxPercent бота остаётся для плоской формулы. ПОЧЕМУ: ТЗ п.12 — налоговая база не равна выплатам площадки; движку TASK-120 нужна база.",
+      "acceptance_criteria": [
+        "taxOf(settings, revenueLines) — pure, тест на УСН 6 % от дохода до комиссий",
+        "Изменение настроек валидируется (stores-settings.domain паттерн), 400 с field",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-120",
+      "milestone": "M18",
+      "category": "functional",
+      "priority": "critical",
+      "description": "Финансовый движок (finance/pnl.ts pure + FinanceService): P&L периода из журнала по формуле ТЗ п.3 — выручка от реализованных + прочие доходы − себестоимость проданного (CostHistory на дату) − комиссии − логистика − реклама − прочие расходы МП − операционные расходы бизнеса − налоги. Уровни: валовая, после расходов МП, операционная, чистая; рентабельность. Возвраты, компенсации, восстановленные комиссии — в своих статьях без двойного вычитания. Каждая цифра раскрывается до операций (ids). Статус периода из TASK-112; для непроверенного периода — плоская формула profitOf рядом с меткой «Предварительные данные» (решение finance_actual_beside_flat). ПОЧЕМУ: главное требование ТЗ — реальная чистая прибыль, а не сумма выплат.",
+      "acceptance_criteria": [
+        "Тесты: продажа→возврат→сторно комиссии даёт ноль выручки и ноль комиссии; компенсация не дублирует возврат",
+        "Σ статей = чистая по построению (одна сводка, не параллельные фильтры — довод IReturnsSummary.records)",
+        "Сверка на живом месяце владельца: выручка/комиссия против кабинета ЯМ, расхождения объяснены в коммите",
+        "Закупка партии в P&L не попадает (только COGS проданного)",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: P&L прошлого месяца живого магазина — сверка с кабинетом",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-111",
+        "TASK-116",
+        "TASK-123"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-127",
+      "milestone": "M19",
+      "category": "refactor",
+      "priority": "critical",
+      "description": "Абстракция площадки (пересматривает crm_marketplaces — решение tz_finance_scope): MarketplaceConnection на продавца (marketplace, креды, статус проверки, магазины/кабинеты), интерфейс адаптера (listOrders, importFinance, listProducts, listStocks) с ЯМ как первой реализацией поверх существующих сервисов (без переписывания отчётов бота). Сегмент ym|ozon|wb в CRM и API, переключатель площадок живой. ПОЧЕМУ: Ozon и WB должны встать в те же журнал/товары/заказы, а не в копии. Новая сущность — пять регистраций (schemas/index.ts, forFeature, providers+exports, services/index.ts, MODELS в scripts/sync-indexes.ts) + npm run db:sync-indexes.",
+      "acceptance_criteria": [
+        "ЯМ работает через адаптер без изменения чисел (снапшот-тесты отчётов зелёные)",
+        "Креды площадок не печатаются ни в одном ответе (тест, как crm-auth.test)",
+        "Журнал и Product уже несут поле marketplace",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: весь CRM ЯМ работает как раньше",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное"
+      ],
+      "dependencies": [
+        "TASK-120"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-122",
+      "milestone": "M18",
+      "category": "functional",
+      "priority": "high",
+      "description": "Закупки и денежный поток: PurchaseBatch (дата оплаты, поставщик, сумма, позиции опционально) — движение денег, НЕ расход P&L. ДДС периода: поступления (фактические выплаты из united-netting), оплаты закупок, операционные расходы, налоги уплаченные. Отдельно «Фактические выплаты» и «Деньги к получению» (начислено, но не выплачено). ПОЧЕМУ: ТЗ — закупка партии и себестоимость проданного — разные вещи, двойное списание недопустимо. Новая сущность — пять регистраций (schemas/index.ts, forFeature, providers+exports, services/index.ts, MODELS в scripts/sync-indexes.ts) + npm run db:sync-indexes.",
+      "acceptance_criteria": [
+        "Тест: закупка партии меняет ДДС и не меняет чистую прибыль",
+        "К получению = Σ начислений − Σ выплат, сверяется с кабинетом",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: внести закупку — ДДС меняется, P&L нет",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-120",
+        "TASK-121"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-124",
+      "milestone": "M18",
+      "category": "ui",
+      "priority": "high",
+      "description": "Раздел CRM «Финансы» (магазина и «все площадки»): уровни прибыли, доходы и расходы по статьям ТЗ п.3 с раскрытием до операций и исходного документа (скачать оригинал), денежный поток, фактические выплаты, к получению, статус периода и список расхождений, история корректировок. ОБЩЕЕ: новый раздел CRM — за своей фичей (defaultEnabled: false), в CRM_SECTIONS и navigation.ts, паритет в crm-parity.test.ts; логика — в сервисах src/modules/finance (или модуле площадки), в src/modules/crm/ только доставка; долгое — kind фоновых задач crm-jobs.",
+      "acceptance_criteria": [
+        "Клик по статье → операции → документ; сумма раскрытия = сумме статьи",
+        "Непроверенный период помечен, плоская оценка подписана «предварительно»",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: открыть прошлый месяц в CRM, раскрыть «Логистика» до операций и скачать оригинал отчёта",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-120",
+        "TASK-122"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-125",
+      "milestone": "M18",
+      "category": "ui",
+      "priority": "high",
+      "description": "Главная v2 по ТЗ п.1: выручка общая и по площадкам, штуки, заказы, средний чек, себестоимость, комиссии, логистика, продвижение, налоги, удержания, возвраты и отмены, валовая/операционная/чистая, рентабельность, к получению, стоимость остатков, товары в пути, динамика к предыдущему периоду. Фильтры: Сегодня, Вчера, 7 дней, 30 дней, текущий месяц, прошлый месяц, произвольный + площадка/все. Периоды из журнала — без лимита API 30 дней (пересматривает календарные периоды crm_dashboard_markethub — решение tz_finance_scope). Тема и раскладка MarketHub сохраняются.",
+      "acceptance_criteria": [
+        "Каждая карточка ведёт в раздел с тем же периодом и площадкой (довод periodQuery)",
+        "Числа главной = числам «Финансов» по построению (один источник)",
+        "Площадка без подключения — «скоро/подключить», а не нули",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: переключить «Прошлый месяц» — карточки сходятся с «Финансами»",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-124"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-128",
+      "milestone": "M19",
+      "category": "integration",
+      "priority": "high",
+      "description": "Ozon Seller API: подключение Client-Id + Api-Key в CRM с проверкой до записи (отказ / недоступность / пусто — разные ответы, урок TASK-077), клиент на axios с ретраями 5xx/429 и учётом лимитов, ошибки OzonApiError с source: ozon в ErrorReporter. Проверить доступность api-seller.ozon.ru с прод-хоста (Москва). ПОЧЕМУ: порядок площадок ЯМ → Ozon → WB (решение tz_finance_scope).",
+      "acceptance_criteria": [
+        "Неверный ключ не перетирает рабочий",
+        "Ключ не логируется (тест на заголовки, довод PolzaClient)",
+        "Конфиг базового URL — через AppConfigService с Joi",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: подключить живой ключ Ozon владельца в CRM — статус «подключено»",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-127"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-129",
+      "milestone": "M19",
+      "category": "integration",
+      "priority": "high",
+      "description": "Ozon: товары (product list/info, штрихкоды, offer_id) и остатки FBS/FBO → привязка к Product через сопоставление TASK-117, остатки в общий формат (без записи в Ozon). ПОЧЕМУ: единая база товаров и склад.",
+      "acceptance_criteria": [
+        "Процент автосопоставления выведен; конфликты — в очередь",
+        "Остатки FBO и FBS разделены",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: синк каталога Ozon владельца — карточки привязаны к тем же Product, что ЯМ",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-128",
+        "TASK-117"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-138",
+      "milestone": "M21",
+      "category": "functional",
+      "priority": "high",
+      "description": "Unit-экономика SKU (ТЗ п.7): карточка Product с таблицей по площадкам — цена продажи, себестоимость, комиссия, логистика, реклама, налог, прибыль фактическая (из журнала, по операциям заказов товара) и средняя за период, рентабельность, доли расходов, изменение к прошлому периоду, разрез по схеме FBS/FBO/FBW, минимально допустимая цена (прибыль = 0). Демо-цифры ТЗ — только пример.",
+      "acceptance_criteria": [
+        "Σ прибыли SKU по площадкам = доле товара в P&L (распределение заказных расходов — как bySku, пропорционально)",
+        "Нет себестоимости → «не подтверждено» (TASK-119)",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: карточка ходового товара владельца — сверка вручную по двум заказам",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-120",
+        "TASK-117"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-139",
+      "milestone": "M21",
+      "category": "functional",
+      "priority": "high",
+      "description": "Калькулятор цен и прибыли (ТЗ п.8): товар, площадка, схема, цена, продвижение, целевая рентабельность → ожидаемая прибыль; обратный расчёт — цена для заданной прибыли ₽ или рентабельности % (решение уравнения, комиссии в % от цены учтены); моделирование: комиссия ±, логистика, реклама, скидка. Ставки — фактические средние товара/категории из журнала, для ЯМ можно сверять с tariffs/calculate. Рекомендуемая цена = обратный расчёт к целевой рентабельности. Отличать от существующего «🧮 Калькулятора» (P&L по тарифам ЯМ).",
+      "acceptance_criteria": [
+        "Прямой и обратный расчёт взаимно обратны (тест)",
+        "Источник каждой ставки виден («факт за 30 дней», «тариф ЯМ», «введено»)",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: «цена на Ozon для 700 ₽ с продажи» → прямой расчёт этой цены даёт 700 ₽",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-138"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-149",
+      "milestone": "M24",
+      "category": "functional",
+      "priority": "high",
+      "description": "Детектор аномалий (детерминированный, не ИИ): резкий рост комиссии (доля к выручке vs медиана прошлых периодов), дублированные начисления (одинаковые тип/сумма/заказ/дата при разных id), нетипичная логистика на товар, штрафы, нераспознанные удержания (unknown), несоответствие отчёта заказам (из TASK-113), отсутствие закупа. Каждая аномалия — с порогом, ссылками на операции и статусом «просмотрено».",
+      "acceptance_criteria": [
+        "Пороги — константы в одном месте с объяснением",
+        "Тест на каждый детектор",
+        "Повторный прогон не плодит дубли аномалий",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: прогон на прошлом месяце владельца — список осмыслен",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-113",
+        "TASK-120"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-153",
+      "milestone": "M16",
+      "category": "infrastructure",
+      "priority": "high",
+      "description": "Зависимость фич: FEATURE_META.requires (напр. requires: [\"ai\"]), isFeatureOpen учитывает зависимости — функция открыта, только если открыты она и все её зависимости. ПОЧЕМУ: решение new_functions_behind_feature — функция с ИИ не должна включаться при выключенной у продавца фиче ai, и зависимость должна решаться в одном месте, а не помниться в каждом экране (довод featureGate).",
+      "acceptance_criteria": [
+        "FEATURE_META принимает requires: TFeatureKey[]; зависимость от неизвестного ключа или цикл — ошибка теста реестра",
+        "isFeatureOpen закрывает фичу при закрытой зависимости; featureGate (бот), CrmJwtGuard.assertFeatures, visibleSections и featureMenuLayout используют его и закрывают функцию",
+        "Админ — по правилу allFeaturesEnabled (зависимости открыты)",
+        "Админ-панель показывает зависимость у фичи («требует: ИИ»)",
+        "Тест на каждую точку: бот, CRM-гвард, разделы CRM, клавиатура",
+        "CLAUDE.md: правило и причина в разделе «Per-feature access»"
+      ],
+      "test_steps": [
+        "Шаг 1: тестовая фича с requires: [\"ai\"] — при ai выкл. кнопки/раздела нет, прямой запрос — 403 FEATURE_DISABLED / отказ гейта",
+        "Шаг 2: включить ai — функция открывается",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build && npm run typecheck:crm && npm run test:crm"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-147",
+      "milestone": "M24",
+      "category": "functional",
+      "priority": "high",
+      "description": "Инструменты для ИИ (tool-calling через AiService, модели с tools): getPnl(period, marketplace), getSkuEconomics, compareMarketplaces, listAnomalies, getOperations(ids) — только чтение, только данные продавца-автора запроса, ответы несут ids операций/документов. ИИ не считает (решение ai_explains_not_computes): все числа приходят из движка. Проверить поддержку tools у выбранной модели Polza (diagnose-polza).",
+      "acceptance_criteria": [
+        "Инструмент не может прочитать данные другого продавца (тест)",
+        "Каждый числовой ответ инструмента содержит sourceRefs",
+        "Нет данных → явный признак insufficientData",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "При выключенной у продавца фиче ai ИИ-часть функции скрыта и не запускается — зависимость requires: [\"ai\"] в FEATURE_META (TASK-153), проверка до вызова AiService"
+      ],
+      "test_steps": [
+        "Шаг 1: юниты инструментов",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг: выключить фичу ai у продавца — ИИ-часть недоступна (скрыта, гейт отказывает), AiService не вызывается, строк AiUsage нет"
+      ],
+      "dependencies": [
+        "TASK-120",
+        "TASK-153"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-148",
+      "milestone": "M24",
+      "category": "ui",
+      "priority": "high",
+      "description": "Раздел «ИИ-аналитик»: чат с вопросами («где заработал больше», «где выгоднее Casio F-91W», «почему рентабельность WB ниже»), ответы с кликабельными ссылками на операции и отчёты, «данных недостаточно» вместо догадки. Через AiService: фича ai, дневной лимит, AiUsage. Текст переписки не хранится в AiUsage (правило TASK-104); история чата — только во вкладке. ОБЩЕЕ: новый раздел CRM — за своей фичей (defaultEnabled: false), в CRM_SECTIONS и navigation.ts, паритет в crm-parity.test.ts; логика — в сервисах src/modules/finance (или модуле площадки), в src/modules/crm/ только доставка; долгое — kind фоновых задач crm-jobs.",
+      "acceptance_criteria": [
+        "Любое число в ответе есть в результатах инструментов этого ответа (проверка на сервере, иначе ответ помечается)",
+        "Исчерпан лимит/закрыта фича — userMessage, без алерта",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature",
+        "При выключенной у продавца фиче ai ИИ-часть функции скрыта и не запускается — зависимость requires: [\"ai\"] в FEATURE_META (TASK-153), проверка до вызова AiService"
+      ],
+      "test_steps": [
+        "Шаг 1: задать три вопроса из ТЗ на живых данных — ссылки ведут на операции",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)",
+        "Шаг: выключить фичу ai у продавца — ИИ-часть недоступна (скрыта, гейт отказывает), AiService не вызывается, строк AiUsage нет"
+      ],
+      "dependencies": [
+        "TASK-147",
+        "TASK-153"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-157",
+      "milestone": "M16",
+      "category": "functional",
+      "priority": "high",
+      "description": "Рассылки отчётов по расписанию невидимы в панели и пересоздаются на каждом старте. ReportSchedulerService.jobId = `report:<botId>:<userId>:<reportKey>`, а Bull 4 склеивает ключ повторяемой задачи как `name:jobId:endDate:tz:cron` и в getRepeatableJobs режет по «:» (node_modules/bull/lib/repeatable.js, _keyToData). На живом Redis у такой задачи id = `report`, cron = кусок id. Следствия: reconcile() не узнаёт ни одной задачи — на каждом старте снимает все и заводит заново; QueuesService.digests() через parseReportJobId отбрасывает все строки — таблица «Рассылки» в панели пуста. Найдено в TASK-112 живым Redis (там тот же баг был у `finance:<id>`, исправлен на `finance-<id>`). ПОЧЕМУ: сверка и панель рассылок фактически не работают с первого дня.",
+      "acceptance_criteria": [
+        "jobId рассылки без «:» (например `report-<botId>-<userId>-<reportKey>`), parseReportJobId читает новый формат",
+        "Старые задачи `report:…` снимаются сверкой при первом старте (по key, а не по id) и заводятся в новом формате, без двойной отправки",
+        "Тест-заглушка очереди имитирует разбор ключа Bull по «:» — иначе баг снова не ловится",
+        "Таблица «Рассылки» в панели показывает живые расписания"
+      ],
+      "test_steps": [
+        "Шаг 1: docker compose up -d redis; скрипт с реальным Bull: schedule → getRepeatableJobs отдаёт правильные id и cron; повторная reconcile — added 0",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-114",
+      "milestone": "M16",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Ручная загрузка финансовых документов XLSX/XLS/CSV (CRM, multipart по образцу PriceListUploadInterceptor): структура распознаётся по заголовкам (словарь синонимов колонок на площадку/тип отчёта), дальше тот же путь, что у импорта — классификатор, дедуп, версии. Нераспознанный файл — понятный отказ с перечнем не найденных колонок. ПОЧЕМУ: ТЗ п.4 — «если документ нельзя получить через API».",
+      "acceptance_criteria": [
+        "Загрузка того же отчёта, что пришёл через API, не создаёт дублей",
+        "Кириллица в имени файла (decodeFileName), лимит размера с кодом ошибки",
+        "Оригинал сохраняется как FinanceDocument источника manual",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: загрузить xlsx united-marketplace-services, скачанный из кабинета — 0 новых операций после API-импорта",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-111"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-118",
+      "milestone": "M17",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Раздел CRM «Товары» (аккаунтный): список с поиском/фильтром по бренду, карточка товара (атрибуты, себестоимость и её история, привязанные карточки площадок, остаток), правка закупа/валюты/доп. расходов, очередь «не сопоставлено» с ручной привязкой. Скилы frontend-module, pinia-store, frontend-design. ОБЩЕЕ: новый раздел CRM — за своей фичей (defaultEnabled: false), в CRM_SECTIONS и navigation.ts, паритет в crm-parity.test.ts; логика — в сервисах src/modules/finance (или модуле площадки), в src/modules/crm/ только доставка; долгое — kind фоновых задач crm-jobs.",
+      "acceptance_criteria": [
+        "Правка себестоимости пишет CostHistory с источником «ручная правка» и автором",
+        "Список закупа «Прайса» и «Товары» показывают одну себестоимость (одна функция)",
+        "Пустые и ошибочные состояния по frontend-design",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: в CRM открыть товар, изменить закуп — история пополнилась, «Прибыль» за новый день считает новую цену",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-116",
+        "TASK-117"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-119",
+      "milestone": "M17",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Неподтверждённая прибыль: заказ/товар без себестоимости на дату продажи помечается «прибыль не подтверждена» единым признаком (поле результата движка, а не текст в каждом экране) и не входит в подтверждённую чистую. Экран всегда показывает, сколько заказов и на какую сумму вне расчёта. ПОЧЕМУ: ТЗ п.6 — «не показывать предполагаемую чистую прибыль как подтверждённую»; правило orderPurchase === null уже есть, его надо пронести во все новые экраны.",
+      "acceptance_criteria": [
+        "Один признак в типе результата, экраны его не вычисляют сами",
+        "Тест: заказ без закупа не меняет подтверждённую чистую",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-115"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-126",
+      "milestone": "M18",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Бот, «💰 Прибыль»: при наличии проверенного журнала за период — строка «Фактическая чистая» из движка рядом с плоской; для непроверенного — плоская с пометкой «предварительно». Кнопка и рассылка ветвятся одинаково (известный паттерн жалоб). ПОЧЕМУ: решение finance_actual_beside_flat — оба канала показывают одно.",
+      "acceptance_criteria": [
+        "Текст бота и CRM для одного периода дают одну фактическую цифру",
+        "Тест форматтера на оба состояния",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: «Прибыль» за прошлый месяц в боте — фактическая совпадает с CRM",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-120"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-140",
+      "milestone": "M22",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Раздел «Аналитика продаж» (ТЗ п.9): по дням/неделям/месяцам, по брендам, SKU, площадкам; средний чек, штуки, скорость продаж (шт./день), динамика спроса; одинаковые товары на разных площадках рядом. Источник — общий формат заказов + журнал. ОБЩЕЕ: новый раздел CRM — за своей фичей (defaultEnabled: false), в CRM_SECTIONS и navigation.ts, паритет в crm-parity.test.ts; логика — в сервисах src/modules/finance (или модуле площадки), в src/modules/crm/ только доставка; долгое — kind фоновых задач crm-jobs.",
+      "acceptance_criteria": [
+        "Σ по любому разрезу = итог периода",
+        "Графики по скиллу dataviz",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: продажи по брендам за месяц совпадают с итогом",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-125"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-141",
+      "milestone": "M22",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Рейтинги и классификации: ТОП-20 по выручке, чистой, штукам, рентабельности, убыточные, растущий и падающий спрос (сравнение с прошлым периодом); ABC (по выручке/прибыли, 80/15/5) и XYZ (коэф. вариации недельных продаж, пороги настраиваемые). Pure-функции с тестами.",
+      "acceptance_criteria": [
+        "Пороги ABC/XYZ — константы в одном месте, отображаются на экране",
+        "Товар без себестоимости не входит в рейтинги прибыли",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 2: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-140"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-146",
+      "milestone": "M23",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Налоговый модуль ИП (ТЗ п.12): доход для УСН по правилам признания (доход продавца, не перечисления после комиссий), начисленный налог, фактически уплаченный (ручной ввод), уменьшения (страховые взносы и пр., ручной ввод с лимитами), доход с начала года, порог НДС и ставки по годам — настраиваемая таблица (не хардкод), прогноз годового дохода, предупреждения о приближении к лимитам, ручная сверка с бухгалтерией (отметка + расхождение). Раздел CRM «Налоги». ОБЩЕЕ: новый раздел CRM — за своей фичей (defaultEnabled: false), в CRM_SECTIONS и navigation.ts, паритет в crm-parity.test.ts; логика — в сервисах src/modules/finance (или модуле площадки), в src/modules/crm/ только доставка; долгое — kind фоновых задач crm-jobs.",
+      "acceptance_criteria": [
+        "Пороги/ставки по годам — данные, а не код; смена года не требует деплоя",
+        "Тест: УСН 6 % считается от дохода до комиссий площадки",
+        "Прогноз помечен «прогноз»",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: доход с начала года владельца сверить с его бухгалтерией",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-120",
+        "TASK-123"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-150",
+      "milestone": "M24",
+      "category": "functional",
+      "priority": "medium",
+      "description": "ИИ-разбор периода и рекомендации: кнопка «Разобрать период» — сколько заработано и удержано, какие статьи выросли, подозрительные списания (из детектора), убыточные товары, почему изменились выплаты; рекомендации («Casio на Ozon выгоднее на 190 ₽/шт.») только из юнит-экономики и сравнения площадок с учётом схемы и возвратов, со ссылками.",
+      "acceptance_criteria": [
+        "Каждая рекомендация ссылается на данные, из которых выведена",
+        "При нехватке данных — прямое сообщение",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature",
+        "При выключенной у продавца фиче ai ИИ-часть функции скрыта и не запускается — зависимость requires: [\"ai\"] в FEATURE_META (TASK-153), проверка до вызова AiService"
+      ],
+      "test_steps": [
+        "Шаг 1: разбор прошлого месяца владельца — цифры совпадают с «Финансами»",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)",
+        "Шаг: выключить фичу ai у продавца — ИИ-часть недоступна (скрыта, гейт отказывает), AiService не вызывается, строк AiUsage нет"
+      ],
+      "dependencies": [
+        "TASK-148",
+        "TASK-149",
+        "TASK-138",
+        "TASK-153"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-151",
+      "milestone": "M24",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Прогнозы (ТЗ п.13), детерминированные: выручка и чистая до конца месяца, продажи до конца года, возвраты, необходимые закупки (по скорости продаж и дням запаса), динамика рентабельности, налоговая нагрузка, денежные поступления. What-if («комиссия WB +5 п.п.») — через калькулятор TASK-139. Везде метка «прогноз». ИИ-инструмент getForecast для ответов чата.",
+      "acceptance_criteria": [
+        "Метод прогноза описан на экране (линейный по N дней и т.п.)",
+        "Бэктест на прошлых месяцах — ошибка выведена в коммите",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature",
+        "При выключенной у продавца фиче ai ИИ-часть функции скрыта и не запускается — зависимость requires: [\"ai\"] в FEATURE_META (TASK-153), проверка до вызова AiService"
+      ],
+      "test_steps": [
+        "Шаг 1: прогноз на конец текущего месяца владельца",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)",
+        "Шаг: выключить фичу ai у продавца — ИИ-часть недоступна (скрыта, гейт отказывает), AiService не вызывается, строк AiUsage нет"
+      ],
+      "dependencies": [
+        "TASK-140",
+        "TASK-139",
+        "TASK-146",
+        "TASK-153"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-155",
+      "milestone": "M16",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Расшифровка сводной строки акта ЯМ: Удержание · Оплата услуг Маркета с offerOrServiceName = null сейчас целиком лежит в other_services (решение finance_act_summary_other_services; на 09-2026 — 2 строки, −99 055,89 ₽: подписка, пуши, вывоз, обработка, хранение возвратов). Разложить её по статьям (storage, processing, promotion/paid_options …) по листам отчёта united-marketplace-services того же акта (business_subscription, pushes, export_from_warehouse, order_processing*, storage_of_returns). ПОЧЕМУ: ТЗ — расшифровывать каждую операцию; «прочие услуги» на ~100 тыс. в месяц прячут хранение и обработку.",
+      "acceptance_criteria": [
+        "Σ расшифровки = сумма сводной строки до копейки; расхождение — строка unknown с алертом, а не подгонка",
+        "Ключ дедупа исходной строки не меняется (journalKeys не трогать); расшифровка — отдельные записи или поле, решение записать",
+        "CLAUDE.md и README модуля finance: правила и причины"
+      ],
+      "test_steps": [
+        "Шаг 1: diagnose-finance.ts --from-dump на дампе 09-2026 (netting + services) — сводные строки разложены, Σ сходится",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-111"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-158",
+      "milestone": "M16",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Сверка услуг с журналом по акту для статуса периода. Сейчас «Проверено» (TASK-112, решение finance_period_status_rule) значит лишь «нет строк без статьи и корректировок»: отчёт услуг united-marketplace-services не загружается, и равенство Σ services = −Σ netting по actDate (TASK-108: 469 903,39 ₽ за 09-2026 до копейки) не проверяется. ПОЧЕМУ: ТЗ п.4 требует статус «Есть расхождения» по настоящей сверке, а не по косвенным признакам.",
+      "acceptance_criteria": [
+        "Загрузка united-marketplace-services за закрытый период в ночной проход (квота 100/ч учтена)",
+        "Σ по акту из услуг сравнивается с −Σ строк netting той же actDate; расхождение больше копейки — «Есть расхождения» с суммой разницы",
+        "Карточка «Загрузка финансов» показывает, по какому акту расхождение",
+        "CLAUDE.md и README модуля finance обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: scripts/import-finance.ts за 09-2026 — статус «Проверено», Σ сходится до копейки",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build"
+      ],
+      "dependencies": [
+        "TASK-112"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-159",
+      "milestone": "M0",
+      "category": "infrastructure",
+      "priority": "medium",
+      "description": "Флейк ai-analyst.test.ts: при полном `npm test` beforeEach HTTP-блока «/api/crm/ym/ai-analyst по HTTP» падает по hookTimeout 10 с (4 теста красные), отдельно файл зелёный. CI делает тот же полный прогон — красный CI без дефекта в коде. Замечено в TASK-140 дважды подряд.",
+      "acceptance_criteria": [
+        "`npm test -- --testTimeout=60000` дважды подряд зелёный целиком",
+        "Таймаут хука задан явно у блока (или hookTimeout в vitest.config.ts) с комментарием, почему"
+      ],
+      "test_steps": [
+        "Шаг 1: npm test -- --testTimeout=60000 — 0 failed, дважды подряд",
+        "Шаг 2: npx vitest run __tests__/unit/ai-analyst.test.ts — зелёный"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-160",
+      "milestone": "M16",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Классификатор статей ЯМ не знает строку «Начисление · Оплата услуг Маркета · Доставка (средняя миля)» — живой импорт 10-2026 (кабинет 164225008, 18-10-2026) дал 13 строк на 1 277,17 ₽ в unknown и алерт YmUnknownArticleError. ПОЧЕМУ: строка без статьи держит месяц в «Есть расхождения» (unknown_article) и выпадает из статей P&L; по смыслу это сторно/компенсация доставки (знак «+» у удержания), её статья — решение, а не догадка.",
+      "acceptance_criteria": [
+        "Правило в ym-articles.ts для пары «Начисление · Оплата услуг Маркета» с услугой «Доставка (средняя миля)» — статья выбрана по смыслу (сторно delivery_to_buyer со знаком «+» по образцу «Скидки за лояльность»), решение записано",
+        "diagnose-finance --from-dump на дампе 10-2026 (или живой импорт) — 0 строк unknown",
+        "Тест классификатора на эту пару"
+      ],
+      "test_steps": [
+        "Шаг 1: npx ts-node scripts/import-finance.ts --user=309809755 --month=10-2026 — «без статьи 0», алерта YmUnknownArticleError нет",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test"
+      ],
+      "dependencies": [
+        "TASK-110"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-161",
+      "milestone": "M19",
+      "category": "ui",
+      "priority": "high",
+      "description": "Экран «Подключения» в CRM (раздел аккаунта /connections): карточка на площадку — статус связи, маска ключа, дата последней проверки, текст ошибки, «Проверить связь» (повторная проверка записанного ключа без замены) и «Заменить ключ» с проверкой до записи. ПОЧЕМУ: владелец считает, что ключ задаётся только в Telegram и только для ЯМ — форма токена ЯМ спрятана внизу «Магазинов» (продавца с одним магазином страница пропускает), Ozon подключается на отдельной странице под выключенной фичей, и нигде не видно, какой ключ стоит и работает ли он.",
+      "acceptance_criteria": [
+        "GET /api/crm/connections — карточки ЯМ/Ozon/WB по MARKETPLACES: статус, маска ключа (последние 4 символа), checkedAt, checkError, магазины; ключа в ответе нет (тест)",
+        "POST /api/crm/connections/:marketplace/check — проверяет записанный ключ, ключ не меняется ни в одном исходе; ЯМ без фичи, Ozon под ozon, WB под wb (403 FEATURE_DISABLED)",
+        "Форма токена ЯМ и подключения Ozon переехали на «Подключения» без копий; на «Магазинах» — ссылка, /ozon/connection — редирект",
+        "Раздел connections в CRM_SECTIONS и навигации (виден всем), ozon-connection удалён, паритет зелёный",
+        "CLAUDE.md и README: правила и причины"
+      ],
+      "test_steps": [
+        "Шаг 1: в CRM открыть «Подключения» — ЯМ «подключено», маска токена, «Проверить связь» отвечает «связь есть»",
+        "Шаг 2: заменить токен ЯМ на неверный — отказ, старый токен работает",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build && npm run typecheck:crm && npm run test:crm — зелёное"
+      ],
+      "dependencies": [
+        "TASK-128"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-133",
+      "milestone": "M20",
+      "category": "integration",
+      "priority": "high",
+      "description": "Wildberries API: подключение токена в CRM с проверкой до записи и проверкой категорий доступа токена (контент, статистика, аналитика, маркетплейс, финансы), клиент с ретраями и жёсткими лимитами WB (поминутные квоты statistics), source: wb в ErrorReporter, доступность с прод-хоста.",
+      "acceptance_criteria": [
+        "Токен без нужной категории — понятный отказ с перечнем",
+        "Ключ не логируется (тест)",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: подключить живой токен WB — статус «подключено»",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-127",
+        "TASK-161"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-162",
+      "milestone": "M19",
+      "category": "refactor",
+      "priority": "high",
+      "description": "Вся работа с тремя площадками — через один интерфейс адаптера. Сейчас IMarketplaceSession (listOrders/importFinance/listProducts/listStocks) реализован только у ЯМ, его типы — псевдонимы типов ЯМ, а клиенты Ozon и WB живут сбоку от реестра; подключение ключа — switch по площадкам в MarketplaceConnectionsService. ПОЧЕМУ: общие экраны («Финансы», «Обзор», «Товары», единый склад/заказы, сравнение площадок, ночной импорт) не должны знать, с какой площадкой говорят — иначе каждая новая площадка правит десятки мест вместо одного адаптера. ЗАМЕТКА 2026-10-18 (решение marketplace_adapter_steps): задача разбита на шаги; здесь — шаг 1 (контракт подключения + реестр по возможностям, потребители через реестр). Критерии про типы заказа/остатка, регистрацию данных Ozon/WB и scripts/sync-ozon-catalog.ts переехали в TASK-163 и TASK-130/131/134–136.",
+      "acceptance_criteria": [
+        "Контракт адаптера возвращает НАШИ сущности (строки финжурнала, Product, нормализованный остаток и заказ), а не псевдонимы типов ЯМ; тип заказа/остатка выведен по ЯМ и Ozon/WB, а не по одной площадке",
+        "Подключение — часть контракта (parse/verify/secretField на площадку); switch в MarketplaceConnectionsService заменён реестром, «Подключения» работают для трёх площадок без ветвлений",
+        "Адаптеры Ozon и WB зарегистрированы в реестре по мере появления методов (TASK-130/131, 134–136 — их реализации); метод, которого у площадки ещё нет, не зарегистрирован, а не бросает «не реализовано» (решение ozon_adapter_after_finance)",
+        "Общие потребители (finance-import, stocks:by-sku, Product/каталог, будущие единые заказы) ходят только через реестр — тест/грep пинит отсутствие прямых импортов клиентов площадок в общих модулях",
+        "Специфика одной площадки (карантин, отзывы, FBY, отчёты Маркета ЯМ) в общий интерфейс НЕ входит",
+        "Числа ЯМ в отчётах и финансах не изменились (паритетные тесты зелёные); CLAUDE.md и README marketplaces: контракт и причины"
+      ],
+      "test_steps": [
+        "Шаг 1: npx tsc --noEmit && npm run lint && npm test && npm run build && npm run typecheck:crm && npm run test:crm — зелёное",
+        "Шаг 2: ночной импорт финансов и «Подключения» на живом ЯМ работают как раньше",
+        "Шаг 3: grep по src/modules/{finance,crm,products} — нет импортов ozon.client/wb.client в обход реестра"
+      ],
+      "dependencies": [
+        "TASK-133"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-163",
+      "milestone": "M19",
+      "category": "refactor",
+      "priority": "high",
+      "description": "Шаг 2 единого адаптера (решение marketplace_adapter_steps): каталог и остатки — НАШИ сущности, а не псевдонимы ЯМ. Карточка площадки = строка, которую принимает ProductMatchService.syncCatalog (уже общая у ЯМ и Ozon); остаток нормализован с FBO/FBS (FBY) раздельно, без суммы (правило FBY read-only). Ozon регистрирует в MarketplaceRegistry возможности catalog и stocks поверх OzonCatalogService; scripts/sync-ozon-catalog.ts ходит через реестр. ПОЧЕМУ: «Товары», единый склад (TASK-142) и сравнение площадок не должны знать форму ответа ЯМ.",
+      "acceptance_criteria": [
+        "Типы TMarketplaceProduct/TMarketplaceStocks выведены по ЯМ и Ozon, а не псевдонимы ЯМ; FBO и FBS не складываются",
+        "Ozon зарегистрирован с catalog и stocks, finance/orders у него по-прежнему не зарегистрированы",
+        "scripts/sync-ozon-catalog.ts и все потребители каталога/остатков — только через реестр; тест границ расширен на products и scripts",
+        "Числа ЯМ (остатки в «Обзоре», «Прогнозах», stocks:by-sku) не изменились — паритетные тесты зелёные",
+        "CLAUDE.md и README marketplaces/ozon обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: npx tsc --noEmit && npm run lint && npm test && npm run build && npm run typecheck:crm && npm run test:crm — зелёное",
+        "Шаг 2: npx ts-node scripts/sync-ozon-catalog.ts --user=<id> без --write печатает то же, что до рефакторинга",
+        "Шаг 3: grep — нет импортов ozon-catalog.service/ozon.client в обход реестра"
+      ],
+      "dependencies": [
+        "TASK-162"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-130",
+      "milestone": "M19",
+      "category": "integration",
+      "priority": "high",
+      "description": "Ozon: отправления FBS и FBO (posting list) → общий формат заказа: статус в нормализованный набор (10 статусов ТЗ п.11), позиции с product, суммы, схема. ПОЧЕМУ: единый список заказов и аналитика продаж.",
+      "acceptance_criteria": [
+        "Маппинг статусов Ozon — Record по полному enum, неизвестный → unknown с логом",
+        "Окна дат с учётом лимитов метода",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: заказы Ozon владельца за неделю совпадают по числу с кабинетом",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-128"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-131",
+      "milestone": "M19",
+      "category": "integration",
+      "priority": "high",
+      "description": "Ozon: финансовые операции (/v3/finance/transaction/list, отчёт о реализации) → FinanceOperation; классификатор статей Ozon (операции и services[] — комиссия, логистика, обратная логистика, эквайринг, хранение, реклама, штрафы…); дедуп по operation_id; версии и корректировки как у ЯМ. ПОЧЕМУ: фактическая прибыль по Ozon в том же движке.",
+      "acceptance_criteria": [
+        "Тест на каждый тип операции с живой выборки",
+        "Σ за месяц сверена с отчётом о реализации Ozon",
+        "Повторный импорт — 0 новых",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: импорт прошлого месяца Ozon — P&L сверен с кабинетом",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-128",
+        "TASK-110",
+        "TASK-111"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-134",
+      "milestone": "M20",
+      "category": "integration",
+      "priority": "high",
+      "description": "WB: карточки (nmID, vendorCode, баркоды) и остатки FBS/FBW → Product через TASK-117, общий формат остатков (без записи).",
+      "acceptance_criteria": [
+        "Карточки WB привязаны к тем же Product, что ЯМ/Ozon",
+        "FBW и FBS разделены",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: синк каталога WB владельца",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-133",
+        "TASK-117"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-135",
+      "milestone": "M20",
+      "category": "integration",
+      "priority": "high",
+      "description": "WB: заказы и продажи (statistics orders/sales, marketplace orders) → общий формат заказа с нормализованными статусами; выкупы и отказы различимы.",
+      "acceptance_criteria": [
+        "Маппинг статусов — Record, неизвестный → unknown",
+        "Пагинация по lastChangeDate без потерь",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: заказы WB за неделю против кабинета",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-133"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-172",
+      "milestone": "M13",
+      "category": "functional",
+      "priority": "high",
+      "description": "Вход админа в CRM «за продавца» (impersonation): кнопка «Открыть CRM как продавец» в карточке продавца админ-панели → короткоживущий (2 ч) токен CRM на продавца с отметкой админа (imp) → CRM в новой вкладке видит ровно то, что продавец (его фичи и магазины), с полными правами (решение владельца 2026-10-18). Сверху CRM — плашка «Режим «за продавца»: … » с кнопкой выхода. Повод: админ проходит все флаги (allFeaturesEnabled) и не видит CRM глазами продавца.",
+      "acceptance_criteria": [
+        "Токен выдаёт только админ-панель (AdminJwtGuard), админ — из её JWT; продавец должен проходить правило входа CRM (approved или админ + магазин)",
+        "verify токена режима перечитывает: админ всё ещё в TELEGRAM_ADMIN_IDS, доступ продавца не отозван; фичи — продавца, не админа",
+        "Смена пароля продавца в режиме закрыта (403 IMPERSONATION_FORBIDDEN); учётка CRM продавца не создаётся и lastLoginAt не трогается",
+        "Каждый запрос режима — строка журнала продавца с context impersonated-by:<админ>; сам вход — строка kind crm-impersonate",
+        "Токен не попадает в журнал и в адрес после входа (replace)",
+        "Плашка видна на всех экранах шелла; «Выйти из режима» чистит сессию вкладки и кэш",
+        "CLAUDE.md и README crm — правила и причины"
+      ],
+      "test_steps": [
+        "Шаг 1: unit — verify токена imp: фичи продавца, отказ после снятия админа и после отзыва доступа, 403 на смену пароля",
+        "Шаг 2: вживую: карточка продавца → «Открыть CRM как продавец» → новая вкладка с плашкой, разделы по фичам продавца; журнал показывает строки с impersonated-by",
+        "Шаг: npx tsc --noEmit && npm run lint && npm test && npm run build; npm run typecheck:crm && npm run test:crm — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-087"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-136",
+      "milestone": "M20",
+      "category": "integration",
+      "priority": "high",
+      "description": "WB: еженедельный отчёт реализации (reportDetailByPeriod) → FinanceOperation; классификатор (продажа, возврат, логистика, обратная логистика, хранение, штрафы, удержания, приёмка, компенсации…); дедуп по rrd_id; сверка и статусы периода через общую логику.",
+      "acceptance_criteria": [
+        "Σ к перечислению за неделю = отчёт WB",
+        "Повторный импорт — 0 новых",
+        "Тест на каждый тип строки",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: импорт последнего опубликованного отчёта WB — сверка с кабинетом",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-133",
+        "TASK-110",
+        "TASK-111",
+        "TASK-113"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-164",
+      "milestone": "M26",
+      "category": "functional",
+      "priority": "high",
+      "description": "ИИ-аналитик: инструменты searchProducts и getTopSkus. Повод — живой разговор 18-10-2026: на «сколько заработал на F-91W» модель требовала точный артикул (offerId), а на «какие товары убыточные» ей нечем ответить, кроме разбора периода. searchProducts({query, limit≤20}) — поиск по Product продавца (название, internalSku, артикул ЯМ; подстрока через escapeRegExp, как PurchasePriceService.list) → артикулы и названия, которые модель передаёт в getSkuEconomics. getTopSkus({from, to, by: net|revenue|units|margin, order: desc|asc, limit≤20, lossOnly?}) — строки pnl.skus того же FinanceService.build({flat:false}); товары с costKnown=false не попадают в рейтинги прибыли и маржи (правило sku-ratings). Промпт: название товара → searchProducts, затем getSkuEconomics; «убыточные/лучшие товары» → getTopSkus. Рядом уже есть getBrandEconomics (сделан 18-10-2026 вне бэклога).",
+      "acceptance_criteria": [
+        "searchProducts скоупится по telegramUserId из toolbox, а не из аргументов; пустой результат — insufficientData с причиной, а не []",
+        "getTopSkus: числа строк == pnl.skus того же расчёта (тест сверяет с getSkuEconomics до копейки); sourceRefs — операции себестоимости выбранных товаров",
+        "Товар без подтверждённого закупа исключён из by=net|margin и помечен в ответе счётчиком «без закупа, вне рейтинга»",
+        "Промпт: не спрашивать артикул, если в вопросе есть название — сначала searchProducts; тест analystSystemPrompt",
+        "Отдельной фичи нет (ai_tools_no_feature): инструменты — часть чата под ai_analyst",
+        "README ai-tools (таблица инструментов) и абзац «AI tools» в CLAUDE.md обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: unit — searchProducts находит «F-91W» по части названия, не видит товаров другого продавца, лишний аргумент telegramUserId — ошибка",
+        "Шаг 2: unit на PGlite — getTopSkus by=net desc/asc, lossOnly, исключение costKnown=false",
+        "Шаг 3: вживую в CRM «ИИ-аналитик»: «сколько я заработал на F-91W в сентябре» и «какие товары убыточные за прошлый месяц» — ответ без уточняющих вопросов, со ссылкой «Операции (N)»",
+        "Шаг: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-148"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-137",
+      "milestone": "M21",
+      "category": "ui",
+      "priority": "high",
+      "description": "Раздел «Сравнение площадок»: таблица ТЗ п.2 (выручка, заказы, выкупы, средний чек, комиссия %/₽, логистика, реклама, себестоимость, налоги, возвраты %, чистая, рентабельность) по ЯМ/Ozon/WB за один период и с одинаковыми правилами учёта, графики (скилл dataviz), автоматические выводы: больше денег, выше чистая на заказ, ниже расходы к выручке, где выгоднее модель, больше возвратов, лучший рост, выгоднее схема FBS/FBO/FBW. Выводы — детерминированные сравнения, не ИИ. ОБЩЕЕ: новый раздел CRM — за своей фичей (defaultEnabled: false), в CRM_SECTIONS и navigation.ts, паритет в crm-parity.test.ts; логика — в сервисах src/modules/finance (или модуле площадки), в src/modules/crm/ только доставка; долгое — kind фоновых задач crm-jobs.",
+      "acceptance_criteria": [
+        "Площадка с непроверенным периодом помечена, сравнение подписано",
+        "Каждая ячейка раскрывается до «Финансов» площадки",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: прошлый месяц по трём площадкам — цифры = «Финансы» каждой",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-125",
+        "TASK-131",
+        "TASK-136"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-142",
+      "milestone": "M22",
+      "category": "functional",
+      "priority": "high",
+      "description": "Единый склад (ТЗ п.10): по Product — физический остаток (свой склад), резерв под заказы, доступный, остатки по площадкам, на складах FBO/FBW/FBY, в пути к покупателю, возвраты в пути, складская себестоимость остатков, дней запаса (по скорости продаж). Только чтение. Раздел CRM «Склад». ОБЩЕЕ: новый раздел CRM — за своей фичей (defaultEnabled: false), в CRM_SECTIONS и navigation.ts, паритет в crm-parity.test.ts; логика — в сервисах src/modules/finance (или модуле площадки), в src/modules/crm/ только доставка; долгое — kind фоновых задач crm-jobs.",
+      "acceptance_criteria": [
+        "Стоимость остатков = Σ остаток × себестоимость, без себестоимости — отдельной строкой",
+        "Остаток FBY берётся из FbyStockService (лимит генерации не нарушается)",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: остаток товара сходится с кабинетами трёх площадок",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-129",
+        "TASK-134",
+        "TASK-115"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-143",
+      "milestone": "M22",
+      "category": "functional",
+      "priority": "high",
+      "description": "Сквозной FBS-остаток и автопередача остатков: при едином складе продажа на одной площадке уменьшает доступный остаток на остальных. Запись в Ozon/WB/ЯМ — отдельный флаг на продавца и площадку (выключен), плюс STOCK_WRITE_ENABLED; защита: не обнулять больше N позиций за проход, не завышать выше физического, dry-run-отчёт перед первым включением, журнал каждой записи. Барьер — внутри единственной функции записи (довод writeInBatches). ОПАСНО: запись в чужие кабинеты — включение на живом магазине только с явного согласия владельца.",
+      "acceptance_criteria": [
+        "Тест: сбой чтения остатка → запись не выполняется (unknown = forbidden)",
+        "Массовое обнуление блокируется порогом с алертом",
+        "FBO/FBW/FBY никогда не пишутся (placement-правило на все площадки)",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: dry-run на живых данных — отчёт «что бы записали»",
+        "Шаг 2: включение — только с согласия владельца",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-142"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-167",
+      "milestone": "M26",
+      "category": "functional",
+      "priority": "high",
+      "description": "Черновик ответа на отзыв от ИИ — в CRM («Отзывы», диалог «Ответить») и в боте («💬 Отзывы», шаг ответа). Кнопка «✨ Предложить ответ» → модель получает текст отзыва, оценку, плюсы/минусы и тон (вежливый, по умолчанию) → черновик ложится в поле/черновик, дальше прежний путь: правка → превью → «Опубликовать» только кнопкой. Автопубликации нет ни в каком виде (ответ публичный — довод dryRun). Правила промпта: ничего не обещать (возврат денег, замену, компенсацию), не спорить и не обвинять покупателя, не упоминать конкурентов и цены, не выдумывать характеристики товара (товара в отзыве нет — FEEDBACK_NO_PRODUCT_NOTE), длина ≤ replyMaxLength. Один запрос без инструментов (purpose 'feedback-reply'). Бот — через очередь reports (ответ Polza бывал 68 с; в хендлере он заморозил бы polling для всех), CRM — по механике InMemoryTurns (переписка не хранится на сервере, правило TASK-104) или kind crm-jobs, если решено, что черновик отзыва можно хранить сутки — решение записать.",
+      "acceptance_criteria": [
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false, requires: [\"ai\", …]), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS или FEATURES_WITHOUT_SECTION с причиной), строка в crm-parity — решения new_functions_behind_feature и TASK-153; ключ feedback_ai_reply, requires: [goods_feedback, ai]",
+        "Черновик никогда не публикуется сам: тест, что генерация не вызывает FeedbackService.reply; публикация — прежний шаг превью",
+        "Длина черновика проверяется feedbackReplyProblem до показа; превышение — обрезка не делается, просьба сгенерировать короче или править",
+        "В AiUsage и журнале нет текста промпта и ответа (правило TASK-104), тест это пиннит",
+        "Отказы AiError — userMessage без алерта; PolzaApiError — его текст, репорт уже сделал AiService",
+        "Бот не ждёт модель в хендлере: задача в reports, свой @OnQueueFailed не добавляется",
+        "CLAUDE.md (раздел «Отзывы» в CRM и четыре экрана) и README модулей обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: unit — промпт содержит запреты (обещания, конкуренты), черновик проходит feedbackReplyProblem, AiService зовётся с purpose feedback-reply",
+        "Шаг 2: вживую в CRM: отзыв с оценкой 2 → «Предложить ответ» → черновик в поле, правка, «Опубликовать» → ответ на Маркете",
+        "Шаг 3: вживую в боте: тот же путь; пока модель думает, другие кнопки бота отвечают сразу",
+        "Шаг: выключить фичу функции (или ai) у продавца в панели — кнопки/инструмента нет, прямой запрос получает отказ гейта, строк AiUsage не появляется",
+        "Шаг: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run build — всё зелёное",
+        "Шаг: npm run typecheck:crm && npm run test:crm — зелёное"
+      ],
+      "dependencies": [
+        "TASK-083"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-132",
+      "milestone": "M19",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Ozon: сверка начислений с отправлениями и статусы периода (переиспользует логику TASK-113 через адаптер), расписание загрузки как у ЯМ.",
+      "acceptance_criteria": [
+        "Одна функция сверки на площадки, тест на данные Ozon",
+        "CLAUDE.md и README модуля: правила и причины нового раздела"
+      ],
+      "test_steps": [
+        "Шаг 1: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-131",
+        "TASK-113"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-144",
+      "milestone": "M22",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Единый список заказов трёх площадок (ТЗ п.11): статусы Новый, Ожидает сборки, Собран, Передан в доставку, В пути, Доставлен, Выкуплен, Отменён, Возвращается, Возвращён; по заказу — прибыль, расходы по статьям, статус, история операций журнала. Фильтры по площадке, статусу, периоду, товару. ОБЩЕЕ: новый раздел CRM — за своей фичей (defaultEnabled: false), в CRM_SECTIONS и navigation.ts, паритет в crm-parity.test.ts; логика — в сервисах src/modules/finance (или модуле площадки), в src/modules/crm/ только доставка; долгое — kind фоновых задач crm-jobs.",
+      "acceptance_criteria": [
+        "Маппинг статусов трёх площадок → 10 — одна таблица, тест на полноту",
+        "Прибыль заказа = Σ его операций − себестоимость",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: открыть заказ ЯМ — расходы совпадают с united-marketplace-services",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-130",
+        "TASK-135",
+        "TASK-120"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-145",
+      "milestone": "M22",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Аналитика возвратов (ТЗ п.11): количество, % от выкупов, сумма возвращённых товаров, обратная логистика, дополнительные удержания, финансовые потери (с учётом начисленных и возвращённых комиссий и корректировок), разрезы по брендам, площадкам, SKU.",
+      "acceptance_criteria": [
+        "Потери = обратная логистика + удержания + невозвращённые комиссии − компенсации, тест",
+        "Правила «Едет обратно» (dead-возвраты, дедуп по orderId) не нарушены",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: возвраты прошлого месяца ЯМ против кабинета",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-144"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-152",
+      "milestone": "M25",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Уведомления (ТЗ п.14 и п.10; пересматривает «Уведомления не делаем» из crm_dashboard_markethub): правила — продажи резко снизились, расходы МП выросли, комиссия изменилась, товар в убытке, остатки < 5 / заканчиваются / нет / нужна закупка / долго не продаётся / много денег в остатках, возвраты выросли, подозрительные удержания, приближение налогового лимита. Настройки на продавца (вкл/порог), дедуп и «не повторять до изменения» (довод shouldNotify), центр уведомлений в CRM, отправка в Telegram через BotRegistry (фича notifications, отдельный от hosting_reminder путь).",
+      "acceptance_criteria": [
+        "Одно событие → одно уведомление до смены состояния (тест)",
+        "Блокировка бота продавцом (403) не ломает рассылку остальным",
+        "Telegram-текст и CRM-текст — из одного модуля",
+        "CLAUDE.md и README модуля: правила и причины нового раздела",
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS), строка в crm-parity — решение new_functions_behind_feature"
+      ],
+      "test_steps": [
+        "Шаг 1: искусственно опустить остаток ниже 5 — уведомление в CRM и Telegram, повтор не приходит",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное",
+        "Шаг 3: npm run typecheck:crm && npm run test:crm && npm run build — зелёное",
+        "Шаг: выключить фичу функции у продавца в панели — кнопки/раздела нет, прямой запрос получает отказ гейта (FEATURE_DISABLED)"
+      ],
+      "dependencies": [
+        "TASK-149",
+        "TASK-142",
+        "TASK-146"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-165",
+      "milestone": "M26",
+      "category": "functional",
+      "priority": "medium",
+      "description": "ИИ-аналитик: инструменты денег, налогов, цены и расходов поверх готовых дверей экранов. getCashflow({month}) — FinanceCashflowService.build: выплаты по поручениям, расхождения поручений, «к получению» на сегодня по статьям (вопросы «когда придут деньги», «почему выплата меньше»). getTaxYear({year?}) — FinanceTaxYearService: доход с начала года, авансы по отчётным периодам, лимит УСН и порог НДС, прогноз (помечен «прогноз»). getPriceFor({sku, targetProfitRub? | targetMarginPercent?}) — ставки price-calc:rates (факт 30 дней + закуп из прайса) и priceFor из src/shared/price-calc.ts. getExpenses({from,to}) — FinanceExpensesService.allocatedFor по категориям. Каждый инструмент виден модели только при открытой фиче своего экрана (прецедент forecast_ai_by_feature): getCashflow — finance, getTaxYear — tax_year, getPriceFor — price_calculator, getExpenses — expenses.",
+      "acceptance_criteria": [
+        "Своих формул нет: числа каждого инструмента совпадают с экраном той же двери (тест на каждый: ответ инструмента == сервис экрана)",
+        "Инструмент закрытой фичи не попадает в toolbox.definitions и отказывает в call как неизвестный (тест на каждый)",
+        "Нет данных — insufficientData с причиной: не загружен журнал, нет ставок (getPriceFor без продаж и без прайса), нет решения (r ≥ 1) — причина словами из price-calc, а не 0",
+        "Прогноз в getTaxYear помечен kind: 'прогноз', промпт велит называть его прогнозом",
+        "README ai-tools и CLAUDE.md обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: unit — по тесту на инструмент: совпадение с дверью экрана, скрытие за фичей, insufficientData",
+        "Шаг 2: вживую: «когда придут деньги и сколько», «сколько налога за 3 квартал», «по какой цене продавать <артикул>, чтобы зарабатывать 20 %», «сколько ушло на аренду в сентябре»",
+        "Шаг: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-164"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-168",
+      "milestone": "M26",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Еженедельная ИИ-сводка в Telegram: по понедельникам в 10:00 МСК продавцу приходит разбор прошлой недели (пн–вс) в 5–7 строк. Факты считает сервер по образцу periodReviewFacts (выручка, чистая, сдвиг к позапрошлой неделе, статьи со сдвигом выше порога, непросмотренные аномалии, убыточные товары) — модель только объясняет, один запрос без инструментов (purpose 'weekly-digest'); числа сверяются verifyAnswer, неподтверждённые помечаются в тексте. Первое появление ИИ в боте. Планировщик — повторяемая задача на продавца по образцу FinanceImportScheduler (свой префикс, id через дефис — урок Bull `:`), сверка по фиче без рестарта (refresh из AccessController). Получатели — чистая функция: approved + магазин + фича (админы с магазином — по решению владельца).",
+      "acceptance_criteria": [
+        "Функция закрыта своей фичей: ключ в features.domain.ts (defaultEnabled: false, requires: [\"ai\", …]), гейт бота (featureGate) и CRM (@RequireFeature, CRM_SECTIONS или FEATURES_WITHOUT_SECTION с причиной), строка в crm-parity — решения new_functions_behind_feature и TASK-153; ключ ai_weekly_digest, requires: [ai, finance]; кнопки MENU нет, процессор перепроверяет флаг (прецедент hosting_reminder)",
+        "Числа сводки == FinanceService.build за ту же неделю (тест до копейки)",
+        "Нет журнала за неделю — модель не зовётся, сообщение не уходит, строка журнала «пропущено: нет данных»",
+        "403 «бот заблокирован» у одного продавца не останавливает остальных и не будит админов",
+        "Текст через splitMessage; второй @OnQueueFailed на reports не появляется (или своя очередь)",
+        "Дневной лимит AI_USER_DAILY_LIMIT_RUB соблюдается: исчерпан — сводка пропускается с записью причины",
+        "В AiUsage и журнале нет текста промпта и ответа (правило TASK-104), тест это пиннит",
+        "Карточка на «Очередях» или строка журнала отвечает «ушла ли сводка» (урок hosting-reminder)",
+        "CLAUDE.md: раздел про сводку (почему понедельник, почему факты сервера), README модулей"
+      ],
+      "test_steps": [
+        "Шаг 1: unit — выбор недели по Москве, получатели (чистая функция), пропуск без журнала, повторное заведение задачи не плодит дубль",
+        "Шаг 2: вживую: «Отправить сейчас» из панели (force) себе — сводка пришла, числа совпадают с «Финансами» за ту неделю",
+        "Шаг: выключить фичу функции (или ai) у продавца в панели — кнопки/инструмента нет, прямой запрос получает отказ гейта, строк AiUsage не появляется",
+        "Шаг: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-150"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-169",
+      "milestone": "M26",
+      "category": "infrastructure",
+      "priority": "medium",
+      "description": "Контрольный набор вопросов к ИИ-аналитику (eval): scripts/eval-ai-analyst.ts + файл вопросов (30–50 типичных: «сколько на Casio», «где больше заработал в прошлом месяце на всех площадках», «почему упала прибыль», «какие товары убыточные», «когда придут деньги»…). Для каждого — ожидание: какие инструменты вызваны (и с какими ключевыми аргументами, например brand=casio), что ответ без уточняющего вопроса, что verifyAnswer без неподтверждённых чисел. Прогон — против журнала заданного продавца (--user) или засеянного PGlite (--seed), отчёт таблицей: прошёл/провалил и почему, стоимость прогона. Платный, только вручную, перед сменой промпта или модели. Решить и записать: purpose 'eval' пишется в AiUsage (видна стоимость на странице «ИИ»), но не съедает дневной лимит продавца.",
+      "acceptance_criteria": [
+        "Скрипт по умолчанию печатает план и стоимость-оценку и не тратит деньги без --run",
+        "Каждый провал объяснён: ожидали инструмент X — вызван Y / уточняющий вопрос / неподтверждённые числа [..]",
+        "Вопросы и ожидания — данные (JSON/TS-таблица), не код; добавление вопроса — одна строка",
+        "Случай Casio 18-10-2026 входит в набор как регрессионный",
+        "README ai-analyst: как запускать и когда (перед сменой POLZA_AI_MODEL или промпта)"
+      ],
+      "test_steps": [
+        "Шаг 1: unit на оценщик — разбор вызовов инструментов и вердикт по заглушечным ответам модели",
+        "Шаг 2: вживую: npx ts-node scripts/eval-ai-analyst.ts --user=<id> --run — отчёт напечатан, стоимость совпадает с AiUsage",
+        "Шаг: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-148"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-170",
+      "milestone": "M26",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Метрики качества ответов ИИ и оценка продавца. (1) На каждом ходе чата и разбора периода записывать счётчики без текста: чисел в ответе, из них неподтверждённых, вызовов инструментов, ответ — уточняющий вопрос без единого вызова инструмента (эвристика), раундов. Хранение — поля на строке AiUsage последнего раунда хода (или своя коллекция по turnId — решить). (2) 👍/👎 под ответом в CRM: POST …/turns/:id/rating {up|down}, хранится только оценка, purpose и turnId. (3) Страница «ИИ» в админке: доля ответов с неподтверждёнными числами, доля «уточняющих без инструментов», доля 👎 — по дням и purpose; клик ведёт в журнал запросов с фильтром.",
+      "acceptance_criteria": [
+        "В AiUsage и журнале нет текста промпта и ответа (правило TASK-104), тест это пиннит; оценка — только up/down",
+        "Оценить можно только свой ход (чужой turnId — тот же 404)",
+        "Суммы и доли считаются одним aggregate в Mongo (прецедент AiUsageService.summary), а не по страницам в JS",
+        "Повторная оценка того же хода заменяет прежнюю, а не добавляет",
+        "Фича для 👍/👎 не нужна — часть ai_analyst; страница — админская (AdminJwtGuard)",
+        "CLAUDE.md (раздел «ИИ» админки) и README ai-analyst обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: unit — счётчики хода по заглушке toolResults и ответа, эвристика уточняющего вопроса (разговор про Casio — уточняющий)",
+        "Шаг 2: HTTP-тест rating: свой ход, чужой ход 404, повтор заменяет",
+        "Шаг 3: вживую: задать вопрос, поставить 👎 — на странице «ИИ» доля 👎 выросла",
+        "Шаг: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run build — всё зелёное",
+        "Шаг: npm run typecheck:crm && npm run test:crm — зелёное"
+      ],
+      "dependencies": [
+        "TASK-148",
+        "TASK-150"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-173",
+      "milestone": "M24",
+      "category": "functional",
+      "priority": "medium",
+      "description": "ИИ-инструмент compareMarketplaces через FinanceService.compare (TASK-137): сейчас он строит только ЯМ, а Ozon/WB отдаёт insufficientData (FINANCE_READY = {ym}), хотя журналы всех трёх площадок есть и экран «Сравнение площадок» их уже сравнивает. Одна дверь — модель и экран не должны давать разные числа.",
+      "acceptance_criteria": [
+        "compareMarketplaces зовёт FinanceService.compare; числа площадок == экрану «Сравнение площадок» за тот же период",
+        "Площадка без журнала или с закрытой фичей ozon/wb — insufficientData с причиной, не нули",
+        "Правила налога по начислению и доли расходов едут в ответе строкой",
+        "README ai-tools и абзац «AI tools» в CLAUDE.md обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: unit на PGlite — три площадки, числа == crm-marketplace-compare",
+        "Шаг 2: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-137"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-175",
+      "milestone": "M22",
+      "category": "integration",
+      "priority": "medium",
+      "description": "Запись «Передачи остатков» в Ozon и WB (продолжение TASK-143, решение stock_push_ym_only_write). Сейчас Ozon/WB в плане — только просмотр (blockedBy: no-write-method). Нужны методы записи без повторов (по образцу postWrite ЯМ — повтор вслепую = двойная запись): Ozon /v2/products/stocks (FBS-склад продавца, warehouse_id), WB PUT /api/v3/stocks/{warehouseId} по штрихкодам. Барьер env + модель — внутри единственной функции записи площадки; отдельный флаг на площадку (stock_push_write_ozon / stock_push_write_wb, default off). ОПАСНО: запись в чужие кабинеты — включение только с согласия владельца.",
+      "acceptance_criteria": [
+        "Ozon и WB зарегистрировали возможность записи остатков в реестре; FBO/FBW не пишутся никогда",
+        "Запись без повторов: тест, что сетевой сбой/5xx не повторяется",
+        "STOCK_WRITE_ENABLED=false — запись на площадку не уходит (тест)",
+        "Фичи stock_push_write_ozon / stock_push_write_wb (defaultEnabled: false, requires: [stock_push, ozon|wb]), строки в crm-parity",
+        "План помечает площадку writable только при открытой фиче и подключённом методе",
+        "README stock-push и ozon/wb: пути записи сверены по документации или помечены несверенными в known-gaps"
+      ],
+      "test_steps": [
+        "Шаг 1: dry-run scripts/preview-stock-push.ts с ключами Ozon/WB — план показывает FBS-склады продавца",
+        "Шаг 2: живая запись — только с согласия владельца",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-143"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-176",
+      "milestone": "M22",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Расписание «Передачи остатков» (продолжение TASK-143, решение stock_push_manual_first): после живой сверки ручной записи — повторяемая задача на продавца (своя очередь или file-processing без второго @Process), чтобы продажа на одной площадке доходила до остальных без нажатия. Каждый проход — тот же StockPushService (план → барьеры → запись), порог обнулений и unknown = forbidden как у кнопки; отчёт прохода в журнал и алерт при блокировке. Отдельная фича stock_push_schedule (default off). Включать — только с согласия владельца.",
+      "acceptance_criteria": [
+        "Проход по расписанию идёт через тот же StockPushService.apply (без второй формулы)",
+        "Сбой чтения заказов/остатков — проход ничего не пишет, алерт",
+        "Повторяемые задачи не дублируются на рестарте (id без двоеточий — урок finance-import)",
+        "Фича stock_push_schedule (defaultEnabled: false) и строка в crm-parity"
+      ],
+      "test_steps": [
+        "Шаг 1: dry-run прохода на локальной копии — журнал «что бы записали»",
+        "Шаг 2: включение у продавца — только с согласия владельца",
+        "Шаг 3: npx tsc --noEmit && npm run lint && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-143"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-166",
+      "milestone": "M26",
+      "category": "functional",
+      "priority": "low",
+      "description": "ИИ-аналитик: инструменты по живым данным Маркета — getStocks (остатки по товару/бренду: StockLevelsService, FBY через FbyStockService с его мемо и single-flight) и getReturns (возвраты в пути и за период: OrderReportsService, тот же collectReturns, что «Едет обратно»). Отличие от журнальных инструментов: ходят в Partner API (секунды–минуты, квоты на токен), магазин — активный из кэша stores или явный аргумент из списка магазинов токена. Только чтение.",
+      "acceptance_criteria": [
+        "Числа == отчётам бота/CRM той же двери (тест)",
+        "Таймаут/квота Маркета — toolError с текстом бота, ход чата не падает; ErrorReporter source yandex",
+        "Магазин из аргумента проверяется по кэшу stores (scopeStore), чужая кампания — отказ",
+        "Учёт времени хода: потолок раунда не превышается, иначе — честный отказ модели",
+        "README ai-tools и CLAUDE.md обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: unit с заглушкой клиента — остатки FBS/FBY раздельно, возвраты в пути == collectReturns",
+        "Шаг 2: вживую: «что из Casio заканчивается», «сколько товаров едет обратно»",
+        "Шаг: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-164"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-171",
+      "milestone": "M26",
+      "category": "infrastructure",
+      "priority": "low",
+      "description": "Модель по назначению: дешёвая для черновиков отзывов и сводки, сильнее — для чата с инструментами. POLZA_AI_MODEL остаётся моделью по умолчанию; новая необязательная переменная POLZA_AI_MODELS (purpose=model через запятую) переопределяет её для отдельных purpose. Joi: известные purpose, формат пары; пустая — нет переопределений. Выбор модели — в AiService (одна дверь), в AiUsage пишется фактическая модель. Решение какой моделью что — по результатам eval (TASK-169).",
+      "acceptance_criteria": [
+        "Переменная проходит по правилу репо: env.validation.ts, геттер в app-config.service.ts, .env.example, docker-compose.yml",
+        "Незнакомый purpose или кривая пара — падение старта с русским сообщением, называющим переменную",
+        "AiUsage.model — та модель, которой реально ушёл запрос (тест)",
+        "CLAUDE.md (Polza.ai) и README ai обновлены"
+      ],
+      "test_steps": [
+        "Шаг 1: unit — config.test: разбор карты, отказ на мусор; ai-service.test: модель по purpose",
+        "Шаг 2: прогнать eval (TASK-169) с двумя моделями и записать выбор в decisions",
+        "Шаг: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run build — всё зелёное"
+      ],
+      "dependencies": [
+        "TASK-169"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-174",
+      "milestone": "M0",
+      "category": "unit",
+      "priority": "low",
+      "description": "Флейк crm-expenses.test.ts «аренда 30 000 ₽/мес: неделя ≈ 7 000 ₽…»: 2026-10-18 упал один раз в полном прогоне npm test (3020/3021), отдельно и при повторном полном прогоне зелёный. Вероятно таймаут beforeEach/HTTP под нагрузкой, как у ai-analyst.test.ts (TASK-159).",
+      "acceptance_criteria": [
+        "Причина падения найдена (таймаут или порядок) и устранена",
+        "Полный npm test -- --testTimeout=60000 зелёный три раза подряд"
+      ],
+      "test_steps": [
+        "Шаг 1: три полных прогона npm test -- --testTimeout=60000 подряд — все зелёные"
+      ],
+      "dependencies": [],
       "status": "done"
     }
   ]
