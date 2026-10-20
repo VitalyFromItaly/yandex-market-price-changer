@@ -64,6 +64,7 @@ export class CrmAuthController {
     const current = body.current?.toString();
     const next = body.next?.toString();
 
+    this.auth.assertNotImpersonating(request.crmUser);
     if (!current || !next) throw new BadRequestException('Нужны текущий и новый пароль');
 
     return await this.auth.changePassword(request.crmUser.telegramUserId, current, next);

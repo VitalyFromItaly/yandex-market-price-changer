@@ -58,8 +58,11 @@ export interface ICrmPurchasePriceItem {
   category: string | null;
   /** Цена в прайсе — как в файле. */
   price: number;
-  /** Закуп после скидки бренда — то, что считает «Прибыль». */
-  cost: number;
+  /**
+   * Себестоимость на сегодня — то, что считает «Прибыль»: скидка бренда и
+   * история (ручная правка из «Товаров»). `null` — неизвестна.
+   */
+  cost: number | null;
   updatedAt: string | null;
 }
 

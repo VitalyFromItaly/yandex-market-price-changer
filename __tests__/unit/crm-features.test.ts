@@ -37,6 +37,7 @@ import {
   allFeaturesEnabled,
   isFeatureOpen,
 } from '../../src/modules/telegram/bots/shared/features.domain';
+import { withRequires } from '../helpers/feature-requires';
 import { inMemoryModel } from '../helpers/in-memory-model';
 
 const INITIAL = 'tg_rules_2026';
@@ -58,10 +59,10 @@ describe('isFeatureOpen — одно правило на бот и CRM', () => {
 });
 
 describe('crm-features.domain', () => {
-  it('разделы CRM ровно те же, что в crm/src/navigation.ts', () => {
+  it('разделы CRM ровно те же, что в web/crm/src/navigation.ts', () => {
     // Белый список живёт на бэкенде, пункты — на фронте. Раздел, забытый здесь,
     // пропадёт из сайдбара у всех, — тест называет его раньше продавца.
-    const source = readFileSync(join(__dirname, '../../crm/src/navigation.ts'), 'utf8');
+    const source = readFileSync(join(__dirname, '../../web/crm/src/navigation.ts'), 'utf8');
     const names = [...source.matchAll(/\bname: '([^']+)'/g)].map((m) => m[1]);
     expect(names.sort()).toEqual(Object.keys(CRM_SECTIONS).sort());
   });
@@ -69,7 +70,7 @@ describe('crm-features.domain', () => {
   it('разделы внутри магазина — ровно STORE_NAV фронта', () => {
     // Раздел, попавший не в тот список, либо потеряет магазин из адреса (отчёт
     // без магазина сервер не ставит), либо будет решаться по активному в боте.
-    const source = readFileSync(join(__dirname, '../../crm/src/navigation.ts'), 'utf8');
+    const source = readFileSync(join(__dirname, '../../web/crm/src/navigation.ts'), 'utf8');
     const block = source.slice(source.indexOf('export const STORE_NAV'));
     const storeNav = block.slice(0, block.indexOf('];'));
     const names = [...storeNav.matchAll(/\bname: '([^']+)'/g)].map((m) => m[1]);
@@ -134,6 +135,50 @@ describe('crm-features.domain', () => {
   });
 });
 
+describe('Зависимости фич в CRM (requires, TASK-153)', () => {
+  it('«Unit-экономика» скрыта и закрыта, пока закрыты «Финансы»', () => {
+    const own = { [FEATURE.UNIT_ECONOMICS]: true };
+    expect(visibleSections(own, 'FBS', 'account')).not.toContain('ym-unit-economics');
+    expect(featureBlock(own, [FEATURE.UNIT_ECONOMICS])?.code).toBe(FEATURE_DISABLED);
+
+    const both = { ...own, [FEATURE.FINANCE]: true };
+    expect(visibleSections(both, 'FBS', 'account')).toContain('ym-unit-economics');
+    expect(featureBlock(both, [FEATURE.UNIT_ECONOMICS])).toBeNull();
+  });
+
+  it('«ИИ-аналитик» скрыт и закрыт, пока закрыт «ИИ» или «Финансы»', () => {
+    const own = { [FEATURE.AI_ANALYST]: true };
+    for (const features of [
+      own,
+      { ...own, [FEATURE.AI]: true },
+      { ...own, [FEATURE.FINANCE]: true },
+    ]) {
+      expect(visibleSections(features, 'FBS', 'account')).not.toContain('ym-ai-analyst');
+      expect(featureBlock(features, [FEATURE.AI_ANALYST])?.code).toBe(FEATURE_DISABLED);
+    }
+    const all = { ...own, [FEATURE.AI]: true, [FEATURE.FINANCE]: true };
+    expect(visibleSections(all, 'FBS', 'account')).toContain('ym-ai-analyst');
+    expect(visibleSections(all, 'FBS', 'store')).not.toContain('ym-ai-analyst');
+    expect(featureBlock(all, [FEATURE.AI_ANALYST])).toBeNull();
+  });
+
+  it('раздел «ИИ-аналитик» открывает и один «Разбор периода» (TASK-150), а чат — нет', () => {
+    const base = { [FEATURE.AI]: true, [FEATURE.FINANCE]: true };
+    const review = { ...base, [FEATURE.AI_PERIOD_REVIEW]: true };
+    expect(visibleSections(review, 'FBS', 'account')).toContain('ym-ai-analyst');
+    expect(featureBlock(review, [FEATURE.AI_PERIOD_REVIEW])).toBeNull();
+    expect(featureBlock(review, [FEATURE.AI_ANALYST])?.code).toBe(FEATURE_DISABLED);
+    // Закрытый «ИИ» закрывает и разбор — до AiService.
+    const noAi = { [FEATURE.FINANCE]: true, [FEATURE.AI_PERIOD_REVIEW]: true };
+    expect(visibleSections(noAi, 'FBS', 'account')).not.toContain('ym-ai-analyst');
+    expect(featureBlock(noAi, [FEATURE.AI_PERIOD_REVIEW])?.code).toBe(FEATURE_DISABLED);
+  });
+
+  it('админ (allFeaturesEnabled) проходит и зависимости', () => {
+    expect(featureBlock(allFeaturesEnabled(), [FEATURE.FINANCE_ANOMALIES])).toBeNull();
+  });
+});
+
 describe('crmLogEntry', () => {
   it('строка CRM: source/botId crm, секреты в адресе замаскированы, тела нет', () => {
     const entry = crmLogEntry(
@@ -178,11 +223,12 @@ describe('crmLogEntry', () => {
 describe('CrmModule по HTTP: гейт и журнал', { timeout: 60_000 }, () => {
   let app: INestApplication;
   let logs: ReturnType<typeof inMemoryModel>;
+  let access: ReturnType<typeof inMemoryModel>;
   let base: string;
 
   beforeEach(async () => {
     logs = inMemoryModel();
-    const access = inMemoryModel([
+    access = inMemoryModel([
       {
         telegramUserId: SELLER_ID,
         botId: '999',
@@ -301,6 +347,37 @@ describe('CrmModule по HTTP: гейт и журнал', { timeout: 60_000 }, (
     expect(rows.every((row) => row.telegramUserId === SELLER_ID)).toBe(true);
     expect(rows[2]).toMatchObject({ status: 'error', httpStatus: 403, username: 'Vasya' });
     expect(JSON.stringify(logs.documents)).not.toContain(INITIAL);
+  });
+
+  it('гвард: фича с закрытой зависимостью → 403 FEATURE_DISABLED, открытая → 200', async () => {
+    const restore = withRequires(FEATURE.REPORT_PROFIT, [FEATURE.AI]);
+    try {
+      const login = await fetch(`${base}/api/crm/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ login: 'vasya', password: INITIAL }),
+      });
+      const { token } = (await login.json()) as { token: string };
+      const change = await fetch(`${base}/api/crm/auth/password`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ current: INITIAL, next: 'my-own-password' }),
+      });
+      const fresh = ((await change.json()) as { token: string }).token;
+      const probe = () =>
+        fetch(`${base}/api/crm/ym/probe`, { headers: { authorization: `Bearer ${fresh}` } });
+
+      // Свой флаг «Прибыли» открыт, ИИ закрыт по умолчанию.
+      access.documents[0].features = { [FEATURE.REPORT_PROFIT]: true };
+      const closed = await probe();
+      expect(closed.status).toBe(403);
+      expect(((await closed.json()) as { code: string }).code).toBe(FEATURE_DISABLED);
+
+      access.documents[0].features = { [FEATURE.REPORT_PROFIT]: true, [FEATURE.AI]: true };
+      expect((await probe()).status).toBe(200);
+    } finally {
+      restore();
+    }
   });
 
   it('без токена — строка от system', async () => {

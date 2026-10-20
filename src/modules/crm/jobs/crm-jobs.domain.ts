@@ -59,9 +59,18 @@ export interface ICrmJobOutput {
   file?: ICrmJobFile | null;
 }
 
+/**
+ * Чей отчёт считает kind. `store` (умолчание) — магазина, открытого в вебе:
+ * POST несёт ключ магазина, замок — на кампанию. `account` — продавца целиком
+ * (финжурнал бизнесовый, статусы помесячные на продавца): магазин не нужен,
+ * замок — на продавца, процессор отдаёт документ активного магазина.
+ */
+export type TCrmJobScope = 'store' | 'account';
+
 export interface ICrmJobKind {
   /** Все ключи обязательны — правило `@RequireFeature`. */
   features: readonly TFeatureKey[];
+  scope?: TCrmJobScope;
   run(context: ICrmJobContext): Promise<ICrmJobOutput>;
 }
 

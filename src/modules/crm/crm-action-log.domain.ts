@@ -31,6 +31,8 @@ export interface ICrmRequestFacts {
   username?: string;
   name?: string;
   error?: string;
+  /** Админ, действующий за продавца: строка остаётся продавца, но видно, кто нажимал. */
+  impersonatedBy?: string;
 }
 
 /**
@@ -56,7 +58,13 @@ export function crmLogEntry(facts: ICrmRequestFacts, systemUser: string): IActio
     httpStatus: facts.statusCode,
     error: failed ? facts.error : undefined,
     source: CRM_SOURCE,
+    ...(facts.impersonatedBy ? { context: impersonationContext(facts.impersonatedBy) } : {}),
   };
+}
+
+/** `context` строк режима «за продавца» — по нему журнал отличает руку админа. */
+export function impersonationContext(adminId: string): string {
+  return `impersonated-by:${adminId}`;
 }
 
 /** Текст исключения для строки запроса — `message` у HttpException и у Error. */

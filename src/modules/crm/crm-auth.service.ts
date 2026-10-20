@@ -29,6 +29,7 @@ import { placementOfCampaign } from '../yandex/stocks/placement';
 import {
   CRM_AUDIENCE,
   CRM_NO_ACCESS,
+  IMPERSONATION_FORBIDDEN,
   WEAK_PASSWORD,
   WRONG_CURRENT_PASSWORD,
   isNumericLogin,
@@ -41,11 +42,19 @@ import { visibleSections } from './crm-features.domain';
 /** Сколько живёт выданный токен — как у админ-панели. */
 export const CRM_TOKEN_TTL = '7d';
 
+/**
+ * Сколько живёт токен режима «за продавца». Коротко: это чужой кабинет с
+ * полными правами, и забытая вкладка не должна держать его неделю.
+ */
+export const CRM_IMPERSONATION_TTL = '2h';
+
 export interface ICrmTokenPayload {
   /** Telegram id продавца. */
   sub: string;
-  /** Версия пароля — `passwordChangedAt` в миллисекундах. */
+  /** Версия пароля — `passwordChangedAt` в миллисекундах. В токене режима «за продавца» — 0. */
   pwdv: number;
+  /** Telegram id админа, вошедшего за продавца; нет — обычная сессия продавца. */
+  imp?: string;
 }
 
 /** Кто вошёл — то, что гвард кладёт в запрос. */
@@ -62,6 +71,8 @@ export interface ICrmUser {
   /** Снимок для журнала: кто это был, без похода в другую коллекцию. */
   username?: string;
   name?: string;
+  /** Админ, действующий за продавца (режим из карточки продавца в панели). */
+  impersonatedBy?: string;
 }
 
 export interface ICrmSession {
@@ -87,6 +98,8 @@ export interface ICrmMe {
    * из `visibleSections`. Сайдбар строится из него, а не из статичной таблицы.
    */
   sections: string[];
+  /** Режим «за продавца»: кто из админов вошёл. null — продавец сам. */
+  impersonation: { adminId: string } | null;
 }
 
 /**
@@ -237,7 +250,10 @@ export class CrmAuthService {
       throw new UnauthorizedException('Сессия истекла, войдите заново');
     }
 
-    const credential = payload.sub ? await this.credentials.find(payload.sub) : null;
+    if (!payload.sub) throw new UnauthorizedException('Сессия истекла, войдите заново');
+    if (payload.imp !== undefined) return await this.verifyImpersonation(payload.sub, payload.imp);
+
+    const credential = await this.credentials.find(payload.sub);
     if (!credential || credential.passwordChangedAt?.getTime() !== payload.pwdv) {
       throw new UnauthorizedException('Сессия истекла, войдите заново');
     }
@@ -261,6 +277,76 @@ export class CrmAuthService {
       username: access?.username || undefined,
       name: [access?.firstName, access?.lastName].filter(Boolean).join(' ') || undefined,
     };
+  }
+
+  /**
+   * Токен режима «за продавца» — его выдаёт только админ-панель
+   * (`AccessController.impersonateCrm`), админ взят из её JWT.
+   *
+   * Продавец должен быть таким, которого CRM пустила бы саму: одобрен (или
+   * админ) и с магазином. Учётка CRM продавцу не нужна и не создаётся: токен не
+   * привязан к его паролю (`pwdv: 0`), а «последний вход» продавца остаётся его.
+   */
+  async impersonate(adminId: string, telegramUserId: string): Promise<ICrmSession> {
+    if (!this.config.isAdmin(adminId)) throw new ForbiddenException('Только для администратора');
+    const rows = await this.access.findByLogin(telegramUserId);
+    const account = resolveAccount(rows, telegramUserId);
+    const status = account.kind === 'found' ? account.access?.status : undefined;
+    if (!(await this.isAllowed(telegramUserId, status))) {
+      throw new ConflictException(
+        'Продавец не может войти в CRM: доступ не одобрен или магазин не подключён',
+      );
+    }
+
+    const payload: ICrmTokenPayload = { sub: telegramUserId, pwdv: 0, imp: adminId };
+    this.logger.log(`Вход в CRM за продавца ${telegramUserId}: админ ${adminId}`);
+    return {
+      token: await this.jwt.signAsync(payload, {
+        secret: await this.secret(),
+        audience: CRM_AUDIENCE,
+        expiresIn: CRM_IMPERSONATION_TTL,
+      }),
+      mustChangePassword: false,
+    };
+  }
+
+  /**
+   * Проверка токена режима «за продавца». Перечитывается, как у обычной сессии:
+   * админ, убранный из TELEGRAM_ADMIN_IDS, теряет режим на следующем запросе, а
+   * продавец с отозванным доступом закрыт и для админа. Фичи — продавца: ради
+   * этого режим и существует (у админа были бы все).
+   */
+  private async verifyImpersonation(telegramUserId: string, adminId: string): Promise<ICrmUser> {
+    if (!this.config.isAdmin(adminId)) {
+      throw new UnauthorizedException('Режим «за продавца» закрыт: вы больше не администратор');
+    }
+    const isAdmin = this.config.isAdmin(telegramUserId);
+    const rows = await this.access.findByLogin(telegramUserId);
+    if (!isAdmin && !rows.some((row) => row.status === 'approved')) {
+      throw new UnauthorizedException('Доступ продавца отозван');
+    }
+    const account = resolveAccount(rows, telegramUserId);
+    const access = account.kind === 'found' ? account.access : null;
+    return {
+      telegramUserId,
+      isAdmin,
+      // Стартовый пароль продавца — его забота: админа экран смены не держит.
+      mustChangePassword: false,
+      features: isAdmin ? allFeaturesEnabled() : resolveFeatures(access?.features),
+      username: access?.username || undefined,
+      name: [access?.firstName, access?.lastName].filter(Boolean).join(' ') || undefined,
+      impersonatedBy: adminId,
+    };
+  }
+
+  /** Смена пароля закрыта в режиме «за продавца» — пароль личный. */
+  assertNotImpersonating(user: ICrmUser): void {
+    if (!user.impersonatedBy) return;
+    throw new ForbiddenException({
+      statusCode: 403,
+      code: IMPERSONATION_FORBIDDEN,
+      message: 'В режиме «за продавца» пароль продавца не меняется',
+    });
   }
 
   /**
@@ -394,6 +480,7 @@ export class CrmAuthService {
       // Разделы аккаунта; разделы магазина отдаёт `/ym/stores/:key` — по модели
       // магазина, открытого в вебе, а не активного в боте.
       sections: visibleSections(user.features, placementType, 'account'),
+      impersonation: user.impersonatedBy ? { adminId: user.impersonatedBy } : null,
     };
   }
 

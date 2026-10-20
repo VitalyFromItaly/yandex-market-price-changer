@@ -1,5 +1,6 @@
-import type { IStockLevels } from '../../yandex/stocks/stock-levels.service';
+import type { TMarketplaceStocks } from '../../marketplaces/marketplace-adapter';
 
+import { availableBySku } from '../../marketplaces/marketplace-stocks';
 import { fbyStockUnavailableLine } from '../../yandex/fby/fby-message';
 import { isFby } from '../../yandex/stocks/placement';
 import { LOW_STOCK_THRESHOLD } from '../../yandex/stocks/stock-levels';
@@ -21,12 +22,13 @@ export interface ICrmStocksView {
   problem: string | null;
 }
 
-export function toCrmStocksView(levels: IStockLevels): ICrmStocksView {
+export function toCrmStocksView(levels: TMarketplaceStocks): ICrmStocksView {
+  const stocks = availableBySku(levels);
   return {
     fby: isFby(levels.placement),
     takenAt: levels.takenAt ? levels.takenAt.toISOString() : null,
     threshold: LOW_STOCK_THRESHOLD,
-    stocks: levels.stocks,
-    problem: levels.stocks ? null : withoutIcon(fbyStockUnavailableLine(levels.error)),
+    stocks,
+    problem: stocks ? null : withoutIcon(fbyStockUnavailableLine(levels.error)),
   };
 }

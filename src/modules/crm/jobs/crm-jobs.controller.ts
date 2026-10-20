@@ -1,4 +1,4 @@
-import type { ICrmJobPayload } from './crm-jobs.domain';
+import type { ICrmJobKind, ICrmJobPayload } from './crm-jobs.domain';
 import type { TCrmJobStatus } from '../../../database/schemas/crm-job-result.schema';
 
 import { InjectQueue } from '@nestjs/bull';
@@ -80,25 +80,11 @@ export class CrmJobsController {
     if (!definition) throw new BadRequestException(`Неизвестный тип задачи: ${kind || '—'}`);
     if (!isPlainObject(params)) throw new BadRequestException('params должен быть объектом');
 
-    // Все отчёты CRM — отчёты магазина, открытого в вебе; активный магазин
-    // бота веб не читает и не пишет.
-    const storeKey = typeof body?.store === 'string' ? body.store : '';
-    if (!storeKey) throw new BadRequestException('Не выбран магазин');
-    const resolved = await this.stores.resolve(user.telegramUserId, storeKey, {
-      telegramUserId: user.telegramUserId,
-      source: 'crm',
-      context: `crm-job:${kind}`,
-    });
-    if (!resolved) {
-      throw new NotFoundException({
-        statusCode: 404,
-        code: STORE_NOT_FOUND,
-        message: STORE_NOT_FOUND_TEXT,
-      });
-    }
-    const { campaignId } = resolved.entry;
-
-    await this.guard.assertFeatures(user, definition.features, resolved.entry);
+    const campaignId =
+      definition.scope === 'account'
+        ? undefined
+        : await this.storeCampaign(request, kind, body?.store, definition.features);
+    if (definition.scope === 'account') await this.guard.assertFeatures(user, definition.features);
 
     const claim = await this.results.claim({
       jobId: randomUUID(),
@@ -126,6 +112,35 @@ export class CrmJobsController {
       }
     }
     return claim;
+  }
+
+  /**
+   * Отчёт магазина считается по магазину, открытому в вебе; активный магазин
+   * бота веб не читает и не пишет. Фичи проверяются по модели ЭТОГО магазина.
+   */
+  private async storeCampaign(
+    request: IRequestWithCrmUser,
+    kind: string,
+    store: unknown,
+    features: ICrmJobKind['features'],
+  ): Promise<string> {
+    const user = request.crmUser;
+    const storeKey = typeof store === 'string' ? store : '';
+    if (!storeKey) throw new BadRequestException('Не выбран магазин');
+    const resolved = await this.stores.resolve(user.telegramUserId, storeKey, {
+      telegramUserId: user.telegramUserId,
+      source: 'crm',
+      context: `crm-job:${kind}`,
+    });
+    if (!resolved) {
+      throw new NotFoundException({
+        statusCode: 404,
+        code: STORE_NOT_FOUND,
+        message: STORE_NOT_FOUND_TEXT,
+      });
+    }
+    await this.guard.assertFeatures(user, features, resolved.entry);
+    return resolved.entry.campaignId;
   }
 
   @Get(':id')

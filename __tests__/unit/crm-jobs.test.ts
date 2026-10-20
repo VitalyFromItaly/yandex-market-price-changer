@@ -36,6 +36,7 @@ import {
   CrmJobError,
   MAX_RESULT_BYTES,
 } from '../../src/modules/crm/jobs/crm-jobs.domain';
+import { CrmForecastKinds } from '../../src/modules/crm/forecast/crm-forecast.kinds';
 import { CrmJobsProcessor } from '../../src/modules/crm/jobs/crm-jobs.processor';
 import { CrmJobsRegistry } from '../../src/modules/crm/jobs/crm-jobs.registry';
 import { JOB_TYPES, QUEUE_NAMES } from '../../src/modules/telegram';
@@ -295,6 +296,38 @@ describe('CrmJobs по HTTP', { timeout: 60_000 }, () => {
     expect(queueAdd).not.toHaveBeenCalled();
   });
 
+  it('kind уровня аккаунта: без магазина, замок на продавца, payload без кампании', async () => {
+    registry.register('account-report', {
+      features: [FEATURE.PAYMENTS_REPORT],
+      scope: 'account',
+      run: async ({ telegramUserId, store }) => ({
+        data: { telegramUserId, campaign: store.campaign_id },
+      }),
+    });
+    const vasya = await tokenOf('vasya');
+    // У Васи фича закрыта — отказ гейта и без магазина.
+    const closed = await api(vasya, '', { kind: 'account-report', store: undefined });
+    expect(closed.status).toBe(403);
+    expect(await closed.json()).toMatchObject({ code: 'FEATURE_DISABLED' });
+
+    await app.get(UserAccessService).setFeature('222', '999', FEATURE.PAYMENTS_REPORT, true);
+    const first = await api(vasya, '', { kind: 'account-report', store: undefined });
+    expect(first.status).toBe(202);
+    const { jobId } = (await first.json()) as { jobId: string };
+    // Ключ магазина у account-kind игнорируется: та же задача, что без него.
+    const again = (await (
+      await api(vasya, '', { kind: 'account-report', store: FBY_KEY })
+    ).json()) as { jobId: string; created: boolean };
+    expect(again).toEqual({ jobId, created: false });
+    expect(queueAdd).toHaveBeenCalledTimes(1);
+    const [, payload] = queueAdd.mock.calls[0] as [string, ICrmJobPayload];
+    expect(payload.campaignId).toBeUndefined();
+
+    await runLast();
+    const status = (await (await api(vasya, `/${jobId}`)).json()) as { data: unknown };
+    expect(status.data).toEqual({ telegramUserId: '222', campaign: '12345678' });
+  });
+
   it('отчёт считается по открытому магазину, активный магазин бота не меняется', async () => {
     const seen: { campaign: string; business: string; placement: unknown }[] = [];
     registry.register('whoami', {
@@ -455,6 +488,19 @@ describe('CrmJobs по HTTP', { timeout: 60_000 }, () => {
     expect(await response.json()).toMatchObject({ code: 'FEATURE_DISABLED' });
     expect(queueAdd).not.toHaveBeenCalled();
     expect(results.documents).toHaveLength(0);
+  });
+
+  it('«Прогнозы» (TASK-151): закрытая forecast → 403 FEATURE_DISABLED для обоих kind-ов', async () => {
+    // Настоящая регистрация kind-ов: гейт берёт фичи из неё, а не из теста.
+    const none = {} as never;
+    new CrmForecastKinds(registry, none, none, none, none, none).onModuleInit();
+    const token = await tokenOf('vasya');
+    for (const kind of ['forecast:summary', 'forecast:purchases']) {
+      const response = await api(token, '', { kind, params: { basisDays: 28 } });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: 'FEATURE_DISABLED' });
+    }
+    expect(queueAdd).not.toHaveBeenCalled();
   });
 
   it('неизвестный kind и params не-объект → 400', async () => {

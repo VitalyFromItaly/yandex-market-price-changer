@@ -15,15 +15,22 @@ import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { ActionLogService } from '../../src/database/services/action-log.service';
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
 import { CrmCredentialService } from '../../src/database/services/crm-credential.service';
+import { CostHistoryService } from '../../src/database/services/cost-history.service';
+import { ProductService } from '../../src/database/services/product.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { ReportScheduleService } from '../../src/database/services/report-schedule.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
+import { FinanceImportScheduler } from '../../src/modules/telegram/queue/services/finance-import.scheduler';
+import { SellerNotificationsScheduler } from '../../src/modules/telegram/queue/services/seller-notifications.scheduler';
+import { StockPushScheduler } from '../../src/modules/telegram/queue/services/stock-push.scheduler';
+import { WeeklyDigestScheduler } from '../../src/modules/telegram/queue/services/weekly-digest.scheduler';
 import { AccessNotifierService } from '../../src/modules/access/access-notifier.service';
 import {
   AccessController,
   CRM_PASSWORD_RESET_KIND,
 } from '../../src/modules/access/access.controller';
+import { ProductMatchService } from '../../src/modules/products/product-match.service';
 import { AdminAuthModule } from '../../src/modules/admin/admin-auth.module';
 import { CrmModule } from '../../src/modules/crm/crm.module';
 import { inMemoryModel } from '../helpers/in-memory-model';
@@ -79,6 +86,8 @@ describe('Сброс пароля CRM из панели по HTTP', { timeout: 6
         { provide: getModelToken(UserAccess.name), useValue: access },
         { provide: getModelToken(YandexMarket.name), useValue: stores },
         { provide: PurchasePriceService, useValue: {} },
+        { provide: ProductService, useValue: {} },
+        { provide: CostHistoryService, useValue: {} },
         { provide: ReportScheduleService, useValue: {} },
         {
           provide: AppConfigService,
@@ -96,6 +105,8 @@ describe('Сброс пароля CRM из панели по HTTP', { timeout: 6
         UserAccessService,
         YandexMarketService,
         PurchasePriceService,
+        ProductService,
+        CostHistoryService,
         ReportScheduleService,
         AppConfigService,
       ],
@@ -107,7 +118,14 @@ describe('Сброс пароля CRM из панели по HTTP', { timeout: 6
     @Module({
       imports: [CrmModule, AdminAuthModule],
       controllers: [AccessController],
-      providers: [{ provide: AccessNotifierService, useValue: { notify: vi.fn() } }],
+      providers: [
+        { provide: AccessNotifierService, useValue: { notify: vi.fn() } },
+        { provide: FinanceImportScheduler, useValue: { refresh: vi.fn() } },
+        { provide: SellerNotificationsScheduler, useValue: { refresh: vi.fn() } },
+        { provide: WeeklyDigestScheduler, useValue: { refresh: vi.fn() } },
+        { provide: StockPushScheduler, useValue: { refresh: vi.fn() } },
+        { provide: ProductMatchService, useValue: {} },
+      ],
     })
     class ResetTestModule {}
 

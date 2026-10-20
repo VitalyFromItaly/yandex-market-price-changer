@@ -41,6 +41,7 @@ export class CrmActionLogMiddleware implements NestMiddleware {
             username: user?.username,
             name: user?.name,
             error: response.locals.errorMessage as string | undefined,
+            impersonatedBy: user?.impersonatedBy,
           },
           SYSTEM_USER,
         ),

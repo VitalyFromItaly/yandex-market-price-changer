@@ -1,9 +1,11 @@
+import type { IFeedbackDraft } from '../../yandex/feedback/feedback-draft.domain';
 import type { IGoodsFeedback } from '../../yandex/feedback/feedback.domain';
 
 import {
   FEEDBACK_NO_PRODUCT_NOTE,
   FEEDBACK_PUBLIC_NOTE,
   feedbackBusinessNote,
+  feedbackDraftProblemPlain,
   feedbackMorePlain,
 } from '../../yandex/feedback/feedback-message';
 import {
@@ -111,3 +113,32 @@ function textOrNull(value: unknown): string | null {
 function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
+
+// --- «✨ Предложить ответ» -----------------------------------------------------
+
+/**
+ * Готовый черновик ИИ для диалога «Ответить». `message` — почему превью
+ * сразу нельзя (длинный, пустой) или почему диалог закрывается (`gone`).
+ * Текст лежит только в памяти хода (TTL 10 мин) — решение
+ * `feedback_ai_draft_in_memory`.
+ */
+export interface ICrmFeedbackDraft {
+  text: string;
+  /** Отзыв уже не ждёт ответа — фронт закрывает диалог, как при 409. */
+  gone: boolean;
+  message: string | null;
+}
+
+export function toCrmFeedbackDraft(draft: IFeedbackDraft): ICrmFeedbackDraft {
+  return {
+    text: draft.text,
+    gone: false,
+    message: draft.problem ? feedbackDraftProblemPlain(draft.problem) : null,
+  };
+}
+
+export const CRM_FEEDBACK_DRAFT_GONE: ICrmFeedbackDraft = {
+  text: '',
+  gone: true,
+  message: FEEDBACK_GONE_TEXT,
+};

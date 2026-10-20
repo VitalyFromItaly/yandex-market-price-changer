@@ -19,6 +19,7 @@ import { ActionLogService } from '../../src/database/services/action-log.service
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
 import { CrmCredentialService } from '../../src/database/services/crm-credential.service';
 import { CrmJobResultService } from '../../src/database/services/crm-job-result.service';
+import { CostHistoryService } from '../../src/database/services/cost-history.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
@@ -30,6 +31,8 @@ import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 import { JOB_TYPES, QUEUE_NAMES } from '../../src/modules/telegram';
 import { BotRegistry } from '../../src/modules/telegram/bots/bot-registry.service';
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
+import { StockPushService } from '../../src/modules/stock-push/stock-push.service';
+import { StockPushScheduler } from '../../src/modules/telegram/queue/services/stock-push.scheduler';
 import { StockSyncProcessor } from '../../src/modules/telegram/queue/processors/stock-sync.processor';
 import { StockSyncService } from '../../src/modules/yandex/stocks/stock-sync.service';
 import { StockUploadPolicyService } from '../../src/modules/yandex/stocks/stock-upload-policy.service';
@@ -146,6 +149,7 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
         },
         { provide: ErrorReporter, useValue: { report: async () => undefined } },
         { provide: PurchasePriceService, useValue: { list, lastUpdatedAt: async () => null } },
+        { provide: CostHistoryService, useValue: { findForSkus: async () => new Map() } },
         {
           provide: AppConfigService,
           useValue: {
@@ -164,6 +168,7 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
         YandexMarketService,
         ErrorReporter,
         PurchasePriceService,
+        CostHistoryService,
         AppConfigService,
         getQueueToken(QUEUE_NAMES.FILE_PROCESSING),
       ],
@@ -184,6 +189,9 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
         { provide: YandexClientFactory, useValue: { forTokenOnly: () => ({ listStores: list }) } },
         { provide: StockSyncService, useValue: { sync, placementFor } },
         { provide: BotRegistry, useValue: { findByTelegramId: () => undefined } },
+        // Ветка записи плана «Передачи остатков» здесь не участвует.
+        { provide: StockPushService, useValue: {} },
+        { provide: StockPushScheduler, useValue: {} },
       ],
     })
     class PriceListUnderTest {}

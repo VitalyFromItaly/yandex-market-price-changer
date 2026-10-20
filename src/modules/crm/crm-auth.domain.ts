@@ -18,6 +18,12 @@ export const CRM_NO_ACCESS = 'CRM_NO_ACCESS';
 export const WRONG_CURRENT_PASSWORD = 'WRONG_CURRENT_PASSWORD';
 export const WEAK_PASSWORD = 'WEAK_PASSWORD';
 
+/**
+ * 403 действия, которое в режиме «за продавца» закрыто даже админу: смена
+ * пароля продавца. Пароль — личный ключ продавца, а не данные его магазина.
+ */
+export const IMPERSONATION_FORBIDDEN = 'IMPERSONATION_FORBIDDEN';
+
 /** Аудитория CRM-токена. Админский токен её не несёт — и потому не проходит. */
 export const CRM_AUDIENCE = 'crm';
 

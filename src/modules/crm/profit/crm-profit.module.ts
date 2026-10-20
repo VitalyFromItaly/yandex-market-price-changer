@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { FinanceModule } from '../../finance/finance.module';
 import { YandexModule } from '../../yandex/yandex.module';
 import { CrmJobsModule } from '../jobs/crm-jobs.module';
 
@@ -11,7 +12,7 @@ import { CrmProfitKinds } from './crm-profit.kinds';
  * Очередь не регистрируется — она живёт в TelegramModule (правило QueuesModule).
  */
 @Module({
-  imports: [CrmJobsModule, YandexModule],
+  imports: [CrmJobsModule, YandexModule, FinanceModule],
   providers: [CrmProfitKinds],
 })
 export class CrmProfitModule {}

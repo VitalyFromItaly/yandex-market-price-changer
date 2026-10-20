@@ -26,15 +26,17 @@ import {
 import { Queue } from 'bull';
 import { randomUUID } from 'node:crypto';
 
+import { CostHistoryService } from '../../../database/services/cost-history.service';
 import { CrmJobResultService } from '../../../database/services/crm-job-result.service';
 import {
   PURCHASE_PRICE_PAGE_MAX,
   PurchasePriceService,
 } from '../../../database/services/purchase-price.service';
 import { YandexMarketService } from '../../../database/services/yandex-market.service';
+import { costsOn } from '../../products/cost-history.domain';
 import { JOB_TYPES, QUEUE_NAMES } from '../../telegram';
 import { FEATURE, isFeatureEnabled } from '../../telegram/bots/shared/features.domain';
-import { applyDiscounts, ratesOf } from '../../yandex/reports/profit';
+import { ratesOf } from '../../yandex/reports/profit';
 import { bothHalvesOff, checkUploadFile } from '../../yandex/stocks/stock-upload-policy';
 import {
   StockUploadPolicyService,
@@ -87,6 +89,7 @@ export class CrmPriceListController {
     private readonly stores: StoresService,
     private readonly results: CrmJobResultService,
     private readonly purchasePrices: PurchasePriceService,
+    private readonly costHistory: CostHistoryService,
     @InjectQueue(QUEUE_NAMES.FILE_PROCESSING) private readonly queue: Queue,
   ) {}
 
@@ -190,9 +193,10 @@ export class CrmPriceListController {
   }
 
   /**
-   * Закупочные цены продавца. Закуп считается скидкой бренда при чтении
-   * (`applyDiscounts`, как в «Прибыли»), поэтому экран показывает ровно то,
-   * чем считается прибыль, и смена процента видна сразу.
+   * Закупочные цены продавца. Себестоимость на сегодня — `costsOn` поверх
+   * `costOn`, той же функции, что у «Прибыли» и раздела «Товары» (TASK-118):
+   * скидка бренда при чтении и история себестоимости, поэтому ручная правка
+   * закупа видна здесь тем же числом. `null` — неизвестна (валюта без курса).
    */
   @Get('purchase-prices')
   @RequireFeature(FEATURE.PURCHASE_PRICES)
@@ -210,7 +214,8 @@ export class CrmPriceListController {
     ]);
 
     const rows = new Map(list.items.map((item) => [item.sku, item]));
-    const costs = applyDiscounts(rows, ratesOf(store ?? {}));
+    const histories = await this.costHistory.findForSkus(telegramUserId, [...rows.keys()]);
+    const costs = costsOn(rows, histories, ratesOf(store ?? {}), new Date());
 
     return {
       items: list.items.map((item) => ({
@@ -218,7 +223,7 @@ export class CrmPriceListController {
         name: item.name ?? null,
         category: item.category ?? null,
         price: item.price,
-        cost: costs.get(item.sku) ?? item.price,
+        cost: costs.get(item.sku) ?? null,
         updatedAt: item.updatedAt ? item.updatedAt.toISOString() : null,
       })),
       total: list.total,

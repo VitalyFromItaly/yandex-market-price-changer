@@ -1,3 +1,5 @@
+import type { IUnconfirmedProfit } from '../../../shared/profit-confirmation';
+import type { IProfitActual } from '../../finance/profit-actual';
 import type { ICalendarDate } from '../../yandex/reports/moscow-day';
 import type { IProfitDay, IProfitSku, IProfitTotals } from '../../yandex/reports/profit';
 import type { IProfitReport, ITariffCalcReport } from '../../yandex/reports/profit.service';
@@ -5,6 +7,9 @@ import type { TReportKey } from '../../yandex/reports/report-status-map';
 import type { ITariffService } from '../../yandex/reports/tariff-calc-message';
 import type { ICrmPeriodEcho } from '../jobs/crm-period.domain';
 
+import { unconfirmedSummary } from '../../../shared/profit-confirmation';
+import { ACTUAL_NET_LABEL, ACTUAL_SCOPE_NOTE, PRELIMINARY_MARK } from '../../finance/profit-actual';
+import { formatRubles } from '../../yandex/reports/money';
 import { moscowDateParam } from '../../yandex/reports/moscow-day';
 import {
   NO_PRICES_TEXT,
@@ -85,11 +90,11 @@ export interface ICrmProfitBlock {
 /** Сколько товаров отдаётся в блоке: топ главной — первые десять. */
 export const SKU_VIEW_LIMIT = 100;
 
-export interface ICrmExcluded {
-  orders: number;
-  revenue: number;
-  /** Полный список — фронт показывает его таблицей, бот — первые пять. */
-  skus: string[];
+/**
+ * Признак «прибыль не подтверждена» движка как есть (TASK-119) плюс причина
+ * словами. `skus` — полный список: фронт показывает его таблицей, бот — первые пять.
+ */
+export interface ICrmExcluded extends IUnconfirmedProfit {
   reason: string;
 }
 
@@ -129,6 +134,38 @@ export interface ICrmProfitView extends ICrmReportBase {
   prices: ICrmPurchaseBasis;
   promo: string[];
   notes: { placed: string; otherOrders: string; unknownSkus: string };
+  /**
+   * «Фактическая чистая» (TASK-126): null — фича profit_actual закрыта. Число —
+   * из того же `FinanceService.actualNet`, что у бота, поэтому каналы совпадают
+   * по построению; тексты — из `profit-actual.ts`.
+   */
+  actual: ICrmProfitActual | null;
+}
+
+export type ICrmProfitActual =
+  | {
+      state: 'verified';
+      label: string;
+      /** Рубли — как остальные деньги вида. */
+      net: number;
+      scopeNote: string;
+      /** «Прибыль не подтверждена: …» — null, если закуп полный. */
+      unconfirmed: string | null;
+    }
+  | { state: 'preliminary' | 'unavailable'; mark: string; reason: string };
+
+export function toCrmProfitActual(actual: IProfitActual | undefined): ICrmProfitActual | null {
+  if (!actual) return null;
+  if (actual.state !== 'verified') {
+    return { state: actual.state, mark: PRELIMINARY_MARK, reason: actual.reason };
+  }
+  return {
+    state: 'verified',
+    label: ACTUAL_NET_LABEL,
+    net: actual.netKopecks / 100,
+    scopeNote: ACTUAL_SCOPE_NOTE,
+    unconfirmed: unconfirmedSummary(actual.unconfirmed, (k) => formatRubles(k / 100)),
+  };
 }
 
 export interface ICrmTariffView extends ICrmReportBase {
@@ -203,7 +240,11 @@ function base(key: TCrmProfitReport, report: { period: IProfitReport['period'] }
   };
 }
 
-export function toCrmProfitView(report: IProfitReport, now: Date): ICrmProfitView {
+export function toCrmProfitView(
+  report: IProfitReport,
+  now: Date,
+  actual?: IProfitActual,
+): ICrmProfitView {
   const { totals, placed } = report;
   const estimate = mainTariffEstimate(report);
   return {
@@ -227,6 +268,7 @@ export function toCrmProfitView(report: IProfitReport, now: Date): ICrmProfitVie
       otherOrders: OTHER_ORDERS_NOTE,
       unknownSkus: UNKNOWN_SKUS_ADVICE,
     },
+    actual: toCrmProfitActual(actual),
   };
 }
 
@@ -246,12 +288,7 @@ export function toCrmTariffView(report: ITariffCalcReport, now: Date): ICrmTarif
       text: flatComparisonText(report),
     },
     returned: { orders: totals.returnedOrders, revenue: totals.returnedRevenue },
-    excluded: {
-      orders: totals.excludedOrders,
-      revenue: totals.excludedRevenue,
-      skus: totals.unknownSkus,
-      reason: TARIFF_EXCLUDED_REASON,
-    },
+    excluded: { ...totals.unconfirmed, reason: TARIFF_EXCLUDED_REASON },
     prices: prices(report.pricesUpdatedAt, totals.rates, TARIFF_NO_PRICES_TEXT),
     notes: {
       placed: PLACED_IN_TRANSIT_NOTE,

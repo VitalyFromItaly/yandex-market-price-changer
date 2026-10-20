@@ -6,8 +6,11 @@ import type {
 import { Test } from '@nestjs/testing';
 import { describe, expect, it, vi } from 'vitest';
 
+import { CostHistoryService } from '../../src/database/services/cost-history.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
+import { FinanceService } from '../../src/modules/finance/finance.service';
+import { unconfirmedOf } from '../../src/shared/profit-confirmation';
 import { CrmJobError } from '../../src/modules/crm/jobs/crm-jobs.domain';
 import { CrmJobsRegistry } from '../../src/modules/crm/jobs/crm-jobs.registry';
 import { profitJobKind } from '../../src/modules/crm/profit/crm-profit.domain';
@@ -102,6 +105,17 @@ async function setup() {
     lastUpdatedAt: vi.fn(async () => new Date('2026-08-01T09:00:00Z')),
   };
 
+  // Журнал проверен: фактическая чистая 1 234,56 ₽ (TASK-126).
+  const finance = {
+    actualNet: vi.fn(async () => ({
+      state: 'verified' as const,
+      netKopecks: 123_456,
+      unconfirmed: unconfirmedOf(0, 0, []),
+      from: '2026-08-01',
+      to: '2026-08-31',
+    })),
+  };
+
   const moduleRef = await Test.createTestingModule({
     providers: [
       OrderReportsService,
@@ -110,7 +124,9 @@ async function setup() {
       CrmProfitKinds,
       { provide: YandexClientFactory, useValue: { forStore: () => client } },
       { provide: PurchasePriceService, useValue: purchasePrices },
+      { provide: CostHistoryService, useValue: { findForSkus: async () => new Map() } },
       { provide: ErrorReporter, useValue: { report: vi.fn() } },
+      { provide: FinanceService, useValue: finance },
     ],
   }).compile();
   await moduleRef.init();
@@ -120,6 +136,7 @@ async function setup() {
     kinds: moduleRef.get(CrmProfitKinds),
     registry: moduleRef.get(CrmJobsRegistry),
     calculateTariffs,
+    finance,
   };
 }
 
@@ -228,6 +245,48 @@ describe('«Прибыль» и «Калькулятор» в CRM (TASK-076)', (
     await kinds.run(REPORT.TARIFF_CALC, context(MONTH, features), NOW);
     expect(build.mock.calls[0][3]).toEqual({ tariffEstimate: false, deepHistory: true });
     expect(tariff.mock.calls[0][3]).toEqual({ deepHistory: true });
+  });
+
+  it('profit_actual: фактическая чистая — тот же actualNet и то же число, что в тексте бота', async () => {
+    const { profit, kinds, finance } = await setup();
+    const features = { [FEATURE.FINANCE]: true, [FEATURE.PROFIT_ACTUAL]: true };
+    const view = (await kinds.run(REPORT.PROFIT, context(MONTH, features), NOW))
+      .data as ICrmProfitView;
+
+    expect(finance.actualNet).toHaveBeenCalledWith('222', { key: PERIOD.MONTH }, NOW);
+    expect(view.actual).toMatchObject({ state: 'verified', net: 1234.56, unconfirmed: null });
+
+    const actual = await finance.actualNet.mock.results[0].value;
+    const bot = await profit.build(STORE, { key: PERIOD.MONTH }, NOW, {});
+    expect(formatProfitReport(bot, NOW, actual)).toContain(formatRubles(1234.56));
+  });
+
+  it('без profit_actual журнал не читается и строки нет', async () => {
+    const { kinds, finance } = await setup();
+    const view = (await kinds.run(REPORT.PROFIT, context(MONTH), NOW)).data as ICrmProfitView;
+    expect(finance.actualNet).not.toHaveBeenCalled();
+    expect(view.actual).toBeNull();
+  });
+
+  it('«Прошлый месяц» — только «Прибыли» и только при profit_actual + deep_history', async () => {
+    const { profit, kinds } = await setup();
+    const build = vi.spyOn(profit, 'build');
+    const prev = { period: { key: PERIOD.PREV_MONTH } };
+    const open = {
+      [FEATURE.FINANCE]: true,
+      [FEATURE.PROFIT_ACTUAL]: true,
+      [FEATURE.DEEP_HISTORY]: true,
+    };
+
+    await kinds.run(REPORT.PROFIT, context(prev, open), NOW);
+    expect(build.mock.calls[0][1]).toEqual({ key: PERIOD.PREV_MONTH });
+
+    await expect(
+      kinds.run(REPORT.PROFIT, context(prev, { [FEATURE.DEEP_HISTORY]: true }), NOW),
+    ).rejects.toBeInstanceOf(CrmJobError);
+    await expect(kinds.run(REPORT.TARIFF_CALC, context(prev, open), NOW)).rejects.toBeInstanceOf(
+      CrmJobError,
+    );
   });
 
   it('день глубже 30 дней без deep_history — понятный отказ; мусорный период — тоже', async () => {

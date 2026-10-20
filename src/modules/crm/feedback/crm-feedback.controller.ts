@@ -44,6 +44,44 @@ import {
 
 type TFeedbackAction = 'list' | 'reply' | 'skip';
 
+/** 400, если в теле нет годного feedbackId. Общий с черновиком ИИ. */
+export function feedbackIdOf(body: Record<string, unknown>): number {
+  const feedbackId = parseFeedbackId(body?.feedbackId);
+  if (feedbackId === null) {
+    throw new BadRequestException({
+      statusCode: 400,
+      code: INVALID_FEEDBACK,
+      message: INVALID_FEEDBACK_TEXT,
+    });
+  }
+  return feedbackId;
+}
+
+/** Магазин по ключу из адреса: 400 без ключа, 404 чужой/несуществующий. */
+export async function resolveFeedbackStore(
+  stores: StoresService,
+  telegramUserId: string,
+  storeKey: unknown,
+  context: string,
+): Promise<{ store: YandexMarketDocument; entry: IStoreEntry }> {
+  if (typeof storeKey !== 'string' || !storeKey) {
+    throw new BadRequestException('Не выбран магазин');
+  }
+  const resolved = await stores.resolve(telegramUserId, storeKey, {
+    telegramUserId,
+    source: 'crm',
+    context,
+  });
+  if (!resolved) {
+    throw new NotFoundException({
+      statusCode: 404,
+      code: STORE_NOT_FOUND,
+      message: STORE_NOT_FOUND_TEXT,
+    });
+  }
+  return resolved;
+}
+
 const ACTION_TITLE: Record<TFeedbackAction, string> = {
   list: 'отзывы',
   reply: 'ответ на отзыв',
@@ -98,7 +136,7 @@ export class CrmFeedbackController {
     @Body() body: Record<string, unknown>,
   ): Promise<{ ok: true }> {
     const telegramUserId = request.crmUser.telegramUserId;
-    const feedbackId = this.feedbackIdOf(body);
+    const feedbackId = feedbackIdOf(body);
     const parsed = parseReplyText(body?.text);
     if ('error' in parsed) {
       throw new BadRequestException({
@@ -127,7 +165,7 @@ export class CrmFeedbackController {
     @Body() body: Record<string, unknown>,
   ): Promise<{ ok: true }> {
     const telegramUserId = request.crmUser.telegramUserId;
-    const feedbackId = this.feedbackIdOf(body);
+    const feedbackId = feedbackIdOf(body);
     const { store } = await this.resolveStore(telegramUserId, body?.store, 'skip');
 
     try {
@@ -137,18 +175,6 @@ export class CrmFeedbackController {
     } catch (error) {
       throw this.marketFailure(error, telegramUserId, 'skip');
     }
-  }
-
-  private feedbackIdOf(body: Record<string, unknown>): number {
-    const feedbackId = parseFeedbackId(body?.feedbackId);
-    if (feedbackId === null) {
-      throw new BadRequestException({
-        statusCode: 400,
-        code: INVALID_FEEDBACK,
-        message: INVALID_FEEDBACK_TEXT,
-      });
-    }
-    return feedbackId;
   }
 
   /**
@@ -169,27 +195,12 @@ export class CrmFeedbackController {
     }
   }
 
-  private async resolveStore(
+  private resolveStore(
     telegramUserId: string,
     storeKey: unknown,
     action: TFeedbackAction,
   ): Promise<{ store: YandexMarketDocument; entry: IStoreEntry }> {
-    if (typeof storeKey !== 'string' || !storeKey) {
-      throw new BadRequestException('Не выбран магазин');
-    }
-    const resolved = await this.stores.resolve(telegramUserId, storeKey, {
-      telegramUserId,
-      source: 'crm',
-      context: `crm-feedback:${action}`,
-    });
-    if (!resolved) {
-      throw new NotFoundException({
-        statusCode: 404,
-        code: STORE_NOT_FOUND,
-        message: STORE_NOT_FOUND_TEXT,
-      });
-    }
-    return resolved;
+    return resolveFeedbackStore(this.stores, telegramUserId, storeKey, `crm-feedback:${action}`);
   }
 
   /**

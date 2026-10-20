@@ -3,9 +3,10 @@ import type { OnModuleInit } from '@nestjs/common';
 
 import { Injectable } from '@nestjs/common';
 
+import { MarketplaceRegistry } from '../../marketplaces/marketplace-registry.service';
 import { FEATURE } from '../../telegram/bots/shared/features.domain';
-import { StockLevelsService } from '../../yandex/stocks/stock-levels.service';
 import { CrmJobsRegistry } from '../jobs/crm-jobs.registry';
+import { ymStocks } from '../jobs/crm-marketplace-stocks';
 
 import { STOCKS_JOB_KIND, toCrmStocksView } from './crm-stocks.domain';
 
@@ -18,7 +19,7 @@ import { STOCKS_JOB_KIND, toCrmStocksView } from './crm-stocks.domain';
 export class CrmStocksKinds implements OnModuleInit {
   constructor(
     private readonly registry: CrmJobsRegistry,
-    private readonly levels: StockLevelsService,
+    private readonly marketplaces: MarketplaceRegistry,
   ) {}
 
   onModuleInit(): void {
@@ -29,6 +30,9 @@ export class CrmStocksKinds implements OnModuleInit {
   }
 
   async run(context: ICrmJobContext, now: Date = new Date()): Promise<ICrmJobOutput> {
-    return { data: toCrmStocksView(await this.levels.levels(context.store, now)) };
+    // Через реестр площадок (TASK-162): магазин задачи — по его кампании,
+    // адаптер перечитывает и сужает документ сам, тем же `scopeStore`.
+    const levels = await ymStocks(this.marketplaces, context.store, now);
+    return { data: toCrmStocksView(levels) };
   }
 }

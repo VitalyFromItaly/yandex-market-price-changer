@@ -18,6 +18,8 @@ import { CrmCredentialService } from '../../src/database/services/crm-credential
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { CrmModule } from '../../src/modules/crm/crm.module';
+import { CrmFeedbackDraftController } from '../../src/modules/crm/feedback/crm-feedback-draft.controller';
+import { FeedbackDraftTurns } from '../../src/modules/crm/feedback/crm-feedback-draft.turns';
 import { CrmFeedbackController } from '../../src/modules/crm/feedback/crm-feedback.controller';
 import {
   parseFeedbackId,
@@ -27,6 +29,7 @@ import {
 import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
 import { FeedbackReplyInvalidError } from '../../src/modules/yandex/feedback/feedback.domain';
+import { FeedbackDraftService } from '../../src/modules/yandex/feedback/feedback-draft.service';
 import { FeedbackService } from '../../src/modules/yandex/feedback/feedback.service';
 import { storeKeyOf } from '../../src/modules/yandex/stores/stores.domain';
 import { StoresService } from '../../src/modules/yandex/stores/stores.service';
@@ -79,6 +82,7 @@ describe('CRM «Отзывы» по HTTP', { timeout: 60_000 }, () => {
   const updateFeedbackComment = vi.fn();
   const skipFeedbackReaction = vi.fn();
   const forStore = vi.fn();
+  const draft = vi.fn();
 
   async function boot(features: Record<string, boolean> = { [FEATURE.GOODS_FEEDBACK]: true }) {
     const access = inMemoryModel([
@@ -132,10 +136,12 @@ describe('CRM «Отзывы» по HTTP', { timeout: 60_000 }, () => {
 
     @Module({
       imports: [CrmModule],
-      controllers: [CrmFeedbackController],
+      controllers: [CrmFeedbackController, CrmFeedbackDraftController],
       providers: [
         StoresService,
         FeedbackService,
+        FeedbackDraftTurns,
+        { provide: FeedbackDraftService, useValue: { draft } },
         { provide: YandexClientFactory, useValue: { forStore } },
       ],
     })
@@ -180,6 +186,7 @@ describe('CRM «Отзывы» по HTTP', { timeout: 60_000 }, () => {
     getFeedbacksNeedingReaction.mockReset().mockResolvedValue({ items: FEEDBACKS });
     updateFeedbackComment.mockReset().mockResolvedValue(undefined);
     skipFeedbackReaction.mockReset().mockResolvedValue(undefined);
+    draft.mockReset().mockResolvedValue({ text: 'Спасибо за отзыв!', problem: null });
     forStore.mockReset().mockReturnValue({
       getFeedbacksNeedingReaction,
       updateFeedbackComment,
@@ -345,6 +352,71 @@ describe('CRM «Отзывы» по HTTP', { timeout: 60_000 }, () => {
     const body = await response.json();
     expect(body.code).toBe('MARKET_ERROR');
     expect(body.message).toBe(new YandexAuthError('nope', 401).userMessage);
+  });
+
+  const DRAFT_FEATURES = {
+    [FEATURE.GOODS_FEEDBACK]: true,
+    [FEATURE.AI]: true,
+    [FEATURE.FEEDBACK_AI_REPLY]: true,
+  };
+
+  async function draftTurn(turnId: string) {
+    for (let i = 0; i < 50; i += 1) {
+      const view = await (await call('GET', `/draft/turns/${turnId}`)).json();
+      if (view.status !== 'running') return view;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error('ход не завершился');
+  }
+
+  it('draft: без feedback_ai_reply или без ai → 403, модель не зовётся', async () => {
+    for (const features of [
+      { [FEATURE.GOODS_FEEDBACK]: true, [FEATURE.AI]: true },
+      { [FEATURE.GOODS_FEEDBACK]: true, [FEATURE.FEEDBACK_AI_REPLY]: true },
+    ]) {
+      await boot(features);
+      const response = await call('POST', '/draft/turns', { store: key, feedbackId: 101 });
+      expect(response.status).toBe(403);
+      expect((await response.json()).code).toBe('FEATURE_DISABLED');
+      await app.close();
+    }
+    expect(draft).not.toHaveBeenCalled();
+  });
+
+  it('draft: ход → черновик текстом, публикации нет', async () => {
+    await boot(DRAFT_FEATURES);
+    const start = await call('POST', '/draft/turns', { store: key, feedbackId: 101 });
+    expect(start.status).toBe(201);
+    const { turnId } = await start.json();
+    const view = await draftTurn(turnId);
+    expect(view).toEqual({
+      status: 'done',
+      answer: { text: 'Спасибо за отзыв!', gone: false, message: null },
+    });
+    expect(draft.mock.calls[0][1]).toEqual({
+      telegramUserId: SELLER_ID,
+      aiAllowed: true,
+      feedbackId: 101,
+    });
+    expect(updateFeedbackComment).not.toHaveBeenCalled();
+  });
+
+  it('draft: второй ход, пока идёт первый → 409 TURN_RUNNING с его id', async () => {
+    await boot(DRAFT_FEATURES);
+    draft.mockReturnValue(new Promise(() => undefined));
+    const first = await (await call('POST', '/draft/turns', { store: key, feedbackId: 101 })).json();
+    const second = await call('POST', '/draft/turns', { store: key, feedbackId: 102 });
+    expect(second.status).toBe(409);
+    expect(await second.json()).toMatchObject({ code: 'TURN_RUNNING', turnId: first.turnId });
+  });
+
+  it('draft: битый id → 400, чужой магазин → 404, чужой ход → 404', async () => {
+    await boot(DRAFT_FEATURES);
+    expect((await call('POST', '/draft/turns', { store: key, feedbackId: 'x' })).status).toBe(400);
+    const foreign = await call('POST', '/draft/turns', { store: storeKeyOf('999999'), feedbackId: 101 });
+    expect(foreign.status).toBe(404);
+    expect((await call('GET', '/draft/turns/nope')).status).toBe(404);
+    expect(draft).not.toHaveBeenCalled();
   });
 });
 

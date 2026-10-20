@@ -12,7 +12,14 @@ import { CrmJobError } from './crm-jobs.domain';
  * периодом (отчёты о заказах, прибыль, калькулятор). Чистый модуль.
  */
 
-const PERIOD_KEYS = new Set<string>(Object.values(PERIOD));
+/**
+ * Общий набор — без «Прошлого месяца»: он есть только у «Прибыли» при открытых
+ * фичах (решение `profit_prev_month_period`), и kind, которому он положен,
+ * передаёт его в `extra` сам. Иначе любой отчёт о заказах принял бы его молча.
+ */
+const PERIOD_KEYS = new Set<string>(
+  Object.values(PERIOD).filter((key) => key !== PERIOD.PREV_MONTH),
+);
 
 const BAD_PERIOD = 'Не удалось разобрать период отчёта. Выберите его заново.';
 
@@ -20,13 +27,19 @@ const BAD_PERIOD = 'Не удалось разобрать период отчё
  * `{period: {key, day?: 'ДД-ММ-ГГГГ'}}` → период бота. Нет поля — период по
  * умолчанию; мусор — `CrmJobError`: текст для продавца, админов не будит.
  */
-export function parsePeriodParams(params: Record<string, unknown>): IReportPeriod {
+export function parsePeriodParams(
+  params: Record<string, unknown>,
+  extra: readonly TPeriodKey[] = [],
+): IReportPeriod {
   const raw = params?.period;
   if (raw === undefined) return DEFAULT_PERIOD;
   if (typeof raw !== 'object' || raw === null) throw new CrmJobError(BAD_PERIOD);
 
   const { key: periodKey, day } = raw as { key?: unknown; day?: unknown };
-  if (typeof periodKey !== 'string' || !PERIOD_KEYS.has(periodKey)) {
+  const known =
+    typeof periodKey === 'string' &&
+    (PERIOD_KEYS.has(periodKey) || (extra as readonly string[]).includes(periodKey));
+  if (!known) {
     throw new CrmJobError(BAD_PERIOD);
   }
   if (periodKey !== PERIOD.DAY) return { key: periodKey as TPeriodKey };

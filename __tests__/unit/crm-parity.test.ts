@@ -19,7 +19,7 @@ import { FEATURE_KEYS, FEATURE_META } from '../../src/modules/telegram/bots/shar
 const sectioned = new Set(Object.values(CRM_SECTIONS).flat());
 
 function navNames(): string[] {
-  const source = readFileSync(join(__dirname, '../../crm/src/navigation.ts'), 'utf8');
+  const source = readFileSync(join(__dirname, '../../web/crm/src/navigation.ts'), 'utf8');
   return [...source.matchAll(/\bname: '([^']+)'/g)].map((m) => m[1]);
 }
 
@@ -42,7 +42,26 @@ describe('паритет фич бота и разделов CRM', () => {
   it('исключения перечислены явно', () => {
     // Спрятать фичу в исключения — решение, а не способ позеленить тест.
     expect(Object.keys(FEATURES_WITHOUT_SECTION).sort()).toEqual(
-      ['ai', 'deep_history', 'fby_supply', 'hosting_reminder', 'promotion'].sort(),
+      [
+        'ai',
+        'ai_weekly_digest',
+        'deep_history',
+        'fby_supply',
+        'feedback_ai_reply',
+        'finance_anomalies',
+        'finance_upload',
+        'hosting_reminder',
+        'notifications_telegram',
+        'ozon',
+        'profit_actual',
+        'promotion',
+        'stock_push_write_ym',
+        'stock_push_write_ozon',
+        'stock_push_write_wb',
+        'stock_push_schedule',
+        'tax_year',
+        'wb',
+      ].sort(),
     );
   });
 });
