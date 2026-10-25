@@ -9,7 +9,6 @@ import {
   expenseArticles,
   filterRows,
   itemsLabel,
-  marketplaceOptions,
   profitLabel,
   totalsLines,
 } from './orderFeedTable.order-feed';
@@ -45,11 +44,8 @@ describe('таблица «Ленты заказов»', () => {
     row({ id: '3', items: [{ sku: 'B7', name: null, count: 1 }] }),
   ];
 
-  it('фильтры: площадка, этап, товар по артикулу или названию без регистра', () => {
+  it('фильтры: этап, товар по артикулу или названию без регистра', () => {
     expect(filterRows(rows, EMPTY_FILTERS)).toHaveLength(3);
-    expect(filterRows(rows, { ...EMPTY_FILTERS, marketplace: 'ozon' }).map((r) => r.id)).toEqual([
-      '2',
-    ]);
     expect(filterRows(rows, { ...EMPTY_FILTERS, stage: 'redeemed' }).map((r) => r.id)).toEqual([
       '1',
       '3',
@@ -108,13 +104,6 @@ describe('таблица «Ленты заказов»', () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/^Яндекс Маркет: 2 заказа, прибыль 700/);
     expect(lines[1]).toBe('Ozon: 1 заказ, прибыли пока нет — операций в журнале нет');
-  });
-
-  it('варианты площадки — «Все» и только площадки из ответа', () => {
-    expect(marketplaceOptions([{ marketplace: 'wb', label: 'Wildberries' }])).toEqual([
-      { value: 'all', label: 'Все' },
-      { value: 'wb', label: 'Wildberries' },
-    ]);
   });
 
   it('история: статья подписью из ответа, себестоимость — только у строки товара', () => {

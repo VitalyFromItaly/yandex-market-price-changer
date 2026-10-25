@@ -3,7 +3,7 @@ import type { DownloadedFile } from '@/shared/http';
 
 import { http } from '@/shared/http';
 
-const JOBS_PATH = '/ym/jobs';
+const JOBS_PATH = '/jobs';
 
 export const jobsApi = {
   /** `store` — ключ магазина из адреса: отчёт считается по нему, а не по активному в боте. */

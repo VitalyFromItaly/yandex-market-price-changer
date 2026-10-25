@@ -11,6 +11,7 @@ import { ActionLog } from '../../src/database/schemas/action-log.schema';
 import { AdminCredential } from '../../src/database/schemas/admin-credential.schema';
 import { CrmCredential } from '../../src/database/schemas/crm-credential.schema';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
+import { MarketplaceConnection } from '../../src/database/schemas/marketplace-connection.schema';
 import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { ActionLogService } from '../../src/database/services/action-log.service';
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
@@ -20,6 +21,7 @@ import { ProductService } from '../../src/database/services/product.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { ReportScheduleService } from '../../src/database/services/report-schedule.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
+import { MarketplaceConnectionService } from '../../src/database/services/marketplace-connection.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { FinanceImportScheduler } from '../../src/modules/telegram/queue/services/finance-import.scheduler';
 import { SellerNotificationsScheduler } from '../../src/modules/telegram/queue/services/seller-notifications.scheduler';
@@ -36,6 +38,8 @@ const INITIAL = 'tg_rules_2026';
 const ADMIN_ID = '100000001';
 const SELLER_ID = '222';
 const PENDING_ID = '333';
+const OZON_ONLY_ID = '444';
+const NO_MARKETPLACE_ID = '555';
 
 /**
  * Вход админа в CRM «за продавца» (TASK-172) — на настоящем HTTP: токен из
@@ -65,6 +69,9 @@ describe('Вход в CRM за продавца по HTTP', { timeout: 60_000 },
         features: { overview: false, finance: true },
       },
       { telegramUserId: PENDING_ID, botId: '999', status: 'pending', username: 'Petya' },
+      // Без магазина ЯМ: с подключением Ozon и вовсе без площадок (TASK-192).
+      { telegramUserId: OZON_ONLY_ID, botId: '999', status: 'approved', username: 'Olya' },
+      { telegramUserId: NO_MARKETPLACE_ID, botId: '999', status: 'approved', username: 'Kolya' },
     ]);
     const stores = inMemoryModel([
       {
@@ -90,6 +97,13 @@ describe('Вход в CRM за продавца по HTTP', { timeout: 60_000 },
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
+        {
+          provide: getModelToken(MarketplaceConnection.name),
+          useValue: inMemoryModel([
+            { telegramUserId: OZON_ONLY_ID, marketplace: 'ozon', status: 'ok', accounts: [] },
+          ]),
+        },
         { provide: getModelToken(ActionLog.name), useValue: journal },
         { provide: getModelToken(AdminCredential.name), useValue: admin },
         { provide: getModelToken(CrmCredential.name), useValue: crm },
@@ -114,6 +128,7 @@ describe('Вход в CRM за продавца по HTTP', { timeout: 60_000 },
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
         PurchasePriceService,
         ProductService,
         CostHistoryService,
@@ -236,5 +251,23 @@ describe('Вход в CRM за продавца по HTTP', { timeout: 60_000 },
 
     accessModel.documents.find((d) => d.telegramUserId === SELLER_ID).status = 'rejected';
     expect((await me(body.token)).status).toBe(401);
+  });
+
+  it('продавца только с Ozon открыть можно, без площадок — тоже, с тремя разделами (TASK-192/193)', async () => {
+    const adminToken = await boot();
+
+    const { status, body } = await impersonate(adminToken, OZON_ONLY_ID);
+    expect(status).toBe(200);
+    const response = await me(body.token);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ telegramUserId: OZON_ONLY_ID, store: null });
+
+    const empty = await impersonate(adminToken, NO_MARKETPLACE_ID);
+    expect(empty.status).toBe(200);
+    const emptyMe = await me(empty.body.token);
+    expect(await emptyMe.json()).toMatchObject({
+      store: null,
+      sections: ['connections', 'profile', 'help'],
+    });
   });
 });

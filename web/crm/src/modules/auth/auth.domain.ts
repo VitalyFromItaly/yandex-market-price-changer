@@ -65,4 +65,6 @@ export const AUTH_ERROR_CODE = {
   WRONG_CURRENT_PASSWORD: 'WRONG_CURRENT_PASSWORD',
   WEAK_PASSWORD: 'WEAK_PASSWORD',
   IMPERSONATION_FORBIDDEN: 'IMPERSONATION_FORBIDDEN',
+  /** Маршрут не для продавца без площадок — его место на «Подключениях» (TASK-193). */
+  NO_PLATFORM: 'NO_PLATFORM',
 } as const;

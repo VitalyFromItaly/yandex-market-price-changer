@@ -21,21 +21,31 @@ beforeEach(() => {
 });
 
 describe('стор «Склада»', () => {
-  it('задача аккаунта без магазина и параметров; повторный вход не ставит вторую', () => {
+  it('задача аккаунта без магазина, с площадкой экрана; повторный вход не ставит вторую', () => {
     const store = useInventoryStore();
-    store.ensure();
-    store.ensure();
+    store.ensure('ym');
+    store.ensure('ym');
     expect(jobs.start).toHaveBeenCalledTimes(1);
-    expect(jobs.start).toHaveBeenCalledWith('inventory:summary', {}, '');
+    expect(jobs.start).toHaveBeenCalledWith('inventory:summary', { marketplace: 'ym' }, '');
+  });
+
+  it('другая площадка (TASK-182) — своя задача; «Обновить» — по площадке экрана', () => {
+    const store = useInventoryStore();
+    store.ensure('ym');
+    store.ensure('ozon');
+    expect(jobs.start).toHaveBeenLastCalledWith('inventory:summary', { marketplace: 'ozon' }, '');
+    store.refresh();
+    expect(jobs.start).toHaveBeenCalledTimes(3);
+    expect(jobs.start).toHaveBeenLastCalledWith('inventory:summary', { marketplace: 'ozon' }, '');
   });
 
   it('«Обновить» ставит задачу заново; reset — снова как при первом входе', () => {
     const store = useInventoryStore();
-    store.ensure();
+    store.ensure('ym');
     store.refresh();
     expect(jobs.start).toHaveBeenCalledTimes(2);
     store.reset();
-    store.ensure();
+    store.ensure('ym');
     expect(jobs.start).toHaveBeenCalledTimes(3);
   });
 });

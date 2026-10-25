@@ -50,7 +50,7 @@ import { MarketplacesModule } from '../src/modules/marketplaces/marketplaces.mod
  * (квоту генераций не тратит). Для «Проверено» нужны загруженные соседние
  * месяцы — сначала импортировать их.
  *
- * `--marketplace=ozon` (TASK-131) — журнал Ozon (/v3/finance/transaction/list)
+ * `--marketplace=ozon` (TASK-131) — журнал Ozon (/v1/finance/accrual/by-day)
  * через реестр площадок, как ночной проход: скрипты не импортируют клиентов
  * Ozon (тест границ). Сводка — по статьям и по типам операций Ozon (сверка
  * классификатора на живом ответе); актов и сверки с заказами у Ozon нет.

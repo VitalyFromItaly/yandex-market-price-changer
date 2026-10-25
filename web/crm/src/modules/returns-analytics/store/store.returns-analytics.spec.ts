@@ -31,7 +31,18 @@ describe('стор «Аналитики возвратов»', () => {
     store.load();
     expect(jobs.start).toHaveBeenCalledWith(
       'returns-analytics:summary',
-      { from: '2026-10-01', to: '2026-10-15' },
+      { from: '2026-10-01', to: '2026-10-15', marketplace: 'ym' },
+      '',
+    );
+  });
+
+  it('площадка экрана (TASK-182) — в params задачи', () => {
+    const store = useReturnsAnalyticsStore();
+    store.selectMarketplace('ozon');
+    store.load();
+    expect(jobs.start).toHaveBeenCalledWith(
+      'returns-analytics:summary',
+      { from: '2026-10-01', to: '2026-10-15', marketplace: 'ozon' },
       '',
     );
   });
@@ -39,7 +50,7 @@ describe('стор «Аналитики возвратов»', () => {
   it('reset возвращает вид по умолчанию', () => {
     const store = useReturnsAnalyticsStore();
     store.setSlice('sku');
-    store.setMarketplace('wb');
+    store.selectMarketplace('wb');
     store.setQuery('casio');
     store.reset();
     expect([store.slice, store.marketplace, store.query]).toEqual(['brand', 'ym', '']);

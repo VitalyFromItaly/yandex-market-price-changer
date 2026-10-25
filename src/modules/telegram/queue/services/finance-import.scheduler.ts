@@ -1,4 +1,5 @@
 import type { TFinanceMarketplace } from '../../../../database/postgres/finance.schema';
+import type { IFinanceScreenMonth } from '../../../finance/finance-screen';
 import type { IFinanceImportJob } from '../processors/finance-import.processor';
 
 import { InjectQueue } from '@nestjs/bull';
@@ -6,16 +7,20 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Queue } from 'bull';
 
 import { AppConfigService } from '../../../../config/app-config.service';
+import { FinancePeriodRepository } from '../../../../database/postgres/repositories/finance-period.repository';
 import { MarketplaceConnectionService } from '../../../../database/services/marketplace-connection.service';
 import { UserAccessService } from '../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../../errors/error-reporter.service';
+import { FINANCE_REPORT_TYPE, financePeriodKey } from '../../../finance/finance-period';
 import { MOSCOW_TIME_ZONE } from '../../../yandex/reports/moscow-day';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
 
 import {
   financeCron,
   financeJobId,
+  financePullCooldownUntil,
+  financePullJobId,
   parseFinanceJobId,
   pickFinanceMarketplaces,
 } from './finance-schedule';
@@ -26,6 +31,22 @@ export interface IFinanceScheduledJob {
   cron: string;
   tz: string;
   next: number;
+}
+
+/** Итог кнопки «Загрузить из Маркета»: что поставлено и что ждёт кулдауна. */
+export interface IFinancePullResult {
+  /** «ГГГГ-ММ» поставленных (или уже стоявших) загрузок. */
+  queued: string[];
+  /** Месяцы, грузившиеся меньше 15 минут назад: когда была попытка и когда можно снова. */
+  cooldown: { month: string; checkedAt: string; until: string }[];
+}
+
+/** Продавцу журнал этой площадки не положен: фича закрыта или площадка не подключена. */
+export class FinancePullNotAllowedError extends Error {
+  constructor() {
+    super('Журнал этой площадки не загружается: она не подключена или «Финансы» закрыты.');
+    this.name = 'FinancePullNotAllowedError';
+  }
 }
 
 /**
@@ -53,6 +74,7 @@ export class FinanceImportScheduler implements OnApplicationBootstrap {
     private readonly config: AppConfigService,
     private readonly errors: ErrorReporter,
     private readonly connections: MarketplaceConnectionService,
+    private readonly periods: FinancePeriodRepository,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -153,6 +175,50 @@ export class FinanceImportScheduler implements OnApplicationBootstrap {
     } catch (error) {
       void this.errors.report({ error, source: 'queue', context: 'finance-import:schedule' });
     }
+  }
+
+  /**
+   * «Загрузить из Маркета» (кнопка CRM): разовая задача на месяц в ту же
+   * очередь и тот же `@Process`, что ночной проход. Право — то же правило, что
+   * у расписания (`marketplacesFor`): фича `finance` (и площадки) плюс
+   * подключённый ключ. Месяц, который грузили меньше 15 минут назад, не ставится —
+   * он уходит в `cooldown` с временем, а не ошибкой: остальные месяцы периода
+   * ставятся. id задачи — продавец, площадка и месяц: повторный клик, пока
+   * задача ждёт или идёт, Bull второй не ставит; после неё задача удаляется.
+   */
+  async pullNow(
+    telegramUserId: string,
+    marketplace: TFinanceMarketplace,
+    months: readonly IFinanceScreenMonth[],
+    now: Date = new Date(),
+  ): Promise<IFinancePullResult> {
+    if (!(await this.marketplacesFor(telegramUserId)).includes(marketplace)) {
+      throw new FinancePullNotAllowedError();
+    }
+    const result: IFinancePullResult = { queued: [], cooldown: [] };
+    for (const { month, period } of months) {
+      const row = await this.periods.find({
+        marketplace,
+        telegramUserId,
+        periodKey: financePeriodKey(FINANCE_REPORT_TYPE[marketplace], period),
+      });
+      const until = financePullCooldownUntil(row?.checkedAt ?? null, now);
+      if (until) {
+        const checkedAt = row.checkedAt.toISOString();
+        result.cooldown.push({ month, checkedAt, until: until.toISOString() });
+        continue;
+      }
+      const payload: IFinanceImportJob = { telegramUserId, marketplace, ...period };
+      await this.queue.add(JOB_TYPES.IMPORT_FINANCE, payload, {
+        jobId: financePullJobId(telegramUserId, marketplace, month),
+        removeOnComplete: true,
+        removeOnFail: true,
+        // Одна попытка: повтор жжёт квоту, а продавец увидит сбой и нажмёт сам.
+        attempts: 1,
+      });
+      result.queued.push(month);
+    }
+    return result;
   }
 
   /** Заведённые задачи загрузки — для карточки «Очереди». */

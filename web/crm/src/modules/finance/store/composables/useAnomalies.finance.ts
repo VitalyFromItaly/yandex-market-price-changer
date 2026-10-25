@@ -1,8 +1,10 @@
-import type { AnomaliesModel, AnomalyFilter } from '../../finance.domain';
+import type { AnomaliesModel, AnomalyFilter, FinanceMarketplace } from '../../finance.domain';
+import type { Ref } from 'vue';
 
 import { computed, ref } from 'vue';
 
 import { financeApi } from '../../api/financeApi.finance';
+import { isFinanceUnsupported } from '../../constants/marketplaces.finance';
 import { ANOMALIES_PAGE_SIZE } from '../../finance.domain';
 import { toAnomaliesModel } from '../../mappers/mapAnomalies.finance';
 
@@ -11,14 +13,16 @@ import { useBaseState } from '@/shared/composables';
 /**
  * Аномалии месяца (TASK-149): страница, фильтр «новые / все», отметка
  * «просмотрено». Поздний ответ прежнего месяца, страницы или фильтра
- * отбрасывается — довод `usePagedList` сверки.
+ * отбрасывается — довод `usePagedList` сверки. Аномалии ищутся только по ЯМ:
+ * у другой площадки — причина в `anomaliesNote` (TASK-180).
  */
-export function useAnomalies() {
+export function useAnomalies(marketplace: Readonly<Ref<FinanceMarketplace>>) {
   const [anomalies, setAnomalies, anomaliesLoading, resetAnomalies] =
     useBaseState<AnomaliesModel | null>(null);
   const anomaliesPage = ref(1);
   const anomaliesFilter = ref<AnomalyFilter>('new');
   const anomaliesError = ref<string | null>(null);
+  const anomaliesNote = ref<string | null>(null);
   const reviewError = ref<string | null>(null);
   const reviewing = ref<string | null>(null);
   let month: string | null = null;
@@ -33,12 +37,16 @@ export function useAnomalies() {
     try {
       const skip = (nextPage - 1) * ANOMALIES_PAGE_SIZE;
       const result = await financeApi.anomalies(
+        marketplace.value,
         nextMonth,
         skip,
         ANOMALIES_PAGE_SIZE,
         anomaliesFilter.value === 'new',
       );
-      if (run === generation) setAnomalies(toAnomaliesModel(result));
+      if (run !== generation) return;
+      const unsupported = isFinanceUnsupported(result);
+      anomaliesNote.value = unsupported ? result.note : null;
+      setAnomalies(unsupported ? null : toAnomaliesModel(result));
     } catch (e) {
       if (run === generation) {
         anomaliesError.value = e instanceof Error ? e.message : 'Не удалось загрузить аномалии';
@@ -69,7 +77,7 @@ export function useAnomalies() {
     reviewing.value = key;
     reviewError.value = null;
     try {
-      await financeApi.reviewAnomalies([key], reviewed);
+      await financeApi.reviewAnomalies(marketplace.value, [key], reviewed);
       await fetchAnomalies(month, anomaliesPage.value);
       // Последняя строка страницы ушла под фильтром — шаг назад, а не пустая страница.
       const pages = anomaliesPages.value;
@@ -88,6 +96,7 @@ export function useAnomalies() {
     anomaliesPage.value = 1;
     anomaliesFilter.value = 'new';
     anomaliesError.value = null;
+    anomaliesNote.value = null;
     reviewError.value = null;
     reviewing.value = null;
   }
@@ -99,6 +108,7 @@ export function useAnomalies() {
     anomaliesPages,
     anomaliesFilter,
     anomaliesError,
+    anomaliesNote,
     reviewError,
     reviewing,
     loadAnomalies: (nextMonth: string) => fetchAnomalies(nextMonth, 1),

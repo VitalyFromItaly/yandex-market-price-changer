@@ -3,6 +3,7 @@ export {
   NETWORK_ERROR_STATUS,
   filenameOf,
   http,
+  onForbidden,
   onUnauthorized,
   request,
   requestFile,

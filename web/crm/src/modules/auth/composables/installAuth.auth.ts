@@ -1,16 +1,17 @@
 import type { Pinia } from 'pinia';
 import type { Router } from 'vue-router';
 
-import { AUTH_ROUTE, SESSION_EXPIRED_TEXT } from '../constants/routeNames.auth';
+import { AUTH_ERROR_CODE } from '../auth.domain';
+import { AUTH_ROUTE, NO_STORE_HOME_PATH, SESSION_EXPIRED_TEXT } from '../constants/routeNames.auth';
 import { useAuthStore } from '../store/store.auth';
 
 import { clearReportCache, setCacheOwner } from '@/shared/cache';
-import { onUnauthorized, setTokenProvider } from '@/shared/http';
+import { onForbidden, onUnauthorized, setTokenProvider } from '@/shared/http';
 import { resetAllStores } from '@/shared/store';
 
 /**
  * Связка http-клиента с сессией: токен в каждый запрос, 401 с любого запроса —
- * выход на вход с причиной. shared/http о сторах не знает, поэтому связку
+ * выход на вход с причиной, 403 `NO_PLATFORM` — на «Подключения». shared/http о сторах не знает, поэтому связку
  * ставит модуль auth (зовётся из main.ts).
  */
 export function installAuth(router: Router, pinia: Pinia): void {
@@ -34,5 +35,14 @@ export function installAuth(router: Router, pinia: Pinia): void {
       name: AUTH_ROUTE.LOGIN.name,
       query: redirect === undefined || redirect === '/' ? {} : { redirect },
     });
+  });
+
+  // Без площадок открыты только «Подключения», профиль и помощь (решение
+  // crm_audience_no_platform): старая ссылка или закладка на раздел площадки
+  // ведёт туда, где заводят первый ключ, а не на экран с ошибкой.
+  onForbidden((error) => {
+    if (error.code !== AUTH_ERROR_CODE.NO_PLATFORM) return;
+    if (router.currentRoute.value.path === NO_STORE_HOME_PATH) return;
+    void router.replace(NO_STORE_HOME_PATH);
   });
 }

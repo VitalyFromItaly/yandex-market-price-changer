@@ -33,7 +33,7 @@ npm run db:sync-indexes      # after adding/changing a Mongo index (mongoose nev
 ```
 
 `scripts/*.ts` (`npx ts-node scripts/<name>.ts --user=<telegramUserId> …`) are read-only diagnostics
-and one-off loaders against live data: `diagnose-{orders,returns,finance,tariffs,deep-history,polza}`,
+and one-off loaders against live data: `diagnose-{orders,returns,finance,tariffs,deep-history,polza,fby-stock}`,
 `{import,pnl,cashflow,anomalies}-finance`, `load-purchase-prices`, `seed-products`,
 `sync-ozon-catalog`, `preview-hosting-reminder`, `preview-stock-push`, `backtest-forecast`, `backfill-stores`, and
 `eval-ai-analyst` (paid AI eval, only with `--run`; README ai-analyst). Each documents
@@ -120,6 +120,8 @@ Short form; the reasons are in the linked README. Do not "simplify" any of these
 - No logic in `src/modules/crm/` — delivery only; numbers come from the same services the bot uses.
 - Every request passes `CrmJwtGuard`; long work goes through `crm-jobs`; the store comes from the URL
   (`scopeStore`) — the web never changes the bot's active store.
+- Approved without any marketplace: login works, but only `@AllowWithoutPlatform` routes (connections,
+  profile, help, auth) pass — the rest is 403 `NO_PLATFORM`. Opt-in marker; don't put it on data routes.
 
 **Notifications (`src/modules/notifications/README.md`)**
 

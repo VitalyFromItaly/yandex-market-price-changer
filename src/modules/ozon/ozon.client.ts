@@ -1,6 +1,8 @@
 import { Logger } from '@nestjs/common';
 import axios, { type AxiosError, type AxiosInstance } from 'axios';
 
+import { shiftDay } from '../finance/finance-period';
+import { type IOzonAccrualType } from '../finance/ozon-journal';
 import { type IRetryOptions, type TSleep, realSleep } from '../yandex/yandex-retry';
 
 import { OZON_RETRY, withOzonRetry } from './ozon-retry';
@@ -33,8 +35,18 @@ export const OZON_PATHS = {
   fbsPostings: '/v3/posting/fbs/list',
   /** PostingAPI_GetFboPostingList: отправления FBO, `offset`, `result` — массив без `has_next`. */
   fboPostings: '/v2/posting/fbo/list',
-  /** FinanceAPI_FinanceTransactionListV3: операции за период ≤ 1 месяца, `page` с 1 до `page_count`. */
-  financeTransactions: '/v3/finance/transaction/list',
+  /**
+   * GetFinanceAccrualByDay: начисления за ОДИН день, курсор `last_id` (живёт 15 мин). Заменил
+   * /v3/finance/transaction/list — тот Ozon отключил 8.09.2026 (TASK-194).
+   */
+  financeAccrualByDay: '/v1/finance/accrual/by-day',
+  /** GetFinanceAccrualTypes: справочник типов начислений `{id, name, description}`. */
+  financeAccrualTypes: '/v1/finance/accrual/types',
+  /**
+   * FinanceAPI_FinanceBalance: сальдо и выплаты за `date_from…date_to` (≤ 30 дней). Берём по ОДНОМУ
+   * дню — выплаты по операции API не даёт, день с `payments > 0` и есть выплата (TASK-184).
+   */
+  financeBalance: '/v1/finance/balance',
   /** WarehouseAPI_WarehouseList: склады FBS/rFBS продавца (TASK-175). Чтение. */
   warehouses: '/v1/warehouse/list',
   /** ProductAPI_ProductsStocksV2: ЗАПИСЬ остатков FBS на склад продавца (TASK-175) — без повторов. */
@@ -46,12 +58,6 @@ export const OZON_PATHS = {
  * на весь запрос.
  */
 export const OZON_STOCKS_WRITE_BATCH = 100;
-
-/**
- * Страница списка операций. Документация Ozon называет потолок 1000; Go-клиент
- * своего не пишет. Больше страница — меньше запросов к квоте ключа.
- */
-export const OZON_FINANCE_PAGE_SIZE = 1000;
 
 /**
  * Страница отправлений. Источники расходятся: у FBS встречается и 1000, и 50,
@@ -321,43 +327,70 @@ export class OzonSellerClient {
   }
 
   /**
-   * Финансовые операции за интервал (TASK-131) — как пришли, сырыми объектами:
-   * их сохраняет журнал (`raw`), а разбирает `ozon-journal.ts`. Только чтение.
-   * Интервал ≤ 1 месяца — режет вызывающий.
+   * Начисления за один день (TASK-194) — как пришли, сырыми объектами: их
+   * сохраняет журнал (`raw`), а разбирает `ozon-journal.ts`. Только чтение.
    *
-   * Страницы — с 1 до `page_count`. Собрано меньше, чем `row_count`, — ошибка,
-   * а не неполный список: импорт снимает строки периода, которых нет в новой
-   * версии, и недокачанная страница сняла бы настоящие операции.
+   * Курсор `last_id` — с тем же `date` (иначе Ozon отвечает 400); пустой —
+   * день кончился. Счётчика строк у метода нет, поэтому неполный ответ ловится
+   * формой: ответ без массива `accruals`, тот же курсор по кругу или потолок
+   * страниц — ошибка, а не «всё»: импорт снимает строки периода, которых нет
+   * в новой версии, и недокачанный день снял бы настоящие начисления.
    */
-  public async listFinanceOperations(from: Date, to: Date): Promise<TRaw[]> {
+  public async listAccrualsByDay(day: string): Promise<TRaw[]> {
     const byId = new Map<string, TRaw>();
-    let rowCount = 0;
+    const seen = new Set<string>();
+    let lastId = '';
     for (let page = 1; page <= OZON_MAX_PAGES; page += 1) {
-      const body = {
-        filter: {
-          date: { from: from.toISOString(), to: to.toISOString() },
-          operation_type: [],
-          posting_number: '',
-          transaction_type: 'all',
-        },
-        page,
-        page_size: OZON_FINANCE_PAGE_SIZE,
-      };
-      const result = mapFinanceTransactions(
-        await this.call(() => this.http.post(OZON_PATHS.financeTransactions, body)),
+      const body = { date: day, last_id: lastId };
+      const result = mapAccrualsByDay(
+        await this.call(() => this.http.post(OZON_PATHS.financeAccrualByDay, body)),
       );
-      rowCount = Math.max(rowCount, result.rowCount);
-      for (const operation of result.operations)
-        byId.set(idString(operation.operation_id), operation);
-      if (!result.operations.length || page >= result.pageCount) break;
+      if (!result.complete) {
+        throw new Error(`Ozon не отдал список начислений за ${day}: журнал не тронут`);
+      }
+      for (const accrual of result.accruals) byId.set(idString(accrual.accrual_id), accrual);
+      if (!result.lastId || !result.accruals.length) return [...byId.values()];
+      if (seen.has(result.lastId)) {
+        throw new Error(
+          `Ozon вернул тот же курсор начислений за ${day}: список неполный, журнал не тронут`,
+        );
+      }
+      seen.add(result.lastId);
+      lastId = result.lastId;
     }
-    if (byId.size < rowCount) {
-      throw new Error(
-        `Ozon отдал ${byId.size} операций из ${rowCount} за ${from.toISOString()}…${to.toISOString()}: ` +
-          'список неполный, журнал не тронут',
-      );
+    throw new Error(`Начисления Ozon за ${day} не уложились в ${OZON_MAX_PAGES} страниц`);
+  }
+
+  /**
+   * Начисления за дни `from…to` включительно (ГГГГ-ММ-ДД) — ПОСЛЕДОВАТЕЛЬНО:
+   * метод берёт один день, а параллельные запросы ловят 429 уже на 0,3 rps.
+   */
+  public async listAccruals(from: string, to: string): Promise<TRaw[]> {
+    const accruals: TRaw[] = [];
+    for (let day = from; day <= to; day = shiftDay(day, 1)) {
+      accruals.push(...(await this.listAccrualsByDay(day)));
     }
-    return [...byId.values()];
+    return accruals;
+  }
+
+  /** Справочник типов начислений: id → английское имя и русское описание. */
+  public async listAccrualTypes(): Promise<IOzonAccrualType[]> {
+    return mapAccrualTypes(
+      await this.call(() => this.http.post(OZON_PATHS.financeAccrualTypes, {})),
+    );
+  }
+
+  /**
+   * Сальдо и выплаты за один день (TASK-184, ГГГГ-ММ-ДД). Только чтение. Ответ
+   * не того вида — ошибка, а не нули: «выплат не было» проставило бы строкам
+   * «к получению» то, что Ozon уже перечислил.
+   */
+  public async balanceOfDay(day: string): Promise<IOzonDayBalance> {
+    const body = { date_from: day, date_to: day };
+    return mapFinanceBalance(
+      await this.call(() => this.http.post(OZON_PATHS.financeBalance, body)),
+      day,
+    );
   }
 
   /** Склады продавца (FBS и rFBS). Только чтение. */
@@ -603,27 +636,97 @@ export function mapStocksWrite(raw: unknown): IOzonStockWriteResult[] {
     });
 }
 
-// ─── Финансовые операции (TASK-131) ──────────────────────────────────────────
+// ─── Начисления (TASK-194) ───────────────────────────────────────────────────
 
 /**
- * Ответ /v3/finance/transaction/list: `{result: {operations, page_count, row_count}}`.
- * Операции остаются сырыми — журналу нужен ответ как есть; отброшены только
- * объекты без `operation_id`: ключа дедупа у них нет.
+ * Ответ /v1/finance/accrual/by-day: `{accruals, last_id}` (обёртка `result`
+ * тоже принимается). Начисления остаются сырыми; отброшены только объекты без
+ * `accrual_id` — ключа дедупа у них нет. `complete: false` — массива нет вовсе:
+ * это не «пустой день», а ответ, которого мы не знаем.
  */
-export function mapFinanceTransactions(raw: unknown): {
-  operations: TRaw[];
-  pageCount: number;
-  rowCount: number;
+export function mapAccrualsByDay(raw: unknown): {
+  accruals: TRaw[];
+  lastId: string;
+  complete: boolean;
 } {
   const level = levelOf(raw);
-  const list = Array.isArray(level.operations) ? level.operations : [];
+  const list = Array.isArray(level.accruals) ? level.accruals : null;
   return {
-    operations: list.filter(
+    accruals: (list ?? []).filter(
       (item): item is TRaw =>
-        !!item && typeof item === 'object' && idString((item as TRaw).operation_id).length > 0,
+        !!item && typeof item === 'object' && idString((item as TRaw).accrual_id).length > 0,
     ),
-    pageCount: numberOf(level.page_count) ?? 0,
-    rowCount: numberOf(level.row_count) ?? 0,
+    lastId: idString(level.last_id),
+    complete: list !== null,
+  };
+}
+
+/** Ответ /v1/finance/accrual/types: `{accrual_types: [{id, name, description}]}`. */
+export function mapAccrualTypes(raw: unknown): IOzonAccrualType[] {
+  const level = levelOf(raw);
+  const list = Array.isArray(level.accrual_types) ? (level.accrual_types as unknown[]) : [];
+  return list
+    .filter((item): item is TRaw => !!item && typeof item === 'object')
+    .map((item) => ({
+      id: idString(item.id),
+      name: textOf(item.name),
+      description: textOf(item.description),
+    }))
+    .filter((type) => type.id.length > 0);
+}
+
+// ─── Сальдо и выплаты (TASK-184) ─────────────────────────────────────────────
+
+/** Сальдо дня Ozon в копейках. */
+export interface IOzonDayBalance {
+  /** Сколько Ozon должен продавцу на начало дня (`total.opening_balance`). */
+  openingKopecks: number;
+  /** Сколько перечислил в этот день (Σ `total.payments`). */
+  paymentsKopecks: number;
+}
+
+/** Валюты выплат, которые журнал понимает: он в рублёвых копейках. Пустая — рубли. */
+const BALANCE_CURRENCIES = new Set(['', 'RUB', 'RUR']);
+
+/**
+ * Сумма из ответа balance в копейках: `{value, currency_code}` или голое число
+ * (схема — только из спеки, живого примера нет). Чужая валюта и не-число —
+ * ошибка: в рублёвый журнал их не сложить.
+ */
+function balanceKopecks(value: unknown, what: string, day: string): number {
+  const money = value && typeof value === 'object' ? (value as TRaw) : { value };
+  const currency = textOf(money.currency_code ?? money.currency).toUpperCase();
+  if (!BALANCE_CURRENCIES.has(currency)) {
+    throw new Error(`Ozon отдал ${what} за ${day} в валюте ${currency}: выплаты не разложены`);
+  }
+  const rubles = numberOf(money.value ?? money.amount);
+  if (rubles === undefined) {
+    throw new Error(`Ozon не отдал ${what} за ${day}: выплаты не разложены`);
+  }
+  return Math.round(rubles * 100);
+}
+
+/**
+ * Ответ /v1/finance/balance: `{total: {opening_balance, accrued, closing_balance,
+ * payments: [{currency_code, value}]}}` (обёртка `result` тоже принимается).
+ * Нет `total` или `opening_balance` — ошибка: неизвестное сальдо не ноль.
+ * Пустой `payments` — выплат в этот день не было. Знак выплаты спека не
+ * фиксирует (вычитается ли она из сальдо минусом) — берём модуль: выплата
+ * всегда от Ozon продавцу.
+ */
+export function mapFinanceBalance(raw: unknown, day: string): IOzonDayBalance {
+  const total = levelOf(raw).total;
+  if (!total || typeof total !== 'object') {
+    throw new Error(`Ozon не отдал сальдо за ${day}: выплаты не разложены`);
+  }
+  const data = total as TRaw;
+  const payments = Array.isArray(data.payments) ? data.payments : [];
+  return {
+    openingKopecks: balanceKopecks(data.opening_balance, 'входящее сальдо', day),
+    paymentsKopecks: payments.reduce<number>(
+      (sum, payment) => sum + Math.abs(balanceKopecks(payment, 'выплату', day)),
+      0,
+    ),
   };
 }
 

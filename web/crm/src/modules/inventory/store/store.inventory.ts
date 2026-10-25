@@ -1,4 +1,5 @@
 import type { InventoryResponse } from '../inventory.domain';
+import type { MarketplaceKey } from '@/navigation.sections';
 
 import { defineStore } from 'pinia';
 
@@ -8,24 +9,24 @@ import { useReportJob } from '@/shared/composables';
 
 /**
  * Стор «Склада» — фасад над фоновой задачей уровня аккаунта (`store: ''`).
- * Параметров нет, поэтому любой ответ этого kind-а — свой. Срез собирается
- * минутами (отчёты ЯМ, заказы WB), поэтому повторный вход в раздел задачу не
- * ставит — свежий срез берётся кнопкой «Обновить».
+ * Параметр — площадка экрана (TASK-182, из адреса): ответ сверяется с её эхом.
+ * Срез собирается минутами (отчёты ЯМ, заказы WB), поэтому повторный вход в
+ * раздел той же площадки задачу не ставит — свежий срез берётся «Обновить».
  */
 export const useInventoryStore = defineStore('inventory', () => {
-  const job = useReportJob<InventoryResponse, true>({
-    launch: () => ({ kind: INVENTORY_KIND, params: {}, store: '' }),
-    isOwn: () => true,
+  const job = useReportJob<InventoryResponse, MarketplaceKey>({
+    launch: (marketplace) => ({ kind: INVENTORY_KIND, params: { marketplace }, store: '' }),
+    isOwn: (data, marketplace) => (data.marketplace ?? 'ym') === marketplace,
   });
 
-  /** При открытии раздела: собирается или уже есть — новую задачу не ставим. */
-  function ensure(): void {
-    if (job.request.value !== null) return;
-    void job.run(true);
+  /** При открытии раздела: эта площадка собирается или уже есть — новую задачу не ставим. */
+  function ensure(marketplace: MarketplaceKey): void {
+    if (job.request.value === marketplace) return;
+    void job.run(marketplace);
   }
 
   function refresh(): void {
-    void job.run(true);
+    void job.run(job.request.value ?? 'ym');
   }
 
   return {

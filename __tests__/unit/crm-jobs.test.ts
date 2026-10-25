@@ -18,12 +18,14 @@ import { AdminCredential } from '../../src/database/schemas/admin-credential.sch
 import { CrmCredential } from '../../src/database/schemas/crm-credential.schema';
 import { CrmJobResult } from '../../src/database/schemas/crm-job-result.schema';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
+import { MarketplaceConnection } from '../../src/database/schemas/marketplace-connection.schema';
 import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { ActionLogService } from '../../src/database/services/action-log.service';
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
 import { CrmCredentialService } from '../../src/database/services/crm-credential.service';
 import { CrmJobResultService } from '../../src/database/services/crm-job-result.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
+import { MarketplaceConnectionService } from '../../src/database/services/marketplace-connection.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 import { CrmModule } from '../../src/modules/crm/crm.module';
@@ -37,6 +39,7 @@ import {
   MAX_RESULT_BYTES,
 } from '../../src/modules/crm/jobs/crm-jobs.domain';
 import { CrmForecastKinds } from '../../src/modules/crm/forecast/crm-forecast.kinds';
+import { CrmMarketplacesDashboardKinds } from '../../src/modules/crm/marketplaces-dashboard/crm-marketplaces-dashboard.kinds';
 import { CrmJobsProcessor } from '../../src/modules/crm/jobs/crm-jobs.processor';
 import { CrmJobsRegistry } from '../../src/modules/crm/jobs/crm-jobs.registry';
 import { JOB_TYPES, QUEUE_NAMES } from '../../src/modules/telegram';
@@ -112,13 +115,25 @@ describe('CrmJobs по HTTP', { timeout: 60_000 }, () => {
         CrmJobResultService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
+        {
+          provide: getModelToken(MarketplaceConnection.name),
+          useValue: inMemoryModel([
+            { telegramUserId: '444', marketplace: 'ozon', status: 'ok', accounts: [] },
+          ]),
+        },
         { provide: getModelToken(ActionLog.name), useValue: inMemoryModel() },
         { provide: getModelToken(AdminCredential.name), useValue: admin },
         { provide: getModelToken(CrmCredential.name), useValue: crm },
         { provide: getModelToken(CrmJobResult.name), useValue: results },
         {
           provide: getModelToken(UserAccess.name),
-          useValue: inMemoryModel([seller('222', 'Vasya'), seller('333', 'Petya')]),
+          // Оля — только Ozon: в UserAccess есть, документа YandexMarket нет.
+          useValue: inMemoryModel([
+            seller('222', 'Vasya'),
+            seller('333', 'Petya'),
+            seller('444', 'Olya'),
+          ]),
         },
         {
           provide: getModelToken(YandexMarket.name),
@@ -138,6 +153,7 @@ describe('CrmJobs по HTTP', { timeout: 60_000 }, () => {
         CrmJobResultService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
         ErrorReporter,
         AppConfigService,
         getQueueToken(QUEUE_NAMES.CRM_JOBS),
@@ -204,9 +220,17 @@ describe('CrmJobs по HTTP', { timeout: 60_000 }, () => {
     return ((await changed.json()) as { token: string }).token;
   }
 
-  /** POST без явного `store` — активный магазин бота (ключ STORE_KEY). */
-  const api = (token: string, path: string, body?: Record<string, unknown>) =>
-    fetch(`${base}/api/crm/ym/jobs${path}`, {
+  /**
+   * POST без явного `store` — активный магазин бота (ключ STORE_KEY). Маршрут —
+   * /api/crm/jobs; прежний /api/crm/ym/jobs — алиас (`root`), решение `crm_jobs_route`.
+   */
+  const api = (
+    token: string,
+    path: string,
+    body?: Record<string, unknown>,
+    root = '/api/crm/jobs',
+  ) =>
+    fetch(`${base}${root}${path}`, {
       method: body === undefined ? 'GET' : 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: body === undefined ? undefined : JSON.stringify({ store: STORE_KEY, ...body }),
@@ -326,6 +350,59 @@ describe('CrmJobs по HTTP', { timeout: 60_000 }, () => {
     await runLast();
     const status = (await (await api(vasya, `/${jobId}`)).json()) as { data: unknown };
     expect(status.data).toEqual({ telegramUserId: '222', campaign: '12345678' });
+  });
+
+  it('продавец без ЯМ (TASK-179/192): входит с Ozon, аккаунтный kind идёт по HTTP с store=null', async () => {
+    registry.register('account-any', {
+      features: [],
+      scope: 'account',
+      run: async ({ store, params }) => ({ data: { store, marketplace: params.marketplace } }),
+    });
+    await app.get(UserAccessService).setFeature('444', '999', FEATURE.OZON, true);
+    // Вход без YandexMarket — по подключению Ozon (TASK-192).
+    const olya = await tokenOf('olya');
+
+    const post = await api(olya, '', { kind: 'account-any', params: { marketplace: 'ozon' } });
+    expect(post.status).toBe(202);
+    const { jobId } = (await post.json()) as { jobId: string };
+    expect(queueAdd.mock.calls.at(-1)?.[1]).not.toHaveProperty('token');
+    await runLast();
+    const done = await api(olya, `/${jobId}`);
+    expect(await done.json()).toMatchObject({
+      status: 'done',
+      data: { store: null, marketplace: 'ozon' },
+    });
+
+    // Магазинному kind-у ЯМ нужен — отказ на POST, в очередь ничего не уходит.
+    queueAdd.mockClear();
+    const store = await api(olya, '', { kind: 'test-xlsx' });
+    expect(store.status).toBe(404);
+    expect(await store.json()).toMatchObject({ code: 'STORE_NOT_FOUND' });
+    expect(queueAdd).not.toHaveBeenCalled();
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it('params.marketplace одной функцией для всех kind-ов: мусор → 400, закрытая площадка → 403', async () => {
+    const vasya = await tokenOf('vasya');
+    const bad = await api(vasya, '', { kind: 'test-xlsx', params: { marketplace: 'amazon' } });
+    expect(bad.status).toBe(400);
+    const closed = await api(vasya, '', { kind: 'test-xlsx', params: { marketplace: 'wb' } });
+    expect(closed.status).toBe(403);
+    expect(await closed.json()).toMatchObject({ code: 'FEATURE_DISABLED' });
+    expect(queueAdd).not.toHaveBeenCalled();
+
+    await app.get(UserAccessService).setFeature('222', '999', FEATURE.WB, true);
+    const open = await api(vasya, '', { kind: 'test-xlsx', params: { marketplace: 'wb' } });
+    expect(open.status).toBe(202);
+  });
+
+  it('прежний маршрут /api/crm/ym/jobs — алиас: вкладки, открытые до деплоя, живут', async () => {
+    const vasya = await tokenOf('vasya');
+    const legacy = await api(vasya, '', { kind: 'test-xlsx' }, '/api/crm/ym/jobs');
+    expect(legacy.status).toBe(202);
+    const { jobId } = (await legacy.json()) as { jobId: string };
+    expect((await api(vasya, `/${jobId}`)).status).toBe(200);
+    expect((await api(vasya, `/${jobId}`, undefined, '/api/crm/ym/jobs')).status).toBe(200);
   });
 
   it('отчёт считается по открытому магазину, активный магазин бота не меняется', async () => {
@@ -500,6 +577,16 @@ describe('CrmJobs по HTTP', { timeout: 60_000 }, () => {
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ code: 'FEATURE_DISABLED' });
     }
+    expect(queueAdd).not.toHaveBeenCalled();
+  });
+
+  it('дашборд «Площадки» (TASK-191): закрытая marketplaces_dashboard → 403 FEATURE_DISABLED', async () => {
+    const none = {} as never;
+    new CrmMarketplacesDashboardKinds(registry, none, none, none).onModuleInit();
+    const token = await tokenOf('vasya');
+    const response = await api(token, '', { kind: 'marketplaces-dashboard:summary' });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: 'FEATURE_DISABLED' });
     expect(queueAdd).not.toHaveBeenCalled();
   });
 

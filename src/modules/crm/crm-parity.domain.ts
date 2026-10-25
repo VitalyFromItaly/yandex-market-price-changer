@@ -43,15 +43,12 @@ export const FEATURES_WITHOUT_SECTION: Readonly<Partial<Record<TFeatureKey, stri
   [FEATURE.FINANCE_UPLOAD]:
     'Вкладка «Загрузка» внутри «Финансов» (ym-finance, TASK-114); ' +
     'маршрут требует finance и finance_upload.',
+  [FEATURE.FINANCE_PULL]:
+    'Кнопка «Загрузить из Маркета» в пустых состояниях экранов над журналом (раздела нет); ' +
+    'маршрут требует finance и finance_pull.',
   [FEATURE.TAX_YEAR]:
     'Вкладка «Год» внутри «Налогов» (ym-taxes, решение tax_year_feature); ' +
     'маршруты и kind taxes:year требуют taxes и tax_year.',
-  [FEATURE.OZON]:
-    'Карточка Ozon на «Подключениях» (connections, TASK-161): без фичи она «скоро», ' +
-    'а PUT crm/ozon/connection и проверка связи отвечают 403.',
-  [FEATURE.WB]:
-    'Карточка Wildberries на «Подключениях» (connections, TASK-133): без фичи она «скоро», ' +
-    'а PUT crm/wb/connection и проверка связи отвечают 403.',
   [FEATURE.STOCK_PUSH_WRITE_YM]:
     'Кнопка «Записать в Яндекс.Маркет» внутри «Передачи остатков» (ym-stock-push, TASK-143); ' +
     'POST crm/ym/stock-push/apply требует stock_push и stock_push_write_ym.',

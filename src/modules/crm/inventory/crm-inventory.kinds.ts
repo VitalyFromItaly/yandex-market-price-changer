@@ -5,6 +5,7 @@ import { Injectable } from '@nestjs/common';
 
 import { InventoryService } from '../../inventory/inventory.service';
 import { FEATURE } from '../../telegram/bots/shared/features.domain';
+import { CrmJobError, parseJobMarketplace } from '../jobs/crm-jobs.domain';
 import { CrmJobsRegistry } from '../jobs/crm-jobs.registry';
 
 import { INVENTORY_KIND, toCrmInventory } from './crm-inventory.domain';
@@ -12,7 +13,8 @@ import { INVENTORY_KIND, toCrmInventory } from './crm-inventory.domain';
 /**
  * «Склад» (TASK-142) — kind уровня аккаунта под `inventory` (она требует
  * `finance` сама). Доставка: площадки собирает `InventoryService` (те же числа
- * читают правила уведомлений), здесь — перечисление полей ответа.
+ * читают правила уведомлений), здесь — перечисление полей ответа. Площадка —
+ * экрана (`params.marketplace`, TASK-182): /ym — только ЯМ, /ozon — только Ozon.
  */
 @Injectable()
 export class CrmInventoryKinds implements OnModuleInit {
@@ -30,16 +32,21 @@ export class CrmInventoryKinds implements OnModuleInit {
   }
 
   async summary(context: ICrmJobContext, now: Date = new Date()): Promise<ICrmJobOutput> {
+    const parsed = parseJobMarketplace(context.params, context.features ?? {});
+    if ('error' in parsed) throw new CrmJobError(parsed.text);
+    const { marketplace } = parsed;
     const snapshot = await this.inventory.build({
       telegramUserId: context.telegramUserId,
       store: context.store,
       features: context.features ?? {},
       now,
       movements: true,
+      marketplace,
     });
     return {
       data: toCrmInventory(snapshot.inventory, {
         now,
+        marketplace,
         columns: snapshot.columns,
         problems: snapshot.problems,
         notes: snapshot.notes,

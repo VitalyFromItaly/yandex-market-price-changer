@@ -97,46 +97,91 @@ const context = (features: Record<string, boolean> = ALL_OPEN, params = {}) =>
   }) as const;
 
 describe('«Лента заказов» CRM (TASK-144)', () => {
-  it('ЯМ по всем магазинам кабинета и Ozon с отменёнными; итоги по площадкам раздельно', async () => {
+  it('/ym — заказы всех магазинов кабинета, Ozon не запрашивается (TASK-182)', async () => {
     const { instance, placed, ozonOrders, orderFeed } = kinds();
     const { data } = await instance.list(context(ALL_OPEN, { period: { key: PERIOD.WEEK } }), NOW);
     const view = data as ICrmOrderFeedView;
 
     expect(placed).toHaveBeenCalledTimes(2);
+    expect(ozonOrders).not.toHaveBeenCalled();
+    expect(orderFeed.list).toHaveBeenCalledTimes(1);
+    expect(view.marketplace).toBe('ym');
+    expect(view.rows.map((row) => [row.marketplace, row.id, row.scheme])).toEqual([
+      ['ym', '200', 'FBY'],
+      ['ym', '100', 'FBS'],
+    ]);
+    expect(view.totals.map((t) => [t.marketplace, t.orders])).toEqual([['ym', 2]]);
+    expect(view.marketplaces.map((m) => m.marketplace)).toEqual(['ym']);
+    expect(view.period).toEqual({ key: PERIOD.WEEK, day: null });
+    expect(view.stages).toHaveLength(10);
+    expect(view.notes).toEqual([ORDER_FEED_ACT_NOTE]);
+  });
+
+  it('/ozon — только Ozon с отменёнными, ЯМ не запрашивается; без дублей с /ym', async () => {
+    const { instance, placed, ozonOrders, orderFeed } = kinds();
+    const params = { period: { key: PERIOD.WEEK }, marketplace: 'ozon' };
+    const view = (await instance.list(context(ALL_OPEN, params), NOW)).data as ICrmOrderFeedView;
+
+    expect(placed).not.toHaveBeenCalled();
     expect(ozonOrders).toHaveBeenCalledWith(
       { telegramUserId: SELLER, marketplace: 'ozon' },
       { key: PERIOD.WEEK },
       NOW,
     );
-    expect(orderFeed.list).toHaveBeenCalledTimes(2);
+    expect(orderFeed.list).toHaveBeenCalledTimes(1);
+    expect(view.marketplace).toBe('ozon');
     expect(view.rows.map((row) => [row.marketplace, row.id, row.scheme])).toEqual([
       ['ozon', '1-2-1', 'FBS'],
       ['ozon', '3-4-1', 'FBS'],
-      ['ym', '200', 'FBY'],
-      ['ym', '100', 'FBS'],
     ]);
-    expect(view.totals.map((t) => [t.marketplace, t.orders])).toEqual([
-      ['ym', 2],
-      ['ozon', 2],
-    ]);
-    expect(view.period).toEqual({ key: PERIOD.WEEK, day: null });
-    expect(view.stages).toHaveLength(10);
-    expect(view.notes).toContain(ORDER_FEED_ACT_NOTE);
+    expect(view.totals.map((t) => [t.marketplace, t.orders])).toEqual([['ozon', 2]]);
+    expect(view.notes).not.toContain(ORDER_FEED_ACT_NOTE);
     expect(view.rows[0].profitGap).toBe('no-operations');
+
+    const ym = (await instance.list(context(ALL_OPEN), NOW)).data as ICrmOrderFeedView;
+    const ids = [...view.rows, ...ym.rows].map((row) => `${row.marketplace}:${row.id}`);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('Ozon закрыт — его заказы не запрашиваются', async () => {
+  it('площадка: мусор и закрытая фича — отказ, а не тихий ЯМ', async () => {
     const { instance, ozonOrders } = kinds();
-    const { data } = await instance.list(context({ [FEATURE.ORDER_FEED]: true }), NOW);
+    await expect(
+      instance.list(context(ALL_OPEN, { marketplace: 'amazon' }), NOW),
+    ).rejects.toThrow('Площадка указана неверно');
+    await expect(
+      instance.list(context({ [FEATURE.ORDER_FEED]: true }, { marketplace: 'ozon' }), NOW),
+    ).rejects.toThrow('«Ozon» закрыта');
     expect(ozonOrders).not.toHaveBeenCalled();
-    expect((data as ICrmOrderFeedView).marketplaces.map((m) => m.marketplace)).toEqual(['ym']);
   });
 
-  it('Ozon не подключён и сбой магазина ЯМ — строки причин, остальное живёт', async () => {
+  it('площадка без возможности orders — пустая лента, а не исключение', async () => {
+    const { instance } = kinds();
+    const view = (await instance.list(context(ALL_OPEN, { marketplace: 'wb' }), NOW))
+      .data as ICrmOrderFeedView;
+    expect(view.marketplace).toBe('wb');
+    expect(view.rows).toEqual([]);
+    expect(view.marketplaces).toEqual([]);
+  });
+
+  it('Ozon не подключён — строка причины', async () => {
     const { instance } = kinds({
       ozonOrders: vi.fn(async () => {
         throw new MarketplaceNotConnectedError('ozon', SELLER, 'no-credentials');
       }),
+    });
+    const view = (await instance.list(context(ALL_OPEN, { marketplace: 'ozon' }), NOW))
+      .data as ICrmOrderFeedView;
+    expect(view.rows).toEqual([]);
+    expect(view.marketplaces).toEqual([
+      { marketplace: 'ozon', label: expect.any(String), state: 'not-connected' },
+    ]);
+    expect(view.problems).toEqual([
+      { marketplace: 'ozon', storeName: null, problem: ORDER_FEED_NOT_CONNECTED_TEXT('ozon') },
+    ]);
+  });
+
+  it('сбой магазина ЯМ — строка причины, остальные магазины живут', async () => {
+    const { instance } = kinds({
       placed: vi.fn(async (store: { campaign_id: string }) => {
         if (store.campaign_id === 'c2') throw new Error('Маркет не ответил');
         return { orders: [ymOrder(100, '01-10-2026')], cancelled: [] };
@@ -146,13 +191,7 @@ describe('«Лента заказов» CRM (TASK-144)', () => {
     expect(view.rows.map((row) => row.id)).toEqual(['100']);
     expect(view.marketplaces).toEqual([
       { marketplace: 'ym', label: expect.any(String), state: 'ok' },
-      { marketplace: 'ozon', label: expect.any(String), state: 'not-connected' },
     ]);
-    expect(view.problems).toContainEqual({
-      marketplace: 'ozon',
-      storeName: null,
-      problem: ORDER_FEED_NOT_CONNECTED_TEXT('ozon'),
-    });
     expect(view.problems.some((p) => p.marketplace === 'ym' && p.storeName === 'Второй')).toBe(
       true,
     );

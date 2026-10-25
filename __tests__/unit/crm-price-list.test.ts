@@ -14,6 +14,7 @@ import { AdminCredential } from '../../src/database/schemas/admin-credential.sch
 import { CrmCredential } from '../../src/database/schemas/crm-credential.schema';
 import { CrmJobResult } from '../../src/database/schemas/crm-job-result.schema';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
+import { MarketplaceConnection } from '../../src/database/schemas/marketplace-connection.schema';
 import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { ActionLogService } from '../../src/database/services/action-log.service';
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
@@ -22,6 +23,7 @@ import { CrmJobResultService } from '../../src/database/services/crm-job-result.
 import { CostHistoryService } from '../../src/database/services/cost-history.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
+import { MarketplaceConnectionService } from '../../src/database/services/marketplace-connection.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { CrmModule } from '../../src/modules/crm/crm.module';
 import { CrmPriceListController } from '../../src/modules/crm/price-list/crm-price-list.controller';
@@ -106,6 +108,8 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
         CrmJobResultService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
+        { provide: getModelToken(MarketplaceConnection.name), useValue: inMemoryModel() },
         { provide: getModelToken(ActionLog.name), useValue: logs },
         { provide: getModelToken(AdminCredential.name), useValue: admin },
         { provide: getModelToken(CrmCredential.name), useValue: crm },
@@ -166,6 +170,7 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
         CrmJobResultService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
         ErrorReporter,
         PurchasePriceService,
         CostHistoryService,

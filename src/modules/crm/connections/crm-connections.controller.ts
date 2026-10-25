@@ -15,6 +15,7 @@ import {
 import { isMarketplace } from '../../../shared/marketplace';
 import { marketplaceFeatures } from '../../marketplaces/marketplace-connections.domain';
 import { MarketplaceConnectionsService } from '../../marketplaces/marketplace-connections.service';
+import { AllowWithoutPlatform } from '../crm-auth.decorators';
 import { CrmJwtGuard, IRequestWithCrmUser } from '../crm-jwt.guard';
 
 import {
@@ -36,6 +37,7 @@ import {
  * повторная проверка.
  */
 @Controller('crm/connections')
+@AllowWithoutPlatform()
 @UseGuards(CrmJwtGuard)
 export class CrmConnectionsController {
   constructor(

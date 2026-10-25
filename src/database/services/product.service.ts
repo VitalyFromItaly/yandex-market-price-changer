@@ -480,6 +480,31 @@ export class ProductService {
       .exec();
   }
 
+  /**
+   * Товары по артикулам журнала площадки (TASK-181), ключ карты — артикул журнала.
+   * Импорт Ozon/WB кладёт в журнал ключ закупа: артикул ЯМ привязанного товара,
+   * а без карточки ЯМ — свой артикул площадки (`ozonPurchaseKeys`, `wbPurchaseKeys`).
+   * Поэтому сначала артикул ЯМ, затем — для ненайденных — артикул площадки.
+   */
+  async findByJournalSkus(
+    telegramUserId: string,
+    marketplace: TMarketplace,
+    skus: readonly string[],
+  ): Promise<Map<string, Product>> {
+    const bySku = new Map<string, Product>();
+    for (const product of await this.findByYmSkus(telegramUserId, skus)) {
+      const ym = product.marketplaceSkus?.ym;
+      if (ym) bySku.set(ym, product);
+    }
+    const rest = skus.filter((sku) => !bySku.has(sku));
+    if (marketplace === 'ym' || !rest.length) return bySku;
+    for (const product of await this.findByMarketplaceSkus(telegramUserId, marketplace, rest)) {
+      const own = product.marketplaceSkus?.[marketplace];
+      if (own && !bySku.has(own)) bySku.set(own, product);
+    }
+    return bySku;
+  }
+
   /** Товары по внутренним SKU — так их адресует загрузка прайса. */
   async findByInternalSkus(telegramUserId: string, skus: readonly string[]): Promise<Product[]> {
     if (!skus.length) return [];

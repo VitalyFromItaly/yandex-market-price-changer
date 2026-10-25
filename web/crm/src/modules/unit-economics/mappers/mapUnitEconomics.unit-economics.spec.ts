@@ -9,6 +9,7 @@ import {
   toUnitRow,
   unconfirmedNote,
   unitCardLines,
+  unitPlatforms,
 } from './mapUnitEconomics.unit-economics';
 
 function sku(over: Partial<UnitSku> = {}): UnitSku {
@@ -141,5 +142,17 @@ describe('признак «прибыль не подтверждена»', () =
     expect(
       unconfirmedNote(view({ confirmed: true, orders: 0, revenueKopecks: 0, skus: [] })),
     ).toBeNull();
+  });
+});
+
+describe('колонки карточки по площадке (TASK-181)', () => {
+  it('ЯМ — числа у Маркета, Ozon и WB «скоро»; Ozon — только своя колонка с числами', () => {
+    expect(unitPlatforms('ym').map((p) => [p.key, p.ready])).toEqual([
+      ['ym', true],
+      ['ozon', false],
+      ['wb', false],
+    ]);
+    expect(unitPlatforms('ozon')).toEqual([{ key: 'ozon', label: 'Ozon', ready: true }]);
+    expect(unitPlatforms('wb').map((p) => p.label)).toEqual(['Wildberries']);
   });
 });

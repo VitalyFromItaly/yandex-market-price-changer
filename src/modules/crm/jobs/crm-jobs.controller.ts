@@ -6,6 +6,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -22,9 +23,11 @@ import { randomUUID } from 'node:crypto';
 import { CrmJobResultService } from '../../../database/services/crm-job-result.service';
 import { JOB_TYPES, QUEUE_NAMES } from '../../telegram';
 import { StoresService } from '../../yandex/stores/stores.service';
+import { FEATURE_DISABLED } from '../crm-features.domain';
 import { CrmJwtGuard, IRequestWithCrmUser } from '../crm-jwt.guard';
 import { STORE_NOT_FOUND, STORE_NOT_FOUND_TEXT } from '../stores/crm-stores.domain';
 
+import { parseJobMarketplace } from './crm-jobs.domain';
 import { CrmJobsRegistry } from './crm-jobs.registry';
 
 interface IStartJobDto {
@@ -50,12 +53,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Фоновые задачи CRM: /api/crm/ym/jobs. Долгий отчёт ставится в очередь
+ * Фоновые задачи CRM: /api/crm/jobs (решение `crm_jobs_route`, TASK-179) —
+ * маршрут общий для экранов всех площадок, площадка экрана едет в
+ * `params.marketplace`. Прежний /api/crm/ym/jobs — алиас для вкладок, открытых
+ * до деплоя; новых вызовов туда нет. Долгий отчёт ставится в очередь
  * `crm-jobs`, веб опрашивает статус и забирает файл. Результат виден только
  * своему продавцу: чужой jobId отвечает тем же 404, что и несуществующий, —
  * иначе по ответу можно было бы перебирать чужие задачи.
  */
-@Controller('crm/ym/jobs')
+@Controller(['crm/jobs', 'crm/ym/jobs'])
 @UseGuards(CrmJwtGuard)
 export class CrmJobsController {
   constructor(
@@ -85,6 +91,15 @@ export class CrmJobsController {
         ? undefined
         : await this.storeCampaign(request, kind, body?.store, definition.features);
     if (definition.scope === 'account') await this.guard.assertFeatures(user, definition.features);
+    const marketplace = parseJobMarketplace(params, user.features);
+    if ('error' in marketplace) {
+      if (marketplace.error === 'invalid') throw new BadRequestException(marketplace.text);
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: FEATURE_DISABLED,
+        message: marketplace.text,
+      });
+    }
 
     const claim = await this.results.claim({
       jobId: randomUUID(),

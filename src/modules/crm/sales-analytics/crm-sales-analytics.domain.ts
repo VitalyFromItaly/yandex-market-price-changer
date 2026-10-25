@@ -52,6 +52,8 @@ export interface ICrmSalesMarketplace extends ISalesFigures {
 }
 
 export interface ICrmSalesAnalytics {
+  /** Площадка журнала (TASK-181) — эхо для сверки ответа с запросом на экране. */
+  marketplace: TMarketplace;
   period: IFinancePeriod;
   previousPeriod: IFinancePeriod;
   status: TFinancePeriodStatus;
@@ -86,14 +88,16 @@ export function toCrmSalesAnalytics(
   current: IPnlReport,
   previous: IPnlReport,
   products: ReadonlyMap<string, IBrandSource>,
+  marketplace: TMarketplace = 'ym',
 ): ICrmSalesAnalytics {
-  const now: ISalesAnalytics = salesAnalyticsOf(current.pnl, products);
-  const before: ISalesAnalytics = salesAnalyticsOf(previous.pnl, products);
+  const now: ISalesAnalytics = salesAnalyticsOf(current.pnl, products, marketplace);
+  const before: ISalesAnalytics = salesAnalyticsOf(previous.pnl, products, marketplace);
   const beforeSku = new Map(before.skus.map((row) => [row.sku, row]));
   const beforeBrand = new Map(before.brands.map((row) => [brandId(row.key), row]));
   const beforeMarketplace = new Map(before.marketplaces.map((row) => [row.marketplace, row]));
 
   return {
+    marketplace,
     period: current.pnl.period,
     previousPeriod: previous.pnl.period,
     status: current.status,

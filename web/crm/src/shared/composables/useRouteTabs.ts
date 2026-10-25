@@ -1,6 +1,6 @@
-import type { ComputedRef } from 'vue';
+import type { ComputedRef, MaybeRefOrGetter } from 'vue';
 
-import { computed } from 'vue';
+import { computed, toValue } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 /** Вкладка из URL, если она открыта; иначе первая открытая; null — открытых нет. */
@@ -15,10 +15,11 @@ export function resolveTab<T extends { key: string }>(
  * Активная вкладка живёт в параметре пути (`/ym/<раздел>/:<param>?`): F5 и
  * ссылка ведут в ту же вкладку. Для первой открытой параметр опускается —
  * адрес раздела остаётся адресом из меню. `replace`, не `push`: переключение
- * вкладки — не шаг истории.
+ * вкладки — не шаг истории. Имя маршрута может зависеть от площадки адреса
+ * (`ym-finance` / `ozon-finance`) — тогда геттером.
  */
 export function useRouteTabs<T extends { key: string }>(
-  routeName: string,
+  routeName: MaybeRefOrGetter<string>,
   param: string,
   open: ComputedRef<readonly T[]>,
 ) {
@@ -32,7 +33,7 @@ export function useRouteTabs<T extends { key: string }>(
     set: (key) => {
       const isFirst = key === open.value[0]?.key;
       void router.replace({
-        name: routeName,
+        name: toValue(routeName),
         params: isFirst || key === undefined ? {} : { [param]: key },
       });
     },

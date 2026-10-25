@@ -763,8 +763,8 @@ their own settings, with no way to fix a token or find out whom to ask.
   which is exactly how «Unit-экономика» stayed visible with «Финансы» closed and led into a 403. A
   resolved snapshot resolves to itself, so double resolution is harmless. Admins pass through
   `allFeaturesEnabled()` (all true ⇒ dependencies open). Today `unit_economics`,
-  `sales_analytics`, `sku_ratings`, `forecast`, `marketplace_compare`, `inventory`, `finance_anomalies`,
-  `finance_upload` and `profit_actual` require `finance`, `tax_year` requires `taxes` **and** `finance`,
+  `sales_analytics`, `sku_ratings`, `forecast`, `marketplace_compare`, `marketplaces_dashboard`, `inventory`, `finance_anomalies`,
+  `finance_upload`, `finance_pull` and `profit_actual` require `finance`, `tax_year` requires `taxes` **and** `finance`,
   `ai_analyst` and `ai_period_review` require `ai` **and** `finance`, `feedback_ai_reply` requires
   `goods_feedback` **and** `ai` (its bot button is `fb:ai:<id>`, gated for both), `stock_push_write_ym` requires
   `stock_push`, `stock_push_write_ozon`/`stock_push_write_wb` require `stock_push` **and** `ozon`/`wb`, `stock_push_schedule` requires `stock_push`; `overview` and `price_calculator` do **not** — they depend on

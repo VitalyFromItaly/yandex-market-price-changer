@@ -30,6 +30,7 @@ import {
   OVERVIEW_STOCKS_KIND,
   OVERVIEW_SUMMARY_KIND,
   cancelledPeriodOf,
+  cancelledRangeUnsupportedText,
   stockValueOf,
 } from '../../src/modules/crm/overview/crm-overview.domain';
 import { CrmOverviewKinds } from '../../src/modules/crm/overview/crm-overview.kinds';
@@ -41,6 +42,8 @@ import { FinancePurchasesService } from '../../src/modules/finance/finance-purch
 import { FinanceTaxService } from '../../src/modules/finance/finance-tax.service';
 import { FinanceService } from '../../src/modules/finance/finance.service';
 import { PNL_SECTION } from '../../src/modules/finance/pnl';
+import { NOT_CONNECTED_TEXT } from '../../src/modules/inventory/inventory.domain';
+import { MarketplaceNotConnectedError } from '../../src/modules/marketplaces/marketplace-adapter';
 import { journalKeys, nettingRowToOperation } from '../../src/modules/finance/ym-journal';
 import {
   FEATURE,
@@ -127,12 +130,17 @@ afterAll(async () => {
   await pg?.close();
 });
 
-async function seed(rows: Record<string, unknown>[], period = SEPT) {
+async function seed(
+  rows: Record<string, unknown>[],
+  period = SEPT,
+  marketplace: 'ym' | 'ozon' = 'ym',
+) {
+  const reportType = marketplace === 'ym' ? 'united-netting' : 'ozon-transaction-list';
   const { document } = await documents.registerVersion({
-    marketplace: 'ym',
+    marketplace,
     telegramUserId: SELLER,
     businessId: 'b1',
-    reportType: 'united-netting',
+    reportType,
     periodFrom: period.from,
     periodTo: period.to,
     buffer: Buffer.from(JSON.stringify(rows)),
@@ -141,15 +149,17 @@ async function seed(rows: Record<string, unknown>[], period = SEPT) {
   });
   const keys = journalKeys(rows);
   await operations.upsertMany(
-    rows.map((r, i) =>
-      nettingRowToOperation(r, keys[i], {
+    // Ozon — те же строки под своей площадкой: сводке важна площадка журнала, не формат отчёта.
+    rows.map((r, i) => ({
+      ...nettingRowToOperation(r, keys[i], {
         telegramUserId: SELLER,
         businessId: 'b1',
         documentId: document.id,
         documentVersion: document.version,
-        periodKey: financePeriodKey('united-netting', period),
+        periodKey: financePeriodKey(reportType, period),
       }),
-    ),
+      marketplace,
+    })),
   );
 }
 
@@ -164,6 +174,7 @@ function overviewKinds(over: Partial<Record<string, unknown>> = {}) {
     (over.marketplaces ?? {}) as never,
     (over.reports ?? {}) as never,
     (over.purchasePrices ?? {}) as never,
+    (over.products ?? {}) as never,
   );
 }
 
@@ -400,6 +411,7 @@ describe('фича и гейт', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     kinds.onModuleInit();
     const byKind = Object.fromEntries(register.mock.calls.map(([kind, def]) => [kind, def]));
@@ -409,5 +421,156 @@ describe('фича и гейт', () => {
     });
     expect(byKind[OVERVIEW_STOCKS_KIND].features).toEqual([FEATURE.OVERVIEW]);
     expect(byKind[OVERVIEW_CANCELLED_KIND].features).toEqual([FEATURE.OVERVIEW]);
+  });
+});
+
+describe('площадка экрана (TASK-183)', () => {
+  const OZON = { [FEATURE.OZON]: true };
+  const SEPT_PARAMS = { from: SEPT.from, to: SEPT.to, prevFrom: AUG.from, prevTo: AUG.to };
+  const ozonOf = (params: Record<string, unknown>) =>
+    contextOf({ ...params, marketplace: 'ozon' }, { telegramUserId: SELLER }, OZON);
+
+  /** Реестр: Ozon отвечает остатками и заказами; ЯМ спрашивать нельзя. */
+  function ozonRegistry(listStocks: unknown, listOrders: unknown) {
+    const require = vi.fn((marketplace: string) => {
+      if (marketplace !== 'ozon') throw new Error(`спросили ${marketplace}`);
+      return { listStocks };
+    });
+    const capability = vi.fn((marketplace: string, name: string) =>
+      marketplace === 'ozon' && name === 'orders' ? { listOrders } : null,
+    );
+    return { require, capability };
+  }
+
+  beforeEach(async () => {
+    await pg.reset();
+  });
+
+  it('сводка Ozon — журнал и «к получению» Ozon; ЯМ не изменилась', async () => {
+    await seed([row()]);
+    const ymBefore = (await overviewKinds().summary(contextOf(SEPT_PARAMS), OCT_15))
+      .data as ICrmOverviewSummaryView;
+    await seed(
+      [
+        row({
+          orderId: 7,
+          count: 1,
+          transactionSum: 2500,
+          paymentStatus: null,
+          bankOrderId: null,
+          bankOrderDate: null,
+          bankSum: null,
+        }),
+      ],
+      SEPT,
+      'ozon',
+    );
+    const ym = (await overviewKinds().summary(contextOf(SEPT_PARAMS), OCT_15))
+      .data as ICrmOverviewSummaryView;
+    const ozon = (await overviewKinds().summary(ozonOf(SEPT_PARAMS), OCT_15))
+      .data as ICrmOverviewSummaryView & { marketplace: string };
+
+    expect(ym).toEqual(ymBefore);
+    expect(ozon.marketplace).toBe('ozon');
+    expect(ozon.current.salesKopecks).toBe(250_000);
+    expect(ym.current.salesKopecks).toBe(500_000);
+    expect(ozon.receivable.totalKopecks).toBe(250_000);
+  });
+
+  it('остатки Ozon — по всем местам, закуп по артикулу ЯМ карточки; в пути без цены — сумма null', async () => {
+    const listStocks = vi.fn(async () => ({
+      takenAt: new Date(),
+      placement: null,
+      byLocation: {
+        seller: { 'OZ-A1': { available: 2, reserved: null } },
+        marketplace: { 'OZ-A1': { available: 1, reserved: null }, X: { available: 4, reserved: 0 } },
+      },
+    }));
+    const order = (stage: string, sales: number | null, count = 1) => ({
+      stage,
+      sales,
+      items: [{ sku: 'OZ-A1', count, price: sales }],
+    });
+    const listOrders = vi.fn(async () => ({
+      orders: [order('in_transit', 100, 2), order('delivered', null), order('new', 50)],
+      cancelled: [],
+    }));
+    const reports = { build: vi.fn(), collectPlacedOrders: vi.fn() };
+    const kinds = overviewKinds({
+      marketplaces: ozonRegistry(listStocks, listOrders),
+      reports,
+      purchasePrices: {
+        findBySkus: vi.fn(async (_uid: string, skus: string[]) => {
+          expect(skus.sort()).toEqual(['A1', 'X']);
+          return new Map([['A1', { price: 1000 }]]);
+        }),
+      },
+      products: {
+        findByJournalSkus: async () =>
+          new Map([['OZ-A1', { marketplaceSkus: { ym: 'A1', ozon: 'OZ-A1' }, name: 'Часы' }]]),
+      },
+    });
+
+    const view = (await kinds.stocks(ozonOf({}), OCT_15)).data as ICrmOverviewStocksView;
+    expect(view.marketplace).toBe('ozon');
+    expect(view.stores).toBe(1);
+    // 1000 ₽ минус общая скидка 10 % = 900 ₽ × (2 + 1).
+    expect(view.stockValueKopecks).toBe(270_000);
+    expect(view.stockUnits).toBe(7);
+    expect(view.withoutCost).toEqual({ skus: 1, units: 4 });
+    expect(view.inTransit).toEqual({ orders: 2, units: 3, salesKopecks: null });
+    expect(view.problems).toEqual([]);
+    expect(reports.build).not.toHaveBeenCalled();
+    expect(listOrders).toHaveBeenCalledWith(
+      { telegramUserId: SELLER, marketplace: 'ozon' },
+      { key: PERIOD.ALL },
+      OCT_15,
+    );
+  });
+
+  it('Ozon не подключён — одна строка причины, а не нули и не повтор', async () => {
+    const notConnected = () => {
+      throw new MarketplaceNotConnectedError('ozon', SELLER, 'no-credentials', 'stocks');
+    };
+    const kinds = overviewKinds({
+      marketplaces: ozonRegistry(vi.fn(notConnected), vi.fn(notConnected)),
+    });
+    const view = (await kinds.stocks(ozonOf({}), OCT_15)).data as ICrmOverviewStocksView;
+    expect(view.problems).toEqual([{ storeName: 'Ozon', problem: NOT_CONNECTED_TEXT('ozon') }]);
+    expect(view.inTransit).toBeNull();
+  });
+
+  it('отмены Ozon — из заказов Ozon; неподдержанный период — причина без «Маркета»', async () => {
+    const listOrders = vi.fn(async () => ({ orders: [], cancelled: [{}, {}, {}] }));
+    const reports = { collectPlacedOrders: vi.fn() };
+    const kinds = overviewKinds({ marketplaces: ozonRegistry(vi.fn(), listOrders), reports });
+    const month = { from: '2026-10-01', to: '2026-10-15', prevFrom: SEPT.from, prevTo: '2026-09-15' };
+    const counted = (await kinds.cancelled(ozonOf(month), OCT_15)).data as ICrmOverviewCancelledView;
+    expect(counted).toMatchObject({ marketplace: 'ozon', count: 3, note: null, stores: 1 });
+    expect(listOrders).toHaveBeenCalledWith(
+      { telegramUserId: SELLER, marketplace: 'ozon' },
+      { key: PERIOD.MONTH },
+      OCT_15,
+    );
+    expect(reports.collectPlacedOrders).not.toHaveBeenCalled();
+
+    const unsupported = (await kinds.cancelled(ozonOf(SEPT_PARAMS), OCT_15))
+      .data as ICrmOverviewCancelledView;
+    expect(unsupported.count).toBeNull();
+    expect(unsupported.note).toBe(cancelledRangeUnsupportedText('ozon'));
+    expect(unsupported.note).not.toContain('Маркет');
+  });
+
+  it('площадка: мусор и закрытая фича — отказ, а не тихий ЯМ', async () => {
+    const kinds = overviewKinds();
+    await expect(
+      kinds.summary(contextOf({ ...SEPT_PARAMS, marketplace: 'amazon' }), OCT_15),
+    ).rejects.toBeInstanceOf(CrmJobError);
+    await expect(kinds.stocks(contextOf({ marketplace: 'ozon' }), OCT_15)).rejects.toThrow(
+      '«Ozon» закрыта',
+    );
+    await expect(
+      kinds.cancelled(contextOf({ ...SEPT_PARAMS, marketplace: 'wb' }), OCT_15),
+    ).rejects.toThrow('закрыта');
   });
 });

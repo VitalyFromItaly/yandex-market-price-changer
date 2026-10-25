@@ -1,13 +1,16 @@
+import type { MarketplaceKey } from '@/navigation.sections';
 import type { RouteRecordRaw } from 'vue-router';
 
-import { INVENTORY_ROUTE_NAME } from '../inventory.domain';
+import { sectionRoute } from '@/router/sectionRoute';
 
-/** «Склад» — раздел аккаунта; имя — ключ пункта меню `ym-inventory`. */
-export const inventoryRoutes: RouteRecordRaw[] = [
-  {
-    path: '/ym/inventory',
-    name: INVENTORY_ROUTE_NAME,
-    component: () => import('@/modules/inventory/pages/InventoryPage.vue'),
-    meta: { title: 'Склад' },
-  },
-];
+/** «Склад» — раздел площадки: `/<площадка>/inventory`, имя `<площадка>-inventory` — ключ пункта меню. */
+export function inventoryRoutes(mp: MarketplaceKey): RouteRecordRaw[] {
+  return [
+    sectionRoute(
+      mp,
+      'inventory',
+      () => import('@/modules/inventory/pages/InventoryPage.vue'),
+      'Склад',
+    ),
+  ];
+}

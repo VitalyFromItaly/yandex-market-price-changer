@@ -6,8 +6,10 @@ import type {
   UnitSku,
   UnitSort,
 } from '../unit-economics.domain';
+import type { MarketplaceKey } from '@/navigation.sections';
 
 import { unconfirmedSummary } from '../../../../../../src/shared/profit-confirmation';
+import { UNIT_PLATFORMS } from '../unit-economics.domain';
 
 import { formatCount, formatKopecks } from '@/shared/utils';
 
@@ -156,4 +158,20 @@ export function unitCardLines(sku: UnitSku): UnitCardLine[] {
 export function unconfirmedNote(data: UnitEconomicsResponse): string | null {
   const summary = unconfirmedSummary(data.unconfirmed, formatKopecks);
   return summary ? `${summary}. Прибыль этих товаров завышена.` : null;
+}
+
+export interface UnitPlatform {
+  key: MarketplaceKey;
+  label: string;
+  ready: boolean;
+}
+
+/**
+ * Колонки карточки товара на экране площадки (TASK-181): числа — первой колонкой
+ * у площадки экрана. На ЯМ — как было (Ozon/WB «скоро»); на Ozon/WB — только своя
+ * колонка: рядом площадки сравнивает «Сравнение площадок», а не карточка.
+ */
+export function unitPlatforms(marketplace: MarketplaceKey): UnitPlatform[] {
+  if (marketplace === 'ym') return UNIT_PLATFORMS.map((p) => ({ ...p }));
+  return UNIT_PLATFORMS.filter((p) => p.key === marketplace).map((p) => ({ ...p, ready: true }));
 }

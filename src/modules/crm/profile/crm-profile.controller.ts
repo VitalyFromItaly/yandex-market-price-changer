@@ -7,6 +7,7 @@ import { UserAccessService } from '../../../database/services/user-access.servic
 import { YandexMarketService } from '../../../database/services/yandex-market.service';
 import { helpModel } from '../../telegram/bots/price-changer-bot/help.text';
 import { profileView } from '../../telegram/bots/price-changer-bot/profile.text';
+import { AllowWithoutPlatform } from '../crm-auth.decorators';
 import { resolveAccount } from '../crm-auth.domain';
 import { CrmJwtGuard, IRequestWithCrmUser } from '../crm-jwt.guard';
 
@@ -24,6 +25,7 @@ import { ICrmProfile, toCrmProfile } from './crm-profile.domain';
  * возврате во вкладку, а профилю нужны ещё запрос в прайс и запись доступа.
  */
 @Controller('crm')
+@AllowWithoutPlatform()
 @UseGuards(CrmJwtGuard)
 export class CrmProfileController {
   constructor(

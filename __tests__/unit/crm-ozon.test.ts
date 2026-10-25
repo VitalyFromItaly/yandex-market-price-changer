@@ -95,7 +95,7 @@ describe('CRM PUT /api/crm/ozon/connection', { timeout: 60_000 }, () => {
         { provide: getModelToken(UserAccess.name), useValue: access },
         {
           provide: getModelToken(YandexMarket.name),
-          // Вход в CRM — только с подключённым магазином ЯМ.
+          // Магазин ЯМ — для сценариев, где у продавца есть и ЯМ, и Ozon.
           useValue: inMemoryModel([
             {
               telegramUserId: SELLER,

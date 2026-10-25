@@ -16,13 +16,15 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ALL_MARKETPLACES, UPCOMING_MARKETPLACES } from '@/navigation';
+import { useLiveMarketplaces } from '@/modules/marketplaces/composables/useLiveMarketplaces.marketplaces';
+import { ALL_MARKETPLACES } from '@/navigation';
 import { useMarketplace } from '@/shared/composables';
 
 /**
  * Шапка сайдбара: знак и имя кабинета (MarketHub), под ним — площадка из
- * адреса. Выбор ведёт на адрес площадки: у ЯМ — список магазинов, у Ozon/WB
- * пока страница «скоро». Вне площадки (профиль, помощь) подписан ЯМ — разделы
+ * адреса. Выбор ведёт на адрес площадки: у ЯМ — список магазинов, у живой
+ * Ozon/WB — её первый открытый раздел, у площадки «скоро» — страница «скоро»
+ * (живая ли — `me.sections`, `useLiveMarketplaces`). Вне площадки (профиль, помощь) подписан ЯМ — разделы
  * в сайдбаре сейчас его.
  */
 const router = useRouter();
@@ -30,10 +32,10 @@ const marketplace = useMarketplace();
 const current = computed(
   () => ALL_MARKETPLACES.find((m) => m.key === (marketplace.value ?? 'ym')) ?? null,
 );
-const upcoming = new Set(UPCOMING_MARKETPLACES.map((m) => m.key));
+const { isLive, homeOf } = useLiveMarketplaces();
 
 function choose(m: Marketplace): void {
-  void router.push(m.home);
+  void router.push(homeOf(m.key));
 }
 </script>
 
@@ -58,10 +60,10 @@ function choose(m: Marketplace): void {
     <DropdownMenuContent align="start" class="w-56">
       <DropdownMenuLabel>Маркетплейс</DropdownMenuLabel>
       <DropdownMenuItem v-for="m in ALL_MARKETPLACES" :key="m.key" @select="choose(m)">
-        <MarketplaceMark :marketplace="m.key" :muted="upcoming.has(m.key)" class="size-5 rounded" />
+        <MarketplaceMark :marketplace="m.key" :muted="!isLive(m.key)" class="size-5 rounded" />
         <span class="flex-1">{{ m.label }}</span>
         <Check v-if="m.key === current?.key" class="ml-auto" />
-        <span v-else-if="upcoming.has(m.key)" class="text-xs text-muted-foreground">скоро</span>
+        <span v-else-if="!isLive(m.key)" class="text-xs text-muted-foreground">скоро</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>

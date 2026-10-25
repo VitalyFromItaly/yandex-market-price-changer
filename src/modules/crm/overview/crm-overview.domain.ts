@@ -1,3 +1,4 @@
+import type { TMarketplace } from '../../../shared/marketplace';
 import type { IUnconfirmedProfit } from '../../../shared/profit-confirmation';
 import type { IFinancePeriod } from '../../finance/finance-period';
 import type { TFinancePeriodStatus } from '../../finance/finance-period-status';
@@ -6,6 +7,7 @@ import type { TOverviewServiceGroup } from '../../finance/service-groups';
 import type { IReportPeriod } from '../../yandex/reports/report-period';
 import type { ICrmPnlLevels } from '../finance/crm-finance.domain';
 
+import { MARKETPLACE_LABEL } from '../../../shared/marketplace';
 import { serviceGroupsOf } from '../../finance/service-groups';
 import { PERIOD } from '../../yandex/reports/report-period';
 import { parseDayRange, pnlLevelsOf } from '../finance/crm-finance.domain';
@@ -17,7 +19,8 @@ import { parseDayRange, pnlLevelsOf } from '../finance/crm-finance.domain';
  * уровни собирает та же `pnlLevelsOf`: карточки равны строкам «Прибыли» по
  * построению (решения `overview_account_section`, `overview_counts_from_journal`).
  * Остатки, товары в пути и отмены — из Маркета по магазинам кабинета: в журнале
- * их нет, и экран подписывает их как «из заказов Маркета».
+ * их нет, и экран подписывает их как «из заказов Маркета». Под /ozon и /wb
+ * (TASK-183) — то же по журналу, остаткам и заказам своей площадки.
  */
 
 export const OVERVIEW_SUMMARY_KIND = 'overview:summary';
@@ -74,7 +77,10 @@ export function overviewTotalsOf(report: IPnlReport): ICrmOverviewTotals {
   };
 }
 
-/** Ответ `overview:summary`: без `operationIds` — раскрытие живёт в «Финансах». */
+/**
+ * Ответ `overview:summary`: без `operationIds` — раскрытие живёт в «Финансах».
+ * Площадку kind добавляет эхом (TASK-183) — как и в двух других ответах.
+ */
 export interface ICrmOverviewSummaryView {
   current: ICrmOverviewTotals;
   previous: ICrmOverviewTotals;
@@ -113,14 +119,18 @@ export interface ICrmOverviewStoreProblem {
 }
 
 export interface ICrmOverviewStocksView {
+  marketplace: TMarketplace;
   takenAt: string;
   /** Σ остаток × текущий закуп, копейки, — только позиции с закупом. */
   stockValueKopecks: number;
   stockUnits: number;
   /** Позиций и штук без закупа: их стоимость не учтена, а не равна нулю. */
   withoutCost: { skus: number; units: number };
-  /** null — отчёт «Едет до клиента» закрыт фичей. */
-  inTransit: { orders: number; units: number; salesKopecks: number } | null;
+  /**
+   * null — отчёт «Едет до клиента» закрыт фичей (ЯМ) или заказы площадки не
+   * прочитаны. `salesKopecks` null — у заказа Ozon/WB неизвестна цена.
+   */
+  inTransit: { orders: number; units: number; salesKopecks: number | null } | null;
   stores: number;
   problems: ICrmOverviewStoreProblem[];
 }
@@ -154,7 +164,17 @@ export function stockValueOf(
 export const CANCELLED_RANGE_UNSUPPORTED_TEXT =
   'Отмены за такой период Маркет по заказам не отдаёт: доступны сегодня, отдельный день и месяц с 1 числа по сегодня.';
 
+/** Текст ЯМ — как был; Ozon/WB — без «Маркета»: периоды заказов те же (`cancelledPeriodOf`). */
+export function cancelledRangeUnsupportedText(marketplace: TMarketplace): string {
+  if (marketplace === 'ym') return CANCELLED_RANGE_UNSUPPORTED_TEXT;
+  return `Отмены ${MARKETPLACE_LABEL[marketplace]} считаются за сегодня, отдельный день и месяц с 1 числа по сегодня.`;
+}
+
+export const CANCELLED_NO_ORDERS_TEXT = (marketplace: TMarketplace) =>
+  `Заказы ${MARKETPLACE_LABEL[marketplace]} пока не читаются — отмены не посчитаны.`;
+
 export interface ICrmOverviewCancelledView {
+  marketplace: TMarketplace;
   from: string;
   to: string;
   /** null — за такой период отмены не считаются, причина в `note`. */

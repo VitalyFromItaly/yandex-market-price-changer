@@ -14,10 +14,12 @@ import * as bcrypt from 'bcrypt';
 import { AppConfigService } from '../../src/config/app-config.service';
 import { AdminCredential } from '../../src/database/schemas/admin-credential.schema';
 import { CrmCredential } from '../../src/database/schemas/crm-credential.schema';
+import { MarketplaceConnection } from '../../src/database/schemas/marketplace-connection.schema';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
 import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
 import { CrmCredentialService } from '../../src/database/services/crm-credential.service';
+import { MarketplaceConnectionService } from '../../src/database/services/marketplace-connection.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { AdminAuthService } from '../../src/modules/admin/admin-auth.service';
@@ -26,10 +28,12 @@ import { MAX_ATTEMPTS } from '../../src/modules/admin/login-throttle';
 import { CrmAuthController } from '../../src/modules/crm/crm-auth.controller';
 import {
   ALLOW_PENDING_PASSWORD_CHANGE,
+  ALLOW_WITHOUT_PLATFORM,
   REQUIRE_FEATURE,
 } from '../../src/modules/crm/crm-auth.decorators';
 import {
   CRM_NO_ACCESS,
+  NO_PLATFORM,
   PASSWORD_CHANGE_REQUIRED,
   WEAK_PASSWORD,
   WRONG_CURRENT_PASSWORD,
@@ -40,6 +44,13 @@ import {
 import { CrmAuthService } from '../../src/modules/crm/crm-auth.service';
 import { FBY_ONLY, FEATURE_DISABLED } from '../../src/modules/crm/crm-features.domain';
 import { CrmJwtGuard } from '../../src/modules/crm/crm-jwt.guard';
+import { CrmConnectionsController } from '../../src/modules/crm/connections/crm-connections.controller';
+import { CrmMarketplacesController } from '../../src/modules/crm/marketplaces/crm-marketplaces.controller';
+import { CrmOzonController } from '../../src/modules/crm/ozon/crm-ozon.controller';
+import { CrmProfileController } from '../../src/modules/crm/profile/crm-profile.controller';
+import { CrmWbController } from '../../src/modules/crm/wb/crm-wb.controller';
+import { CrmFinanceController } from '../../src/modules/crm/finance/crm-finance.controller';
+import { CrmStoresController } from '../../src/modules/crm/stores/crm-stores.controller';
 import { fbyOnlyScreenText } from '../../src/modules/yandex/stocks/placement';
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
 import { inMemoryModel } from '../helpers/in-memory-model';
@@ -102,6 +113,7 @@ describe('CrmAuthService + CrmJwtGuard', { timeout: 60_000 }, () => {
   let access: ReturnType<typeof inMemoryModel>;
   let stores: ReturnType<typeof inMemoryModel>;
   let crm: ReturnType<typeof inMemoryModel>;
+  let connections: ReturnType<typeof inMemoryModel>;
   let auth: CrmAuthService;
   let guard: CrmJwtGuard;
   let adminAuth: AdminAuthService;
@@ -134,6 +146,10 @@ describe('CrmAuthService + CrmJwtGuard', { timeout: 60_000 }, () => {
       { telegramUserId: '333', botId: '999', status: 'pending', username: 'petya' },
       { telegramUserId: '444', botId: '999', status: 'rejected', username: 'kolya' },
       { telegramUserId: '555', botId: '999', status: 'approved', username: 'nostore' },
+      // Без магазина ЯМ, но с площадкой Ozon/WB (TASK-192).
+      { telegramUserId: '556', botId: '999', status: 'approved', username: 'ozonly' },
+      { telegramUserId: '557', botId: '999', status: 'approved', username: 'wbrejected' },
+      { telegramUserId: '558', botId: '999', status: 'pending', username: 'ozonpending' },
       // Один ник у двух разных людей.
       { telegramUserId: '601', botId: '999', status: 'approved', username: 'twin' },
       { telegramUserId: '602', botId: '999', status: 'approved', username: 'Twin' },
@@ -144,6 +160,15 @@ describe('CrmAuthService + CrmJwtGuard', { timeout: 60_000 }, () => {
       STORE('444'),
       STORE(ADMIN_ID),
       STORE('601'),
+    ]);
+    connections = inMemoryModel([
+      { telegramUserId: '556', marketplace: 'ozon', status: 'ok', accounts: [] },
+      // Ключ отвергнут площадкой — продавца всё равно пускаем: заменить ключ можно только в CRM.
+      { telegramUserId: '557', marketplace: 'wb', status: 'rejected', accounts: [] },
+      { telegramUserId: '558', marketplace: 'ozon', status: 'ok', accounts: [] },
+      // ЯМ + Ozon — две площадки: дашборд «Площадки» (TASK-191).
+      { telegramUserId: '333', marketplace: 'ozon', status: 'ok', accounts: [] },
+      { telegramUserId: '601', marketplace: 'wb', status: 'rejected', accounts: [] },
     ]);
     crm = inMemoryModel();
     crm.uniqueBy('telegramUserId');
@@ -162,6 +187,8 @@ describe('CrmAuthService + CrmJwtGuard', { timeout: 60_000 }, () => {
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
+        { provide: getModelToken(MarketplaceConnection.name), useValue: connections },
         { provide: getModelToken(AdminCredential.name), useValue: adminModel },
         { provide: getModelToken(CrmCredential.name), useValue: crm },
         { provide: getModelToken(UserAccess.name), useValue: access },
@@ -183,11 +210,20 @@ describe('CrmAuthService + CrmJwtGuard', { timeout: 60_000 }, () => {
     adminGuard = moduleRef.get(AdminJwtGuard);
   });
 
-  /** Контекст маршрута. `allowPending` — стоит ли на нём пометка «до смены пароля». */
-  function contextOf(token: string | undefined, allowPending = false, features?: string[]) {
+  /**
+   * Контекст маршрута. `allowPending` — стоит ли на нём пометка «до смены пароля»,
+   * `withoutPlatform` — пометка «и без площадки».
+   */
+  function contextOf(
+    token: string | undefined,
+    allowPending = false,
+    features?: string[],
+    withoutPlatform = false,
+  ) {
     const handler = () => undefined;
     if (allowPending) Reflect.defineMetadata(ALLOW_PENDING_PASSWORD_CHANGE, true, handler);
     if (features) Reflect.defineMetadata(REQUIRE_FEATURE, features, handler);
+    if (withoutPlatform) Reflect.defineMetadata(ALLOW_WITHOUT_PLATFORM, true, handler);
     const request: Record<string, any> = {
       headers: { authorization: token ? `Bearer ${token}` : undefined },
     };
@@ -231,7 +267,7 @@ describe('CrmAuthService + CrmJwtGuard', { timeout: 60_000 }, () => {
     it.each([
       ['pending', 'petya'],
       ['rejected', 'kolya'],
-      ['без магазина', 'nostore'],
+      ['pending с подключением Ozon', 'ozonpending'],
     ])('%s с верным паролем → 403 «нет доступа», учётка не создаётся', async (_, login) => {
       const error = await auth.login(login, INITIAL).catch((e) => e);
       expect(error).toBeInstanceOf(ForbiddenException);
@@ -241,9 +277,33 @@ describe('CrmAuthService + CrmJwtGuard', { timeout: 60_000 }, () => {
 
     it.each([
       ['pending', 'petya'],
-      ['без магазина', 'nostore'],
+      ['без площадок', 'nostore'],
     ])('%s с неверным паролем → общий 401: без пароля о доступе не узнать', async (_, login) => {
       await expect(auth.login(login, 'не тот')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it.each([
+      ['с подключением Ozon', 'ozonly', '556'],
+      ['с отвергнутым ключом WB', 'wbrejected', '557'],
+    ])('без магазина ЯМ, %s → входит; профиль без магазина (TASK-192)', async (_, login, id) => {
+      const session = await auth.login(login, INITIAL);
+      const user = await auth.verify(session.token);
+      expect(user.telegramUserId).toBe(id);
+
+      const me = await auth.me(user);
+      expect(me.store).toBeNull();
+      // Разделы магазина ЯМ отдаёт только `/ym/stores/:key` — в профиле аккаунта их нет.
+      expect(me.sections).toContain('connections');
+      expect(me.sections).not.toContain('ym-orders');
+    });
+
+    it('одобренный без площадок → входит, видит только «Подключения», профиль и помощь (TASK-193)', async () => {
+      const session = await auth.login('nostore', INITIAL);
+      expect(crm.documents).toHaveLength(1);
+
+      const me = await auth.me(await auth.verify(session.token));
+      expect(me.store).toBeNull();
+      expect(me.sections).toEqual(['connections', 'profile', 'help']);
     });
 
     it('несуществующий логин → 401', async () => {
@@ -263,12 +323,13 @@ describe('CrmAuthService + CrmJwtGuard', { timeout: 60_000 }, () => {
       expect(compare).toHaveBeenCalledTimes(1);
     });
 
-    it('админ входит по id, если магазин подключён; без магазина — нет', async () => {
+    it('админ входит по id; без площадок — как продавец, только три раздела (TASK-193)', async () => {
       const session = await auth.login(ADMIN_ID, INITIAL);
       expect((await auth.verify(session.token)).isAdmin).toBe(true);
 
       admins.add('777');
-      await expect(auth.login('777', INITIAL)).rejects.toThrow(ForbiddenException);
+      const bare = await auth.verify((await auth.login('777', INITIAL)).token);
+      expect((await auth.me(bare)).sections).toEqual(['connections', 'profile', 'help']);
     });
 
     it('после пяти промахов — блокировка с числом минут, до сверки пароля', async () => {
@@ -353,6 +414,60 @@ describe('CrmAuthService + CrmJwtGuard', { timeout: 60_000 }, () => {
     });
   });
 
+  describe('без площадки — только маршруты @AllowWithoutPlatform (TASK-193)', () => {
+    async function nostoreToken(): Promise<string> {
+      await auth.login('nostore', INITIAL);
+      return (await auth.changePassword('555', INITIAL, 'my-own-password')).token;
+    }
+
+    it('помеченный маршрут пускает, остальные — 403 NO_PLATFORM', async () => {
+      const token = await nostoreToken();
+      expect(await guard.canActivate(contextOf(token, false, undefined, true).context)).toBe(true);
+
+      const error = await guard.canActivate(contextOf(token).context).catch((e) => e);
+      expect(error).toBeInstanceOf(ForbiddenException);
+      expect(error.getResponse().code).toBe(NO_PLATFORM);
+    });
+
+    it('первый ключ Ozon открывает остальное: вход, разделы и маршруты', async () => {
+      const token = await nostoreToken();
+      // То, что пишет `OzonConnectionService.connect` после проверки ключа.
+      await connections.create({ telegramUserId: '555', marketplace: 'ozon', status: 'ok', accounts: [] });
+
+      expect(await guard.canActivate(contextOf(token).context)).toBe(true);
+      const session = await auth.login('nostore', 'my-own-password');
+      const me = await auth.me(await auth.verify(session.token));
+      expect(me.sections).toEqual(expect.arrayContaining(['connections', 'profile', 'ym-settings']));
+    });
+
+    it('у продавца с магазином ЯМ пометка не нужна', async () => {
+      await auth.login('vasya', INITIAL);
+      const { token } = await auth.changePassword(SELLER_ID, INITIAL, 'my-own-password');
+      expect(await guard.canActivate(contextOf(token).context)).toBe(true);
+    });
+
+    it('пометка стоит ровно на маршрутах «Подключений», профиля, помощи и входа', () => {
+      const marked = (target: object) => Reflect.getMetadata(ALLOW_WITHOUT_PLATFORM, target) === true;
+      for (const controller of [
+        CrmAuthController,
+        CrmConnectionsController,
+        CrmMarketplacesController,
+        CrmProfileController,
+      ]) {
+        expect(marked(controller), controller.name).toBe(true);
+      }
+      // Ozon/WB — только запись ключа, не весь контроллер площадки.
+      expect(marked(CrmOzonController)).toBe(false);
+      expect(marked(CrmOzonController.prototype.connect)).toBe(true);
+      expect(marked(CrmWbController)).toBe(false);
+      expect(marked(CrmWbController.prototype.connect)).toBe(true);
+      expect(marked(CrmFinanceController)).toBe(false);
+      // Токен ЯМ — чтобы карточка ЯМ сказала «подключите в боте» (409), а не NO_PLATFORM.
+      expect(marked(CrmStoresController)).toBe(false);
+      expect(marked(CrmStoresController.prototype.replaceToken)).toBe(true);
+    });
+  });
+
   describe('сброс пароля из админ-панели', () => {
     it('вход пишет lastLoginAt — его показывает карточка продавца', async () => {
       expect(await auth.crmState(SELLER_ID)).toBeNull();
@@ -424,6 +539,39 @@ describe('CrmAuthService + CrmJwtGuard', { timeout: 60_000 }, () => {
   });
 
   describe('/auth/me', () => {
+    describe('дашборд «Площадки» — при фиче и ≥2 подключённых открытых площадках (TASK-191)', () => {
+      const DASHBOARD = 'ym-marketplaces-dashboard';
+      const userOf = (telegramUserId: string, features: Record<string, boolean>) => ({
+        telegramUserId,
+        isAdmin: false,
+        mustChangePassword: false,
+        features: { [FEATURE.FINANCE]: true, [FEATURE.MARKETPLACES_DASHBOARD]: true, ...features },
+      });
+      const sectionsOf = async (id: string, features: Record<string, boolean> = {}) =>
+        (await auth.me(userOf(id, features))).sections;
+
+      it('ЯМ + подключённый Ozon с открытой фичей → раздел есть', async () => {
+        expect(await sectionsOf('333', { [FEATURE.OZON]: true })).toContain(DASHBOARD);
+      });
+
+      it.each([
+        ['только ЯМ', SELLER_ID, { [FEATURE.OZON]: true, [FEATURE.WB]: true }],
+        ['ЯМ + Ozon, но фича ozon закрыта', '333', {}],
+        ['ЯМ + отвергнутый ключ WB', '601', { [FEATURE.WB]: true }],
+        ['только Ozon, без ЯМ', '556', { [FEATURE.OZON]: true }],
+      ])('%s → раздела нет', async (_, id, features) => {
+        expect(await sectionsOf(id, features)).not.toContain(DASHBOARD);
+      });
+
+      it('две площадки, но фича дашборда выключена → раздела нет', async () => {
+        const sections = await sectionsOf('333', {
+          [FEATURE.OZON]: true,
+          [FEATURE.MARKETPLACES_DASHBOARD]: false,
+        });
+        expect(sections).not.toContain(DASHBOARD);
+      });
+    });
+
     it('профиль без token/campaign_id/business_id', async () => {
       const session = await auth.login('vasya', INITIAL);
       const me = await auth.me(await auth.verify(session.token));

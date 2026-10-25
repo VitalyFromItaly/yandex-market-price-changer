@@ -12,6 +12,12 @@ export const PASSWORD_CHANGE_REQUIRED = 'PASSWORD_CHANGE_REQUIRED';
 export const CRM_NO_ACCESS = 'CRM_NO_ACCESS';
 
 /**
+ * 403 маршрута, которому нужна площадка, у вошедшего без площадок (решение
+ * crm_audience_no_platform): фронт уводит на «Подключения».
+ */
+export const NO_PLATFORM = 'NO_PLATFORM';
+
+/**
  * Коды ошибок формы смены пароля — по ним фронт ставит текст под нужное поле.
  * Код, а не сверка текста: формулировку можно править, не ломая форму.
  */

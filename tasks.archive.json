@@ -2,7 +2,7 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 164,
+    "archived_tasks": 178,
     "updated_at": "2026-10-20"
   },
   "tasks": [
@@ -3893,6 +3893,292 @@
         "Шаг 1: три полных прогона npm test -- --testTimeout=60000 подряд — все зелёные"
       ],
       "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-177",
+      "milestone": "M0",
+      "category": "unit",
+      "priority": "high",
+      "description": "Тест полного графа DI AppModule в CI. 2026-10-20 прод не стартовал после деплоя 47303ea: CrmAiAnalystModule не импортировал DatabaseModule (AiTurnService), а HTTP-тесты подставляют @Global() FakeDatabaseModule и такие дыры не видят. Нужен тест, который компилирует Test.createTestingModule({ imports: [AppModule] }) без внешних соединений (env-заглушки, lazy Mongo/Redis/Postgres) и падает на любой неразрешённой зависимости.",
+      "acceptance_criteria": [
+        "Тест компилирует весь AppModule и проходит на текущем коде",
+        "Если убрать DatabaseModule из imports CrmAiAnalystModule, тест падает с UnknownDependenciesException",
+        "Тест не ходит в сеть, не трогает вебхук Telegram и проходит в CI без Mongo/Redis/Postgres"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run <новый тест> — зелёный",
+        "Шаг 2: временно убрать DatabaseModule из CrmAiAnalystModule — тест красный с UnknownDependenciesException, вернуть",
+        "Шаг 3: npm test, npx tsc --noEmit, npm run lint — зелёные"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-178",
+      "milestone": "M27",
+      "category": "refactor",
+      "priority": "high",
+      "description": "Каркас навигации по площадке (вариант А, ozon_wb_crm_variant_a). Сейчас разделы и маршруты CRM захардкожены под /ym (имена ym-*, пути /ym/<раздел> в navigation.ts и modules/*/pages/routes.ts), а /ozon и /wb — заглушка «скоро» по константе LIVE_MARKETPLACES. Нужны фабрики навигации и маршрутов от площадки (имя ${mp}-<раздел>, путь /${mp}/<раздел>) и одна таблица Record<раздел, вид>: по площадке / общий для аккаунта / только ЯМ. Бэкенд (CRM_SECTIONS, CRM_STORE_SECTIONS) и тест crm-features должны знать имена ozon-*/wb-*; разделы Ozon/WB видны только при фиче ozon/wb. Хардкод /ym в HOME_PATH, корневом и catch-all редиректах, редиректе финансов — через фабрику. Площадка остаётся «скоро», пока у неё нет ни одного готового раздела (открытие — TASK-189/190).",
+      "acceptance_criteria": [
+        "Разделы ЯМ работают по прежним адресам /ym/…, имена маршрутов ym-* не изменились",
+        "Вид каждого раздела задан одной таблицей Record<раздел, вид> — новый раздел без вида не компилируется",
+        "CRM_SECTIONS знает разделы ozon-*/wb-*, раздел Ozon/WB отдаётся в me.sections только при открытой фиче ozon/wb",
+        "crm-features.test сверяет имена навигации с CRM_SECTIONS для всех площадок",
+        "Общий раздел (налоги, расходы, …) — один экран, в навигации каждой площадки ведёт на него же"
+      ],
+      "test_steps": [
+        "Шаг 1: npm run dev + dev:crm, продавец только с ЯМ — навигация и все разделы /ym/… как раньше",
+        "Шаг 2: продавцу открыть фичу ozon — /ozon по-прежнему «скоро» (готовых разделов ещё нет), /ym не изменился",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-179",
+      "milestone": "M27",
+      "category": "refactor",
+      "priority": "high",
+      "description": "Фоновые задачи CRM без магазина ЯМ. crm-jobs.processor грузит документ YandexMarket для каждой задачи, даже аккаунтной, и падает «Магазин не подключён» — продавец только с Ozon/WB не получит ни одного отчёта. Аккаунтные kind-ы не требуют ЯМ; площадка экрана передаётся параметром params.marketplace (умолчание ym), закрытая площадка — 403 как у finance:pnl (isFinanceMarketplaceOpen). Решить и записать в decisions, где живёт маршрут задач для экранов /ozon и /wb: нейтральный /api/crm/jobs или прежний /ym/jobs (решение crm_marketplace_api_segment называет сегмент ym площадкой).",
+      "acceptance_criteria": [
+        "Аккаунтная задача продавца без документа YandexMarket выполняется, магазинная — по-прежнему «Магазин не подключён»",
+        "params.marketplace проверяется одной функцией для всех kind-ов: незнакомое — 400, закрытая площадка — 403",
+        "Решение о маршруте задач записано в reference.decisions"
+      ],
+      "test_steps": [
+        "Шаг 1: тест — продавец без YandexMarket, только Ozon: finance:pnl с marketplace=ozon отрабатывает",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-192",
+      "milestone": "M27",
+      "category": "functional",
+      "priority": "high",
+      "description": "Вход в CRM без магазина ЯМ. CrmAuthService.isAllowed требует stores.isConfigured (документ YandexMarket) — продавец только с Ozon/WB не может войти в CRM вовсе, хотя после TASK-179 аккаунтные задачи без ЯМ работают. Найдено в TASK-179: сквозной тест продавца без ЯМ по HTTP невозможен, логин отвечает 401.",
+      "acceptance_criteria": [
+        "Одобренный продавец с подключением Ozon или WB (MarketplaceConnection) и без YandexMarket входит в CRM",
+        "Продавец без единой площадки — по-прежнему отказ",
+        "/me отдаёт store: null, разделы ym-* закрыты, аккаунтные разделы — по фичам"
+      ],
+      "test_steps": [
+        "Шаг 1: тест crm-auth — продавец без YandexMarket, с подключением Ozon: login → 200, POST /api/crm/jobs finance:pnl marketplace=ozon → 202 и done",
+        "Шаг 2: продавец без площадок — login 401 как раньше",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-179"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-180",
+      "milestone": "M27",
+      "category": "functional",
+      "priority": "medium",
+      "description": "«Финансы» по площадке: /ozon/finance, /wb/finance. P&L уже принимает marketplace; остальные вкладки — нет: FinanceScreenService.months() берёт только ym и YM_NETTING, anomalies()/reviewAnomalies() захардкожены на ym, discrepancies()/corrections() и ДДС без фильтра. Все вкладки — по площадке экрана; загрузка файла взаимозачёта остаётся только у ЯМ. У WB нет сверки и аномалий — честное «не поддерживается для WB», а не пустой список. ДДС/«к получению» Ozon/WB — «нет данных о выплатах» до TASK-184/185.",
+      "acceptance_criteria": [
+        "Каждая вкладка /ozon/finance показывает только операции Ozon, числа = scripts/pnl-finance.ts --marketplace=ozon",
+        "Вкладки ЯМ не изменились",
+        "Неподдерживаемое для площадки — текст причины, не нули"
+      ],
+      "test_steps": [
+        "Шаг 1: засеянный журнал с ЯМ и Ozon — вкладки /ym/finance и /ozon/finance не смешивают операции",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-178",
+        "TASK-179"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-181",
+      "milestone": "M27",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Аналитика по площадке: юнит-экономика, аналитика продаж, рейтинг SKU под /ozon и /wb. Kind-ы crm-unit-economics/sales-analytics/sku-ratings зовут finance.build без marketplace (умолчание ym), имена товаров ищут через findByYmSkus/marketplaceSkus.ym. Передать площадку экрана и искать товар по SKU своей площадки.",
+      "acceptance_criteria": [
+        "Три экрана /ozon/… считают только журнал Ozon, товары подписаны по marketplaceSkus.ozon",
+        "Числа ЯМ не изменились"
+      ],
+      "test_steps": [
+        "Шаг 1: засеянный журнал ЯМ+Ozon — суммы экранов по площадкам складываются в прежний итог ЯМ+Ozon",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-178",
+        "TASK-179"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-182",
+      "milestone": "M27",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Лента заказов, аналитика возвратов и склад по площадке. Сейчас они собирают все открытые площадки сразу (order-feed — по MARKETPLACES с возможностью orders, returns-analytics — по FINANCE_MARKETPLACES, inventory — byMarketplace). Под /ozon и /wb — фильтр своей площадкой (параметр, а не новая формула); под /ym — как сейчас решит TASK-178 (ЯМ или все).",
+      "acceptance_criteria": [
+        "/ozon/order-feed, /ozon/returns-analytics, /ozon/inventory показывают только Ozon",
+        "Детали заказа /order-feed/:marketplace/:orderId работают из раздела площадки"
+      ],
+      "test_steps": [
+        "Шаг 1: фейковые клиенты ЯМ+Ozon — у каждой площадки свои строки, без дублей",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-178",
+        "TASK-179"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-183",
+      "milestone": "M27",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Главная и прогноз по площадке. crm-overview: сводка — finance.build (ym), остатки/в пути/отмены — ymStocks, reports.build(IN_TRANSIT), collectPlacedOrders по магазинам ЯМ; фронтовый MarketplaceFilter есть, но бэкенд его игнорирует. crm-forecast: журнал ym и остатки ymStocks. Для Ozon/WB — журнал площадки и остатки/заказы через MarketplaceRegistry (возможности stocks/orders); чего у площадки нет — честная плашка.",
+      "acceptance_criteria": [
+        "/ozon/overview и /ozon/forecast считают по журналу и остаткам Ozon",
+        "Главная ЯМ не изменилась"
+      ],
+      "test_steps": [
+        "Шаг 1: фейковый клиент Ozon с остатками и заказами — плитки главной и прогноз закупок по Ozon",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-178",
+        "TASK-179"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-194",
+      "milestone": "M27",
+      "category": "integration",
+      "priority": "high",
+      "description": "Журнал Ozon на /v1/finance/accrual/by-day + /v1/finance/accrual/types. Метод /v3/finance/transaction/list, на котором стоит импорт журнала Ozon, по официальной спецификации отключён 8.09.2026 (по Habr отвечает 400 «obsolete method cannot be used») — импорт Ozon, скорее всего, уже падает. Без живого журнала TASK-184 (выплаты) не на что крепить.",
+      "acceptance_criteria": [
+        "Импорт периода Ozon идёт по дням через /v1/finance/accrual/by-day (курсор last_id), старый метод не вызывается",
+        "Ключ строки ozonOperationKey(accrual_id, total) совпадает со старым для того же id и суммы — повторный импорт даёт upsert, а не дубли",
+        "Статьи — по name типа из /v1/finance/accrual/types; неизвестный или спорный тип → unknown и сигнал, как раньше",
+        "P&L (COGS по продажам/возвратам) работает и для старых, и для новых строк"
+      ],
+      "test_steps": [
+        "Шаг 1: юниты клиента (курсор, дедуп, обход по дням) и журнала на фикстурах продажи/возврата/ITEM/NON_ITEM",
+        "Шаг 2 (с ключом, за владельцем — TASK-186): импорт месяца сходится с кабинетом Ozon",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-184",
+      "milestone": "M27",
+      "category": "integration",
+      "priority": "medium",
+      "description": "Выплаты Ozon в журнал. Метод финопераций не несёт выплат (paidAt пуст), поэтому ДДС, «к получению» и налог «по поступлению» по Ozon не считаются (known-gaps TASK-131). Найти метод выплат Ozon Seller API, загрузить в тот же журнал (дата поступления), сверить «к получению» с кабинетом.",
+      "acceptance_criteria": [
+        "ДДС и «к получению» /ozon/finance считаются из журнала",
+        "Налог «по поступлению» учитывает выплаты Ozon"
+      ],
+      "test_steps": [
+        "Шаг 1: юнит на ответе метода из документации",
+        "Шаг 2 (с ключом, за владельцем): выплата месяца = кабинету Ozon",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-180"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-185",
+      "milestone": "M27",
+      "category": "integration",
+      "priority": "medium",
+      "description": "Выплаты WB в журнал — то же, что TASK-184, для WB (known-gaps TASK-136): ДДС, «к получению», налог «по поступлению». Источник — отчёт реализации (поле выплаты недели) или отдельный метод; решение записать.",
+      "acceptance_criteria": [
+        "ДДС и «к получению» /wb/finance считаются из журнала"
+      ],
+      "test_steps": [
+        "Шаг 1: юнит на ответе из документации",
+        "Шаг 2 (с токеном, за владельцем): выплата недели = кабинету WB",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-180"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-188",
+      "milestone": "M27",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Переключатель площадок и карточка «Площадки» от сервера: площадка живая, когда у неё есть хотя бы один готовый раздел и сервер отдал available (фича ozon/wb), а не по константе LIVE_MARKETPLACES. Проверить в браузере переключатель и /ozon, /wb (known-gaps TASK-127 — ни разу не открывались).",
+      "acceptance_criteria": [
+        "Без фичи ozon — Ozon «скоро», с фичей — ведёт на /ozon/overview",
+        "Сайдбар, табы главной и роутер берут один список"
+      ],
+      "test_steps": [
+        "Шаг 1: в браузере — продавец с фичей ozon и без неё",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-178"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-191",
+      "milestone": "M27",
+      "category": "ui",
+      "priority": "medium",
+      "description": "Дашборд «Площадки» — сравнение всех подключённых площадок на графиках (решение marketplaces_dashboard). Сейчас есть только «Сравнение площадок» — таблица P&L колонками с выводами текстом; явного обзора с графиками нет. Раздел аккаунта, своя фича marketplaces_dashboard (default off, requires finance, строка в crm-parity); показывается, только если у продавца подключено и открыто больше одной площадки (connected из GET /api/crm/marketplaces + фича ozon/wb) — иначе раздела нет в навигации, а прямой адрес даёт понятную плашку «Подключите вторую площадку» со ссылкой на «Подключения». Содержимое за выбранный период: KPI по площадкам рядом (выручка = orderTotals/журнал, прибыль, маржа, заказы, средний чек, % возвратов, доля в выручке); графики (Unovis, примитивы web/crm/src/components/ui/chart): выручка и прибыль по площадкам во времени, доля площадок в выручке, маржа и % возвратов рядом; клик по площадке — в её раздел /<mp>/…, по показателю — в «Сравнение площадок». Числа только из FinanceService.compare и сервисов экранов по площадке (TASK-181/182) — своих формул нет; площадка без журнала — «нет данных» с причиной, не ноль; общего итога по площадкам нет там, где правила учёта разные (как в compare). Дизайн — скилы frontend-design / frontend-module / pinia-store, графики — skill dataviz.",
+      "acceptance_criteria": [
+        "Раздел виден только при фиче marketplaces_dashboard и ≥2 подключённых открытых площадках; иначе нет в навигации, прямой адрес — плашка со ссылкой на «Подключения»",
+        "KPI каждой площадки = колонке «Сравнения площадок» за тот же период до копейки",
+        "Графики во времени = сумме экранов аналитики продаж по площадке за те же дни",
+        "Площадка без журнала — «нет данных» с причиной, без нулей и без вклада в общие величины",
+        "Фича в FEATURES/crm-parity, default off, requires finance"
+      ],
+      "test_steps": [
+        "Шаг 1: юнит — сборка дашборда на засеянном журнале ЯМ+Ozon сверяется с FinanceService.compare",
+        "Шаг 2: HTTP-тест — одна площадка → раздела нет в me.sections, две → есть; без фичи — 403 FEATURE_DISABLED",
+        "Шаг 3: в браузере (dev:crm) — продавец с ЯМ и Ozon: KPI, графики, переходы в /ozon/… и «Сравнение площадок»; светлая и тёмная тема, ширина телефона",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-178",
+        "TASK-179",
+        "TASK-181",
+        "TASK-182"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-193",
+      "milestone": "M27",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Первое подключение Ozon/WB для продавца без магазина ЯМ невозможно: подключения создаются только в CRM (crm-ozon/crm-wb контроллеры), а вход в CRM после TASK-192 требует магазин ЯМ или уже существующее подключение. Продавец «только Ozon» может попасть в CRM, лишь если ключ завели раньше при ЯМ или админ (impersonate тоже требует площадку). Найдено в TASK-192. Решить с владельцем путь онбординга: ключ Ozon/WB в боте, вход одобренного без площадок с доступом только к «Подключениям», или ввод ключа админом.",
+      "acceptance_criteria": [
+        "Владелец выбрал путь онбординга, решение записано в reference.decisions",
+        "Одобренный продавец без ЯМ и без подключений может завести первый ключ Ozon/WB выбранным путём",
+        "Решение crm_audience не нарушено без явного согласия владельца"
+      ],
+      "test_steps": [
+        "Шаг 1: тест — одобренный продавец без площадок заводит ключ Ozon выбранным путём, после этого login → 200",
+        "Шаг 2: продавец без площадок не видит разделов, кроме разрешённых решением",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-192"
+      ],
       "status": "done"
     }
   ]

@@ -51,10 +51,12 @@ export class CrmJobsProcessor {
 
       await this.results.markActive(jobId);
       const doc = await this.yandexMarket.findByTelegramUser(telegramUserId);
-      if (!doc) throw new CrmJobError(NO_STORE_TEXT);
+      // Аккаунтному kind-у ЯМ не обязателен: продавец только с Ozon/WB получает
+      // свои отчёты, ЯМ-часть kind-а просто пуста (TASK-179).
+      if (!doc && definition.scope !== 'account') throw new CrmJobError(NO_STORE_TEXT);
       // Магазин, открытый в вебе; задачи до появления поля — по активному.
-      const store = campaignId ? scopeStore(doc, campaignId) : doc;
-      if (!store) throw new CrmJobError(STORE_GONE_TEXT);
+      const store = doc && campaignId ? scopeStore(doc, campaignId) : doc;
+      if (doc && !store) throw new CrmJobError(STORE_GONE_TEXT);
 
       const output = await definition.run({
         telegramUserId,

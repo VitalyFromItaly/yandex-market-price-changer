@@ -11,11 +11,13 @@ import { ActionLog } from '../../src/database/schemas/action-log.schema';
 import { AdminCredential } from '../../src/database/schemas/admin-credential.schema';
 import { CrmCredential } from '../../src/database/schemas/crm-credential.schema';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
+import { MarketplaceConnection } from '../../src/database/schemas/marketplace-connection.schema';
 import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { ActionLogService } from '../../src/database/services/action-log.service';
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
 import { CrmCredentialService } from '../../src/database/services/crm-credential.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
+import { MarketplaceConnectionService } from '../../src/database/services/marketplace-connection.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { CrmModule } from '../../src/modules/crm/crm.module';
 import { CrmStoresController } from '../../src/modules/crm/stores/crm-stores.controller';
@@ -87,6 +89,8 @@ describe('CRM «Магазины» по HTTP', { timeout: 60_000 }, () => {
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
+        { provide: getModelToken(MarketplaceConnection.name), useValue: inMemoryModel() },
         { provide: getModelToken(ActionLog.name), useValue: inMemoryModel() },
         { provide: getModelToken(AdminCredential.name), useValue: admin },
         { provide: getModelToken(CrmCredential.name), useValue: crm },
@@ -104,6 +108,7 @@ describe('CRM «Магазины» по HTTP', { timeout: 60_000 }, () => {
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
         ErrorReporter,
         AppConfigService,
       ],

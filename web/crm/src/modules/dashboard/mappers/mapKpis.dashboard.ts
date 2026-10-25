@@ -10,7 +10,7 @@ import type { FbyResponse } from '@/modules/fby/fby.domain';
 import type { OrdersReportResponse } from '@/modules/orders/orders.domain';
 import type { ProfitResponse } from '@/modules/profit/profit.domain';
 
-import { KPI, ORDER_ROW, UPCOMING_MARKETPLACES } from '../dashboard.domain';
+import { KPI, ORDER_ROW } from '../dashboard.domain';
 
 // Исключение из «не импортировать внутренности чужого модуля» (как форма пароля
 // в ProfilePage): блок, подпись чистой и заголовок среза берутся из мапперов
@@ -24,7 +24,7 @@ import {
   mainBlock,
   profitBreakdown,
 } from '@/modules/profit/mappers/mapProfitReport.profit';
-import { MARKETPLACES } from '@/navigation';
+import { ALL_MARKETPLACES } from '@/navigation';
 import { formatCount, formatRub } from '@/shared/utils';
 
 type ProfitKpi =
@@ -93,7 +93,10 @@ export function mapProfitKpis(response: ProfitResponse): Record<ProfitKpi, KpiSu
  * «Unit-экономика по площадкам» (решение crm_unit_economics_platforms): строка
  * подключённой площадки — тот же основной блок «Прибыли», что карточки ряда, и
  * та же маржа, что под «Чистой» (`profitBreakdown`), поэтому числа совпадают
- * по построению. Остальные площадки — приглушённые строки «скоро».
+ * по построению. Ответ — прибыль магазина ЯМ, поэтому числа несёт только строка
+ * ЯМ: живой Ozon/WB числа ЯМ не ставятся никогда. Остальные площадки —
+ * приглушённые строки без чисел; «скоро» или ссылку на свой раздел решает
+ * карточка по `me.sections`, маппер от сервера не зависит.
  */
 export function mapUnitEconomics(response: ProfitResponse): UnitEconomicsRow[] {
   const block = mainBlock(response);
@@ -101,7 +104,7 @@ export function mapUnitEconomics(response: ProfitResponse): UnitEconomicsRow[] {
   const percent = (value: number): string => `${formatPercent(value)}%`;
   const netTone = block.net < 0 ? 'danger' : 'ok';
 
-  const active: UnitEconomicsRow[] = MARKETPLACES.map((m) => ({
+  const active: UnitEconomicsRow[] = ALL_MARKETPLACES.filter((m) => m.key === 'ym').map((m) => ({
     key: m.key,
     label: m.label,
     active: true,
@@ -115,7 +118,7 @@ export function mapUnitEconomics(response: ProfitResponse): UnitEconomicsRow[] {
     margin: margin === null ? null : percent(Math.round(margin * 1000) / 10),
     tone: margin === null ? 'neutral' : netTone,
   }));
-  const upcoming: UnitEconomicsRow[] = UPCOMING_MARKETPLACES.map((m) => ({
+  const others: UnitEconomicsRow[] = ALL_MARKETPLACES.filter((m) => m.key !== 'ym').map((m) => ({
     key: m.key,
     label: m.label,
     active: false,
@@ -129,7 +132,7 @@ export function mapUnitEconomics(response: ProfitResponse): UnitEconomicsRow[] {
     margin: null,
     tone: 'neutral',
   }));
-  return [...active, ...upcoming];
+  return [...active, ...others];
 }
 
 /** Срез заказов: число, сумма продаж и момент съёмки — как на странице отчёта. */

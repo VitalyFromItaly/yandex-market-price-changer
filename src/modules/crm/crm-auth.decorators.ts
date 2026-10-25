@@ -24,3 +24,15 @@ export const REQUIRE_FEATURE = 'crm:requireFeature';
  * `@UseGuards`, и пометка молча ничего бы не закрыла.
  */
 export const RequireFeature = (...keys: TFeatureKey[]) => SetMetadata(REQUIRE_FEATURE, keys);
+
+export const ALLOW_WITHOUT_PLATFORM = 'crm:allowWithoutPlatform';
+
+/**
+ * Маршрут доступен и одобренному продавцу без единой площадки — ни магазина ЯМ,
+ * ни подключения Ozon/WB (решение crm_audience_no_platform): вход, «Подключения»,
+ * профиль и помощь. Остальное `CrmJwtGuard` отдаёт 403 `NO_PLATFORM`.
+ *
+ * Разрешение, а не запрет — по той же причине, что `AllowPendingPasswordChange`:
+ * забытая пометка закрывает новый маршрут, а не открывает пустой кабинет.
+ */
+export const AllowWithoutPlatform = () => SetMetadata(ALLOW_WITHOUT_PLATFORM, true);

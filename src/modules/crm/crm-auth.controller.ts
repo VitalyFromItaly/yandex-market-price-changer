@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
-import { AllowPendingPasswordChange } from './crm-auth.decorators';
+import { AllowPendingPasswordChange, AllowWithoutPlatform } from './crm-auth.decorators';
 import { CrmAuthService, ICrmMe, ICrmSession } from './crm-auth.service';
 import { CrmJwtGuard, IRequestWithCrmUser } from './crm-jwt.guard';
 
@@ -26,6 +26,7 @@ interface IPasswordDto {
 
 /** Полный адрес — /api/crm/auth/... (глобальный префикс задан в main.ts). */
 @Controller('crm/auth')
+@AllowWithoutPlatform()
 export class CrmAuthController {
   constructor(private readonly auth: CrmAuthService) {}
 

@@ -42,10 +42,11 @@
       "M23": "Налоговый модуль ИП (УСН, порог НДС, прогноз, сверка с бухгалтерией)",
       "M24": "ИИ-финансист — инструменты чтения, чат, детектор аномалий, разбор и рекомендации, прогнозы",
       "M25": "Уведомления в CRM и Telegram",
-      "M26": "ИИ v2 — инструменты чата (поиск товара, топы, деньги, налоги, цена), черновики ответов на отзывы, еженедельная ИИ-сводка в Telegram, контроль качества ответов"
+      "M26": "ИИ v2 — инструменты чата (поиск товара, топы, деньги, налоги, цена), черновики ответов на отзывы, еженедельная ИИ-сводка в Telegram, контроль качества ответов",
+      "M27": "Ozon и WB в CRM — вариант А: /ozon/… и /wb/… с теми же экранами, что у ЯМ, по своей площадке"
     },
-    "active_tasks": 1,
-    "archived_tasks": 164,
+    "active_tasks": 5,
+    "archived_tasks": 178,
     "archive_file": "tasks.archive.json"
   },
   "agent_instructions": {
@@ -329,7 +330,17 @@
       "stock_push_schedule_file_processing": "2026-10-19: проход по расписанию — в очереди file-processing тем же @Process(SYNC_STOCKS), source schedule: одна запись остатков за раз на прайс, кнопку и расписание; фичи перечитываются в момент прохода.",
       "ai_live_tools_store_by_name": "2026-10-19: магазин живых ИИ-инструментов (getStocks/getReturns) — аргумент store НАЗВАНИЕМ из кэша stores токена, не campaignId (номер продавцу не показывается, а модель повторяет аргументы); название → campaignId → scopeStore, два с одним названием — отказ; без аргумента — активный магазин бота.",
       "ai_live_tools_features": "2026-10-19: getStocks виден модели при фиче inventory («Склад»), getReturns — при report_returning («Едет обратно»).",
-      "ai_tool_round_timeout": "2026-10-19: потолок времени инструментов одного раунда AI_TOOL_ROUND_TIMEOUT_MS = 60 с в AiService (Promise.race, вызовы раунда делят дедлайн, после него не запускаются); модели — TOOL_TIMEOUT_TEXT; запрос Маркета не отменяется (мемо FBY подхватит)."
+      "ai_tool_round_timeout": "2026-10-19: потолок времени инструментов одного раунда AI_TOOL_ROUND_TIMEOUT_MS = 60 с в AiService (Promise.race, вызовы раунда делят дедлайн, после него не запускаются); модели — TOOL_TIMEOUT_TEXT; запрос Маркета не отменяется (мемо FBY подхватит).",
+      "ozon_wb_crm_variant_a": "2026-10-20, владелец: «вариант А» — у Ozon и WB свои адреса /ozon/<раздел>, /wb/<раздел> с теми же экранами, что у ЯМ, но по данным своей площадки. Вариант Б (только статус подключения в карточке «Площадки», данные — в общих экранах) отклонён. Разделы делятся на три вида одной таблицей: по площадке (финансы, аналитика, лента, возвраты, склад, главная, прогноз), общие для аккаунта (налоги, расходы, закупки, товары, ИИ, уведомления, сравнение, передача остатков — один экран в навигации каждой площадки) и только ЯМ (все разделы магазина, настройки, калькулятор с тарифами ЯМ). Открытие площадки продавцу — фичами ozon/wb (default off), новых ключей фич не нужно.",
+      "marketplaces_dashboard": "2026-10-20, владелец: нужен явный дашборд с аналитикой и графиками, где сравниваются все площадки; доступен, только если подключено больше одной площадки. Отдельный раздел аккаунта (вид «общий» в таблице TASK-178), своя фича marketplaces_dashboard (default off, requires finance). «Сравнение площадок» (таблица P&L) остаётся детализацией — дашборд ведёт в неё. Своих формул нет: числа из FinanceService.compare и сервисов экранов площадок.",
+      "crm_jobs_route": "2026-10-20 (TASK-179, владелец): фоновые задачи CRM — нейтральный /api/crm/jobs (экраны /ozon и /wb тоже ставят аккаунтные задачи), /api/crm/ym/jobs остаётся алиасом для вкладок, открытых до деплоя. Площадка экрана — params.marketplace (parseJobMarketplace: мусор 400, закрытая 403). Уточняет crm_marketplace_api_segment: сегмент ym — только у данных ЯМ.",
+      "crm_audience_connections": "2026-10-20 (TASK-192): в CRM пускаем одобренного продавца (или админа) с магазином ЯМ ИЛИ с любым подключением Ozon/WB в MarketplaceConnection; отвергнутый площадкой ключ (status rejected) считается — ключ меняют только в CRM. YandexMarketService.isConfigured не расширяется (бот). Без ЯМ стартовая CRM — «Подключения».",
+      "crm_marketplace_screens_own_only": "2026-10-20 (TASK-182, владелец): «Лента заказов», «Аналитика возвратов» и «Склад» под /ym — только ЯМ, под /ozon и /wb — только своя площадка (params.marketplace, площадку задаёт адрес). Переключатель площадки в возвратах, разрез «По площадкам» и фильтр ?mp ленты убраны. Заменяет returns_marketplace_switch. Сравнение площадок — дашборд marketplaces_dashboard и «Сравнение площадок». «Дней хватит» на экране площадки — (свой склад + её склад) / её скорость; InventoryService.build без marketplace (уведомления) — все площадки.",
+      "ozon_accrual_migration_and_payouts": "2026-10-20 (TASK-184/194, владелец): /v3/finance/transaction/list отключён 8.09.2026 — сначала TASK-194 (журнал на /v1/finance/accrual/by-day), потом TASK-184. Выплаты Ozon: у API нет выплаты по операции; берём /v1/finance/balance по одному дню (total.payments > 0 → день и сумма выплаты) и раскладываем по FIFO: выплаты гасят сначала opening_balance, затем строки журнала по дате начисления; paidAt = день покрывшей выплаты; bankOrderId/bankSumKopecks не ставим (ДДС группирует по дню, сверка не шумит); Ozon-импорт пишет с keepPayment.",
+      "wb_payout_by_create_dt": "2026-10-20 (TASK-185, владелец): у WB нет метода выплат и поля «дата выплаты» в отчёте реализации; день выплаты строки = начало дня create_dt её недельного отчёта по Москве (отчёт формируется после недели, тогда же WB перечисляет). Нет create_dt — выплаты нет. Ставится в самой строке (wbRowToOperation), без прохода после импорта и без keepPayment.",
+      "wb_payout_bank_order_report": "2026-10-20 (TASK-185, владелец): bankOrderId = realizationreport_id, bankSumKopecks = Σ сумм ВСЕХ строк отчёта из ответа (wbPayoutByReport до фильтра месяца). Σ строк = выплате по построению (wb_finance_amount_formula), поэтому ДДС показывает выплату поручением; на стыке месяцев без соседнего месяца — mismatch, это честно.",
+      "marketplaces_dashboard_profit_by_period": "2026-10-20 (TASK-191, владелец): на дашборде «Площадки» во времени — выручка и заказы по площадкам (pnl.salesByDay, = «Аналитике продаж»), прибыль и маржа — только за период, столбиками из FinanceService.compare. Дневной прибыли в журнальном P&L нет; новую формулу (налог и расходы по дням) не заводим.",
+      "crm_audience_no_platform": "2026-10-20 (TASK-193), владелец: одобренный продавец (или админ) без площадок входит в CRM; видны только «Подключения», «Профиль», «Помощь», остальные маршруты — 403 NO_PLATFORM в CrmJwtGuard (белый список — @AllowWithoutPlatform). Уточняет crm_audience/crm_audience_connections: «одобрен» — условие входа, площадка — условие остальных разделов. Ключ Ozon/WB по-прежнему требует открытой фичи ozon/wb (её открывает админ). Impersonate — по тому же правилу. isConfigured не расширяется. ЯМ без документа YandexMarket — только через бот. Отвергнуты: ключ в боте, ключ заводит админ."
     },
     "price_template": {
       "fixture": "__tests__/fixtures/price-template.xlsx (Прайс 29.07.26.xlsx)",
@@ -399,6 +410,88 @@
       ],
       "status": "skipped",
       "skip_reason": "2026-09-24, решение владельца: отложена. Дайджест приходит в Telegram и считается по активному магазину бота, а в вебе после TASK-079 магазин открывается по адресу — неясно, какой магазин настраивать. Варианты: только настройка с пометкой «по магазину из бота»; рассылка по каждому магазину (схема ReportSchedule + jobId + процессор); история отправленного в вебе. Вернуться, когда выбран вариант."
+    },
+    {
+      "id": "TASK-186",
+      "milestone": "M27",
+      "category": "integration",
+      "priority": "high",
+      "description": "Живая проверка Ozon с настоящим ключом — всё из known-gaps по Ozon: подключение и роли (TASK-128), каталог и остатки (TASK-129/163), отправления (TASK-130), импорт финансов и классификатор статей (TASK-131), сверка (TASK-132), dry-run записи остатков (TASK-175). Без неё открывать Ozon продавцам — показывать непроверенную прибыль. Ждёт ключа Ozon от владельца.",
+      "acceptance_criteria": [
+        "Импорт прошлого месяца без статей unknown, P&L сверен с кабинетом Ozon",
+        "Пункты Ozon в known-gaps закрыты или переписаны по факту"
+      ],
+      "test_steps": [
+        "Шаг 1: import-finance --marketplace=ozon, pnl-finance, сверка — с ключом владельца",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [],
+      "status": "blocked"
+    },
+    {
+      "id": "TASK-187",
+      "milestone": "M27",
+      "category": "integration",
+      "priority": "high",
+      "description": "Живая проверка WB с настоящим токеном — всё из known-gaps по WB: подключение (TASK-133), карточки и остатки (TASK-134), заказы (TASK-135), отчёт реализации и имена полей (TASK-136), dry-run записи остатков (TASK-175). Ждёт токена WB от владельца.",
+      "acceptance_criteria": [
+        "Импорт недели, Σ = выплате кабинета WB",
+        "Пункты WB в known-gaps закрыты или переписаны по факту"
+      ],
+      "test_steps": [
+        "Шаг 1: import-finance --marketplace=wb, pnl-finance — с токеном владельца",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [],
+      "status": "blocked"
+    },
+    {
+      "id": "TASK-189",
+      "milestone": "M27",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Открыть Ozon продавцам: все разделы вида «по площадке» готовы, живая проверка пройдена, выплаты загружаются. Включение — фичей ozon в админке у конкретного продавца.",
+      "acceptance_criteria": [
+        "Продавец с фичей ozon и подключённым ключом видит /ozon/… со своими данными"
+      ],
+      "test_steps": [
+        "Шаг 1 (за владельцем): включить ozon одному продавцу, пройти все разделы /ozon",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-180",
+        "TASK-181",
+        "TASK-182",
+        "TASK-183",
+        "TASK-184",
+        "TASK-186",
+        "TASK-188"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-190",
+      "milestone": "M27",
+      "category": "functional",
+      "priority": "medium",
+      "description": "Открыть WB продавцам — то же для WB.",
+      "acceptance_criteria": [
+        "Продавец с фичей wb и подключённым токеном видит /wb/… со своими данными"
+      ],
+      "test_steps": [
+        "Шаг 1 (за владельцем): включить wb одному продавцу, пройти все разделы /wb",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-180",
+        "TASK-181",
+        "TASK-182",
+        "TASK-183",
+        "TASK-185",
+        "TASK-187",
+        "TASK-188"
+      ],
+      "status": "pending"
     }
   ]
 }

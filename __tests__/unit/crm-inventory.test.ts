@@ -8,6 +8,7 @@ import {
   NOT_CONNECTED_TEXT,
   NO_JOURNAL_TEXT,
   OZON_RETURNS_UNAVAILABLE_TEXT,
+  toCrmInventory,
 } from '../../src/modules/crm/inventory/crm-inventory.domain';
 import { CrmInventoryKinds } from '../../src/modules/crm/inventory/crm-inventory.kinds';
 import { InventoryService } from '../../src/modules/inventory/inventory.service';
@@ -108,8 +109,19 @@ function kinds(fakes: IFakes = {}) {
     findByMarketplaceSkus: vi.fn(async (_uid: string, mp: string, skus: string[]) =>
       PRODUCTS.filter((p) => skus.includes((p.marketplaceSkus as Record<string, string>)[mp])),
     ),
-    findByYmSkus: vi.fn(async (_uid: string, skus: string[]) =>
-      PRODUCTS.filter((p) => skus.includes(p.marketplaceSkus.ym)),
+    // Как `ProductService.findByJournalSkus`: сначала артикул ЯМ, затем артикул площадки.
+    findByJournalSkus: vi.fn(
+      async (_uid: string, mp: string, skus: string[]) =>
+        new Map(
+          skus.flatMap((sku) => {
+            const found =
+              PRODUCTS.find((p) => p.marketplaceSkus.ym === sku) ??
+              (mp === 'ym'
+                ? undefined
+                : PRODUCTS.find((p) => (p.marketplaceSkus as Record<string, string>)[mp] === sku));
+            return found ? [[sku, found] as const] : [];
+          }),
+        ),
     ),
     findWithOwnStock: vi.fn(async () => PRODUCTS.filter((p) => (p.stock ?? 0) > 0)),
   };
@@ -120,32 +132,41 @@ function kinds(fakes: IFakes = {}) {
     ),
   };
   const register = vi.fn();
-  const instance = new CrmInventoryKinds(
-    { register } as never,
-    new InventoryService(
-      marketplaces as never,
-      reports as never,
-      finance as never,
-      products as never,
-      catalog as never,
-    ),
+  const service = new InventoryService(
+    marketplaces as never,
+    reports as never,
+    finance as never,
+    products as never,
+    catalog as never,
   );
-  return { instance, register, ymStocks, ozonStocks, ozonOrders, reports, finance };
+  const instance = new CrmInventoryKinds({ register } as never, service);
+  /** Сборка без площадки — как её зовут правила уведомлений: все открытые площадки. */
+  const aggregate = async (features: Record<string, boolean> = ALL_OPEN) => {
+    const ctx = context(features);
+    const snapshot = await service.build({ ...ctx, now: NOW, movements: true });
+    return toCrmInventory(snapshot.inventory, {
+      now: NOW,
+      marketplace: 'ym',
+      columns: snapshot.columns,
+      problems: snapshot.problems,
+      notes: snapshot.notes,
+    });
+  };
+  return { instance, aggregate, register, ymStocks, ozonStocks, ozonOrders, reports, finance };
 }
 
-const context = (features: Record<string, boolean> = ALL_OPEN) =>
+const context = (features: Record<string, boolean> = ALL_OPEN, params = {}) =>
   ({
     telegramUserId: SELLER,
     store: { telegramUserId: SELLER, name: 'Магазин', campaign_id: 'c1' } as never,
-    params: {},
+    params,
     features,
   }) as const;
 
 describe('«Склад» — inventory:summary', () => {
-  it('сводит площадки к товару: свой склад, FBY, FBO отдельно; FBS не в стоимости', async () => {
-    const { instance, reports } = kinds();
-    const { data } = await instance.summary(context(), NOW);
-    const view = data as ICrmInventoryView;
+  it('без площадки (уведомления) сводит площадки к товару: свой склад, FBY, FBO отдельно; FBS не в стоимости', async () => {
+    const { aggregate, reports } = kinds();
+    const view = await aggregate();
 
     expect(view.columns.map((c) => [c.marketplace, c.places.marketplace, c.hasReserve])).toEqual([
       ['ym', 'FBY', false],
@@ -177,9 +198,9 @@ describe('«Склад» — inventory:summary', () => {
   });
 
   it('закрытая ozon — колонки нет и запросов к Ozon нет', async () => {
-    const { instance, ozonStocks, ozonOrders, finance } = kinds();
-    const { data } = await instance.summary(context({ ...ALL_OPEN, [FEATURE.OZON]: false }), NOW);
-    expect((data as ICrmInventoryView).columns.map((c) => c.marketplace)).toEqual(['ym']);
+    const { aggregate, ozonStocks, ozonOrders, finance } = kinds();
+    const view = await aggregate({ ...ALL_OPEN, [FEATURE.OZON]: false });
+    expect(view.columns.map((c) => c.marketplace)).toEqual(['ym']);
     expect(ozonStocks).not.toHaveBeenCalled();
     expect(ozonOrders).not.toHaveBeenCalled();
     expect(finance.build.mock.calls.map(([, , , options]) => options.marketplace)).toEqual(['ym']);
@@ -203,14 +224,13 @@ describe('«Склад» — inventory:summary', () => {
   });
 
   it('сбой магазина и неподключённый Ozon — строки с причиной, а не нули', async () => {
-    const { instance } = kinds({
+    const { aggregate } = kinds({
       ymStocks: vi.fn().mockRejectedValue(new Error('boom')),
       ozonStocks: vi
         .fn()
         .mockRejectedValue(new MarketplaceNotConnectedError('ozon', SELLER, 'no-credentials')),
     });
-    const { data } = await instance.summary(context(), NOW);
-    const view = data as ICrmInventoryView;
+    const view = await aggregate();
     expect(view.problems).toEqual([
       expect.objectContaining({ marketplace: 'ym', storeName: 'Магазин' }),
       { marketplace: 'ozon', storeName: null, problem: NOT_CONNECTED_TEXT('ozon') },
@@ -218,6 +238,55 @@ describe('«Склад» — inventory:summary', () => {
     expect(view.columns.find((c) => c.marketplace === 'ozon')?.state).toBe('not-connected');
     // Свой склад из прайса всё равно виден.
     expect(view.rows.find((r) => r.internalSku === 'A1')?.ownStock).toBe(6);
+  });
+
+  it('/ym (TASK-182) — только ЯМ: Ozon не запрашивается, скорость по журналу ЯМ', async () => {
+    const { instance, ozonStocks, ozonOrders, finance } = kinds();
+    const view = (await instance.summary(context(), NOW)).data as ICrmInventoryView;
+    expect(view.marketplace).toBe('ym');
+    expect(view.columns.map((c) => c.marketplace)).toEqual(['ym']);
+    expect(ozonStocks).not.toHaveBeenCalled();
+    expect(ozonOrders).not.toHaveBeenCalled();
+    expect(finance.build.mock.calls.map(([, , , options]) => options.marketplace)).toEqual(['ym']);
+    expect(view.rows.find((row) => row.internalSku === 'A1')).toMatchObject({
+      atMarketplaces: 4,
+      inTransit: 2,
+      // ЯМ 28 за 28 дней = 1 шт./день; свой склад 6 + FBY 4.
+      unitsPerDay: 1,
+      daysLeft: 10,
+    });
+    expect(view.notes).not.toContain(OZON_RETURNS_UNAVAILABLE_TEXT);
+  });
+
+  it('/ozon — только Ozon: ни остатков, ни отчётов ЯМ; товар по ключу закупа журнала', async () => {
+    const { instance, ymStocks, reports, finance } = kinds();
+    const view = (await instance.summary(context(ALL_OPEN, { marketplace: 'ozon' }), NOW))
+      .data as ICrmInventoryView;
+    expect(view.marketplace).toBe('ozon');
+    expect(view.columns.map((c) => c.marketplace)).toEqual(['ozon']);
+    expect(ymStocks).not.toHaveBeenCalled();
+    expect(reports.build).not.toHaveBeenCalled();
+    expect(finance.build.mock.calls.map(([, , , options]) => options.marketplace)).toEqual([
+      'ozon',
+    ]);
+    expect(view.rows.map((row) => row.internalSku)).toEqual(['A1']);
+    expect(view.rows[0]).toMatchObject({
+      atMarketplaces: 2,
+      inTransit: 1,
+      // Ozon 14 за 28 дней = 0,5 шт./день.
+      unitsPerDay: 0.5,
+    });
+    expect(Object.keys(view.rows[0].byMarketplace)).toEqual(['ozon']);
+  });
+
+  it('площадка: мусор и закрытая фича — отказ, а не тихий ЯМ', async () => {
+    const { instance } = kinds();
+    await expect(
+      instance.summary(context(ALL_OPEN, { marketplace: 'amazon' }), NOW),
+    ).rejects.toThrow('Площадка указана неверно');
+    await expect(
+      instance.summary(context({ ...ALL_OPEN, [FEATURE.WB]: false }, { marketplace: 'wb' }), NOW),
+    ).rejects.toThrow('«Wildberries» закрыта');
   });
 
   it('журнал окна не загружен — скорости нет, причина строкой', async () => {

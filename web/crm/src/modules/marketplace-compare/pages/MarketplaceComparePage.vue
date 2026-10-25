@@ -33,6 +33,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { RefreshIndicator } from '@/components/ui/refresh-indicator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuthStore } from '@/modules/auth/store/store.auth';
+import { MarketplaceJournalPulls } from '@/shared/finance-journal';
 import { RangePicker, rangeLabel, useLinkedRange } from '@/shared/period';
 import { formatKopecks } from '@/shared/utils';
 
@@ -108,6 +109,8 @@ watch(
       <span class="tnum">{{ rangeLabel(data.period) }}</span>
       · рост — к периоду <span class="tnum">{{ rangeLabel(data.previousPeriod) }}</span>
     </p>
+
+    <MarketplaceJournalPulls :columns="data.columns" :range="data.period" @loaded="store.retry()" />
 
     <EmptyState
       v-if="withNumbers === 0"

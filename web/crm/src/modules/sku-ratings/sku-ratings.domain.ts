@@ -8,9 +8,9 @@ import type { IUnconfirmedProfit } from '../../../../../src/shared/profit-confir
  * `FinanceService.build`). Пороги классов приходят в ответе: экран их печатает,
  * своих копий у него нет.
  */
+import type { MarketplaceKey } from '@/navigation.sections';
 import type { DayRange } from '@/shared/utils';
 
-export const SKU_RATINGS_ROUTE_NAME = 'ym-sku-ratings';
 export const SKU_RATINGS_KIND = 'sku-ratings:summary';
 /** Без «Финансов» рейтингов из журнала нет: задача получила бы 403 гейта. */
 export const FINANCE_FEATURE = 'finance';
@@ -63,6 +63,8 @@ export interface ClassSummary<T extends string> {
 }
 
 export interface SkuRatingsResponse {
+  /** Площадка журнала (TASK-181) — эхо запроса; старый ответ без неё — ЯМ. */
+  marketplace?: MarketplaceKey;
   period: DayRange;
   previousPeriod: DayRange;
   status: 'preliminary' | 'final' | 'verified' | 'discrepancy';

@@ -15,3 +15,16 @@ export function parseFinanceMarketplace(value: unknown): FinanceMarketplace | nu
     ? (value as FinanceMarketplace)
     : null;
 }
+
+/**
+ * Вкладки, которой у площадки нет (TASK-180: ДДС Ozon/WB, сверка WB, аномалии
+ * не ЯМ), сервер отвечает причиной — экран показывает её вместо нулей.
+ */
+export interface FinanceUnsupported {
+  unsupported: true;
+  note: string;
+}
+
+export function isFinanceUnsupported(value: object): value is FinanceUnsupported {
+  return 'unsupported' in value && value.unsupported === true;
+}

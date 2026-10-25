@@ -1,12 +1,19 @@
 /**
- * Журнал финансовых операций Ozon (/v3/finance/transaction/list, TASK-131):
- * ключ дедупа, разбор операции в строку журнала, сводка нераспознанного.
- * Чистые функции — без Nest и базы; аналог `ym-journal.ts`.
+ * Журнал финансовых операций Ozon: ключ дедупа, разбор начисления в строку
+ * журнала, сводка нераспознанного. Чистые функции — без Nest и базы; аналог
+ * `ym-journal.ts`.
  *
- * Операция ложится ОДНОЙ строкой (решение владельца 2026-10-18): сумма —
- * `amount`, составляющие — частями в `breakdown`, как сводная строка акта ЯМ
- * (TASK-155). Ключ и выплата у операции одни, а P&L раскладывает части по
- * статьям той же `expandBreakdown`.
+ * Источник — /v1/finance/accrual/by-day (TASK-194). До него был
+ * /v3/finance/transaction/list (TASK-131), но Ozon отключил его 8.09.2026. По
+ * сверке автора Habr 1086658, `accrual_id` = прежнему `operation_id`, а
+ * `total_amount` = прежнему `amount`. Ключ строки от этого не меняется, и
+ * повторный импорт периода поверх старых строк даёт upsert, а не дубли (на
+ * живом ответе наших продавцов не сверено, known-gaps).
+ *
+ * Начисление ложится ОДНОЙ строкой (решение владельца 2026-10-18): сумма —
+ * `total_amount`, составляющие — частями в `breakdown`, как сводная строка
+ * акта ЯМ (TASK-155). Ключ и выплата у начисления одни, а P&L раскладывает
+ * части по статьям той же `expandBreakdown`.
  */
 
 import type { IFinanceOperationContext, IFinanceOperationRow } from './finance-journal';
@@ -16,14 +23,7 @@ import type { ErrorReporter } from '../errors/error-reporter.service';
 
 import { financeToday } from './finance-period';
 import { kopecksToRub, toKopecks } from './kopecks';
-import {
-  OZON_COMPONENT_ARTICLE,
-  OZON_RETURN_TYPES,
-  OZON_SALE_TYPES,
-  ozonAccrualArticle,
-  ozonOperationTypeArticle,
-  ozonServiceArticle,
-} from './ozon-articles';
+import { OZON_RETURN_TYPES, OZON_SALE_TYPES, ozonAccrualTypeArticle } from './ozon-articles';
 import { operationKeyOf } from './ym-journal';
 
 type TRaw = Record<string, unknown>;
@@ -77,9 +77,9 @@ export function parseOzonDateTime(value: unknown): Date | null {
   return date;
 }
 
-/** id операции — ключ дедупа Ozon (у ЯМ id нет, у Ozon есть). */
-export function ozonOperationIdOf(raw: TRaw): string {
-  return ozonIdOf(raw.operation_id);
+/** id начисления — ключ дедупа Ozon (у ЯМ id нет, у Ozon есть). */
+export function ozonAccrualIdOf(raw: TRaw): string {
+  return ozonIdOf(raw.accrual_id);
 }
 
 /**
@@ -94,32 +94,117 @@ export function ozonOperationKey(operationId: string, amountKopecks: number): st
   return operationKeyOf(JSON.stringify(['ozon', operationId, amountKopecks]));
 }
 
-/** Составляющие операции по статьям; Σ частей = `amount` (остаток — `unknown`). */
-export function ozonOperationParts(raw: TRaw, amountKopecks: number): IOperationBreakdownPart[] {
-  const type = text(raw.operation_type);
+/** Тип начисления из справочника /v1/finance/accrual/types. */
+export interface IOzonAccrualType {
+  id: string;
+  /** Английский код (`Acquiring`, `LastMile`) — по нему ставится статья. */
+  name: string;
+  /** Русское название — для `serviceName` строки. */
+  description: string;
+}
+
+/** Справочник типов: `type_id` строкой → тип. */
+export type TOzonAccrualTypes = ReadonlyMap<string, IOzonAccrualType>;
+
+/** Справочник списком → карта по id. */
+export function ozonAccrualTypesMap(types: readonly IOzonAccrualType[]): TOzonAccrualTypes {
+  return new Map(types.map((type) => [type.id, type]));
+}
+
+/** Сумма `{amount, currency}` → копейки; поля нет — null. */
+const moneyOf = (value: unknown): number | null => toKopecks(asObject(value).amount);
+
+/** Сбор с `type_id` и `accrued` — у доставки, товара, продавца и контейнера. */
+interface IOzonFee {
+  typeId: string;
+  kopecks: number | null;
+}
+
+function feesOf(list: unknown): IOzonFee[] {
+  return asList(list).map((fee) => ({
+    typeId: ozonIdOf(fee.type_id),
+    kopecks: moneyOf(fee.accrued),
+  }));
+}
+
+/** Все сборы начисления — кроме выручки и комиссии отправления, у них свои поля. */
+function accrualFees(raw: TRaw): IOzonFee[] {
+  const fees: IOzonFee[] = [];
+  for (const product of asList(asObject(raw.posting).products)) {
+    fees.push(...feesOf(asObject(product.delivery).services));
+  }
+  for (const item of asList(asObject(raw.item_fees).fees)) fees.push(...feesOf(item.fees));
+  const nonItem = asObject(raw.non_item_fee);
+  if (Object.keys(nonItem).length) fees.push(...feesOf([nonItem]));
+  fees.push(...feesOf(asObject(raw.container_fees).fees));
+  return fees;
+}
+
+/** Подпись типа в расшифровке: имя из справочника, без него — id. */
+function typeLabel(typeId: string, types: TOzonAccrualTypes): string {
+  return types.get(typeId)?.name || `type_id ${typeId || '?'}`;
+}
+
+/** Выручка отправления: Σ `sale_amount` товаров, копейки. */
+function saleKopecks(raw: TRaw): number {
+  let total = 0;
+  for (const product of asList(asObject(raw.posting).products)) {
+    total += moneyOf(asObject(product.commission).sale_amount) ?? 0;
+  }
+  return total;
+}
+
+/**
+ * Тип строки (`transactionType`). Своего типа операции у начисления нет —
+ * только категория, поэтому у отправления он выводится из знака выручки:
+ * плюс — продажа, минус — возврат (так же делит их открытый разбор
+ * pavelsur07, сверенный с отчётом о реализации). Он решает движение товара
+ * (`ozonGoodsMovement`).
+ */
+export function ozonAccrualKind(raw: TRaw): string {
+  const category = text(raw.accrued_category) || 'UNSPECIFIED';
+  if (category !== 'POSTING') return category;
+  const sale = saleKopecks(raw);
+  if (sale > 0) return 'POSTING_SALE';
+  if (sale < 0) return 'POSTING_RETURN';
+  return 'POSTING';
+}
+
+/**
+ * Составляющие начисления по статьям; Σ частей = `total_amount` (остаток —
+ * `unknown`). У отправления — выручка каждого товара (`sales` или `returns`
+ * по знаку), комиссия `commission.commission` (итоговая, с учётом скидок) и
+ * услуги доставки; `bonus` и `coinvestment` — справочные, в сумму начисления
+ * не входят и частями не становятся. У остальных — сборы по имени типа.
+ */
+export function ozonAccrualParts(
+  raw: TRaw,
+  totalKopecks: number,
+  types: TOzonAccrualTypes,
+): IOperationBreakdownPart[] {
   const parts: IOperationBreakdownPart[] = [];
-  const add = (article: IOperationBreakdownPart['article'], value: unknown, sheet: string) => {
-    const kopecks = toKopecks(value);
+  const add = (
+    article: IOperationBreakdownPart['article'],
+    kopecks: number | null,
+    sheet: string,
+  ) => {
     if (kopecks) parts.push({ article, kopecks, sheet });
   };
 
-  add(ozonAccrualArticle(type), raw.accruals_for_sale, 'accruals_for_sale');
-  for (const [field, article] of Object.entries(OZON_COMPONENT_ARTICLE))
-    add(article, raw[field], field);
-  for (const service of asList(raw.services)) {
-    const name = text(service.name);
-    add(ozonServiceArticle(name), service.price, name || 'services');
+  for (const product of asList(asObject(raw.posting).products)) {
+    const commission = asObject(product.commission);
+    const sale = moneyOf(commission.sale_amount);
+    add(sale !== null && sale < 0 ? 'returns' : 'sales', sale, 'sale_amount');
+    add('commission', moneyOf(commission.commission), 'commission');
+  }
+  for (const fee of accrualFees(raw)) {
+    const label = typeLabel(fee.typeId, types);
+    add(ozonAccrualTypeArticle(types.get(fee.typeId)?.name), fee.kopecks, label);
   }
 
   const covered = parts.reduce((sum, part) => sum + part.kopecks, 0);
-  if (!parts.length) {
-    // Составляющих нет — вся сумма статьёй типа операции (хранение, реклама, компенсация).
-    return amountKopecks
-      ? [{ article: ozonOperationTypeArticle(type), kopecks: amountKopecks, sheet: null }]
-      : [];
-  }
-  if (covered !== amountKopecks) {
-    parts.push({ article: 'unknown', kopecks: amountKopecks - covered, sheet: null });
+  if (covered !== totalKopecks) {
+    parts.push({ article: 'unknown', kopecks: totalKopecks - covered, sheet: null });
   }
   return parts;
 }
@@ -128,100 +213,136 @@ export function ozonOperationParts(raw: TRaw, amountKopecks: number): IOperation
  * Статья строки целиком — для чтений, которые берут строку без расшифровки
  * (выплаты, счётчик нераспознанного у статуса периода). Любая нераспознанная
  * часть делает строку `unknown`: иначе счётчик статуса её не увидел бы.
+ * Частей нет (начисление на ноль) — статья единственного типа, иначе `unknown`.
  */
 function rowArticle(
-  type: string,
+  raw: TRaw,
+  kind: string,
   parts: readonly IOperationBreakdownPart[],
+  types: TOzonAccrualTypes,
 ): IOperationBreakdownPart['article'] {
-  if (!parts.length) return ozonOperationTypeArticle(type);
+  if (!parts.length) {
+    const names = new Set(accrualFees(raw).map((fee) => types.get(fee.typeId)?.name));
+    return names.size === 1 ? ozonAccrualTypeArticle([...names][0]) : 'unknown';
+  }
   if (parts.some((part) => part.article === 'unknown')) return 'unknown';
-  if (OZON_SALE_TYPES.has(type)) return 'sales';
-  if (OZON_RETURN_TYPES.has(type)) return 'returns';
+  if (OZON_SALE_TYPES.has(kind)) return 'sales';
+  if (OZON_RETURN_TYPES.has(kind)) return 'returns';
   const largest = [...parts].sort((a, b) => Math.abs(b.kopecks) - Math.abs(a.kopecks))[0];
   return largest.article;
+}
+
+/** SKU Ozon начисления: товары отправления и товары сборов. */
+function accrualSkus(raw: TRaw): string[] {
+  const skus: string[] = [];
+  for (const product of asList(asObject(raw.posting).products)) skus.push(ozonIdOf(product.sku));
+  for (const item of asList(asObject(raw.item_fees).fees)) skus.push(ozonIdOf(item.sku));
+  return skus.filter(Boolean);
+}
+
+/** Есть ли у начислений SKU — без них каталог для закупа не нужен. */
+export function ozonAccrualsHaveSkus(accruals: readonly TRaw[]): boolean {
+  return accruals.some((raw) => accrualSkus(raw).length > 0);
 }
 
 /**
  * Артикул строки для себестоимости: SKU Ozon позиций → ключ закупа
  * (`skuOf`, решение владельца 2026-10-18 — резолвить при импорте). Один
- * артикул на операцию — он; ни одного или несколько — пусто: делить закуп
+ * артикул на начисление — он; ни одного или несколько — пусто: делить закуп
  * отправления по догадке нельзя, такая строка честно «без закупа».
  */
 function rowSku(raw: TRaw, skuOf: (ozonSku: string) => string | undefined): string | undefined {
-  const skus = new Set<string>();
-  for (const item of asList(raw.items)) {
-    const ozonSku = ozonIdOf(item.sku);
-    if (ozonSku) skus.add(skuOf(ozonSku) ?? ozonSku);
-  }
+  const skus = new Set(accrualSkus(raw).map((ozonSku) => skuOf(ozonSku) ?? ozonSku));
   return skus.size === 1 ? [...skus][0] : undefined;
 }
 
+const KIND_NAME: Readonly<Record<string, string>> = {
+  POSTING_SALE: 'Продажа',
+  POSTING_RETURN: 'Возврат',
+  POSTING: 'Отправление',
+};
+
+/** Название строки: у отправления — продажа/возврат, у сбора — русское имя его типа. */
+function rowServiceName(raw: TRaw, kind: string, types: TOzonAccrualTypes): string | undefined {
+  if (KIND_NAME[kind]) return KIND_NAME[kind];
+  const ids = new Set(accrualFees(raw).map((fee) => fee.typeId));
+  if (ids.size !== 1) return undefined;
+  const type = types.get([...ids][0]);
+  return type?.description || type?.name || undefined;
+}
+
+/** Заказ строки — номер отправления. У сбора продавца `unit_number` — договор, не заказ. */
+const ORDER_CATEGORIES: ReadonlySet<string> = new Set(['POSTING', 'ITEM']);
+
 /**
- * Операция Ozon → строка журнала. Без id, суммы или даты — бросает: это не
- * «операция на ноль», а форма ответа, которой мы не знаем (довод
+ * Начисление Ozon → строка журнала. Без id, суммы или даты — бросает: это не
+ * «начисление на ноль», а форма ответа, которой мы не знаем (довод
  * `nettingRowToOperation`).
  */
-export function ozonOperationToRow(
+export function ozonAccrualToRow(
   raw: TRaw,
   ctx: IFinanceOperationContext,
+  types: TOzonAccrualTypes,
   skuOf: (ozonSku: string) => string | undefined = () => undefined,
 ): IFinanceOperationRow {
-  const operationId = ozonOperationIdOf(raw);
-  if (!operationId) throw new Error('Операция Ozon без operation_id');
-  const amountKopecks = toKopecks(raw.amount);
-  if (amountKopecks === null) throw new Error(`Операция Ozon ${operationId} без суммы`);
-  const accruedAt = parseOzonDateTime(raw.operation_date);
-  if (!accruedAt) throw new Error(`Операция Ozon ${operationId} без даты`);
+  const accrualId = ozonAccrualIdOf(raw);
+  if (!accrualId) throw new Error('Начисление Ozon без accrual_id');
+  const amountKopecks = moneyOf(raw.total_amount);
+  if (amountKopecks === null) throw new Error(`Начисление Ozon ${accrualId} без суммы`);
+  const accruedAt = parseOzonDateTime(raw.date);
+  if (!accruedAt) throw new Error(`Начисление Ozon ${accrualId} без даты`);
 
-  const type = text(raw.operation_type);
-  const parts = ozonOperationParts(raw, amountKopecks);
-  const posting = asObject(raw.posting);
+  const kind = ozonAccrualKind(raw);
+  const category = text(raw.accrued_category);
+  const parts = ozonAccrualParts(raw, amountKopecks, types);
+  const article = rowArticle(raw, kind, parts, types);
   const articles = new Set(parts.map((part) => part.article));
 
   return {
     marketplace: 'ozon',
     telegramUserId: ctx.telegramUserId,
     businessId: ctx.businessId,
-    operationKey: ozonOperationKey(operationId, amountKopecks),
-    article: rowArticle(type, parts),
+    operationKey: ozonOperationKey(accrualId, amountKopecks),
+    article,
     direction: amountKopecks < 0 ? 'expense' : 'income',
     amountKopecks,
-    orderId: text(posting.posting_number) || undefined,
+    orderId: (ORDER_CATEGORIES.has(category) && text(raw.unit_number)) || undefined,
     sku: rowSku(raw, skuOf),
-    serviceName: text(raw.operation_type_name) || undefined,
-    transactionType: type,
-    transactionSource: text(raw.type) || undefined,
+    serviceName: rowServiceName(raw, kind, types),
+    transactionType: kind,
+    transactionSource: category || undefined,
     accruedAt,
     // FBO — склад Ozon, FBS/RFBS — продавца: схема строки, как `model` у ЯМ.
-    model: text(posting.delivery_schema).toUpperCase() || undefined,
+    model: text(asObject(raw.posting).delivery_schema).toUpperCase() || undefined,
     documentId: ctx.documentId,
     documentVersion: ctx.documentVersion,
     periodKey: ctx.periodKey,
     raw,
-    // Одна статья — расшифровка ничего не добавляет: строка и есть эта статья.
-    ...(articles.size > 1 ? { breakdown: parts } : {}),
+    // Одна статья — расшифровка ничего не добавляет: строка и есть эта статья. У
+    // нераспознанной строки расшифровка остаётся всегда: по ней алерт называет тип.
+    ...(parts.length && (articles.size > 1 || article === 'unknown') ? { breakdown: parts } : {}),
   };
 }
 
 /**
- * Операции, чей день (по Москве) лежит в периоде. Фильтр Ozon по датам —
- * моменты, и как он их толкует, на живом ответе не сверено; без этой проверки
- * операция на границе легла бы в два месяца, и замена версии одного снимала
- * бы её из другого. Без даты — в `dropped`: разбор всё равно бросит на ней.
+ * Начисления, чей день лежит в периоде. Метод берёт ровно день, так что чужих
+ * быть не должно; проверка — страховка: начисление на границе легло бы в два
+ * месяца, и замена версии одного снимала бы его из другого. Без даты — в
+ * `dropped`: разбор всё равно бросит на нём.
  */
-export function ozonOperationsInPeriod(
+export function ozonAccrualsInPeriod(
   raws: readonly TRaw[],
   period: IFinancePeriod,
-): { ops: TRaw[]; dropped: number } {
-  const ops: TRaw[] = [];
+): { accruals: TRaw[]; dropped: number } {
+  const accruals: TRaw[] = [];
   let dropped = 0;
   for (const raw of raws) {
-    const at = parseOzonDateTime(raw.operation_date);
+    const at = parseOzonDateTime(raw.date);
     const day = at ? financeToday(at) : null;
-    if (day && day >= period.from && day <= period.to) ops.push(raw);
+    if (day && day >= period.from && day <= period.to) accruals.push(raw);
     else dropped += 1;
   }
-  return { ops, dropped };
+  return { accruals, dropped };
 }
 
 function sortKeys(value: unknown): unknown {
@@ -237,10 +358,16 @@ function sortKeys(value: unknown): unknown {
 }
 
 /**
- * «Оригинал» версии — операции периода JSON-ом. Файла у метода нет, а версии
+ * «Оригинал» версии — начисления периода JSON-ом. Файла у метода нет, а версии
  * документа нужен sha256: одинаковый ответ должен давать одинаковые байты,
- * поэтому ключи отсортированы, операции — по id, и нет ни момента запроса,
+ * поэтому ключи отсортированы, начисления — по id, и нет ни момента запроса,
  * ни номеров страниц. Иначе каждый прогон заводил бы новую версию.
+ *
+ * Рядом — имена типов, которые встретились в периоде (`types`): статья сбора
+ * взята из справочника, а не из ответа. Новое правило в `ozon-articles.ts` само
+ * версию не меняет, но тип, который Ozon переименовал или впервые описал, —
+ * меняет, и строки переразберутся. Справочник целиком не кладётся: тип,
+ * добавленный Ozon где-то ещё, заводил бы новую версию каждого периода.
  *
  * Рядом — ключи закупа по SKU операций (`purchaseKeys`): артикул строки взят
  * не из ответа Ozon, а из каталога. Каталог не ответил или товар привязали
@@ -249,24 +376,28 @@ function sortKeys(value: unknown): unknown {
  */
 export function ozonFinanceOriginal(
   period: IFinancePeriod,
-  ops: readonly TRaw[],
+  accruals: readonly TRaw[],
+  types: TOzonAccrualTypes,
   skuOf: (ozonSku: string) => string | undefined = () => undefined,
 ): Buffer {
-  const sorted = [...ops].sort((a, b) => {
-    const x = ozonOperationIdOf(a);
-    const y = ozonOperationIdOf(b);
+  const sorted = [...accruals].sort((a, b) => {
+    const x = ozonAccrualIdOf(a);
+    const y = ozonAccrualIdOf(b);
     return x.length - y.length || x.localeCompare(y);
   });
   const purchaseKeys: Record<string, string> = {};
-  for (const op of sorted) {
-    for (const item of asList(op.items)) {
-      const sku = ozonIdOf(item.sku);
-      const key = sku ? skuOf(sku) : undefined;
+  const usedTypes: Record<string, string> = {};
+  for (const accrual of sorted) {
+    for (const sku of accrualSkus(accrual)) {
+      const key = skuOf(sku);
       if (key) purchaseKeys[sku] = key;
+    }
+    for (const fee of accrualFees(accrual)) {
+      if (fee.typeId) usedTypes[fee.typeId] = types.get(fee.typeId)?.name ?? '';
     }
   }
   return Buffer.from(
-    JSON.stringify(sortKeys({ period, operations: sorted, purchaseKeys })),
+    JSON.stringify(sortKeys({ period, accruals: sorted, purchaseKeys, types: usedTypes })),
     'utf8',
   );
 }
@@ -292,9 +423,9 @@ export interface IOzonUnknownGroup {
 }
 
 /**
- * Нераспознанное по подписям: тип операции без составляющих, услуга или
- * остаток, которому составляющей не нашлось. Сумма — нераспознанной части,
- * а не всей операции.
+ * Нераспознанное по подписям: тип сбора без правила, остаток, которому
+ * составляющей не нашлось, или начисление без частей. Сумма — нераспознанной
+ * части, а не всего начисления.
  */
 export function ozonUnknownGroups(ops: readonly IFinanceOperationRow[]): IOzonUnknownGroup[] {
   const groups = new Map<string, IOzonUnknownGroup>();
@@ -307,13 +438,14 @@ export function ozonUnknownGroups(ops: readonly IFinanceOperationRow[]): IOzonUn
   for (const op of ops) {
     if (op.article !== 'unknown') continue;
     const type = op.transactionType || '(без типа)';
-    const parts = op.breakdown ?? [{ article: op.article, kopecks: op.amountKopecks, sheet: null }];
+    const parts = op.breakdown?.length
+      ? op.breakdown
+      : [{ article: op.article, kopecks: op.amountKopecks, sheet: null }];
     for (const part of parts) {
       if (part.article !== 'unknown') continue;
-      if (part.sheet === 'accruals_for_sale') add(`выручка у типа ${type}`, part.kopecks);
-      else if (part.sheet) add(`услуга ${part.sheet}`, part.kopecks);
-      else if (op.breakdown) add(`остаток без составляющей у типа ${type}`, part.kopecks);
-      else add(`тип ${type}`, part.kopecks);
+      if (part.sheet) add(`тип начисления ${part.sheet}`, part.kopecks);
+      else if (op.breakdown?.length) add(`остаток без составляющей у ${type}`, part.kopecks);
+      else add(`начисление ${type}`, part.kopecks);
     }
   }
   return [...groups.values()].sort((a, b) => b.count - a.count);
@@ -332,7 +464,7 @@ export async function reportOzonUnknownArticles(
     );
     await errors.report({
       error: new OzonUnknownArticleError(
-        `Журнал Ozon: операции без статьи — допишите правило в ozon-articles.ts\n${lines.join('\n')}`,
+        `Журнал Ozon: начисления без статьи — допишите правило в ozon-articles.ts\n${lines.join('\n')}`,
       ),
       source: 'queue',
       context: OZON_UNKNOWN_ARTICLE_CONTEXT,

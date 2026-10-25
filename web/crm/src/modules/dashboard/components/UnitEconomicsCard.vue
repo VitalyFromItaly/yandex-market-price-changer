@@ -2,7 +2,9 @@
 /**
  * «Unit-экономика по площадкам» (решение crm_unit_economics_platforms): строка
  * Яндекс Маркета — тот же основной блок «Прибыли», что карточки ряда, поэтому
- * числа совпадают с ними. Ozon и Wildberries — приглушённые строки «скоро».
+ * числа совпадают с ними. Ozon и Wildberries — приглушённые строки без чисел:
+ * «скоро», пока сервер не открыл площадку, иначе — ссылка на её unit-экономику
+ * (числа ЯМ им не ставятся).
  */
 import type { UnitEconomicsRow } from '../dashboard.domain';
 import type { RouteLocationRaw } from 'vue-router';
@@ -25,6 +27,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { useLiveMarketplaces } from '@/modules/marketplaces/composables/useLiveMarketplaces.marketplaces';
+import { sectionPath } from '@/navigation.sections';
+
+const { isLive } = useLiveMarketplaces();
 
 defineProps<{
   rows: UnitEconomicsRow[] | null;
@@ -88,7 +94,16 @@ defineEmits<{ retry: [] }>();
                 <div class="flex items-center gap-2">
                   <MarketplaceMark :marketplace="row.key" :muted="!row.active" />
                   <span class="truncate">{{ row.label }}</span>
-                  <span v-if="!row.active" class="text-xs">скоро</span>
+                  <template v-if="!row.active">
+                    <RouterLink
+                      v-if="isLive(row.key)"
+                      :to="sectionPath(row.key, 'unit-economics')"
+                      class="text-xs underline-offset-2 hover:underline"
+                    >
+                      в разделе
+                    </RouterLink>
+                    <span v-else class="text-xs">скоро</span>
+                  </template>
                 </div>
               </TableCell>
               <TableCell class="text-right tnum">{{ row.sales ?? '—' }}</TableCell>

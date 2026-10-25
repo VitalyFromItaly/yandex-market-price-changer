@@ -124,6 +124,25 @@ export function connectionsView(
   });
 }
 
+/** С какого числа подключённых открытых площадок продавцу виден дашборд «Площадки» (TASK-191). */
+export const DASHBOARD_MIN_MARKETPLACES = 2;
+
+/**
+ * Площадки, которые подключены (`connectionsView`: ЯМ — записанный ключ, Ozon/WB — проверка `ok`)
+ * и открыты продавцу (`isMarketplaceFeatureOpen`), в порядке `MARKETPLACES`. Одно правило для
+ * видимости дашборда «Площадки» в `/auth/me` и для площадок его kind-а: раздел не может показать
+ * площадку, по которой kind ответил бы иначе.
+ */
+export function connectedOpenMarketplaces(
+  ym: IYmConnectionSource | null,
+  rows: readonly IMarketplaceConnectionRow[],
+  features: Readonly<Record<string, boolean>>,
+): TMarketplace[] {
+  return connectionsView(ym, rows, MARKETPLACES)
+    .filter((view) => view.connected && isMarketplaceFeatureOpen(features, view.key))
+    .map((view) => view.key);
+}
+
 /** Сколько последних символов ключа видно на «Подключениях». */
 const KEY_HINT_TAIL = 4;
 /** Короче — хвост ключа был бы заметной его частью, поэтому показываем одни точки. */

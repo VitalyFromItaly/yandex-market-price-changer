@@ -1,4 +1,4 @@
-import type { MarketplaceFilter, OverviewRequest } from '../../overview.domain';
+import type { OverviewRequest } from '../../overview.domain';
 import type { RangePreset } from '@/shared/period';
 import type { DayRange } from '@/shared/utils';
 
@@ -16,7 +16,6 @@ import { moscowToday } from '@/shared/utils';
 export function useOverviewPeriod() {
   const [preset, setPreset, , resetPreset] = useBaseState<RangePreset>('month');
   const [custom, setCustom, , resetCustom] = useBaseState<DayRange | null>(null);
-  const [marketplace, setMarketplace, , resetMarketplace] = useBaseState<MarketplaceFilter>('all');
 
   const range = computed<DayRange | null>(() => {
     const today = moscowToday();
@@ -43,18 +42,15 @@ export function useOverviewPeriod() {
   function reset(): void {
     resetPreset();
     resetCustom();
-    resetMarketplace();
   }
 
   return {
     preset,
     custom,
-    marketplace,
     range,
     request,
     choosePreset,
     chooseCustom,
-    chooseMarketplace: setMarketplace,
     reset,
   };
 }

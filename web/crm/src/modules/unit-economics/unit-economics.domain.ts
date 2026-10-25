@@ -5,13 +5,13 @@ import type { IUnconfirmedProfit } from '../../../../../src/shared/profit-confir
  *
  * Числа — разрез того же P&L, что «Финансы» (`unit-economics:skus` поверх
  * `FinanceService.build`): сумма по товарам вместе со строкой «не относится к
- * товару» равна чистой прибыли «Финансов» за тот же период. Площадка пока
- * одна — Маркет; Ozon и Wildberries в карточке подписаны «скоро», без нулей
- * (решение `ozon_wb_skipped_for_now`).
+ * товару» равна чистой прибыли «Финансов» за тот же период. Площадка — из
+ * адреса (TASK-181): журнал и артикулы своей площадки; на ЯМ Ozon и Wildberries
+ * в карточке подписаны «скоро», без нулей (решение `ozon_wb_skipped_for_now`).
  */
+import type { MarketplaceKey } from '@/navigation.sections';
 import type { DayRange } from '@/shared/utils';
 
-export const UNIT_ECONOMICS_ROUTE_NAME = 'ym-unit-economics';
 export const UNIT_ECONOMICS_KIND = 'unit-economics:skus';
 /** Без «Финансов» прибыли по товару нет: задача получила бы 403 гейта. */
 export const FINANCE_FEATURE = 'finance';
@@ -83,6 +83,8 @@ export interface UnitRest {
 }
 
 export interface UnitEconomicsResponse {
+  /** Площадка журнала (TASK-181) — эхо запроса; старый ответ без неё — ЯМ. */
+  marketplace?: MarketplaceKey;
   period: DayRange;
   previousPeriod: DayRange;
   status: 'preliminary' | 'final' | 'verified' | 'discrepancy';

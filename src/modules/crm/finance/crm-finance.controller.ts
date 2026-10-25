@@ -5,8 +5,11 @@ import type {
   ICrmFinanceDiscrepancyView,
   ICrmFinanceMonthView,
   ICrmFinanceOperationView,
+  ICrmFinanceUnsupportedView,
   TCrmFinanceUploadView,
 } from './crm-finance.domain';
+import type { TFinanceMarketplace } from '../../../database/postgres/finance.schema';
+import type { IFinancePullResult } from '../../telegram/queue/services/finance-import.scheduler';
 import type { IUploadedFile } from '../price-list/crm-price-list.domain';
 
 import {
@@ -14,6 +17,7 @@ import {
   Body,
   ConflictException,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   NotFoundException,
@@ -27,7 +31,10 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 
-import { FINANCE_ORIGINAL_MAX_BYTES } from '../../../database/postgres/finance.schema';
+import {
+  FINANCE_MARKETPLACES,
+  FINANCE_ORIGINAL_MAX_BYTES,
+} from '../../../database/postgres/finance.schema';
 import { labelResolver } from '../../finance/expense.domain';
 import { FinanceCashflowService } from '../../finance/finance-cashflow.service';
 import { FinanceExpensesService } from '../../finance/finance-expenses.service';
@@ -44,7 +51,12 @@ import {
 } from '../../finance/finance-screen.service';
 import { NettingFileError } from '../../finance/ym-netting-file';
 import { FEATURE } from '../../telegram/bots/shared/features.domain';
+import {
+  FinanceImportScheduler,
+  FinancePullNotAllowedError,
+} from '../../telegram/queue/services/finance-import.scheduler';
 import { RequireFeature } from '../crm-auth.decorators';
+import { FEATURE_DISABLED } from '../crm-features.domain';
 import { CrmJwtGuard, IRequestWithCrmUser } from '../crm-jwt.guard';
 import { createUploadInterceptor } from '../crm-upload.interceptor';
 import { contentDisposition } from '../jobs/crm-jobs.controller';
@@ -57,13 +69,20 @@ import {
   FINANCE_FILE_UNRECOGNIZED,
   FINANCE_FILE_WRONG_REPORT,
   FINANCE_IMPORT_BUSY,
+  FINANCE_MARKETPLACE_INVALID_TEXT,
   FINANCE_NO_STORE,
+  FINANCE_PULL_MONTHS_TEXT,
+  FINANCE_PULL_NOT_ALLOWED,
   FINANCE_UPLOAD_BAD_EXTENSION_TEXT,
   FINANCE_UPLOAD_EXTENSIONS,
   FINANCE_UPLOAD_MONTH_TEXT,
   FINANCE_UPLOAD_NO_FILE_TEXT,
   FINANCE_UPLOAD_TOO_LARGE_TEXT,
+  financeMarketplaceClosedText,
+  financeUnsupportedView,
   INVALID_FINANCE_REQUEST,
+  isFinanceMarketplaceOpen,
+  parsePullMonths,
   toCrmCashflowView,
   toCrmFinanceAnomaly,
   toCrmFinanceCorrection,
@@ -101,6 +120,10 @@ interface IPage<T> {
  * задача `finance:pnl`; здесь — быстрое: месяцы со статусом, раскрытие статьи
  * до операций, оригинал отчёта, ДДС (переехал из «Закупок»), расхождения и
  * корректировки месяца. Всё — только Postgres, в скоупе продавца.
+ *
+ * Площадка экрана — `?marketplace=` (TASK-180; нет — ЯМ, адрес остаётся
+ * `ym/finance`). Вкладка, которой у площадки нет, отвечает причиной
+ * (`{ unsupported, note }`), а не нулями. Загрузка файла — только ЯМ.
  */
 @Controller('crm/ym/finance')
 @UseGuards(CrmJwtGuard)
@@ -111,11 +134,17 @@ export class CrmFinanceController {
     private readonly cashflow: FinanceCashflowService,
     private readonly expenses: FinanceExpensesService,
     private readonly imports: FinanceImportService,
+    private readonly pulls: FinanceImportScheduler,
   ) {}
 
   @Get('months')
-  async months(@Req() request: IRequestWithCrmUser): Promise<{ months: ICrmFinanceMonthView[] }> {
-    return { months: toCrmFinanceMonths(await this.screen.months(request.crmUser.telegramUserId)) };
+  async months(
+    @Req() request: IRequestWithCrmUser,
+    @Query('marketplace') marketplace: unknown,
+  ): Promise<{ months: ICrmFinanceMonthView[] }> {
+    const mp = marketplaceOf(request, marketplace);
+    const months = await this.screen.months(request.crmUser.telegramUserId, new Date(), mp);
+    return { months: toCrmFinanceMonths(months) };
   }
 
   /** Раскрытие статьи: страница id из `operationIds` P&L — сумма та же по построению. */
@@ -159,11 +188,15 @@ export class CrmFinanceController {
   async cashflowView(
     @Req() request: IRequestWithCrmUser,
     @Query('month') month: unknown,
-  ): Promise<ICrmCashflowView> {
+    @Query('marketplace') marketplace: unknown,
+  ): Promise<ICrmCashflowView | ICrmFinanceUnsupportedView> {
+    const mp = marketplaceOf(request, marketplace);
     const parsed = monthOf(month);
+    const unsupported = financeUnsupportedView('cashflow', mp);
+    if (unsupported) return unsupported;
     const userId = request.crmUser.telegramUserId;
     const [report, expenses] = await Promise.all([
-      this.cashflow.build(userId, parsed.period),
+      this.cashflow.build(userId, parsed.period, undefined, mp),
       this.expenses.snapshot(userId),
     ]);
     return toCrmCashflowView(report, labelResolver(expenses.categories));
@@ -175,11 +208,17 @@ export class CrmFinanceController {
     @Query('month') month: unknown,
     @Query('limit') limit: unknown,
     @Query('skip') skip: unknown,
-  ): Promise<IPage<ICrmFinanceDiscrepancyView>> {
+    @Query('marketplace') marketplace: unknown,
+  ): Promise<IPage<ICrmFinanceDiscrepancyView> | ICrmFinanceUnsupportedView> {
+    const mp = marketplaceOf(request, marketplace);
+    const parsed = monthOf(month);
+    const unsupported = financeUnsupportedView('reconcile', mp);
+    if (unsupported) return unsupported;
     const { items, total } = await this.screen.discrepancies(
       request.crmUser.telegramUserId,
-      monthOf(month),
+      parsed,
       { limit: intOf(limit), skip: intOf(skip) },
+      mp,
     );
     return { total, items: items.map(toCrmFinanceDiscrepancy) };
   }
@@ -196,12 +235,22 @@ export class CrmFinanceController {
     @Query('limit') limit: unknown,
     @Query('skip') skip: unknown,
     @Query('unreviewed') unreviewed: unknown,
-  ): Promise<ICrmFinanceAnomaliesView> {
-    const page = await this.screen.anomalies(request.crmUser.telegramUserId, monthOf(month), {
-      limit: intOf(limit),
-      skip: intOf(skip),
-      unreviewedOnly: unreviewed === '1' || unreviewed === 'true',
-    });
+    @Query('marketplace') marketplace: unknown,
+  ): Promise<ICrmFinanceAnomaliesView | ICrmFinanceUnsupportedView> {
+    const mp = marketplaceOf(request, marketplace);
+    const parsed = monthOf(month);
+    const unsupported = financeUnsupportedView('anomalies', mp);
+    if (unsupported) return unsupported;
+    const page = await this.screen.anomalies(
+      request.crmUser.telegramUserId,
+      parsed,
+      {
+        limit: intOf(limit),
+        skip: intOf(skip),
+        unreviewedOnly: unreviewed === '1' || unreviewed === 'true',
+      },
+      mp,
+    );
     return {
       total: page.total,
       unreviewed: page.unreviewed,
@@ -216,12 +265,17 @@ export class CrmFinanceController {
   async reviewAnomalies(
     @Req() request: IRequestWithCrmUser,
     @Body() body: { keys?: unknown; reviewed?: unknown },
+    @Query('marketplace') marketplace: unknown,
   ): Promise<{ updated: number }> {
+    const mp = marketplaceOf(request, marketplace);
+    const unsupported = financeUnsupportedView('anomalies', mp);
+    if (unsupported) throw invalid('marketplace', unsupported.note);
     try {
       const updated = await this.screen.reviewAnomalies(
         request.crmUser.telegramUserId,
         body?.keys,
         body?.reviewed,
+        mp,
       );
       return { updated };
     } catch (error) {
@@ -280,17 +334,51 @@ export class CrmFinanceController {
     }
   }
 
+  /**
+   * «Загрузить из Маркета»: журнал месяцев периода — разовыми задачами очереди
+   * `finance-import`, не дожидаясь ночи. Ответ сразу (202): генерация отчёта у
+   * Маркета — минуты; готовность фронт видит по `checkedAt` в `months`. Месяц,
+   * который грузили меньше 15 минут назад, приходит в `cooldown`. Метод
+   * перекрывает `@RequireFeature` класса, поэтому `finance` повторён.
+   */
+  @Post('pull')
+  @HttpCode(202)
+  @RequireFeature(FEATURE.FINANCE, FEATURE.FINANCE_PULL)
+  async pull(
+    @Req() request: IRequestWithCrmUser,
+    @Body() body: { months?: unknown; marketplace?: unknown } | undefined,
+  ): Promise<IFinancePullResult> {
+    const mp = marketplaceOf(request, body?.marketplace);
+    const months = parsePullMonths(body?.months, screenMonths(financeToday(new Date())));
+    if (!months) throw invalid('months', FINANCE_PULL_MONTHS_TEXT);
+    try {
+      return await this.pulls.pullNow(request.crmUser.telegramUserId, mp, months);
+    } catch (error) {
+      if (error instanceof FinancePullNotAllowedError) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: FINANCE_PULL_NOT_ALLOWED,
+          message: error.message,
+        });
+      }
+      throw error;
+    }
+  }
+
   @Get('corrections')
   async corrections(
     @Req() request: IRequestWithCrmUser,
     @Query('month') month: unknown,
     @Query('limit') limit: unknown,
     @Query('skip') skip: unknown,
+    @Query('marketplace') marketplace: unknown,
   ): Promise<IPage<ICrmFinanceCorrectionView>> {
+    const mp = marketplaceOf(request, marketplace);
     const { items, total } = await this.screen.corrections(
       request.crmUser.telegramUserId,
       monthOf(month),
       { limit: intOf(limit), skip: intOf(skip) },
+      mp,
     );
     return { total, items: items.map(toCrmFinanceCorrection) };
   }
@@ -344,6 +432,24 @@ function uploadError(error: unknown): unknown {
     });
   }
   return error;
+}
+
+/**
+ * Площадка экрана из `?marketplace=`: нет — ЯМ, мусор — 400, закрытая фича
+ * площадки — 403 (как деталь «Ленты заказов»).
+ */
+function marketplaceOf(request: IRequestWithCrmUser, value: unknown): TFinanceMarketplace {
+  if (value === undefined || value === '') return 'ym';
+  const mp = FINANCE_MARKETPLACES.find((key) => key === value);
+  if (!mp) throw invalid('marketplace', FINANCE_MARKETPLACE_INVALID_TEXT);
+  if (!isFinanceMarketplaceOpen(request.crmUser.features, mp)) {
+    throw new ForbiddenException({
+      statusCode: 403,
+      code: FEATURE_DISABLED,
+      message: financeMarketplaceClosedText(mp),
+    });
+  }
+  return mp;
 }
 
 function monthOf(value: unknown) {

@@ -32,7 +32,7 @@ export interface UseJob<TData> {
   /** `store` — ключ открытого магазина; отчёты CRM без него сервер не ставит. */
   start(kind: string, params?: Record<string, unknown>, store?: string): Promise<void>;
   /**
-   * Опрашивать задачу, созданную не через /ym/jobs (загрузка прайса ставит её
+   * Опрашивать задачу, созданную не через /jobs (загрузка прайса ставит её
    * своим POST с файлом). Тот же опрос, что у `start`, — второй копии нет.
    */
   track(jobId: string): void;

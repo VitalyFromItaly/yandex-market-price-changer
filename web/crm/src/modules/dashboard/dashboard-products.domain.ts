@@ -1,3 +1,5 @@
+import type { MarketplaceKey } from '@/navigation';
+
 /**
  * Типы и константы блоков «Топ товаров», «На исходе» и «Unit-экономика по
  * площадкам» главной. Реэкспортируются из dashboard.domain.ts.
@@ -28,9 +30,9 @@ export const STOCK_WARN_LIMIT = 10;
 
 /** Строка «Unit-экономики по площадкам»: null у полей — площадка ещё не подключена. */
 export interface UnitEconomicsRow {
-  key: string;
+  key: MarketplaceKey;
   label: string;
-  /** Подключена — числа; нет — приглушённая строка «скоро». */
+  /** Числа есть только у ЯМ (ответ — прибыль магазина ЯМ); прочие — приглушённые строки. */
   active: boolean;
   sales: string | null;
   commission: string | null;

@@ -133,7 +133,7 @@ export function mapSummaryKpis(data: SummaryResponse): Partial<Record<KpiKey, Kp
   };
 }
 
-/** Карточки срезов Маркета по магазинам кабинета. */
+/** Карточки срезов площадки: у ЯМ — по магазинам кабинета, у Ozon/WB — по кабинету площадки. */
 export function mapStocksKpis(data: StocksResponse): Partial<Record<KpiKey, KpiView>> {
   const missing = data.withoutCost.skus;
   const stockCaption = missing
@@ -153,10 +153,17 @@ export function mapStocksKpis(data: StocksResponse): Partial<Record<KpiKey, KpiV
             'заказ',
             'заказа',
             'заказов',
-          ])} на ${money(inTransit.salesKopecks)}`,
+          ])}${inTransit.salesKopecks === null ? ', сумма неизвестна' : ` на ${money(inTransit.salesKopecks)}`}`,
           tone: 'neutral',
         }
-      : { value: '—', caption: 'отчёт «Едет до клиента» закрыт', tone: 'neutral' },
+      : {
+          value: '—',
+          caption:
+            (data.marketplace ?? 'ym') === 'ym'
+              ? 'отчёт «Едет до клиента» закрыт'
+              : 'заказы площадки не прочитаны',
+          tone: 'neutral',
+        },
   };
 }
 

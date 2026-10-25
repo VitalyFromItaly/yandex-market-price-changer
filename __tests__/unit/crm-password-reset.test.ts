@@ -11,6 +11,7 @@ import { ActionLog } from '../../src/database/schemas/action-log.schema';
 import { AdminCredential } from '../../src/database/schemas/admin-credential.schema';
 import { CrmCredential } from '../../src/database/schemas/crm-credential.schema';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
+import { MarketplaceConnection } from '../../src/database/schemas/marketplace-connection.schema';
 import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { ActionLogService } from '../../src/database/services/action-log.service';
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
@@ -20,6 +21,7 @@ import { ProductService } from '../../src/database/services/product.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { ReportScheduleService } from '../../src/database/services/report-schedule.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
+import { MarketplaceConnectionService } from '../../src/database/services/marketplace-connection.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { FinanceImportScheduler } from '../../src/modules/telegram/queue/services/finance-import.scheduler';
 import { SellerNotificationsScheduler } from '../../src/modules/telegram/queue/services/seller-notifications.scheduler';
@@ -80,6 +82,8 @@ describe('Сброс пароля CRM из панели по HTTP', { timeout: 6
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
+        { provide: getModelToken(MarketplaceConnection.name), useValue: inMemoryModel() },
         { provide: getModelToken(ActionLog.name), useValue: journal },
         { provide: getModelToken(AdminCredential.name), useValue: admin },
         { provide: getModelToken(CrmCredential.name), useValue: crm },
@@ -104,6 +108,7 @@ describe('Сброс пароля CRM из панели по HTTP', { timeout: 6
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
         PurchasePriceService,
         ProductService,
         CostHistoryService,

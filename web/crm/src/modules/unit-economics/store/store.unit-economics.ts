@@ -1,4 +1,5 @@
 import type { UnitEconomicsResponse, UnitRequest, UnitSku } from '../unit-economics.domain';
+import type { MarketplaceKey } from '@/navigation.sections';
 
 import { defineStore } from 'pinia';
 import { computed } from 'vue';
@@ -8,17 +9,18 @@ import { UNIT_ECONOMICS_KIND } from '../unit-economics.domain';
 import { useUnitPeriod } from './composables/useUnitPeriod.unit-economics';
 import { useUnitView } from './composables/useUnitView.unit-economics';
 
-import { useReportJob } from '@/shared/composables';
+import { useBaseState, useReportJob } from '@/shared/composables';
 import { sameRange } from '@/shared/period';
 
 /**
  * Стор «Unit-экономики» — фасад: период, фоновая задача уровня аккаунта
  * (`store: ''`) и вид таблицы. Замок задачи — на (продавец, kind), поэтому
  * ответ сверяется с эхом обоих периодов: быстрое переключение иначе показало
- * бы прошлый.
+ * бы прошлый. Площадка (TASK-181) — из адреса, тоже часть эха.
  */
 export const useUnitEconomicsStore = defineStore('unit-economics', () => {
   const period = useUnitPeriod();
+  const [marketplace, setMarketplace, , resetMarketplace] = useBaseState<MarketplaceKey>('ym');
 
   const job = useReportJob<UnitEconomicsResponse, UnitRequest>({
     launch: (request) => ({
@@ -28,11 +30,14 @@ export const useUnitEconomicsStore = defineStore('unit-economics', () => {
         to: request.range.to,
         prevFrom: request.previous.from,
         prevTo: request.previous.to,
+        marketplace: marketplace.value,
       },
       store: '',
     }),
     isOwn: (data, request) =>
-      sameRange(data.period, request.range) && sameRange(data.previousPeriod, request.previous),
+      (data.marketplace ?? 'ym') === marketplace.value &&
+      sameRange(data.period, request.range) &&
+      sameRange(data.previousPeriod, request.previous),
   });
 
   const skus = computed<readonly UnitSku[]>(() => job.data.value?.skus ?? []);
@@ -51,12 +56,20 @@ export const useUnitEconomicsStore = defineStore('unit-economics', () => {
     isRefreshing: job.isRefreshing,
     savedAt: job.savedAt,
     error: job.error,
+    marketplace,
     load,
     retry: job.retry,
+    /** Площадка экрана (TASK-181); другая — ответ прежней сброшен, период остаётся. */
+    selectMarketplace(next: MarketplaceKey): void {
+      if (next === marketplace.value) return;
+      job.reset();
+      setMarketplace(next);
+    },
     reset() {
       period.reset();
       view.reset();
       job.reset();
+      resetMarketplace();
     },
   };
 });

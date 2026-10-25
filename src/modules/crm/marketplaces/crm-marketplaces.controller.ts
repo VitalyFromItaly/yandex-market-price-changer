@@ -3,6 +3,7 @@ import type { IMarketplaceConnectionView } from '../../marketplaces/marketplace-
 import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 
 import { MarketplaceConnectionsService } from '../../marketplaces/marketplace-connections.service';
+import { AllowWithoutPlatform } from '../crm-auth.decorators';
 import { CrmJwtGuard, IRequestWithCrmUser } from '../crm-jwt.guard';
 
 export interface ICrmMarketplacesView {
@@ -25,6 +26,7 @@ export interface ICrmMarketplacesView {
  * возврате во вкладку, а здесь — два запроса в Mongo.
  */
 @Controller('crm/marketplaces')
+@AllowWithoutPlatform()
 @UseGuards(CrmJwtGuard)
 export class CrmMarketplacesController {
   constructor(private readonly connections: MarketplaceConnectionsService) {}

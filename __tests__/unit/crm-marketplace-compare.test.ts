@@ -17,7 +17,10 @@ import {
   NO_JOURNAL_TEXT,
 } from '../../src/modules/ai-tools/ai-tools.domain';
 import { AiToolsService } from '../../src/modules/ai-tools/ai-tools.service';
-import { CRM_SECTIONS } from '../../src/modules/crm/crm-features.domain';
+import {
+  CRM_SECTIONS,
+  MARKETPLACES_DASHBOARD_SECTION,
+} from '../../src/modules/crm/crm-features.domain';
 import { CrmFinanceKinds } from '../../src/modules/crm/finance/crm-finance.kinds';
 import { CrmJobError } from '../../src/modules/crm/jobs/crm-jobs.domain';
 import {
@@ -25,6 +28,13 @@ import {
   MARKETPLACE_COMPARE_KIND,
 } from '../../src/modules/crm/marketplace-compare/crm-marketplace-compare.domain';
 import { CrmMarketplaceCompareKinds } from '../../src/modules/crm/marketplace-compare/crm-marketplace-compare.kinds';
+import {
+  DASHBOARD_NEEDS_SECOND_TEXT,
+  type ICrmMarketplacesDashboardView,
+  MARKETPLACES_DASHBOARD_KIND,
+} from '../../src/modules/crm/marketplaces-dashboard/crm-marketplaces-dashboard.domain';
+import { CrmMarketplacesDashboardKinds } from '../../src/modules/crm/marketplaces-dashboard/crm-marketplaces-dashboard.kinds';
+import { CrmSalesAnalyticsKinds } from '../../src/modules/crm/sales-analytics/crm-sales-analytics.kinds';
 import { FinanceExpensesService } from '../../src/modules/finance/finance-expenses.service';
 import {
   financePeriodKey,
@@ -464,5 +474,114 @@ describe('compareMarketplaces ИИ = «Сравнение площадок» (TA
 
   it('журнала нет ни у одной площадки — insufficientData целиком', async () => {
     expect(await askAi(ALL)).toMatchObject({ ok: false, insufficientData: true });
+  });
+});
+
+describe('Дашборд «Площадки» = «Сравнение площадок» + «Аналитика продаж» (TASK-191)', () => {
+  /** ЯМ подключён ключом, Ozon/WB — строками подключений с итогом проверки. */
+  const YM_STORE = { token: 't', campaign_id: 'c1', business_id: 'b1', stores: [] };
+  const rowOf = (marketplace: 'ozon' | 'wb', status = 'ok') => ({
+    marketplace,
+    telegramUserId: SELLER,
+    status,
+    accounts: [],
+  });
+  const dashboard = (rows: unknown[] = [rowOf('ozon'), rowOf('wb')], ym: unknown = YM_STORE) =>
+    new CrmMarketplacesDashboardKinds(
+      { register: vi.fn() } as never,
+      finance,
+      { findByTelegramUser: async () => ym } as never,
+      { findForUser: async () => rows } as never,
+    );
+  const salesKinds = () =>
+    new CrmSalesAnalyticsKinds({ register: vi.fn() } as never, finance, {
+      findByJournalSkus: async () => new Map(),
+    } as never);
+  const viewOf = async (rows?: unknown[], features: Record<string, boolean> = ALL_OPEN) => {
+    const { data } = await dashboard(rows).summary(contextOf(SEPT_PARAMS, features));
+    return data as ICrmMarketplacesDashboardView;
+  };
+
+  it('KPI колонки = колонке «Сравнения площадок» того же периода до копейки', async () => {
+    await seedAll();
+    const view = await viewOf();
+    const { data } = await kinds().summary(contextOf(SEPT_PARAMS));
+    const compare = data as ICrmMarketplaceCompareView;
+    for (const column of view.columns) {
+      const twin = compare.columns.find((c) => c.marketplace === column.marketplace);
+      const { days: _days, ...rest } = column;
+      expect(rest).toEqual(twin);
+    }
+    expect(view.conclusions).toEqual(compare.conclusions);
+  });
+
+  it('ряд по дням = «Аналитике продаж» площадки, Σ дней = выручке колонки', async () => {
+    await seedAll();
+    const view = await viewOf();
+    for (const marketplace of ['ym', 'ozon'] as const) {
+      const column = view.columns.find((c) => c.marketplace === marketplace);
+      const { data } = await salesKinds().summary(
+        contextOf({ ...SEPT_PARAMS, marketplace }),
+        OCT_15,
+      );
+      expect(column?.days).toEqual((data as { days: unknown[] }).days);
+      const sum = (column?.days ?? []).reduce((acc, day) => acc + day.revenueKopecks, 0);
+      expect(sum).toBe(column?.metrics?.revenueKopecks);
+    }
+  });
+
+  it('площадка без журнала — «нет данных» с причиной, без нулей и без дней', async () => {
+    await seedAll();
+    const view = await viewOf();
+    expect(view.columns.map((c) => c.marketplace)).toEqual(['ym', 'ozon', 'wb']);
+    expect(view.columns[2]).toMatchObject({
+      state: 'no-journal',
+      reason: COMPARE_NO_JOURNAL_TEXT,
+      metrics: null,
+      days: [],
+    });
+  });
+
+  it('только подключённые и открытые: WB rejected и закрытый Ozon — не колонки', async () => {
+    await seedAll();
+    const view = await viewOf([rowOf('ozon'), rowOf('wb', 'rejected')]);
+    expect(view.columns.map((c) => c.marketplace)).toEqual(['ym', 'ozon']);
+    await expect(
+      dashboard([rowOf('ozon'), rowOf('wb', 'rejected')]).summary(
+        contextOf(SEPT_PARAMS, { [FEATURE.WB]: true }),
+      ),
+    ).rejects.toThrow(DASHBOARD_NEEDS_SECOND_TEXT);
+  });
+
+  it('одна площадка — понятный отказ; без ЯМ, но с Ozon и WB — дашборд есть', async () => {
+    await expect(dashboard([]).summary(contextOf(SEPT_PARAMS))).rejects.toThrow(
+      DASHBOARD_NEEDS_SECOND_TEXT,
+    );
+    // Без ЯМ, но с Ozon и WB — две площадки, дашборд есть.
+    const { data } = await dashboard(undefined, null).summary(contextOf(SEPT_PARAMS));
+    expect((data as ICrmMarketplacesDashboardView).columns.map((c) => c.marketplace)).toEqual([
+      'ozon',
+      'wb',
+    ]);
+  });
+
+  it('kind под marketplaces_dashboard, раздел аккаунта; фича выключена и требует finance', () => {
+    const register = vi.fn();
+    new CrmMarketplacesDashboardKinds(
+      { register } as never,
+      finance,
+      {} as never,
+      {} as never,
+    ).onModuleInit();
+    expect(register).toHaveBeenCalledWith(
+      MARKETPLACES_DASHBOARD_KIND,
+      expect.objectContaining({ features: [FEATURE.MARKETPLACES_DASHBOARD], scope: 'account' }),
+    );
+    expect(CRM_SECTIONS[MARKETPLACES_DASHBOARD_SECTION]).toEqual([FEATURE.MARKETPLACES_DASHBOARD]);
+    expect(FEATURE_META[FEATURE.MARKETPLACES_DASHBOARD].defaultEnabled).toBe(false);
+    expect(FEATURE_META[FEATURE.MARKETPLACES_DASHBOARD].requires).toEqual([FEATURE.FINANCE]);
+    expect(
+      isFeatureEnabled({ [FEATURE.MARKETPLACES_DASHBOARD]: true }, FEATURE.MARKETPLACES_DASHBOARD),
+    ).toBe(false);
   });
 });

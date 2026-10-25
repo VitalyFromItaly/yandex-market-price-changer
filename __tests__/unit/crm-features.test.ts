@@ -1,8 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { Controller, Get, Global, Module, UseGuards } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
@@ -14,15 +11,18 @@ import { ActionLog } from '../../src/database/schemas/action-log.schema';
 import { AdminCredential } from '../../src/database/schemas/admin-credential.schema';
 import { CrmCredential } from '../../src/database/schemas/crm-credential.schema';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
+import { MarketplaceConnection } from '../../src/database/schemas/marketplace-connection.schema';
 import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { ActionLogService } from '../../src/database/services/action-log.service';
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
 import { CrmCredentialService } from '../../src/database/services/crm-credential.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
+import { MarketplaceConnectionService } from '../../src/database/services/marketplace-connection.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { crmLogEntry } from '../../src/modules/crm/crm-action-log.domain';
 import { RequireFeature } from '../../src/modules/crm/crm-auth.decorators';
 import {
+  CRM_MARKETPLACE_SECTIONS,
   CRM_SECTIONS,
   CRM_STORE_SECTIONS,
   FBY_ONLY,
@@ -39,6 +39,7 @@ import {
 } from '../../src/modules/telegram/bots/shared/features.domain';
 import { withRequires } from '../helpers/feature-requires';
 import { inMemoryModel } from '../helpers/in-memory-model';
+import { allNavNames, sectionsOfKind, storeNavNames } from '../../web/crm/src/navigation.sections';
 
 const INITIAL = 'tg_rules_2026';
 const SELLER_ID = '222';
@@ -59,22 +60,35 @@ describe('isFeatureOpen — одно правило на бот и CRM', () => {
 });
 
 describe('crm-features.domain', () => {
-  it('разделы CRM ровно те же, что в web/crm/src/navigation.ts', () => {
+  it('разделы CRM ровно те же, что в навигации фронта, — по всем площадкам', () => {
     // Белый список живёт на бэкенде, пункты — на фронте. Раздел, забытый здесь,
     // пропадёт из сайдбара у всех, — тест называет его раньше продавца.
-    const source = readFileSync(join(__dirname, '../../web/crm/src/navigation.ts'), 'utf8');
-    const names = [...source.matchAll(/\bname: '([^']+)'/g)].map((m) => m[1]);
-    expect(names.sort()).toEqual(Object.keys(CRM_SECTIONS).sort());
+    expect(allNavNames().sort()).toEqual(Object.keys(CRM_SECTIONS).sort());
+  });
+
+  it('разделы вида «площадка» — те же, что у фронта', () => {
+    expect(Object.keys(CRM_MARKETPLACE_SECTIONS).sort()).toEqual(
+      [...sectionsOfKind('marketplace')].sort(),
+    );
   });
 
   it('разделы внутри магазина — ровно STORE_NAV фронта', () => {
     // Раздел, попавший не в тот список, либо потеряет магазин из адреса (отчёт
     // без магазина сервер не ставит), либо будет решаться по активному в боте.
-    const source = readFileSync(join(__dirname, '../../web/crm/src/navigation.ts'), 'utf8');
-    const block = source.slice(source.indexOf('export const STORE_NAV'));
-    const storeNav = block.slice(0, block.indexOf('];'));
-    const names = [...storeNav.matchAll(/\bname: '([^']+)'/g)].map((m) => m[1]);
-    expect(names.sort()).toEqual([...CRM_STORE_SECTIONS].sort());
+    expect(storeNavNames().sort()).toEqual([...CRM_STORE_SECTIONS].sort());
+  });
+
+  it('разделы Ozon/WB — только при открытой фиче площадки и фиче раздела', () => {
+    const finance = { [FEATURE.FINANCE]: true };
+    expect(visibleSections(finance, 'FBS', 'account')).not.toContain('ozon-finance');
+    const ozon = visibleSections({ ...finance, [FEATURE.OZON]: true }, 'FBS', 'account');
+    expect(ozon).toContain('ozon-finance');
+    expect(ozon).not.toContain('wb-finance');
+    const noFinance = { [FEATURE.FINANCE]: false, [FEATURE.OZON]: true };
+    expect(visibleSections(noFinance, 'FBS', 'account')).not.toContain('ozon-finance');
+    // Разделы ЯМ от фичи площадки не зависят; Ozon/WB — разделы аккаунта, не магазина.
+    expect(visibleSections(finance, 'FBS', 'account')).toContain('ym-finance');
+    expect(visibleSections(allFeaturesEnabled(), 'FBS', 'store')).not.toContain('ozon-finance');
   });
 
   it('scope делит разделы: аккаунт без отчётов, магазин без настроек', () => {
@@ -259,6 +273,8 @@ describe('CrmModule по HTTP: гейт и журнал', { timeout: 60_000 }, (
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
+        { provide: getModelToken(MarketplaceConnection.name), useValue: inMemoryModel() },
         { provide: getModelToken(ActionLog.name), useValue: logs },
         { provide: getModelToken(AdminCredential.name), useValue: admin },
         { provide: getModelToken(CrmCredential.name), useValue: crm },
@@ -275,6 +291,7 @@ describe('CrmModule по HTTP: гейт и журнал', { timeout: 60_000 }, (
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
         AppConfigService,
       ],
     })

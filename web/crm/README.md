@@ -15,9 +15,14 @@ npm run test:crm       # vitest --config web/crm/vitest.config.ts
 
 ## Устройство
 
-- `src/navigation.ts` — пункты сайдбара: `MARKETPLACE_NAV` (аккаунт: обзор, магазины, рассылка,
-  настройки, финансовые разделы, товары, ИИ-аналитик…), `STORE_NAV` (внутри магазина `/ym/stores/:store/...`), `ACCOUNT_NAV` (подключения,
-  профиль, помощь). `name` пункта == ключ `CRM_SECTIONS` на бэкенде; какие показывать, решает сервер
+- `src/navigation.sections.ts` — таблица разделов `SECTION_KIND` (решение ozon_wb_crm_variant_a, TASK-178):
+  `marketplace` — свой у площадки (`/ozon/finance`, имя `ozon-finance`), `account` — общий экран `/ym/<раздел>`
+  в меню каждой площадки, `ym` — только ЯМ, `ym-store` — внутри магазина ЯМ. Имена и адреса — только через
+  `sectionName`/`sectionPath`; `READY_SECTIONS` — какие разделы площадки уже готовы. Файл без импортов: его
+  читают бэкенд-тесты (`crm-features`, `crm-parity`).
+- `src/navigation.ts` — пункты сайдбара: `navFor(mp)` (разделы площадки вне магазина; `MARKETPLACE_NAV` =
+  `navFor('ym')`), `STORE_NAV` (внутри магазина `/ym/stores/:store/...`), `ACCOUNT_NAV` (подключения,
+  профиль, помощь). Подписи — `NAV_META: Record<Section, …>`. `name` пункта == ключ `CRM_SECTIONS` на бэкенде; какие показывать, решает сервер
   (`/auth/me` и `/ym/stores/:key`), до ответа меню пустое.
 - Площадки (TASK-127): `ALL_MARKETPLACES` в `navigation.ts` — ЯМ, Ozon, WB (копия бэкендового
   `src/shared/marketplace.ts`, сверяется тестом). У каждой площадки буквальный префикс адресов, как у
@@ -25,23 +30,41 @@ npm run test:crm       # vitest --config web/crm/vitest.config.ts
   `/wb` ведут на «Подключения», а прочие адреса под ними открывают страницу «скоро»
   (`modules/marketplaces`). Площадку из адреса отдаёт
   `useMarketplace()`, подключена ли она у продавца — `GET /api/crm/marketplaces` (стор
-  `marketplaces`). Появились разделы у площадки — добавьте её в `LIVE_MARKETPLACES`, и
-  заглушка уйдёт сама.
+  `marketplaces`). Площадка живая, когда у неё есть готовый раздел в
+  `READY_SECTIONS`: тогда роутер заводит её маршруты (`MARKETPLACE_ROUTES` в `router/routes.ts` — фабрика
+  `xRoutes(mp)` модуля), а заглушка уходит сама.
+- Экран по журналу площадки (TASK-180 «Финансы», TASK-181 unit-экономика/продажи/рейтинги): страница берёт
+  `useMarketplace() ?? 'ym'` и зовёт `store.selectMarketplace` до первой загрузки; стор кладёт площадку в params
+  задачи и сверяет её эхо в `isOwn`, смена площадки сбрасывает ответ прежней. Ссылки на соседний раздел площадки —
+  `sectionName(mp, section)` из `@/navigation.sections`, не жёсткое `ym-…`.
 - «Подключения» (`/connections`, модуль `marketplaces`, TASK-161) — ключи всех площадок: карточка
   со статусом, маской ключа и датой проверки, «Проверить связь» и «Заменить ключ». Формы ключей
   (`YmTokenForm`, `OzonKeyForm`, `WbTokenForm`) живут только здесь. `/ozon`, `/ozon/connection`, `/wb` ведут сюда,
   «Магазины» — ссылкой. После замены или проверки стор перечитывает и карточки, и список площадок
   сайдбара (`useConnections.refresh`).
+- Главная — `HOME_PATH` (`/ym/stores`). Продавца без магазина ЯМ (только Ozon/WB, `me.store === null`,
+  TASK-192) гард (`resolveAuthRoute`) уводит с неё на `NO_STORE_HOME_PATH` — «Подключения»: список
+  магазинов ответил бы 409 NO_STORE. Все входы — корень, старые адреса, после входа, смены пароля и
+  «за продавца» — приходят на `HOME_PATH`, поэтому подмена одна, в гарде. Профиль неизвестен (сбой
+  сети) — главная прежняя.
 - `src/modules/<module>/` — модуль фичи: `api/`, `store/`, `composables/`, `mappers/`,
   `components/`, `pages/` (с `routes.ts`), `<module>.domain.ts`. Образец — `modules/auth`.
 - `src/shared/` — общее: `http` (клиент, 401 → выход), `jobs` + `composables/useJob`,
   `useReportJob` (опрос фоновых задач, эхо периода), `useStoreKey`, `useRouteTabs`, `period`,
-  `report-file`. В `period` два вида периода: отчётов о заказах (`period.ts`, периоды бота) и
+  `report-file`, `finance-journal` (загружен ли журнал за период экрана и «Загрузить из Маркета» — баннер
+  `JournalPull` + `useFinanceJournal(source, onLoaded)`, ставится на каждый экран над журналом). В `period` два вида периода: отчётов о заказах (`period.ts`, периоды бота) и
   произвольный финансовый (`range.ts`: пресеты «Обзора», `previousRange` для динамики,
   `?from=&to=` + `useLinkedRange` для ссылок в «Финансы»).
 - «Обзор» (`modules/overview`, TASK-125) — раздел аккаунта: деньги из финжурнала (`overview:summary`),
-  срезы Маркета по всем магазинам (`overview:stocks`, `overview:cancelled`). Главная магазина —
-  отдельный модуль `dashboard`.
+  срезы Маркета по всем магазинам (`overview:stocks`, `overview:cancelled`). Под /ozon и /wb (TASK-183) —
+  журнал, остатки и заказы своей площадки; площадка — из адреса (`useMarketplace`), фильтра площадок нет.
+  Главная магазина — отдельный модуль `dashboard`. Живая ли Ozon/WB у продавца или «скоро» (TASK-188) —
+  решает сервер: готовый раздел площадки (`READY_SECTIONS`) есть в `me.sections`, т. е. открыта фича
+  площадки (`isLiveMarketplace` в `navigation.ts`). Компоненты (переключатель, карточка «Площадки», табы
+  главной, unit-экономика, аналитика продаж) берут список из `useLiveMarketplaces`, роутер — тем же
+  правилом в гарде `useMarketplaceGuard` (после `useAuthGuard`): разделы — статические маршруты, поэтому
+  закрытая площадка переводится на «скоро» по имени маршрута на каждом переходе. Числа главной ЯМ
+  стоят только у строки ЯМ — живой Ozon/WB ведёт в свой раздел.
 - «ИИ-аналитик» (`modules/ai-analyst`, TASK-148) — раздел аккаунта: чат без кэша и без хранения,
   лента только в памяти вкладки; ход — `POST /turns` + опрос (`shared/composables/useTurn`, общий с
   «✨ Предложить ответ» в «Отзывах»), 409 — подхватить идущий. Раскрытие
@@ -66,7 +89,8 @@ npm run test:crm       # vitest --config web/crm/vitest.config.ts
 
 ## Как добавить раздел
 
-Модуль в `src/modules/`, его `pages/routes.ts` в роутере, пункт в `navigation.ts` — и строка
+Модуль в `src/modules/`, вид раздела в `SECTION_KIND`, подпись в `NAV_META`, его `pages/routes.ts` в роутере
+(раздел вида `marketplace` — фабрика от площадки через `sectionRoute`, в `MARKETPLACE_ROUTES`) — и строка
 раздела на бэкенде (`CRM_SECTIONS`, паритет с ботом — см. `src/modules/crm/README.md`). Без строки
 на бэкенде пункт не покажется никому.
 

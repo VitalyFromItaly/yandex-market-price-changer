@@ -6,11 +6,13 @@ import type { IUnconfirmedProfit } from '../../../../../src/shared/profit-confir
  * (`overview:summary`), поэтому каждая денежная карточка ведёт в «Прибыль»
  * с тем же периодом и показывает там ту же цифру. Остатки, товары в пути и
  * отмены — срезы Маркета по всем магазинам кабинета: в журнале их нет.
+ * Площадку задаёт адрес (TASK-183): под /ozon и /wb — журнал, остатки и заказы
+ * своей площадки; ответы несут её эхом.
  */
 import type { IconTone } from '@/modules/dashboard/dashboard.domain';
+import type { MarketplaceKey } from '@/navigation.sections';
 import type { DayRange } from '@/shared/utils';
 
-export const OVERVIEW_ROUTE_NAME = 'ym-overview';
 export const OVERVIEW_SUMMARY_KIND = 'overview:summary';
 export const OVERVIEW_STOCKS_KIND = 'overview:stocks';
 export const OVERVIEW_CANCELLED_KIND = 'overview:cancelled';
@@ -57,6 +59,7 @@ export interface OverviewTotals {
 export type FinancePeriodStatus = 'preliminary' | 'verified' | 'discrepancy';
 
 export interface SummaryResponse {
+  marketplace?: MarketplaceKey;
   current: OverviewTotals;
   previous: OverviewTotals;
   status: FinancePeriodStatus;
@@ -73,16 +76,20 @@ export interface StoreProblem {
 }
 
 export interface StocksResponse {
+  /** Эхо площадки; в ответах до TASK-183 его нет — это ЯМ. */
+  marketplace?: MarketplaceKey;
   takenAt: string;
   stockValueKopecks: number;
   stockUnits: number;
   withoutCost: { skus: number; units: number };
-  inTransit: { orders: number; units: number; salesKopecks: number } | null;
+  /** null — отчёт ЯМ закрыт или заказы площадки не прочитаны; сумма null — цена заказа неизвестна. */
+  inTransit: { orders: number; units: number; salesKopecks: number | null } | null;
   stores: number;
   problems: StoreProblem[];
 }
 
 export interface CancelledResponse {
+  marketplace?: MarketplaceKey;
   from: string;
   to: string;
   count: number | null;
@@ -96,16 +103,6 @@ export interface OverviewRequest {
   range: DayRange;
   previous: DayRange;
 }
-
-// --- площадки ---------------------------------------------------------------
-
-/** «Все» или одна площадка. Журнал пока только ЯМ, поэтому «Все» = ЯМ. */
-export type MarketplaceFilter = 'all' | 'ym';
-
-export const MARKETPLACE_FILTER_OPTIONS: readonly { value: MarketplaceFilter; label: string }[] = [
-  { value: 'all', label: 'Все площадки' },
-  { value: 'ym', label: 'Яндекс Маркет' },
-];
 
 // --- карточки ---------------------------------------------------------------
 
@@ -249,5 +246,16 @@ export interface KpiView {
   tone: KpiTone;
 }
 
-/** Подпись источника срезов Маркета: в журнале их нет (решение overview_counts_from_journal). */
-export const MARKET_SOURCE_NOTE = 'из заказов и остатков Маркета, не из журнала';
+/**
+ * Подпись источника срезов: в журнале их нет (решение overview_counts_from_journal).
+ * У ЯМ — прежние слова, у Ozon/WB — имя площадки.
+ */
+export const MARKETPLACE_SOURCE_LABEL: Record<MarketplaceKey, string> = {
+  ym: 'Маркета',
+  ozon: 'Ozon',
+  wb: 'Wildberries',
+};
+
+export function sourceNoteOf(marketplace: MarketplaceKey): string {
+  return `из заказов и остатков ${MARKETPLACE_SOURCE_LABEL[marketplace]}, не из журнала`;
+}

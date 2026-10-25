@@ -1,4 +1,6 @@
 import type { IUnconfirmedProfit } from '../../../../../src/shared/profit-confirmation';
+import type { MarketplaceKey } from '@/navigation.sections';
+import type { TimeGrain } from '@/shared/period';
 /**
  * «Аналитика продаж» (TASK-140, ТЗ п.9) — выручка, заказы, штуки, средний чек и
  * скорость продаж за период: по дням, неделям и месяцам, по брендам, товарам и
@@ -6,12 +8,12 @@ import type { IUnconfirmedProfit } from '../../../../../src/shared/profit-confir
  *
  * Числа — разрезы того же P&L, что «Финансы» (`sales-analytics:summary` поверх
  * `FinanceService.build`): выручка любого разреза в сумме равна выручке
- * «Финансов» за тот же период. Площадка пока одна — Маркет; Ozon и Wildberries
+ * «Финансов» за тот же период. Площадка — из адреса (TASK-181): журнал своей
+ * площадки, её строка в срезе «По площадкам» = итог; на ЯМ Ozon и Wildberries
  * подписаны «скоро», без нулей (решение `ozon_wb_skipped_for_now`).
  */
 import type { DayRange } from '@/shared/utils';
 
-export const SALES_ANALYTICS_ROUTE_NAME = 'ym-sales-analytics';
 export const SALES_ANALYTICS_KIND = 'sales-analytics:summary';
 /** Без «Финансов» продаж из журнала нет: задача получила бы 403 гейта. */
 export const FINANCE_FEATURE = 'finance';
@@ -59,6 +61,8 @@ export interface SalesMarketplace extends SalesFigures {
 }
 
 export interface SalesAnalyticsResponse {
+  /** Площадка журнала (TASK-181) — эхо запроса; старый ответ без неё — ЯМ. */
+  marketplace?: MarketplaceKey;
   period: DayRange;
   previousPeriod: DayRange;
   status: 'preliminary' | 'final' | 'verified' | 'discrepancy';
@@ -91,8 +95,8 @@ export const SALES_SLICE_OPTIONS: { value: SalesSlice; label: string }[] = [
   { value: 'marketplace', label: 'По площадкам' },
 ];
 
-/** Шаг ряда: дни, недели (с понедельника), календарные месяцы. */
-export type TimeGrain = 'day' | 'week' | 'month';
+/** Шаг ряда — общий с дашбордом «Площадки» (`shared/period/timeBucket`). */
+export type { TimeGrain };
 
 export const TIME_GRAIN_OPTIONS: { value: TimeGrain; label: string }[] = [
   { value: 'day', label: 'Дни' },

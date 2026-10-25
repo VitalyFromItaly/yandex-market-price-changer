@@ -13,6 +13,7 @@ import {
   reportWbUnknownArticles,
   wbFinanceOriginal,
   wbOperationKey,
+  wbPaidAtOf,
   wbPayoutByReport,
   wbRowAmount,
   wbRowParts,
@@ -52,6 +53,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   rrd_id: 1001,
   realizationreport_id: 555,
   rr_dt: '2026-09-16',
+  create_dt: '2026-09-22',
   supplier_oper_name: 'Продажа',
   doc_type_name: 'Продажа',
   sa_name: 'VC-1',
@@ -102,6 +104,15 @@ describe('wbRowParts — тест на каждый тип строки', () => 
       { article: 'commission', kopecks: -37000, sheet: 'ppvz_for_pay' },
     ]);
     expect(wbRowAmount(row())).toBe(160000);
+  });
+
+  it('деньги строками (новый метод WB, 2026) — те же копейки, что числами', () => {
+    const asStrings = row({
+      retail_price_withdisc_rub: '2000.00',
+      acquiring_fee: '30',
+      ppvz_for_pay: '1600.00',
+    });
+    expect(wbRowParts(asStrings)).toEqual(wbRowParts(row()));
   });
 
   it('Возврат: те же колонки со знаком минус', () => {
@@ -221,6 +232,30 @@ describe('wbRowToOperation', () => {
     expect(wbRowToOperation(row(), CTX).operationKey).toBe(a);
     expect(a).toBe(wbOperationKey('1001', 160000));
     expect(wbRowToOperation(row({ ppvz_for_pay: 1590 }), CTX).operationKey).not.toBe(a);
+  });
+
+  it('выплата (TASK-185): день create_dt по Москве, поручение — номер отчёта, сумма — Σ отчёта', () => {
+    const op = wbRowToOperation(row(), CTX, undefined, (id) => (id === '555' ? 104500 : undefined));
+    expect(op.paidAt?.toISOString()).toBe('2026-09-21T21:00:00.000Z');
+    expect(op).toMatchObject({ bankOrderId: '555', bankSumKopecks: 104500 });
+
+    // Нет create_dt — выплаты нет: ни дня, ни поручения.
+    const unpaid = wbRowToOperation(row({ create_dt: '' }), CTX, undefined, () => 104500);
+    expect(unpaid).toMatchObject({
+      paidAt: undefined,
+      bankOrderId: undefined,
+      bankSumKopecks: undefined,
+    });
+  });
+
+  it('wbPaidAtOf: дата, время с поясом и без — полночь дня по Москве; мусор — undefined', () => {
+    const midnight = '2026-09-21T21:00:00.000Z';
+    expect(wbPaidAtOf({ create_dt: '2026-09-22' })?.toISOString()).toBe(midnight);
+    expect(wbPaidAtOf({ create_dt: '2026-09-22T15:30:00' })?.toISOString()).toBe(midnight);
+    // 22:30 UTC 21.09 — уже 22.09 по Москве.
+    expect(wbPaidAtOf({ create_dt: '2026-09-21T22:30:00Z' })?.toISOString()).toBe(midnight);
+    expect(wbPaidAtOf({ create_dt: 'мусор' })).toBeUndefined();
+    expect(wbPaidAtOf({})).toBeUndefined();
   });
 
   it('без rrd_id или даты — бросает', () => {

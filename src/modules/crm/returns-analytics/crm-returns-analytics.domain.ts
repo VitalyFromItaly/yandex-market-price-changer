@@ -7,10 +7,9 @@ import { MARKETPLACE_LABEL } from '../../../shared/marketplace';
 /**
  * «Аналитика возвратов» CRM (TASK-145, ТЗ п.11) — доставка, уровня аккаунта.
  *
- * Числа считает `returnsAnalyticsOf` (finance) над журналом каждой открытой
- * площадки отдельно; здесь — только перечисление полей ответа. Площадки не
- * складываются (решение `returns_marketplace_switch`): экран показывает одну
- * выбранную, а разрез «Площадки» — строки без итога.
+ * Числа считает `returnsAnalyticsOf` (finance) над журналом площадки экрана;
+ * здесь — только перечисление полей ответа. Площадки не складываются: у каждой
+ * свой экран (/ym, /ozon, /wb — `crm_marketplace_screens_own_only`).
  */
 
 export const RETURNS_ANALYTICS_KIND = 'returns-analytics:summary';
@@ -36,8 +35,10 @@ export interface ICrmReturnsProblem {
 }
 
 export interface ICrmReturnsAnalytics {
+  /** Площадка экрана (эхо `params.marketplace`) — стор сверяет по ней свой ответ. */
+  marketplace: TFinanceMarketplace;
   period: IFinancePeriod;
-  /** Открытые продавцу площадки, по которым журнал прочитан, — порядок переключателя. */
+  /** Блок площадки экрана; пусто, если её журнал не прочитан (причина — в problems). */
   marketplaces: ICrmReturnsMarketplace[];
   problems: ICrmReturnsProblem[];
   notes: string[];
@@ -45,6 +46,7 @@ export interface ICrmReturnsAnalytics {
 
 export function toCrmReturnsAnalytics(input: {
   period: IFinancePeriod;
+  marketplace: TFinanceMarketplace;
   reports: readonly IReturnsAnalytics[];
   problems: readonly ICrmReturnsProblem[];
 }): ICrmReturnsAnalytics {
@@ -56,6 +58,7 @@ export function toCrmReturnsAnalytics(input: {
   if (opened.has('ym')) notes.push(RETURNS_ANALYTICS_YM_NOTE);
   if (opened.has('ozon')) notes.push(RETURNS_ANALYTICS_OZON_NOTE);
   return {
+    marketplace: input.marketplace,
     period: { from: input.period.from, to: input.period.to },
     marketplaces: input.reports.map((report) => ({
       ...report,

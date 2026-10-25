@@ -75,12 +75,119 @@ export const WB_PATHS = {
   /** Статусы сборочных заданий по id — POST, но только чтение («Маркетплейс»). */
   fbsOrderStatuses: '/api/v3/orders/status',
   /**
-   * Отчёт реализации — строки еженедельных отчётов за период, курсор `rrdid`
-   * («Статистика», тот же лимит 1 запрос в минуту). Путь — по памяти: доки
-   * WB автоматике не отдаются (known-gaps).
+   * Отчёт реализации — строки еженедельных отчётов за период, курсор `rrdId`
+   * («Финансы», POST). Заменил `GET statistics-api/api/v5/supplier/reportDetailByPeriod`
+   * (заметка WB 15.04.2026, «будет отключён 15 июля»; на проде отвечал «deprecated»).
+   * Поля ответа — camelCase, деньги — строками; в журнал строка идёт в прежних
+   * именах (`toLegacyReportRow`).
    */
-  reportDetail: '/api/v5/supplier/reportDetailByPeriod',
+  reportDetail: '/api/finance/v1/sales-reports/detailed',
 } as const;
+
+/**
+ * Новые имена полей отчёта реализации → прежние (таблица соответствия из заметки
+ * WB 15.04.2026). Журнал (`wb-journal.ts`), ключи дедупа и сохранённые сырые строки
+ * живут в прежних именах: перевод здесь — и разбор, и строки до перехода не
+ * меняются. Аналогов `suppliercontract_code` и `ppvz_supplier_id` нет; `title`
+ * — новое поле, имя то же.
+ */
+export const WB_REPORT_LEGACY_FIELD: Readonly<Record<string, string>> = {
+  reportId: 'realizationreport_id',
+  dateFrom: 'date_from',
+  dateTo: 'date_to',
+  createDate: 'create_dt',
+  currency: 'currency_name',
+  rrdId: 'rrd_id',
+  giId: 'gi_id',
+  dlvPrc: 'dlv_prc',
+  fixTariffDateFrom: 'fix_tariff_date_from',
+  fixTariffDateTo: 'fix_tariff_date_to',
+  subjectName: 'subject_name',
+  nmId: 'nm_id',
+  brandName: 'brand_name',
+  vendorCode: 'sa_name',
+  title: 'title',
+  techSize: 'ts_name',
+  sku: 'barcode',
+  docTypeName: 'doc_type_name',
+  quantity: 'quantity',
+  retailPrice: 'retail_price',
+  retailAmount: 'retail_amount',
+  salePercent: 'sale_percent',
+  commissionPercent: 'commission_percent',
+  officeName: 'office_name',
+  sellerOperName: 'supplier_oper_name',
+  orderDt: 'order_dt',
+  saleDt: 'sale_dt',
+  rrDate: 'rr_dt',
+  shkId: 'shk_id',
+  retailPriceWithDisc: 'retail_price_withdisc_rub',
+  deliveryAmount: 'delivery_amount',
+  returnAmount: 'return_amount',
+  deliveryService: 'delivery_rub',
+  giBoxTypeName: 'gi_box_type_name',
+  productDiscountForReport: 'product_discount_for_report',
+  sellerPromo: 'supplier_promo',
+  spp: 'ppvz_spp_prc',
+  kvwBase: 'ppvz_kvw_prc_base',
+  kvw: 'ppvz_kvw_prc',
+  supRatingUp: 'sup_rating_prc_up',
+  isKgvpV2: 'is_kgvp_v2',
+  ppvzSalesCommission: 'ppvz_sales_commission',
+  forPay: 'ppvz_for_pay',
+  ppvzReward: 'ppvz_reward',
+  acquiringFee: 'acquiring_fee',
+  acquiringPercent: 'acquiring_percent',
+  paymentProcessing: 'payment_processing',
+  acquiringBank: 'acquiring_bank',
+  vw: 'ppvz_vw',
+  vwNds: 'ppvz_vw_nds',
+  ppvzOfficeName: 'ppvz_office_name',
+  ppvzOfficeId: 'ppvz_office_id',
+  ppvzSupplierName: 'ppvz_supplier_name',
+  ppvzSupplierInn: 'ppvz_inn',
+  declarationNumber: 'declaration_number',
+  bonusTypeName: 'bonus_type_name',
+  stickerId: 'sticker_id',
+  country: 'site_country',
+  srvDbs: 'srv_dbs',
+  penalty: 'penalty',
+  additionalPayment: 'additional_payment',
+  rebillLogisticCost: 'rebill_logistic_cost',
+  rebillLogisticOrg: 'rebill_logistic_org',
+  paidStorage: 'storage_fee',
+  deduction: 'deduction',
+  paidAcceptance: 'acceptance',
+  orderId: 'assembly_id',
+  kiz: 'kiz',
+  srid: 'srid',
+  reportType: 'report_type',
+  isB2b: 'is_legal_entity',
+  trbxId: 'trbx_id',
+  installmentCofinancingAmount: 'installment_cofinancing_amount',
+  wibesDiscountPercent: 'wibes_wb_discount_percent',
+  cashbackAmount: 'cashback_amount',
+  cashbackDiscount: 'cashback_discount',
+  cashbackCommissionChange: 'cashback_commission_change',
+  paymentSchedule: 'payment_schedule',
+  deliveryMethod: 'delivery_method',
+  sellerPromoId: 'seller_promo_id',
+  sellerPromoDiscount: 'seller_promo_discount',
+  loyaltyId: 'loyalty_id',
+  loyaltyDiscount: 'loyalty_discount',
+  uuidPromocode: 'uuid_promocode',
+  salePricePromocodeDiscountPrc: 'sale_price_promocode_discount_prc',
+  articleSubstitution: 'article_substitution',
+  salePriceAffiliatedDiscountPrc: 'sale_price_affiliated_discount_prc',
+  agencyVat: 'agency_vat',
+  salePriceWholesaleDiscountPrc: 'sale_price_wholesale_discount_prc',
+};
+
+/**
+ * Поля, которые просим явно (`fields` запроса): все из таблицы — строка в журнале
+ * та же, что до перехода, и не зависим от того, что WB отдаёт без списка.
+ */
+export const WB_REPORT_FIELDS: readonly string[] = Object.keys(WB_REPORT_LEGACY_FIELD);
 
 /** Страница карточек: больше WB не отдаёт. */
 export const WB_CARDS_LIMIT = 100;
@@ -299,7 +406,7 @@ export class WbClient {
 
   /**
    * Строки отчёта реализации за `dateFrom`…`dateTo` (`ГГГГ-ММ-ДД` по Москве),
-   * еженедельные отчёты. Курсор — `rrd_id` последней строки (`rrdid`), стоп
+   * еженедельные отчёты, в прежних именах полей. Курсор — `rrd_id` последней строки (`rrdId`), стоп
    * на пустом ответе. Неполное — `WbIncompleteResponseError`, а не тихий стоп:
    * недосчитанная неделя легла бы в журнал как настоящая. Только чтение.
    */
@@ -308,12 +415,13 @@ export class WbClient {
     let rrdid = '0';
     for (let page = 0; page < WB_STATISTICS_MAX_PAGES; page += 1) {
       const result = mapWbRealization(
-        await this.statistics(WB_PATHS.reportDetail, {
+        await this.financeReport({
           dateFrom,
           dateTo,
           limit: WB_REPORT_DETAIL_LIMIT,
-          rrdid,
+          rrdId: Number(rrdid),
           period: 'weekly',
+          fields: WB_REPORT_FIELDS,
         }),
       );
       rows.push(...result.rows);
@@ -395,6 +503,19 @@ export class WbClient {
     }
     throw new WbIncompleteResponseError(
       `${path}: после ${WB_STATISTICS_MAX_PAGES} полных страниц данные не кончились`,
+    );
+  }
+
+  /**
+   * Отчёт реализации «Финансов» — POST, но только чтение (повторы безвредны). Лимит
+   * нового метода WB не назвал; выдержка — та же, что у «Статистики», откуда метод
+   * переехал, и общая с ней: заказы и отчёт одного токена не идут разом.
+   */
+  private async financeReport(body: Record<string, unknown>): Promise<unknown> {
+    if (this.statisticsCalled) await this.sleep(WB_STATISTICS_INTERVAL_MS);
+    this.statisticsCalled = true;
+    return this.call(() =>
+      this.http.post(`${WB_CATEGORY_HOSTS.finance}${WB_PATHS.reportDetail}`, body),
     );
   }
 
@@ -663,9 +784,29 @@ export function mapFbsOrderStatuses(raw: unknown): IWbFbsOrderStatus[] {
 
 // ─── Отчёт реализации (TASK-136) ─────────────────────────────────────────────
 
+/** Строка нового отчёта → прежние имена полей; незнакомое поле — как пришло. */
+export function toLegacyReportRow(row: TRaw): TRaw {
+  const legacy: TRaw = {};
+  for (const [key, value] of Object.entries(row))
+    legacy[WB_REPORT_LEGACY_FIELD[key] ?? key] = value;
+  return legacy;
+}
+
 /**
- * Ответ reportDetailByPeriod — массив строк (пустой ответ, 204 или `null` —
- * конец). Строки отдаются сырыми: разбор денег — дело журнала финансов, а
+ * Строки ответа: массив целиком или под `data` (`data` массивом или с массивом
+ * внутри) — форму ответа нового метода живым токеном ещё не видели (known-gaps).
+ */
+function reportRowsOf(raw: unknown): unknown {
+  if (Array.isArray(raw) || raw === null || typeof raw !== 'object') return raw;
+  const data = (raw as TRaw).data;
+  if (Array.isArray(data) || data === null || typeof data !== 'object') return data;
+  return Object.values(data as TRaw).find((value) => Array.isArray(value)) ?? [];
+}
+
+/**
+ * Ответ отчёта реализации — строки (пустой ответ, 204 или `null` — конец).
+ * Строки отдаются сырыми в прежних именах (`toLegacyReportRow`): разбор денег —
+ * дело журнала финансов (суммы теперь строками — `toKopecks` их читает), а
  * мусор без `rrd_id` отбрасывается. `count` и `lastRrdId` — до отсева, по
  * ним решается, где курсор.
  */
@@ -674,7 +815,7 @@ export function mapWbRealization(raw: unknown): {
   count: number;
   lastRrdId: string;
 } {
-  const objects = objectsOf(raw);
+  const objects = objectsOf(reportRowsOf(raw)).map(toLegacyReportRow);
   const rows = objects.filter((row) => /^\d+$/.test(idString(row.rrd_id)));
   return { rows, count: objects.length, lastRrdId: idString(rows.at(-1)?.rrd_id) };
 }

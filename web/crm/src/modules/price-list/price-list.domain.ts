@@ -1,7 +1,7 @@
 /**
  * «Прайс» CRM: загрузка файла (остатки + закупочные цены) и список закупа.
  * Ответы — /api/crm/ym/price-list/*; итог загрузки — фоновая задача, её опрос
- * идёт через /api/crm/ym/jobs/:id (общий useJob).
+ * идёт через /api/crm/jobs/:id (общий useJob).
  */
 
 export const PRICE_LIST_ROUTE_NAME = 'ym-price-list';

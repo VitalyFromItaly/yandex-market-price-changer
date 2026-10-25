@@ -19,6 +19,8 @@ export interface IFinanceDiscrepanciesScope {
 
 export interface IFinanceDiscrepanciesQuery {
   telegramUserId?: string;
+  /** Площадка журнала (TASK-180); не задана — все. */
+  marketplace?: TFinanceMarketplace;
   periodKey?: string;
   limit?: number;
   skip?: number;
@@ -120,6 +122,7 @@ export class FinanceDiscrepancyRepository {
     const where = and(
       query.telegramUserId ? eq(t.telegramUserId, query.telegramUserId) : undefined,
       query.periodKey ? eq(t.periodKey, query.periodKey) : undefined,
+      query.marketplace ? eq(t.marketplace, query.marketplace) : undefined,
     );
     const limit = Math.min(Math.max(query.limit ?? 50, 1), MAX_FINANCE_DISCREPANCIES_PAGE);
     const offset = Math.max(query.skip ?? 0, 0);

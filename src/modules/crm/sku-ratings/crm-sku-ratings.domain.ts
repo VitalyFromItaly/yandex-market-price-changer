@@ -1,3 +1,4 @@
+import type { TMarketplace } from '../../../shared/marketplace';
 import type { IUnconfirmedProfit } from '../../../shared/profit-confirmation';
 import type { IFinancePeriod } from '../../finance/finance-period';
 import type { TFinancePeriodStatus } from '../../finance/finance-period-status';
@@ -36,6 +37,8 @@ export interface ICrmRatingTop {
 }
 
 export interface ICrmSkuRatings {
+  /** Площадка журнала (TASK-181) — эхо для сверки ответа с запросом на экране. */
+  marketplace: TMarketplace;
   period: IFinancePeriod;
   previousPeriod: IFinancePeriod;
   status: TFinancePeriodStatus;
@@ -80,9 +83,11 @@ export function toCrmSkuRatings(
   current: IPnlReport,
   previous: IPnlReport,
   products: ReadonlyMap<string, IBrandSource>,
+  marketplace: TMarketplace = 'ym',
 ): ICrmSkuRatings {
   const ratings = skuRatingsOf(current.pnl, previous.pnl, products);
   return {
+    marketplace,
     period: current.pnl.period,
     previousPeriod: previous.pnl.period,
     status: current.status,

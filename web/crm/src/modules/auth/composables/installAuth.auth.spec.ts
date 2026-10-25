@@ -41,6 +41,7 @@ describe('installAuth', () => {
       routes: [
         { path: '/login', name: 'login', component: page, meta: { public: true } },
         { path: '/ym/orders', name: 'ym-orders', component: page },
+        { path: '/connections', name: 'connections', component: page },
       ],
     });
     await router.push('/ym/orders');
@@ -84,5 +85,15 @@ describe('installAuth', () => {
 
     expect(useAuthStore().notice).toBeNull();
     expect(router.currentRoute.value.name).toBe('ym-orders');
+  });
+
+  it('403 NO_PLATFORM — на «Подключения»; другой 403 остаётся ошибкой экрана (TASK-193)', async () => {
+    respond(403, { code: 'FEATURE_DISABLED', message: 'Закрыто' });
+    await expect(http.get('/ym/finance')).rejects.toThrow('Закрыто');
+    expect(router.currentRoute.value.name).toBe('ym-orders');
+
+    respond(403, { code: 'NO_PLATFORM', message: 'Сначала подключите площадку' });
+    await expect(http.get('/ym/finance')).rejects.toThrow();
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('connections'));
   });
 });

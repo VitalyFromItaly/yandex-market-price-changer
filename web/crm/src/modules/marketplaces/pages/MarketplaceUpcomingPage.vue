@@ -6,18 +6,19 @@ import { RouterLink } from 'vue-router';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PageHeader } from '@/components/ui/page-header';
-import { ALL_MARKETPLACES, MARKETPLACES } from '@/navigation';
+import { ALL_MARKETPLACES } from '@/navigation';
+import { sectionPath } from '@/navigation.sections';
 import { useMarketplace } from '@/shared/composables';
 
 /**
- * Площадка, разделов которой в CRM ещё нет (Ozon, Wildberries). Адрес живой —
- * переключатель ведёт сюда, — но говорит честно: подключение скоро.
+ * Площадка «скоро» у продавца (Ozon, Wildberries без открытой фичи — гард
+ * `useMarketplaceGuard` ведёт сюда любой её адрес). Говорит честно: подключение скоро.
  */
 const marketplace = useMarketplace();
 const label = computed(
   () => ALL_MARKETPLACES.find((m) => m.key === marketplace.value)?.label ?? 'Площадка',
 );
-const home = MARKETPLACES[0]?.home ?? '/';
+const home = sectionPath('ym', 'stores');
 </script>
 
 <template>

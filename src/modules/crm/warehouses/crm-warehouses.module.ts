@@ -5,7 +5,7 @@ import { CrmJobsModule } from '../jobs/crm-jobs.module';
 
 import { CrmWarehousesKinds } from './crm-warehouses.kinds';
 
-/** «Склады» в CRM. Контроллера нет — срез без параметров идёт через /api/crm/ym/jobs. */
+/** «Склады» в CRM. Контроллера нет — срез без параметров идёт через /api/crm/jobs. */
 @Module({
   imports: [CrmJobsModule, YandexModule],
   providers: [CrmWarehousesKinds],

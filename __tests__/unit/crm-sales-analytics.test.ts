@@ -101,12 +101,17 @@ beforeEach(async () => {
   await pg.reset();
 });
 
-async function seed(rows: Record<string, unknown>[], period = SEPT) {
+async function seed(
+  rows: Record<string, unknown>[],
+  period = SEPT,
+  marketplace: 'ym' | 'ozon' = 'ym',
+) {
+  const reportType = marketplace === 'ym' ? 'united-netting' : 'ozon-transaction-list';
   const { document } = await documents.registerVersion({
-    marketplace: 'ym',
+    marketplace,
     telegramUserId: SELLER,
     businessId: 'b1',
-    reportType: 'united-netting',
+    reportType,
     periodFrom: period.from,
     periodTo: period.to,
     buffer: Buffer.from(JSON.stringify(rows)),
@@ -115,26 +120,43 @@ async function seed(rows: Record<string, unknown>[], period = SEPT) {
   });
   const keys = journalKeys(rows);
   await operations.upsertMany(
-    rows.map((r, i) =>
-      nettingRowToOperation(r, keys[i], {
+    // Ozon — те же строки под своей площадкой: экрану важна площадка журнала, не формат отчёта.
+    rows.map((r, i) => ({
+      ...nettingRowToOperation(r, keys[i], {
         telegramUserId: SELLER,
         businessId: 'b1',
         documentId: document.id,
         documentVersion: document.version,
-        periodKey: financePeriodKey('united-netting', period),
+        periodKey: financePeriodKey(reportType, period),
       }),
-    ),
+      marketplace,
+    })),
   );
 }
 
 const contextOf = (params: Record<string, unknown>) =>
   ({ telegramUserId: SELLER, store: {} as never, params, features: {} }) as const;
 
-type TProduct = { marketplaceSkus: { ym: string }; name: string; category?: string };
+type TProduct = {
+  marketplaceSkus: Partial<Record<'ym' | 'ozon', string>>;
+  name: string;
+  category?: string;
+};
 
 function kinds(products: TProduct[] = []) {
   return new CrmSalesAnalyticsKinds({ register: vi.fn() } as never, finance, {
-    findByYmSkus: async () => products,
+    // Как `ProductService.findByJournalSkus`: сначала артикул ЯМ, затем артикул площадки.
+    findByJournalSkus: async (_uid: string, marketplace: 'ym' | 'ozon', skus: string[]) =>
+      new Map(
+        skus.flatMap((sku) => {
+          const found =
+            products.find((p) => p.marketplaceSkus.ym === sku) ??
+            (marketplace === 'ym'
+              ? undefined
+              : products.find((p) => p.marketplaceSkus[marketplace] === sku));
+          return found ? [[sku, found] as const] : [];
+        }),
+      ),
   } as never);
 }
 
@@ -231,6 +253,45 @@ describe('«Аналитика продаж» = «Финансам» по пос
       units: 2,
     });
     expect(view.brands.find((b) => b.key === 'casio')?.previous).toBeNull();
+  });
+
+  it('площадка (TASK-181): Ozon — свой журнал и свои артикулы, ЯМ не изменился', async () => {
+    await seed([row()]);
+    const products: TProduct[] = [
+      { marketplaceSkus: { ym: 'A1' }, name: 'Часы ЯМ' },
+      { marketplaceSkus: { ozon: 'B2' }, name: 'Часы Ozon' },
+    ];
+    const ymBefore = (await kinds(products).summary(contextOf(SEPT_PARAMS), OCT_15))
+      .data as ICrmSalesAnalytics;
+
+    await seed([row({ orderId: 2, shopSku: 'B2', count: 1, transactionSum: 2500 })], SEPT, 'ozon');
+    const ozonContext = {
+      ...contextOf({ ...SEPT_PARAMS, marketplace: 'ozon' }),
+      features: { [FEATURE.OZON]: true },
+    };
+    const ym = (await kinds(products).summary(contextOf(SEPT_PARAMS), OCT_15)).data as ICrmSalesAnalytics;
+    const ozon = (await kinds(products).summary(ozonContext, OCT_15)).data as ICrmSalesAnalytics;
+
+    expect(ym).toEqual(ymBefore);
+    expect([ym.marketplace, ozon.marketplace]).toEqual(['ym', 'ozon']);
+    expect(ozon.skus.map((s) => [s.sku, s.name])).toEqual([['B2', 'Часы Ozon']]);
+    expect(ym.skus.map((s) => [s.sku, s.name])).toEqual([['A1', 'Часы ЯМ']]);
+    // Экраны площадок складываются в общий итог: каждая — ровно выручка своего журнала.
+    const revenueOf = (view: ICrmSalesAnalytics) => view.totals.revenueKopecks;
+    expect(revenueOf(ym)).toBe(500_000);
+    expect(revenueOf(ozon)).toBe(250_000);
+    expect(ozon.marketplaces.map((m) => [m.marketplace, m.label, m.revenueKopecks])).toEqual([
+      ['ozon', 'Ozon', 250_000],
+    ]);
+  });
+
+  it('площадка: мусор и закрытая фича — отказ, а не тихий ЯМ', async () => {
+    await expect(
+      kinds().summary(contextOf({ ...SEPT_PARAMS, marketplace: 'amazon' })),
+    ).rejects.toBeInstanceOf(CrmJobError);
+    await expect(
+      kinds().summary(contextOf({ ...SEPT_PARAMS, marketplace: 'ozon' })),
+    ).rejects.toThrow('«Ozon» закрыта');
   });
 
   it('кривой период — понятный отказ продавцу, а не сбой', async () => {

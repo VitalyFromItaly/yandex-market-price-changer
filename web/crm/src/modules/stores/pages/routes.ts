@@ -2,10 +2,12 @@ import type { RouteRecordRaw } from 'vue-router';
 
 import { STORE_PARAM, STORES_ROUTE_NAME } from '../stores.domain';
 
+import { sectionPath } from '@/navigation.sections';
+
 /** Список магазинов — стартовая CRM; имя — ключ пункта меню `ym-stores`. */
 export const storesRoutes: RouteRecordRaw[] = [
   {
-    path: '/ym/stores',
+    path: sectionPath('ym', 'stores'),
     name: STORES_ROUTE_NAME,
     component: () => import('@/modules/stores/pages/StoresPage.vue'),
     meta: { title: 'Магазины' },
@@ -20,7 +22,7 @@ export const storesRoutes: RouteRecordRaw[] = [
 export function storeRoutes(children: RouteRecordRaw[]): RouteRecordRaw[] {
   return [
     {
-      path: `/ym/stores/:${STORE_PARAM}`,
+      path: `${sectionPath('ym', 'stores')}/:${STORE_PARAM}`,
       component: () => import('@/modules/stores/pages/StoreLayout.vue'),
       children,
     },

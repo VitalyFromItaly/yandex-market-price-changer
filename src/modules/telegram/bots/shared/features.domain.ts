@@ -163,6 +163,14 @@ export const FEATURE = {
    */
   MARKETPLACE_COMPARE: 'marketplace_compare',
   /**
+   * Дашборд «Площадки» (TASK-191, решение marketplaces_dashboard): KPI и графики всех
+   * подключённых открытых площадок за период рядом. Кнопки в боте нет — раздел
+   * аккаунта CRM, `featureGate` закрывать нечего. Раздел виден только при ≥2
+   * подключённых открытых площадках (`connectedOpenMarketplaces`). Числа — из
+   * `FinanceService.compare`; без `finance` журналов нет.
+   */
+  MARKETPLACES_DASHBOARD: 'marketplaces_dashboard',
+  /**
    * «Рейтинги и классификации» (TASK-141, ТЗ п.9): ТОП-20 товаров, ABC и XYZ из
    * финжурнала. Кнопки в боте нет — раздел аккаунта CRM, `featureGate` закрывать
    * нечего. Без `finance` рейтингов нет.
@@ -248,6 +256,13 @@ export const FEATURE = {
    * нечего. Гейт — `@RequireFeature(finance, finance_upload)` на маршруте.
    */
   FINANCE_UPLOAD: 'finance_upload',
+  /**
+   * «Загрузить из Маркета» — журнал месяца по кнопке, не дожидаясь ночи: та же
+   * задача очереди `finance-import`, что ночной проход, только разовая. Кнопка
+   * живёт в пустом состоянии каждого экрана над журналом (CRM), в боте её нет —
+   * `featureGate` закрывать нечего. Гейт — `@RequireFeature(finance, finance_pull)`.
+   */
+  FINANCE_PULL: 'finance_pull',
   /**
    * «Фактическая чистая» в «💰 Прибыли» (TASK-126, M18, решение
    * `finance_actual_beside_flat`): при проверенном журнале периода — чистая из
@@ -357,6 +372,7 @@ const FEATURE_KEY_SET: Record<TFeatureKey, true> = {
   [FEATURE.UNIT_ECONOMICS]: true,
   [FEATURE.SALES_ANALYTICS]: true,
   [FEATURE.MARKETPLACE_COMPARE]: true,
+  [FEATURE.MARKETPLACES_DASHBOARD]: true,
   [FEATURE.SKU_RATINGS]: true,
   [FEATURE.INVENTORY]: true,
   [FEATURE.ORDER_FEED]: true,
@@ -370,6 +386,7 @@ const FEATURE_KEY_SET: Record<TFeatureKey, true> = {
   [FEATURE.PRICE_CALCULATOR]: true,
   [FEATURE.FINANCE_ANOMALIES]: true,
   [FEATURE.FINANCE_UPLOAD]: true,
+  [FEATURE.FINANCE_PULL]: true,
   [FEATURE.PROFIT_ACTUAL]: true,
   [FEATURE.OZON]: true,
   [FEATURE.WB]: true,
@@ -648,6 +665,18 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     // Сравниваются финжурналы площадок: без них экран пуст.
     requires: [FEATURE.FINANCE],
   },
+  [FEATURE.MARKETPLACES_DASHBOARD]: {
+    // Inline-only подпись: кнопки в боте нет, раздел живёт в CRM.
+    label: '📊 Площадки',
+    description:
+      'Дашборд со сравнением подключённых площадок на графиках: выручка во времени, прибыль, маржа, ' +
+      'доля в выручке и возвраты за один период. Виден, когда подключено больше одной площадки; ' +
+      'работает только вместе с «Финансами».',
+    // Выключена: новая функция, открывается по продавцу (new_functions_behind_feature).
+    defaultEnabled: false,
+    // Числа — из финжурналов площадок (FinanceService.compare): без них экран пуст.
+    requires: [FEATURE.FINANCE],
+  },
   [FEATURE.INVENTORY]: {
     // Inline-only подпись: кнопки в боте нет, раздел живёт в CRM.
     label: '📦 Склад',
@@ -878,6 +907,18 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     // Выключена: новая функция, открывается по продавцу (new_functions_behind_feature).
     defaultEnabled: false,
     // Пишет в финжурнал и живёт вкладкой «Финансов» — без них её нет.
+    requires: [FEATURE.FINANCE],
+  },
+  [FEATURE.FINANCE_PULL]: {
+    // Inline-only подпись: кнопки в боте нет, она в пустых состояниях экранов CRM.
+    label: '🔄 Загрузка журнала по кнопке',
+    description:
+      'Кнопка «Загрузить из Маркета» на экранах над финжурналом: журнал текущего или прошлого ' +
+      'месяца загружается сразу, не дожидаясь ночи (не чаще раза в 15 минут на месяц). ' +
+      'Работает только вместе с «Финансами».',
+    // Выключена: новая функция, открывается по продавцу (new_functions_behind_feature).
+    defaultEnabled: false,
+    // Пишет в финжурнал — без «Финансов» его некому показать.
     requires: [FEATURE.FINANCE],
   },
   [FEATURE.PROFIT_ACTUAL]: {

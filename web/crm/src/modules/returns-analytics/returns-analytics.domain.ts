@@ -11,7 +11,6 @@
  */
 import type { DayRange } from '@/shared/utils';
 
-export const RETURNS_ANALYTICS_ROUTE_NAME = 'ym-returns-analytics';
 export const RETURNS_ANALYTICS_KIND = 'returns-analytics:summary';
 /** Без «Финансов» журнала нет: задача получила бы 403 гейта. */
 export const FINANCE_FEATURE = 'finance';
@@ -55,6 +54,8 @@ export interface ReturnsMarketplace {
 }
 
 export interface ReturnsAnalyticsResponse {
+  /** Площадка экрана (эхо `params.marketplace`, TASK-182); старый ответ без неё — ЯМ. */
+  marketplace?: ReturnsMarketplace['marketplace'];
   period: DayRange;
   marketplaces: ReturnsMarketplace[];
   problems: { marketplace: string; problem: string }[];
@@ -63,12 +64,11 @@ export interface ReturnsAnalyticsResponse {
 
 // --- вид -----------------------------------------------------------------------
 
-export type ReturnsSlice = 'brand' | 'sku' | 'marketplace';
+export type ReturnsSlice = 'brand' | 'sku';
 
 export const RETURNS_SLICE_OPTIONS: { value: ReturnsSlice; label: string }[] = [
   { value: 'brand', label: 'По брендам' },
   { value: 'sku', label: 'По товарам' },
-  { value: 'marketplace', label: 'По площадкам' },
 ];
 
 export interface ReturnsKpi {

@@ -63,8 +63,10 @@ web/crm/src/modules/<module-name>/
   **не** объявляются.
 - **Роутер на `createWebHashHistory`** — довод админки: F5 на `#/ym/orders` не уходит на сервер, и
   не нужен SPA-fallback, который мог бы проглотить ошибку `/api`.
-- **Маршруты фич маркетплейса — под `/ym/...`** (`/ym/orders`, `/ym/profit`, `/ym/settings`): другие
-  маркетплейсы — только каркас, но префикс закладывается сразу, чтобы потом не переписывать ссылки.
+- **Маршруты фич маркетплейса — под префиксом площадки** (`/ym/orders`, `/ym/settings`, `/ozon/finance`):
+  вид раздела задаёт `SECTION_KIND` в `src/navigation.sections.ts` (своя у площадки / общий / только ЯМ),
+  адрес и имя — только `sectionPath`/`sectionName`, не литералом. Раздел вида `marketplace` — фабрика
+  `xRoutes(mp)` через `sectionRoute` и строка в `MARKETPLACE_ROUTES` (`src/router/routes.ts`).
   Вне префикса — то, что не про маркетплейс: вход, смена пароля, профиль.
 - Страницы грузятся лениво в `routes.ts` через `() => import('@/modules/<m>/pages/<Page>.vue')`.
   Публичные маршруты (вход) — `meta: { public: true }`.

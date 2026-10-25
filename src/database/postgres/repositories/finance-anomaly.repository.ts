@@ -23,6 +23,8 @@ export interface IFinanceAnomaliesScope {
 
 export interface IFinanceAnomaliesQuery {
   telegramUserId: string;
+  /** Площадка журнала (TASK-180); не задана — все площадки периода (ключ периода и так её несёт). */
+  marketplace?: TFinanceMarketplace;
   periodKey: string;
   /** true — только непросмотренные. */
   unreviewedOnly?: boolean;
@@ -146,7 +148,11 @@ export class FinanceAnomalyRepository {
       eq(r.telegramUserId, a.telegramUserId),
       eq(r.anomalyKey, a.anomalyKey),
     );
-    const scope = and(eq(a.telegramUserId, query.telegramUserId), eq(a.periodKey, query.periodKey));
+    const scope = and(
+      eq(a.telegramUserId, query.telegramUserId),
+      eq(a.periodKey, query.periodKey),
+      query.marketplace ? eq(a.marketplace, query.marketplace) : undefined,
+    );
     const notReviewed = or(isNull(r.id), sql`${r.fingerprint} <> ${a.fingerprint}`);
     const where = query.unreviewedOnly ? and(scope, notReviewed) : scope;
     const limit = Math.min(Math.max(query.limit ?? 50, 1), MAX_FINANCE_ANOMALIES_PAGE);

@@ -8,12 +8,11 @@ import type { TFinanceArticle } from '../../finance/finance-articles';
 import type { ICashflowReport } from '../../finance/finance-cashflow.service';
 import type { IFinancePeriod } from '../../finance/finance-period';
 import type { TFinancePeriodStatus } from '../../finance/finance-period-status';
-import type { IFinanceScreenOperation } from '../../finance/finance-screen';
+import type { IFinanceScreenMonth, IFinanceScreenOperation } from '../../finance/finance-screen';
 import type { IFinanceScreenMonthState } from '../../finance/finance-screen.service';
 import type { IPnlFlatEstimate, IPnlReport } from '../../finance/finance.service';
 import type { TPnlSection } from '../../finance/pnl';
 
-import { FINANCE_MARKETPLACES } from '../../../database/postgres/finance.schema';
 import { MARKETPLACE_LABEL } from '../../../shared/marketplace';
 import { ANOMALY_KIND_LABEL } from '../../finance/finance-anomalies';
 import { FINANCE_ARTICLE_KEYS, FINANCE_ARTICLE_META } from '../../finance/finance-articles';
@@ -59,6 +58,26 @@ export const FINANCE_UPLOAD_TOO_LARGE_TEXT = 'Файл больше 15 МБ — 
 export const FINANCE_UPLOAD_MONTH_TEXT =
   'Выберите месяц из списка: текущий или один из двенадцати прошлых.';
 
+/** 409: журнал площадки продавцу не загружается — фича закрыта или площадка не подключена. */
+export const FINANCE_PULL_NOT_ALLOWED = 'FINANCE_PULL_NOT_ALLOWED';
+export const FINANCE_PULL_MONTHS_TEXT =
+  'Укажите месяцы журнала: текущий или из двенадцати прошлых.';
+
+/**
+ * Месяцы кнопки «Загрузить из Маркета»: непустой список «ГГГГ-ММ» из тех же
+ * месяцев, что у экрана «Финансы» и загрузки файлом. Повторы схлопываются, порядок —
+ * от свежего, как ночной проход (сверке закрытого месяца нужен следующий).
+ */
+export function parsePullMonths(
+  value: unknown,
+  allowed: readonly IFinanceScreenMonth[],
+): IFinanceScreenMonth[] | null {
+  if (!Array.isArray(value) || !value.length || value.length > allowed.length) return null;
+  const wanted = new Set<unknown>(value);
+  const months = allowed.filter((month) => wanted.has(month.month));
+  return months.length === wanted.size ? months : null;
+}
+
 /** Итог ручной загрузки для фронта — перечислением полей. */
 export type TCrmFinanceUploadView =
   | { status: 'unchanged'; month: string; rows: number }
@@ -101,20 +120,6 @@ export function parseFinanceRangeParams(
   return period ? { month: null, period } : null;
 }
 
-export const FINANCE_MARKETPLACE_INVALID_TEXT = 'Площадка указана неверно.';
-
-/**
- * Площадка `finance:pnl` (TASK-137, решение `finance_pnl_marketplace_param`):
- * ячейка «Сравнения площадок» раскрывается в «Прибыль» своей площадки. Нет
- * параметра — ЯМ, как было; мусор — null (отказ, а не тихий ЯМ под чужим именем).
- */
-export function parseFinanceMarketplace(value: unknown): TFinanceMarketplace | null {
-  if (value === undefined || value === null || value === '') return 'ym';
-  return (FINANCE_MARKETPLACES as readonly unknown[]).includes(value)
-    ? (value as TFinanceMarketplace)
-    : null;
-}
-
 /**
  * Открыта ли продавцу площадка журнала. ЯМ — всегда (её закрывает `finance`
  * гвардом), Ozon/WB — своими фичами из снимка задачи (у админа — все открыты).
@@ -128,6 +133,60 @@ export function isFinanceMarketplaceOpen(
 
 export function financeMarketplaceClosedText(marketplace: TFinanceMarketplace): string {
   return `Функция «${MARKETPLACE_LABEL[marketplace]}» закрыта — финансы этой площадки недоступны.`;
+}
+
+/** 400: `?marketplace=` не из списка площадок журнала. */
+export const FINANCE_MARKETPLACE_INVALID_TEXT = 'Неизвестная площадка: нужна ym, ozon или wb.';
+
+/** Вкладки «Финансов», которые считаются не для каждой площадки (TASK-180). */
+export type TFinanceScreenPart = 'cashflow' | 'reconcile' | 'anomalies' | 'upload';
+
+/**
+ * Что из вкладок есть у площадки. Выплаты у Ozon — раскладкой сальдо (TASK-184), у WB —
+ * `create_dt` строки отчёта (TASK-185); сверка WB ждёт заказов площадки
+ * (`RECONCILE_NOT_IMPLEMENTED`), аномалии детектятся только по журналу ЯМ, ручная
+ * загрузка — только отчёт ЯМ по платежам.
+ */
+export const FINANCE_SCREEN_SUPPORT: Record<
+  TFinanceMarketplace,
+  Record<TFinanceScreenPart, boolean>
+> = {
+  ym: { cashflow: true, reconcile: true, anomalies: true, upload: true },
+  ozon: { cashflow: true, reconcile: true, anomalies: false, upload: false },
+  wb: { cashflow: true, reconcile: false, anomalies: false, upload: false },
+};
+
+/**
+ * Причина, почему вкладки нет у площадки, — показывается вместо нулей и
+ * пустого списка: «пусто» значило бы «всё чисто», а это неправда.
+ */
+export function financeUnsupportedNote(
+  part: TFinanceScreenPart,
+  marketplace: TFinanceMarketplace,
+): string {
+  const label = MARKETPLACE_LABEL[marketplace];
+  const notes: Record<TFinanceScreenPart, string> = {
+    cashflow: `Нет данных о выплатах ${label}: движение денег по этой площадке пока не считается.`,
+    reconcile: `Сверка начислений ${label} с заказами ещё не сделана — расхождения не ищутся.`,
+    anomalies: `Аномалии пока ищутся только в журнале Яндекс Маркета — для ${label} проверки нет.`,
+    upload: 'Загрузить файлом можно только отчёт Маркета по платежам.',
+  };
+  return notes[part];
+}
+
+/** Ответ вкладки, которой у площадки нет: только причина. */
+export interface ICrmFinanceUnsupportedView {
+  unsupported: true;
+  note: string;
+}
+
+export function financeUnsupportedView(
+  part: TFinanceScreenPart,
+  marketplace: TFinanceMarketplace,
+): ICrmFinanceUnsupportedView | null {
+  return FINANCE_SCREEN_SUPPORT[marketplace][part]
+    ? null
+    : { unsupported: true, note: financeUnsupportedNote(part, marketplace) };
 }
 
 export interface ICrmFinanceArticleView {
@@ -268,7 +327,15 @@ export interface ICrmFinanceMonthView {
   unknownCount: number;
   /** Почему сверка не сделана или упала; null — сделана или не начиналась. */
   reconcileNote: string | null;
+  /** Последняя попытка загрузки (и неудачная тоже); null — не грузили. */
   checkedAt: string | null;
+  /**
+   * В журнале есть версия отчёта. Не то же, что `status !== null`: первая же
+   * упавшая загрузка заводит строку периода со статусом, а данных нет.
+   */
+  loaded: boolean;
+  /** Почему упала последняя загрузка; null — прошла или не грузили. */
+  error: string | null;
 }
 
 export const FINANCE_NOT_LOADED_LABEL = 'Журнал не загружен';
@@ -286,6 +353,8 @@ export function toCrmFinanceMonths(months: IFinanceScreenMonthState[]): ICrmFina
     unknownCount: state?.unknownCount ?? 0,
     reconcileNote: state?.reconcileNote ?? null,
     checkedAt: state ? state.checkedAt.toISOString() : null,
+    loaded: (state?.documentVersion ?? null) !== null,
+    error: state?.error ?? null,
   }));
 }
 

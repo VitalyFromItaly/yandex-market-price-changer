@@ -101,12 +101,17 @@ beforeEach(async () => {
   await pg.reset();
 });
 
-async function seed(rows: Record<string, unknown>[], period = SEPT) {
+async function seed(
+  rows: Record<string, unknown>[],
+  period = SEPT,
+  marketplace: 'ym' | 'ozon' = 'ym',
+) {
+  const reportType = marketplace === 'ym' ? 'united-netting' : 'ozon-transaction-list';
   const { document } = await documents.registerVersion({
-    marketplace: 'ym',
+    marketplace,
     telegramUserId: SELLER,
     businessId: 'b1',
-    reportType: 'united-netting',
+    reportType,
     periodFrom: period.from,
     periodTo: period.to,
     buffer: Buffer.from(JSON.stringify(rows)),
@@ -115,24 +120,39 @@ async function seed(rows: Record<string, unknown>[], period = SEPT) {
   });
   const keys = journalKeys(rows);
   await operations.upsertMany(
-    rows.map((r, i) =>
-      nettingRowToOperation(r, keys[i], {
+    // Ozon — те же строки под своей площадкой: экрану важна площадка журнала, не формат отчёта.
+    rows.map((r, i) => ({
+      ...nettingRowToOperation(r, keys[i], {
         telegramUserId: SELLER,
         businessId: 'b1',
         documentId: document.id,
         documentVersion: document.version,
-        periodKey: financePeriodKey('united-netting', period),
+        periodKey: financePeriodKey(reportType, period),
       }),
-    ),
+      marketplace,
+    })),
   );
 }
 
 const contextOf = (params: Record<string, unknown>) =>
   ({ telegramUserId: SELLER, store: {} as never, params, features: {} }) as const;
 
-function kinds(names: Array<{ marketplaceSkus: { ym: string }; name: string }> = []) {
+type TProductStub = { marketplaceSkus: Partial<Record<'ym' | 'ozon', string>>; name: string };
+
+function kinds(names: TProductStub[] = []) {
   return new CrmUnitEconomicsKinds({ register: vi.fn() } as never, finance, {
-    findByYmSkus: async () => names,
+    // Как `ProductService.findByJournalSkus`: сначала артикул ЯМ, затем артикул площадки.
+    findByJournalSkus: async (_uid: string, marketplace: 'ym' | 'ozon', skus: string[]) =>
+      new Map(
+        skus.flatMap((sku) => {
+          const found =
+            names.find((p) => p.marketplaceSkus.ym === sku) ??
+            (marketplace === 'ym'
+              ? undefined
+              : names.find((p) => p.marketplaceSkus[marketplace] === sku));
+          return found ? [[sku, found] as const] : [];
+        }),
+      ),
   } as never);
 }
 
@@ -191,6 +211,67 @@ describe('«Unit-экономика» = «Финансам» по построе
     expect(view.rest.lines).toBe(1);
     expect(view.period).toEqual(SEPT);
     expect(view.previousPeriod).toEqual(AUG);
+  });
+
+  it('площадка (TASK-181): Ozon — свой журнал и свои артикулы, ЯМ не изменился', async () => {
+    const ymRows = [row(), service(1, 'Размещение товарных предложений', -1150.17)];
+    await seed(ymRows);
+    const names: TProductStub[] = [
+      { marketplaceSkus: { ym: 'A1' }, name: 'Часы ЯМ' },
+      { marketplaceSkus: { ozon: 'B2' }, name: 'Часы Ozon' },
+      // Привязан к ЯМ: импорт Ozon пишет в журнал его артикул ЯМ (ключ закупа), а не offer_id.
+      { marketplaceSkus: { ym: 'C3', ozon: 'OZ-C3' }, name: 'Часы связанные' },
+    ];
+    const ymBefore = (await kinds(names).skus(contextOf(SEPT_PARAMS), OCT_15))
+      .data as ICrmUnitEconomics;
+
+    await seed(
+      [
+        row({ orderId: 2, shopSku: 'B2', count: 1, transactionSum: 2500 }),
+        row({ orderId: 3, shopSku: 'C3', count: 1, transactionSum: 1000 }),
+        service(2, 'Доставка покупателю', -200),
+      ],
+      SEPT,
+      'ozon',
+    );
+    const ozonContext = {
+      ...contextOf({ ...SEPT_PARAMS, marketplace: 'ozon' }),
+      features: { [FEATURE.OZON]: true },
+    };
+    const ym = (await kinds(names).skus(contextOf(SEPT_PARAMS), OCT_15)).data as ICrmUnitEconomics;
+    const ozon = (await kinds(names).skus(ozonContext, OCT_15)).data as ICrmUnitEconomics;
+
+    expect(ym).toEqual(ymBefore);
+    expect(ym.marketplace).toBe('ym');
+    expect(ozon.marketplace).toBe('ozon');
+    expect(ozon.skus.map((s) => [s.sku, s.name])).toEqual([
+      ['B2', 'Часы Ozon'],
+      ['C3', 'Часы связанные'],
+    ]);
+    expect(ym.skus.map((s) => [s.sku, s.name])).toEqual([['A1', 'Часы ЯМ']]);
+
+    // Экраны площадок складываются в прежний общий итог: каждая — ровно «Финансы» своей площадки.
+    const pnlOf = async (marketplace: 'ym' | 'ozon') =>
+      (
+        (
+          await new CrmFinanceKinds({ register: vi.fn() } as never, finance).run(
+            { ...ozonContext, params: { month: '2026-09', marketplace } },
+            OCT_15,
+          )
+        ).data as ICrmPnlView
+      ).levels.netKopecks;
+    expect(ym.netKopecks).toBe(await pnlOf('ym'));
+    expect(ozon.netKopecks).toBe(await pnlOf('ozon'));
+    expect(ozon.revenueKopecks).toBe(350_000);
+  });
+
+  it('площадка: мусор и закрытая фича — отказ, а не тихий ЯМ', async () => {
+    await expect(
+      kinds().skus(contextOf({ ...SEPT_PARAMS, marketplace: 'amazon' })),
+    ).rejects.toBeInstanceOf(CrmJobError);
+    await expect(kinds().skus(contextOf({ ...SEPT_PARAMS, marketplace: 'ozon' }))).rejects.toThrow(
+      '«Ozon» закрыта',
+    );
   });
 
   it('кривой период — понятный отказ продавцу, а не сбой', async () => {

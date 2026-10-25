@@ -1,21 +1,25 @@
-import type { IOzonProduct } from './ozon.client';
+import type { IOzonProduct, OzonSellerClient } from './ozon.client';
 import type { TFinanceImportResult } from '../finance/finance-import.service';
 import type { IFinancePeriod } from '../finance/finance-period';
+import type { IOzonDayPayout } from '../finance/ozon-payouts';
 
 import { Injectable, Logger } from '@nestjs/common';
 
+import { FinanceOperationRepository } from '../../database/postgres/repositories/finance-operation.repository';
 import { MarketplaceConnectionService } from '../../database/services/marketplace-connection.service';
 import { ProductService } from '../../database/services/product.service';
 import { ErrorReporter } from '../errors/error-reporter.service';
 import { FinanceImportService } from '../finance/finance-import.service';
-import { financeToday, requestRange } from '../finance/finance-period';
+import { financeToday, requestRange, shiftDay } from '../finance/finance-period';
 import {
+  ozonAccrualToRow,
+  ozonAccrualTypesMap,
+  ozonAccrualsHaveSkus,
+  ozonAccrualsInPeriod,
   ozonFinanceOriginal,
-  ozonIdOf,
-  ozonOperationToRow,
-  ozonOperationsInPeriod,
   reportOzonUnknownArticles,
 } from '../finance/ozon-journal';
+import { ozonPaidDays } from '../finance/ozon-payouts';
 
 import { OzonClientFactory } from './ozon-client.factory';
 import { ozonReconcileOrders } from './ozon-reconcile-orders';
@@ -23,6 +27,11 @@ import { ozonSellerClient } from './ozon-seller-client';
 
 /** Место сбоя каталога при импорте — без id, довод троттлинга алертов. */
 export const OZON_FINANCE_SKU_CONTEXT = 'finance:ozon-sku';
+
+/** Место сбоя раскладки выплат (TASK-184) — без id, довод троттлинга алертов. */
+export const OZON_PAYOUTS_CONTEXT = 'finance:ozon-payouts';
+
+const moscowStart = (day: string) => new Date(`${day}T00:00:00+03:00`);
 
 /**
  * SKU Ozon → ключ закупа (решение владельца 2026-10-18). Цепочка: SKU Ozon →
@@ -48,8 +57,9 @@ export function ozonPurchaseKeys(
 }
 
 /**
- * Импорт финансовых операций Ozon (TASK-131): /v3/finance/transaction/list за
- * месяц → строки журнала → та же версия, upsert и корректировки, что у ЯМ
+ * Импорт финансовых операций Ozon (TASK-131, TASK-194): начисления
+ * /v1/finance/accrual/by-day по дням месяца + справочник типов → строки
+ * журнала → та же версия, upsert и корректировки, что у ЯМ
  * (`FinanceImportService.importBatchAndRecord`). Только чтение у Ozon.
  *
  * Ключ продавца — на каждый вызов (`ozonSellerClient`); нет ключа —
@@ -65,6 +75,7 @@ export class OzonFinanceService {
     private readonly products: ProductService,
     private readonly imports: FinanceImportService,
     private readonly errors: ErrorReporter,
+    private readonly operations: FinanceOperationRepository,
   ) {}
 
   async importPeriod(
@@ -76,58 +87,115 @@ export class OzonFinanceService {
     const credentials = await this.connections.credentialsOf(telegramUserId, 'ozon');
     const clientId = credentials?.clientId ?? '';
 
-    return await this.imports.importBatchAndRecord(
+    const result = await this.imports.importBatchAndRecord(
       { telegramUserId, period, marketplace: 'ozon' },
       async () => {
         // Незакрытый месяц — по сегодня, хранится целым (довод requestRange).
         const range = requestRange(period, financeToday(now));
-        const raws = await client.listFinanceOperations(
-          new Date(`${range.from}T00:00:00+03:00`),
-          new Date(`${range.to}T23:59:59.999+03:00`),
-        );
-        const { ops, dropped } = ozonOperationsInPeriod(raws, period);
+        const raws = await client.listAccruals(range.from, range.to);
+        const { accruals, dropped } = ozonAccrualsInPeriod(raws, period);
         if (dropped) {
           this.logger.warn(
-            `Ozon ${telegramUserId} ${period.from}…${period.to}: вне периода ${dropped} операций — пропущены`,
+            `Ozon ${telegramUserId} ${period.from}…${period.to}: вне периода ${dropped} начислений — пропущены`,
           );
         }
-        if (!ops.length) return null;
+        if (!accruals.length) return null;
 
-        const keys = await this.purchaseKeys(telegramUserId, ops, () => client.listProducts());
+        // Справочник — после начислений: пустой период его не запрашивает.
+        const types = ozonAccrualTypesMap(await client.listAccrualTypes());
+        const keys = ozonAccrualsHaveSkus(accruals)
+          ? await this.purchaseKeys(telegramUserId, () => client.listProducts())
+          : new Map<string, string>();
         return {
           businessId: clientId,
           original: {
-            buffer: ozonFinanceOriginal(period, ops, (sku) => keys.get(sku)),
-            filename: `ozon-transactions-${period.from}-${period.to}.json`,
+            buffer: ozonFinanceOriginal(period, accruals, types, (sku) => keys.get(sku)),
+            filename: `ozon-accruals-${period.from}-${period.to}.json`,
             contentType: 'application/json',
           },
           toOperations: (ctx) =>
-            ops.map((raw) => ozonOperationToRow(raw, ctx, (sku) => keys.get(sku))),
+            accruals.map((raw) => ozonAccrualToRow(raw, ctx, types, (sku) => keys.get(sku))),
           reportUnknown: (rows) => reportOzonUnknownArticles(this.errors, rows, telegramUserId),
           refreshSku: true,
+          // paidAt ставит раскладка выплат ниже — новая версия его не стирает.
+          keepPayment: true,
           orders: ozonReconcileOrders(client, now),
         };
       },
       now,
     );
+    // И при `unchanged`: начисления те же, а выплаты могли прийти новые.
+    if (result.status !== 'empty') await this.assignPayouts(telegramUserId, period, client, now);
+    return result;
   }
 
   /**
-   * Ключи закупа для SKU операций. Каталог не ответил — алерт и пустая
+   * Выплаты Ozon → `paidAt` строк месяца (TASK-184): сальдо по дням от начала
+   * месяца по сегодня, раскладка FIFO (`ozonPaidDays`). Дни — последовательно
+   * (довод `listAccruals`) и до первого дня, когда покрыто всё. Запись
+   * авторитетна для строк месяца: непокрытые — `null` (выплат до сегодня нет).
+   *
+   * Сбой — алерт, журнал как есть: начисления уже записаны и важнее, а
+   * следующий импорт (ночной) разложит заново.
+   */
+  private async assignPayouts(
+    telegramUserId: string,
+    period: IFinancePeriod,
+    client: Pick<OzonSellerClient, 'balanceOfDay'>,
+    now: Date,
+  ): Promise<void> {
+    try {
+      const lines = await this.operations.liveForPayout(
+        telegramUserId,
+        moscowStart(period.from),
+        moscowStart(shiftDay(period.to, 1)),
+        'ozon',
+      );
+      if (!lines.length) return;
+
+      const today = financeToday(now);
+      const payouts: IOzonDayPayout[] = [];
+      let opening = 0;
+      let allocation = ozonPaidDays(lines, opening, payouts);
+      for (let day = period.from; day <= today && allocation.uncovered > 0; ) {
+        const balance = await client.balanceOfDay(day);
+        if (day === period.from) opening = balance.openingKopecks;
+        if (balance.paymentsKopecks > 0) {
+          payouts.push({ day, kopecks: balance.paymentsKopecks });
+          allocation = ozonPaidDays(lines, opening, payouts);
+        }
+        day = shiftDay(day, 1);
+      }
+
+      const paidAt = new Map<string, Date | null>();
+      for (const line of lines) {
+        const day = allocation.paid.get(line.id);
+        paidAt.set(line.id, day ? moscowStart(day) : null);
+      }
+      await this.operations.setPaidAt(telegramUserId, 'ozon', paidAt);
+      this.logger.log(
+        `Выплаты Ozon ${telegramUserId} ${period.from}…${period.to}: выплат ${payouts.length}, ` +
+          `строк выплачено ${allocation.paid.size}, ждут выплаты ${allocation.uncovered}`,
+      );
+    } catch (error) {
+      void this.errors.report({
+        error,
+        telegramUserId,
+        source: 'queue',
+        context: OZON_PAYOUTS_CONTEXT,
+      });
+    }
+  }
+
+  /**
+   * Ключи закупа для SKU начислений. Каталог не ответил — алерт и пустая
    * карта: операции важнее себестоимости, строки лягут с сырым SKU Ozon
    * («без закупа»), а следующий импорт допишет артикул (`refreshSku`).
    */
   private async purchaseKeys(
     telegramUserId: string,
-    ops: readonly Record<string, unknown>[],
     listProducts: () => Promise<IOzonProduct[]>,
   ): Promise<Map<string, string>> {
-    const hasItems = ops.some(
-      (op) =>
-        Array.isArray(op.items) &&
-        op.items.some((item) => ozonIdOf((item as Record<string, unknown> | null)?.sku)),
-    );
-    if (!hasItems) return new Map();
     try {
       const catalog = await listProducts();
       const linked = await this.products.findByMarketplaceSkus(

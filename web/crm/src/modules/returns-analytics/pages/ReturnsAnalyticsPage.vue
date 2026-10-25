@@ -2,8 +2,8 @@
 /**
  * «Аналитика возвратов» (TASK-145, ТЗ п.11): штуки и заказы возвратов, % от
  * выкупов, сумма, обратная логистика, удержания, невозвращённые комиссии и
- * потери — по брендам, товарам и площадкам. Числа — из финансового журнала
- * выбранной площадки; площадки в одно число не складываются.
+ * потери — по брендам и товарам. Числа — из финансового журнала площадки
+ * экрана (из адреса, TASK-182): у каждой площадки свой экран.
  */
 import type { ReturnsKpi } from '../returns-analytics.domain';
 import type { Component } from 'vue';
@@ -17,7 +17,6 @@ import {
   brandRows,
   isQuiet,
   kpisOf,
-  marketplaceRows,
   restRow,
   skuRow,
   totalRow,
@@ -41,6 +40,8 @@ import { PageHeader } from '@/components/ui/page-header';
 import { RefreshIndicator } from '@/components/ui/refresh-indicator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuthStore } from '@/modules/auth/store/store.auth';
+import { useMarketplace } from '@/shared/composables';
+import { JournalPull, useFinanceJournal } from '@/shared/finance-journal';
 import { RangePicker, rangeLabel } from '@/shared/period';
 
 const ICON: Record<ReturnsKpi['key'], Component> = {
@@ -53,6 +54,15 @@ const ICON: Record<ReturnsKpi['key'], Component> = {
 
 const store = useReturnsAnalyticsStore();
 const auth = useAuthStore();
+const routeMarketplace = useMarketplace();
+const marketplace = computed(() => routeMarketplace.value ?? 'ym');
+store.selectMarketplace(marketplace.value);
+
+// Журнал периода не загружен — баннер с «Загрузить из Маркета», а не пустой экран.
+const journal = useFinanceJournal(
+  () => (store.range ? { marketplace: marketplace.value, ...store.range } : null),
+  () => store.load(),
+);
 const { data, isRefreshing, savedAt, error, slice, query, current, visibleSkus } =
   storeToRefs(store);
 
@@ -60,9 +70,6 @@ const ready = computed(() => auth.me !== null);
 const withFinance = computed(() => auth.me?.features?.[FINANCE_FEATURE] === true);
 
 const periodLabel = computed(() => (store.range ? rangeLabel(store.range) : ''));
-const marketplaceOptions = computed(() =>
-  (data.value?.marketplaces ?? []).map((m) => ({ value: m.marketplace, label: m.label })),
-);
 const kpis = computed(() => (current.value ? kpisOf(current.value) : []));
 const total = computed(() => (current.value ? totalRow(current.value) : null));
 const rest = computed(() => (current.value ? restRow(current.value) : null));
@@ -72,9 +79,10 @@ const quiet = computed(() => (current.value ? isQuiet(current.value) : false));
 watch(
   () =>
     ready.value && withFinance.value && store.range
-      ? `${store.range.from}:${store.range.to}`
+      ? `${marketplace.value}:${store.range.from}:${store.range.to}`
       : null,
   (key) => {
+    store.selectMarketplace(marketplace.value);
     if (key !== null) store.load();
   },
   { immediate: true },
@@ -84,7 +92,7 @@ watch(
 <template>
   <PageHeader
     title="Аналитика возвратов"
-    description="Возвраты, процент от выкупов и потери на них — по брендам, товарам и площадкам"
+    description="Возвраты, процент от выкупов и потери на них — по брендам и товарам"
   >
     <template #filters>
       <RangePicker
@@ -126,18 +134,11 @@ watch(
 
     <Alert v-for="p in data.problems" :key="p.marketplace">{{ p.problem }}</Alert>
 
-    <div class="flex flex-wrap items-center gap-3">
-      <OptionGroup
-        v-if="marketplaceOptions.length > 1"
-        :model-value="current?.marketplace ?? ''"
-        :options="marketplaceOptions"
-        label="Площадка"
-        @update:model-value="store.setMarketplace($event)"
-      />
-      <span class="tnum text-sm text-muted-foreground">
-        {{ periodLabel }}<template v-if="current"> · {{ current.label }}</template>
-      </span>
-    </div>
+    <p class="tnum text-sm text-muted-foreground">
+      {{ periodLabel }}<template v-if="current"> · {{ current.label }}</template>
+    </p>
+
+    <JournalPull :journal="journal" />
 
     <EmptyState
       v-if="!current || quiet"
@@ -173,7 +174,7 @@ watch(
         :total="total"
       />
 
-      <template v-else-if="slice === 'sku'">
+      <template v-else>
         <Input
           :model-value="query"
           class="h-9 w-72"
@@ -193,18 +194,11 @@ watch(
           Итого — за весь период, без учёта поиска.
         </p>
       </template>
-
-      <template v-else>
-        <ReturnsBreakdownTable :rows="marketplaceRows(data.marketplaces)" title="Площадка" />
-        <p class="text-xs text-muted-foreground">
-          Площадки — отдельными строками: у каждой свои правила и свой журнал, общего итога нет.
-        </p>
-      </template>
     </template>
 
     <p class="text-xs text-muted-foreground">
       {{ LOSSES_HINT }} {{ RATE_HINT }}
-      <template v-if="rest && slice !== 'marketplace'">{{ REST_NOTE }}</template>
+      <template v-if="rest">{{ REST_NOTE }}</template>
       Возвраты в пути — в отчёте «Едет обратно».
     </p>
     <p v-for="note in data.notes" :key="note" class="text-xs text-muted-foreground">{{ note }}</p>

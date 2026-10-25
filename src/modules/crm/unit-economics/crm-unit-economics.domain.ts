@@ -1,3 +1,4 @@
+import type { TMarketplace } from '../../../shared/marketplace';
 import type { IUnconfirmedProfit } from '../../../shared/profit-confirmation';
 import type { IFinancePeriod } from '../../finance/finance-period';
 import type { TFinancePeriodStatus } from '../../finance/finance-period-status';
@@ -89,6 +90,8 @@ export interface ICrmUnitRest {
 }
 
 export interface ICrmUnitEconomics {
+  /** Площадка журнала (TASK-181) — эхо для сверки ответа с запросом на экране. */
+  marketplace: TMarketplace;
   period: IFinancePeriod;
   previousPeriod: IFinancePeriod;
   status: TFinancePeriodStatus;
@@ -174,6 +177,7 @@ export function toCrmUnitEconomics(
   current: IPnlReport,
   previous: IPnlReport,
   names: ReadonlyMap<string, string>,
+  marketplace: TMarketplace = 'ym',
 ): ICrmUnitEconomics {
   const previousBySku = new Map(previous.pnl.skus.skus.map((sku) => [sku.sku, sku]));
   const skus = current.pnl.skus.skus
@@ -181,6 +185,7 @@ export function toCrmUnitEconomics(
     .sort((a, b) => b.columns.revenue - a.columns.revenue || a.sku.localeCompare(b.sku));
 
   return {
+    marketplace,
     period: current.pnl.period,
     previousPeriod: previous.pnl.period,
     status: current.status,

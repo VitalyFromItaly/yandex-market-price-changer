@@ -1,5 +1,6 @@
-import type { FinanceMonth } from '../../finance.domain';
+import type { FinanceMarketplace, FinanceMonth } from '../../finance.domain';
 import type { DayRange } from '@/shared/utils';
+import type { Ref } from 'vue';
 
 import { computed, ref } from 'vue';
 
@@ -9,9 +10,10 @@ import { useBaseState } from '@/shared/composables';
 
 /**
  * Месяцы выбора со статусом и выбранный месяц. Пока список не пришёл,
- * выбранного нет — экран не заказывает P&L за неизвестный месяц.
+ * выбранного нет — экран не заказывает P&L за неизвестный месяц. Статусы —
+ * журнала площадки экрана (TASK-180).
  */
-export function useMonths() {
+export function useMonths(marketplace: Readonly<Ref<FinanceMarketplace>>) {
   const [months, setMonths, isLoading, resetMonths] = useBaseState<FinanceMonth[]>([]);
   const [selected, setSelected, , resetSelected] = useBaseState<string | null>(null);
   // Произвольный период из ссылки «Обзора»: перекрывает месяц у «Прибыли»,
@@ -23,7 +25,7 @@ export function useMonths() {
     isLoading.value = true;
     error.value = null;
     try {
-      const list = await financeApi.months();
+      const list = await financeApi.months(marketplace.value);
       setMonths(list);
       // Выбранный остаётся, если он есть в списке; иначе — текущий (первый).
       if (!list.some((m) => m.month === selected.value)) setSelected(list[0]?.month ?? null);

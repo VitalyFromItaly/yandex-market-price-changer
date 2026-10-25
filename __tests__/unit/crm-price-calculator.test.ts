@@ -174,7 +174,7 @@ describe('ставки калькулятора из журнала', () => {
     const window = priceCalcWindow(OCT_15);
     const unit = (
       await new CrmUnitEconomicsKinds({ register: vi.fn() } as never, finance, {
-        findByYmSkus: async () => NAMES,
+        findByJournalSkus: async () => new Map(NAMES.map((p) => [p.marketplaceSkus.ym, p])),
       } as never).skus(
         contextOf({
           from: window.from,

@@ -1,10 +1,9 @@
-import type { OrderFeedFilters, OrderFeedMarketplace, OrderStage } from '../order-feed.domain';
+import type { OrderFeedFilters, OrderStage } from '../order-feed.domain';
 import type { LocationQuery } from 'vue-router';
 
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-const MARKETPLACES = new Set<string>(['ym', 'ozon', 'wb']);
 const STAGES = new Set<string>([
   'new',
   'awaiting_assembly',
@@ -24,12 +23,13 @@ function single(value: LocationQuery[string] | undefined): string | null {
   return typeof first === 'string' && first !== '' ? first : null;
 }
 
-/** Фильтры из query: `?mp=ozon&stage=in_transit&q=casio`; мусор — «все». */
+/**
+ * Фильтры из query: `?stage=in_transit&q=casio`; мусор — «все». Площадка — из
+ * адреса раздела (/ozon/order-feed, TASK-182), прежний `?mp` не читается.
+ */
 export function filtersFromQuery(query: LocationQuery): OrderFeedFilters {
-  const mp = single(query.mp);
   const stage = single(query.stage);
   return {
-    marketplace: mp !== null && MARKETPLACES.has(mp) ? (mp as OrderFeedMarketplace) : null,
     stage: stage !== null && STAGES.has(stage) ? (stage as OrderStage) : null,
     product: single(query.q) ?? '',
   };
@@ -37,7 +37,6 @@ export function filtersFromQuery(query: LocationQuery): OrderFeedFilters {
 
 export function filtersQuery(filters: OrderFeedFilters): Record<string, string> {
   const query: Record<string, string> = {};
-  if (filters.marketplace) query.mp = filters.marketplace;
   if (filters.stage) query.stage = filters.stage;
   if (filters.product.trim()) query.q = filters.product.trim();
   return query;

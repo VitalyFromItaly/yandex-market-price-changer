@@ -101,11 +101,6 @@ export function skuRow(sku: ReturnSku): ReturnsRow {
   return toReturnsRow(`sku:${sku.sku}`, sku.name ?? sku.sku, sku.name ? sku.sku : null, sku);
 }
 
-/** Площадки — строки без итога: суммировать их в одно число экран не берётся. */
-export function marketplaceRows(marketplaces: readonly ReturnsMarketplace[]): ReturnsRow[] {
-  return marketplaces.map((m) => toReturnsRow(`mp:${m.marketplace}`, m.label, null, m.totals));
-}
-
 const isEmptyFigures = (f: ReturnFigures): boolean =>
   f.returnedUnits === 0 &&
   f.returnedOrders === 0 &&

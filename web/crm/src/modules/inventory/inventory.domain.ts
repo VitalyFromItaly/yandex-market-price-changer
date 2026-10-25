@@ -4,7 +4,6 @@
  * «нет данных», не ноль.
  */
 
-export const INVENTORY_ROUTE_NAME = 'ym-inventory';
 export const INVENTORY_KIND = 'inventory:summary';
 export const FINANCE_FEATURE = 'finance';
 
@@ -66,6 +65,8 @@ export interface InventoryProblem {
 
 /** Ответ `inventory:summary` — как отдал сервер. */
 export interface InventoryResponse {
+  /** Площадка экрана (эхо `params.marketplace`, TASK-182); старый ответ без неё — ЯМ. */
+  marketplace?: InventoryMarketplace;
   takenAt: string;
   basisDays: number;
   lowDays: number;

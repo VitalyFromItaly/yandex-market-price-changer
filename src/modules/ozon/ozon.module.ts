@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
+import { PostgresModule } from '../../database/postgres/postgres.module';
 import { FinanceModule } from '../finance/finance.module';
 
 import { OzonCatalogService } from './ozon-catalog.service';
@@ -18,11 +19,12 @@ import { OzonStockWriteService } from './ozon-stock-write.service';
  * AppConfigService и ErrorReporter приходят сами: их модули глобальные.
  * DatabaseModule — ради MarketplaceConnectionService и товаров. FinanceModule —
  * ради общей записи журнала (`FinanceImportService`); обратного импорта нет:
- * финансы до Ozon не дотягиваются (тест границ). `OzonMarketplaceAdapter` —
+ * финансы до Ozon не дотягиваются (тест границ). PostgresModule — ради раскладки
+ * выплат по строкам журнала (TASK-184). `OzonMarketplaceAdapter` —
  * часть Ozon в реестре площадок (TASK-162), регистрирует его MarketplacesModule.
  */
 @Module({
-  imports: [DatabaseModule, FinanceModule],
+  imports: [DatabaseModule, PostgresModule, FinanceModule],
   providers: [
     OzonClientFactory,
     OzonConnectionService,

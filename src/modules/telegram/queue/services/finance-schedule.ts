@@ -124,3 +124,39 @@ export function pickFinanceMarketplaces(
 
   return new Map([...result.entries()].sort(([a], [b]) => a.localeCompare(b)));
 }
+
+/**
+ * Префикс разовых загрузок по кнопке CRM («Загрузить из Маркета»). НЕ `finance-`:
+ * сверка расписания и карточка «Очереди» узнают свои задачи по `finance-` —
+ * разовая задача там читалась бы как продавец `pull-…`. Дефис — довод выше.
+ */
+export const FINANCE_PULL_JOB_PREFIX = 'finpull-';
+
+/**
+ * Не чаще раза в 15 минут на месяц: у united-netting квота 100 генераций в час
+ * на кабинет, её делят ночной проход и все кнопки продавца.
+ */
+export const FINANCE_PULL_COOLDOWN_MS = 15 * 60_000;
+
+/**
+ * id разовой загрузки — из продавца, площадки и месяца: двойной клик, пока
+ * задача ждёт или идёт, Bull второй не ставит.
+ */
+export function financePullJobId(
+  telegramUserId: string,
+  marketplace: TFinanceMarketplace,
+  month: string,
+): string {
+  return `${FINANCE_PULL_JOB_PREFIX}${marketplace}-${telegramUserId}-${month}`;
+}
+
+/**
+ * До какого момента месяц нельзя грузить снова; null — можно сейчас. Отсчёт —
+ * от последней попытки (`finance_periods.checked_at`), и неудачной тоже: сбой
+ * Маркета повтором через минуту не лечится, а квоту жжёт.
+ */
+export function financePullCooldownUntil(lastAttemptAt: Date | null, now: Date): Date | null {
+  if (!lastAttemptAt) return null;
+  const until = new Date(lastAttemptAt.getTime() + FINANCE_PULL_COOLDOWN_MS);
+  return until > now ? until : null;
+}

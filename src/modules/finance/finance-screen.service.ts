@@ -1,4 +1,5 @@
 import type { IFinanceScreenMonth, IFinanceScreenOperation } from './finance-screen';
+import type { TFinanceMarketplace } from '../../database/postgres/finance.schema';
 import type { IFinanceOriginalFile } from '../../database/postgres/repositories/finance-document.repository';
 import type { TFinancePeriodRow } from '../../database/postgres/repositories/finance-period.repository';
 
@@ -15,7 +16,7 @@ import { FinanceOperationRepository } from '../../database/postgres/repositories
 import { FinancePeriodRepository } from '../../database/postgres/repositories/finance-period.repository';
 
 import { isUuid } from './expense.domain';
-import { financePeriodKey, financeToday, YM_NETTING_REPORT_TYPE } from './finance-period';
+import { FINANCE_REPORT_TYPE, financePeriodKey, financeToday } from './finance-period';
 import { MAX_SCREEN_OPERATION_IDS, screenMonths } from './finance-screen';
 
 /** Запрос экрана не годится — CRM отвечает 400 под полем `field`. */
@@ -42,7 +43,8 @@ export interface IFinanceScreenPage {
  * Данные экрана «Финансы» CRM, кроме P&L и ДДС (те — `FinanceService` и
  * `FinanceCashflowService`): месяцы со статусом, раскрытие статьи до операций,
  * оригинал отчёта, расхождения и корректировки месяца. Только Postgres; каждый
- * запрос — в скоупе продавца, потому что id приходят из браузера.
+ * запрос — в скоупе продавца, потому что id приходят из браузера. Месяцы,
+ * расхождения, корректировки и аномалии — по площадке (TASK-180, по умолчанию ЯМ).
  */
 @Injectable()
 export class FinanceScreenService {
@@ -58,16 +60,17 @@ export class FinanceScreenService {
   async months(
     telegramUserId: string,
     now: Date = new Date(),
+    marketplace: TFinanceMarketplace = 'ym',
   ): Promise<IFinanceScreenMonthState[]> {
     const rows = await this.periods.listByUsers([telegramUserId]);
     const byKey = new Map<string, TFinancePeriodRow>();
     for (const row of rows) {
-      if (row.marketplace === 'ym' && row.reportType === YM_NETTING_REPORT_TYPE)
+      if (row.marketplace === marketplace && row.reportType === FINANCE_REPORT_TYPE[marketplace])
         byKey.set(row.periodKey, row);
     }
     return screenMonths(financeToday(now)).map((month) => ({
       ...month,
-      state: byKey.get(periodKeyOf(month.period)) ?? null,
+      state: byKey.get(periodKeyOf(month.period, marketplace)) ?? null,
     }));
   }
 
@@ -97,10 +100,12 @@ export class FinanceScreenService {
     telegramUserId: string,
     month: IFinanceScreenMonth,
     page: IFinanceScreenPage,
+    marketplace: TFinanceMarketplace = 'ym',
   ) {
     return this.discrepancyRepo.list({
       telegramUserId,
-      periodKey: periodKeyOf(month.period),
+      marketplace,
+      periodKey: periodKeyOf(month.period, marketplace),
       ...page,
     });
   }
@@ -113,21 +118,27 @@ export class FinanceScreenService {
     telegramUserId: string,
     month: IFinanceScreenMonth,
     page: IFinanceScreenPage & { unreviewedOnly?: boolean },
+    marketplace: TFinanceMarketplace = 'ym',
   ) {
     const scope = {
-      marketplace: 'ym' as const,
+      marketplace,
       telegramUserId,
-      periodKey: periodKeyOf(month.period),
+      periodKey: periodKeyOf(month.period, marketplace),
     };
     const [list, checkedAt] = await Promise.all([
-      this.anomalyRepo.list({ telegramUserId, periodKey: scope.periodKey, ...page }),
+      this.anomalyRepo.list({ ...scope, ...page }),
       this.anomalyRepo.checkedAt(scope),
     ]);
     return { ...list, checkedAt };
   }
 
   /** Отметить «просмотрено» или снять; чужие и выдуманные ключи молча не находятся. */
-  async reviewAnomalies(telegramUserId: string, keys: unknown, reviewed: unknown): Promise<number> {
+  async reviewAnomalies(
+    telegramUserId: string,
+    keys: unknown,
+    reviewed: unknown,
+    marketplace: TFinanceMarketplace = 'ym',
+  ): Promise<number> {
     if (
       !Array.isArray(keys) ||
       !keys.length ||
@@ -142,18 +153,27 @@ export class FinanceScreenService {
     if (typeof reviewed !== 'boolean') {
       throw new FinanceScreenValidationError('reviewed', 'reviewed — true или false');
     }
-    return this.anomalyRepo.setReviewed('ym', telegramUserId, keys as string[], reviewed);
+    return this.anomalyRepo.setReviewed(marketplace, telegramUserId, keys as string[], reviewed);
   }
 
-  async corrections(telegramUserId: string, month: IFinanceScreenMonth, page: IFinanceScreenPage) {
+  async corrections(
+    telegramUserId: string,
+    month: IFinanceScreenMonth,
+    page: IFinanceScreenPage,
+    marketplace: TFinanceMarketplace = 'ym',
+  ) {
     return this.correctionRepo.list({
       telegramUserId,
-      periodKey: periodKeyOf(month.period),
+      marketplace,
+      periodKey: periodKeyOf(month.period, marketplace),
       ...page,
     });
   }
 }
 
-function periodKeyOf(period: IFinanceScreenMonth['period']): string {
-  return financePeriodKey(YM_NETTING_REPORT_TYPE, period);
+function periodKeyOf(
+  period: IFinanceScreenMonth['period'],
+  marketplace: TFinanceMarketplace,
+): string {
+  return financePeriodKey(FINANCE_REPORT_TYPE[marketplace], period);
 }

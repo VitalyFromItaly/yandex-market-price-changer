@@ -4,6 +4,7 @@ import type {
   PurchasesRequest,
   PurchasesResponse,
 } from '../forecast.domain';
+import type { MarketplaceKey } from '@/navigation.sections';
 
 import { defineStore } from 'pinia';
 
@@ -11,7 +12,7 @@ import { FORECAST_KIND, FORECAST_PURCHASES_KIND } from '../forecast.domain';
 
 import { useForecastSettings } from './composables/useForecastSettings.forecast';
 
-import { useReportJob } from '@/shared/composables';
+import { useBaseState, useReportJob } from '@/shared/composables';
 import { moscowToday } from '@/shared/utils';
 
 interface ForecastRequest {
@@ -28,24 +29,36 @@ interface ForecastRequest {
  */
 export const useForecastStore = defineStore('forecast', () => {
   const settings = useForecastSettings();
+  const [marketplace, setMarketplace, , resetMarketplace] = useBaseState<MarketplaceKey>('ym');
+  const isOwnMarketplace = (data: { marketplace?: MarketplaceKey }) =>
+    (data.marketplace ?? 'ym') === marketplace.value;
 
   const summary = useReportJob<ForecastResponse, ForecastRequest>({
     launch: (request) => ({
       kind: FORECAST_KIND,
-      params: { basisDays: request.basisDays },
+      params: { basisDays: request.basisDays, marketplace: marketplace.value },
       store: '',
     }),
-    isOwn: (data, request) => data.basisDays === request.basisDays && data.today === request.today,
+    isOwn: (data, request) =>
+      isOwnMarketplace(data) &&
+      data.basisDays === request.basisDays &&
+      data.today === request.today,
   });
 
   const purchases = useReportJob<PurchasesResponse, PurchasesRequest>({
     launch: (request) => ({
       kind: FORECAST_PURCHASES_KIND,
-      params: { basisDays: request.basisDays, coverDays: request.coverDays },
+      params: {
+        basisDays: request.basisDays,
+        coverDays: request.coverDays,
+        marketplace: marketplace.value,
+      },
       store: '',
     }),
     isOwn: (data, request) =>
-      data.basisDays === request.basisDays && data.coverDays === request.coverDays,
+      isOwnMarketplace(data) &&
+      data.basisDays === request.basisDays &&
+      data.coverDays === request.coverDays,
   });
 
   function load(): void {
@@ -59,8 +72,18 @@ export const useForecastStore = defineStore('forecast', () => {
     });
   }
 
+  /** Площадка экрана (из адреса); другая — оба расчёта прежней сброшены, грузит страница. */
+  function selectMarketplace(next: MarketplaceKey): void {
+    if (next === marketplace.value) return;
+    summary.reset();
+    purchases.reset();
+    setMarketplace(next);
+  }
+
   return {
     ...settings,
+    marketplace,
+    selectMarketplace,
     data: summary.data,
     isLoading: summary.isLoading,
     isRefreshing: summary.isRefreshing,
@@ -74,6 +97,7 @@ export const useForecastStore = defineStore('forecast', () => {
     loadPurchases,
     reset() {
       settings.reset();
+      resetMarketplace();
       summary.reset();
       purchases.reset();
     },

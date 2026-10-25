@@ -13,7 +13,7 @@
 | `crm-features.domain.ts`                                                                                  | разделы CRM → фичи (`CRM_SECTIONS`), разделы магазина, причины 403                                   |
 | `crm-parity.domain.ts`                                                                                    | паритет с ботом: фичи без раздела и кнопки меню → раздел                                             |
 | `crm-action-log.*`                                                                                        | журнал каждого запроса CRM в `actionlogs` (`source: 'crm'`)                                          |
-| `jobs/`                                                                                                   | фоновые задачи CRM: очередь `crm-jobs`, `CrmJobResult`, `/api/crm/ym/jobs`                           |
+| `jobs/`                                                                                                   | фоновые задачи CRM: очередь `crm-jobs`, `CrmJobResult`, `/api/crm/jobs`                              |
 | `stores/`                                                                                                 | список магазинов токена, вход в магазин по ключу, смена токена (`PUT token`)                         |
 | `connections/`                                                                                            | «Подключения»: карточки ключей площадок и «проверить связь» (TASK-161)                               |
 | `orders/`, `profit/`, `payments/`, `market-reports/`, `recommendations/`, `cards/`, `fby/`, `warehouses/` | kind-ы фоновых задач — отчёты                                                                        |
@@ -42,9 +42,11 @@
 
 ## Как добавить раздел
 
-1. Ключ в `CRM_SECTIONS` (+ `CRM_STORE_SECTIONS`, если раздел внутри магазина).
-2. Пункт с тем же `name` в `web/crm/src/navigation.ts` (`STORE_NAV` или `MARKETPLACE_NAV`/`ACCOUNT_NAV`) —
-   совпадение пинит `crm-features.test.ts`.
+1. Ключ в `CRM_SECTIONS` (+ `CRM_STORE_SECTIONS`, если раздел внутри магазина). Раздел вида «площадка»
+   (свой у ЯМ, Ozon, WB) — в `CRM_MARKETPLACE_SECTIONS`: он разворачивается в `ym-*`, `ozon-*`, `wb-*`, а
+   `ozon-*`/`wb-*` вдобавок требуют фичи площадки (`CRM_MARKETPLACE_GATE`, TASK-178).
+2. Вид раздела в `SECTION_KIND` (`web/crm/src/navigation.sections.ts`) и подпись в `NAV_META`
+   (`navigation.ts`) — совпадение имён по всем площадкам пинит `crm-features.test.ts`.
 3. Если раздел — экран бота: строка в `BOT_SCREEN_SECTIONS`; если новая фича — в разделе или в
    `FEATURES_WITHOUT_SECTION`.
 4. Маршруты под `@RequireFeature`, долгие отчёты — kind в `CrmJobsRegistry`, логику — из общего
@@ -75,7 +77,7 @@
 - **Паритет пинится, а не помнится** (TASK-088, требование владельца «абсолютно весь
   функционал»). `crm-parity.domain.ts`: `FEATURES_WITHOUT_SECTION` — фичи без раздела с причиной
   (`promotion` — блок «Настроек», `deep_history`/`fby_supply` — модификаторы, едут снимком
-  `features`, `hosting_reminder` — рассылка без экрана, `ai` — модификатор, флаг читает `AiService`, `finance_anomalies` и `finance_upload` — вкладки «Финансов», `tax_year` — вкладка «Налогов», `ozon`/`wb` — карточки «Подключений», `stock_push_write_ym`/`_ozon`/`_wb` — запись «Передачи остатков», `stock_push_schedule` — её фоновый проход, `profit_actual` — модификатор «Прибыли»; `finance`, `expenses`, `taxes`, `purchases` и `overview` в таблицу НЕ входят — у них разделы `ym-finance`, `ym-expenses`, `ym-taxes`, `ym-purchases` и `ym-overview`);
+  `features`, `hosting_reminder` — рассылка без экрана, `ai` — модификатор, флаг читает `AiService`, `finance_anomalies` и `finance_upload` — вкладки «Финансов», `finance_pull` — кнопка в баннерах экранов над журналом, `tax_year` — вкладка «Налогов», `ozon`/`wb` — карточки «Подключений», `stock_push_write_ym`/`_ozon`/`_wb` — запись «Передачи остатков», `stock_push_schedule` — её фоновый проход, `profit_actual` — модификатор «Прибыли»; `finance`, `expenses`, `taxes`, `purchases` и `overview` в таблицу НЕ входят — у них разделы `ym-finance`, `ym-expenses`, `ym-taxes`, `ym-purchases` и `ym-overview`);
   `BOT_SCREEN_SECTIONS` — кнопка `MENU` →
   раздел, полный `Record` (новый ключ `MENU` без строки не компилируется). `__tests__/unit/crm-parity.test.ts` краснеет на фиче без раздела и на кнопке, ведущей
   в раздел, который её фича не открывает. Исключения — `Partial`, **намеренно**: новая фича должна
@@ -153,6 +155,15 @@
 - **Отмены — только за периоды, которые знают отчёты о заказах** (`cancelledPeriodOf`: сегодня, день, месяц с
   1-го по сегодня). Расширять `IReportPeriod` ради главной — правка общего кода отчётов бота; остальные
   периоды — прочерк с причиной.
+- **Площадка экрана** (TASK-183): все три kind-а читают `params.marketplace` (`parseJobMarketplace`) и эхом
+  возвращают его для `isOwn`. /ym — как было. /ozon, /wb: сводка — `FinanceService.build` и
+  `FinanceCashflowService.receivable` с площадкой; остатки — `stocks` реестра (`marketplaceAvailable` в
+  `crm/jobs/crm-marketplace-stocks.ts`, места FBS и склада площадки складываются — итог «сколько товара на
+  площадке», раздельно по местам — «Склад»), стоимость — по закупу карточки: артикул площадки → артикул ЯМ
+  (`findByJournalSkus` + `byPurchaseKey`); в пути — заказы площадки (`orders`, окно «всего» = 30 дней) по
+  `IN_TRANSIT_STAGES` (общий со «Складом»), сумма `null`, если неизвестна цена хоть одного заказа; отмены — её
+  `listOrders(...).cancelled` за те же периоды `cancelledPeriodOf`. ЯМ на экране Ozon не спрашивается вовсе
+  (иначе пустой «ok»-блок ЯМ). Фильтра площадок на экране больше нет — площадку задаёт адрес.
 - **Динамика — от фронта** (`previousRange` в `web/crm/src/shared/period/range.ts`): целый месяц — с прошлым
   целым, «этот месяц» — с прошлым с 1-го по то же число, остальное — та же длина перед. Сервер проверяет оба
   периода тем же `parseDayRange` (настоящие даты, не длиннее 366 дней).
@@ -160,6 +171,14 @@
   журналы Ozon/WB уже грузятся, поэтому «Все» = ЯМ; Ozon/WB — «скоро», пока площадка недоступна
   (`available: false` из `/api/crm/marketplaces`: нет адаптера или закрыта фича `ozon`/`wb`), и «подключить», когда доступна, а
   ключа нет. Не нули: «0 ₽» читалось бы как убыточный месяц.
+
+- **Журнал не загружен — не нули** (`finance_pull`): «Обзор» прячет денежные карточки и бейдж статуса, если хоть
+  один месяц периода без журнала, и показывает баннер общего фронтового `shared/finance-journal` (`JournalPull`)
+  с «Загрузить из Маркета». Тот же баннер — на «Финансах», unit-экономике, аналитике продаж и возвратов,
+  рейтингах, прогнозе, «Ленте заказов», а на «Сравнении» и «Дашборде площадок» — по баннеру на площадку
+  (`MarketplaceJournalPulls`). Бэкенд экранов не менялся: какие месяцы не загружены, фронт спрашивает у
+  `GET /ym/finance/months` (`loaded`). Правила кнопки — README финансов, раздел «Загрузить из Маркета».
+  «Налоги» — без баннера: год — это 13 генераций одной кнопкой.
 
 ### «Unit-экономика» — прибыль по товару (M21, TASK-138)
 
@@ -214,13 +233,36 @@
   Σ там больше итога, экран это говорит строкой (`ORDERS_NOTE`); выручка и штуки складываются точно.
 - **Строка «не относится к товару» замыкает сумму**: продажа без артикула и без заказа с артикулами —
   тоже выручка. Для штук у `pnl.skus.rest` появилось поле `units`.
-- **Бренд — `brandOf` по названию и категории товара** из базы (`findByYmSkus`), для товаров обоих
+- **Бренд — `brandOf` по названию и категории товара** из базы (`findByJournalSkus` площадки экрана), для товаров обоих
   периодов: товар, проданный только в прошлом, иначе упал бы в «Остальные» и сдвинул динамику бренда.
-- **Площадки — только ЯМ**: раздел строится из журнала ЯМ (`FinanceService.build` без `marketplace`), строка
-  ЯМ = итог; Ozon/WB — «скоро» без нулей (`ozon_wb_skipped_for_now`). «Одинаковые товары на разных площадках
-  рядом» ждут подключения журналов Ozon/WB к разделу.
+- **Одна площадка на экран** (TASK-181): раздел строится из журнала площадки экрана, строка площадки = итог;
+  на ЯМ Ozon/WB — «скоро» без нулей (`ozon_wb_skipped_for_now`), на Ozon/WB «скоро» не показывается.
+  Площадки рядом — «Сравнение площадок».
 - **Один ряд на график** (скил dataviz): метрика переключается (выручка/заказы/штуки), под графиком —
   таблица тех же корзин. Фраза динамики `deltaCaption` переехала из «Обзора» в `web/crm/src/shared/utils/delta.ts`.
+
+### Дашборд «Площадки» (M27, TASK-191)
+
+Раздел аккаунта `/ym/marketplaces-dashboard` под фичей `marketplaces_dashboard` (default off, `requires: [finance]`,
+решение `marketplaces_dashboard`): подключённые площадки за один период рядом — KPI (выручка, чистая, маржа, заказы,
+средний чек, % возвратов, доля в выручке), выручка/заказы во времени, доля в выручке, прибыль, маржа и возвраты
+столбиками. Доставка — `src/modules/crm/marketplaces-dashboard/` (kind `marketplaces-dashboard:summary`, scope
+`account`), фронт — `web/crm/src/modules/marketplaces-dashboard/`. «Сравнение площадок» остаётся детализацией:
+показатель дашборда ведёт туда, площадка — в свои «Финансы» за тот же период.
+
+- **Видимость — не только фича.** Раздел в `me.sections` есть, только когда подключено и открыто ≥2 площадок
+  (`connectedOpenMarketplaces` в `marketplace-connections.domain.ts`: ЯМ — записанный ключ, Ozon/WB — проверка `ok`,
+  плюс фича площадки). Это данные продавца, а не флаг, поэтому `visibleSections` получает `hidden`, а не новую
+  фичу. Kind берёт площадки тем же правилом и при одной отвечает `CrmJobError` — раздел не может показать
+  площадку, по которой kind ответил бы иначе. Под `/ym/…` гард раздел не закрывает: прямой адрес без раздела
+  показывает плашку «Подключите вторую площадку» со ссылкой на «Подключения» и задачу не ставит.
+- **Своих формул нет.** Колонки — `toCrmMarketplaceCompare` над теми же двумя `FinanceService.compare`, что у
+  «Сравнения площадок», поэтому KPI = колонке сравнения до копейки (тест). Ряд по дням — `pnl.salesByDay` того же
+  отчёта, он же `days` «Аналитики продаж» площадки (тест), а недели и месяцы группируются общим
+  `web/crm/src/shared/period/timeBucket.ts`. Площадка без журнала — «нет данных» с причиной: без нулей, не в долях и
+  не на графиках. Общего итога по площадкам нет — как в сравнении.
+- **Прибыль только за период** (решение `marketplaces_dashboard_profit_by_period`): по дням в журнальном P&L
+  есть только выручка, заказы и штуки. Дневная чистая потребовала бы новой формулы налога и расходов по дням.
 
 ### «Сравнение площадок» (M21, TASK-137)
 
@@ -256,8 +298,17 @@
 - **Ячейка ведёт в «Прибыль» своей площадки** (решение `finance_pnl_marketplace_param`): kind `finance:pnl`
   принимает `marketplace` (умолчание ЯМ, мусор и закрытая площадка — `CrmJobError`), эхо площадки в ответе; на
   фронте `?marketplace=` читается до первой загрузки и снимается вместе с `from/to` (`useLinkedRange(…,
-['marketplace'])`), во вкладке «Прибыль» — переключатель открытых площадок. ДДС, сверка, аномалии и загрузка
-  остаются ЯМ.
+['marketplace'])`). Ячейка теперь ведёт на `/<площадка>/finance/pnl`, старая ссылка `/ym/finance?marketplace=ozon`
+  переводится на адрес площадки.
+- **Все вкладки — по площадке экрана** (TASK-180): `/ozon/finance`, `/wb/finance` — тот же `FinancePage`, площадка
+  из адреса; API остаётся `crm/ym/finance/*` с `?marketplace=` (нет — ЯМ, мусор — 400 `INVALID_FINANCE_REQUEST`
+  под полем `marketplace`, закрытая фича площадки — 403 `FEATURE_DISABLED`, как деталь «Ленты заказов»). Месяцы,
+  расхождения, корректировки и аномалии фильтруются по `marketplace` и ключу периода `FINANCE_REPORT_TYPE[mp]`.
+  Чего у площадки нет — `FINANCE_SCREEN_SUPPORT` (`crm-finance.domain.ts`): ДДС Ozon/WB (нет выплат, TASK-184/185),
+  сверка WB, аномалии не ЯМ, загрузка файлом не ЯМ. Такая вкладка отвечает 200 `{ unsupported: true, note }` —
+  причина вместо нулей и пустого списка («пусто» читалось бы как «всё чисто»); отметка аномалий не ЯМ — 400.
+  Вкладки «Загрузка» у Ozon/WB нет. На фронте Ozon/WB с частью разделов остаются в `UPCOMING_MARKETPLACES`
+  (главная и фильтры не показывают им числа ЯМ), сайдбар показывает их готовые разделы (`isLiveMarketplace`).
 - **ИИ-инструмент `compareMarketplaces` ходит в тот же `compare`** (TASK-173, `ai_compare_via_finance_compare`; прежнее
   `compare_ai_tool_unchanged` снято): числа модели = колонкам экрана, правила учёта — строками `rules`.
 
@@ -268,6 +319,23 @@
 (80/15/5, по выручке и отдельно по чистой) и XYZ по коэффициенту вариации недельных продаж. Ядро —
 `src/modules/finance/sku-ratings.ts` (лист), доставка — `src/modules/crm/sku-ratings/` (kind
 `sku-ratings:summary`, scope `account`), фронт — `web/crm/src/modules/sku-ratings/`. Правила — README модуля finance.
+
+### Аналитика по площадке: unit-экономика, продажи, рейтинги (M27, TASK-181)
+
+Три раздела выше живут и под `/ozon/…`, `/wb/…` (`ozon-unit-economics` и т. п., гейт — фича раздела + фича
+площадки). Площадка — `params.marketplace` задачи, разбор — общий `parseJobMarketplace` (нет → ЯМ, мусор и
+закрытая площадка — отказ, а не тихий ЯМ). Kind зовёт `FinanceService.build(..., { flat: false, marketplace })`,
+товары ищет `ProductService.findByJournalSkus(uid, marketplace, skus)`: импорт Ozon/WB кладёт в журнал ключ
+закупа — артикул ЯМ привязанного товара, а без карточки ЯМ — свой артикул площадки (`ozonPurchaseKeys`,
+`wbPurchaseKeys`), поэтому сначала ЯМ, затем артикул площадки. Голый `findByMarketplaceSkus` оставил бы
+привязанные товары без названий. Ответ эхом несёт `marketplace` — стор сверяет его в `isOwn`
+(замок задачи на (продавец, kind), площадки иначе подменили бы друг друга). Числа ЯМ не меняются:
+без параметра всё как было.
+
+**Склад, лента заказов, аналитика возвратов (TASK-182)** — то же правило: `params.marketplace`, `parseJobMarketplace`,
+эхо `marketplace` в ответе для `isOwn`. **/ym — только ЯМ** (`crm_marketplace_screens_own_only`): у каждой площадки
+свой экран, своих заказов, возвратов и остатков другие площадки не подмешивают. Переключателя площадки и фильтра
+`?mp` нет — площадку задаёт адрес; сравнить площадки — дашборд/«Сравнение площадок».
 
 - **Пороги — один объект `RATING_THRESHOLDS`** с причиной у каждого числа, и он едет в ответе: экран
   печатает пороги из него, своих копий у фронта нет. Задача просила «настраиваемые» — настройкой стал
@@ -290,20 +358,23 @@
 
 ### «Лента заказов» (M22, TASK-144)
 
-Раздел аккаунта `/ym/order-feed` под фичей `order_feed` (default off, `requires: [finance]`): заказы ЯМ, Ozon и WB одним
-списком — этап из 10 (`src/shared/order-stage.ts`), прибыль заказа по журналу, расходы по статьям, история операций;
-фильтры — площадка, этап, товар (на фронте, в query), период — как в боте (`order_feed_bot_periods`, на сервере).
+Раздел аккаунта `/ym/order-feed` (и `/ozon/…`, `/wb/…` — TASK-182) под фичей `order_feed` (default off,
+`requires: [finance]`): заказы площадки экрана — этап из 10 (`src/shared/order-stage.ts`), прибыль заказа по журналу,
+расходы по статьям, история операций; фильтры — этап, товар (на фронте, в query), период — как в боте
+(`order_feed_bot_periods`, на сервере). Площадка — `params.marketplace`, на ЯМ-экране Ozon/WB не запрашиваются и наоборот.
 Ядро — `src/modules/finance/order-feed.ts` + `OrderFeedService`, доставка — `src/modules/crm/order-feed/`.
 
 - **Имя не `orders`**: `crm/orders` — отчёты ЯМ по магазину (раздел `ym-orders`, на него смотрят ключи паритета
-  отчётов). Лента — аккаунтная и о трёх площадках.
+  отчётов). Лента — аккаунтная, по площадке экрана.
 - **Заказы ЯМ — по каждому магазину кабинета** (`accountStores` → `collectPlacedOrders` → `ymMarketplaceOrder`, как
-  «Обзор»): `listOrders` адаптера ЯМ знает только активный магазин. Ozon/WB — `listOrders` реестра под своими фичами.
+  «Обзор»): `listOrders` адаптера ЯМ знает только активный магазин. Ozon/WB — `listOrders` реестра; закрытая фича
+  площадки — отказ задачи (403 на POST), площадка без возможности `orders` — пустая лента.
   Отменённые входят в ленту (этап «Отменён»). Сбой магазина или площадки — строка причины, остальное живёт.
 - **Список — kind `order-feed:list`** (минуты: Partner API, статистика WB 1/мин); **история — обычный GET**
   `crm/ym/order-feed/:marketplace/:orderId` (Postgres, миллисекунды), открывается при раскрытии заказа. GET под
   `@RequireFeature(order_feed)` и фичей площадки (`isFinanceMarketplaceOpen`), иначе 403 `FEATURE_DISABLED`.
-- **Итоги — строкой на площадку** с её подписью: в одно число площадки не складываются.
+- **Итоги — строкой площадки** с её подписью. Деталь заказа берёт площадку из строки (`row.marketplace`) — работает
+  из раздела любой площадки.
 
 ### «Уведомления» (M25, TASK-152)
 
@@ -316,19 +387,20 @@
 
 ### «Аналитика возвратов» (M22, TASK-145)
 
-Раздел аккаунта `/ym/returns-analytics` под фичей `returns_analytics` (default off, `requires: [finance]`; кнопки в боте
+Раздел аккаунта `/ym/returns-analytics` (и `/ozon/…`, `/wb/…` — TASK-182) под фичей `returns_analytics` (default off, `requires: [finance]`; кнопки в боте
 нет — бот показывает возвраты в пути отчётом «Едет обратно»). Ядро — `src/modules/finance/returns-analytics.ts` +
 `ReturnsAnalyticsService`, доставка — `src/modules/crm/returns-analytics/`.
 
-- **Kind `returns-analytics:summary`**, период — `from/to` (`parseDayRange`). Журнал каждой площадки, открытой
-  продавцу (`isFinanceMarketplaceOpen`), читается отдельно; сбой площадки — строка проблемы, остальные живут.
-- **Площадки не складываются** (`returns_marketplace_switch`): ответ — блок на площадку, экран — переключатель,
-  разрез «Площадки» — строки без итога.
+- **Kind `returns-analytics:summary`**, период — `from/to` (`parseDayRange`), площадка — `params.marketplace`.
+  Читается журнал одной площадки экрана; сбой — строка проблемы, блока нет. Названия товаров —
+  `findByJournalSkus` (у Ozon/WB без карточки ЯМ — по артикулу площадки).
+- **Площадки не складываются**: у каждой свой экран (`crm_marketplace_screens_own_only` сменило
+  `returns_marketplace_switch` — переключателя и разреза «По площадкам» больше нет).
 - Правила чисел (журнал, нетто-комиссия по заказу, потери) — в `src/modules/finance/README.md`.
 
 ### «Склад» (M22, TASK-142)
 
-Раздел аккаунта `/ym/inventory` под фичей `inventory` (default off, `requires: [finance]`): по каждому товару `Product` —
+Раздел аккаунта `/ym/inventory` (и `/ozon/…`, `/wb/…` — TASK-182) под фичей `inventory` (default off, `requires: [finance]`): по каждому товару `Product` —
 свой склад, остатки площадок по местам, в пути к покупателю, возвраты в пути, стоимость остатков по себестоимости и
 дни запаса. Только чтение. Ядро — лист `src/modules/finance/inventory.ts`, доставка — `src/modules/crm/inventory/`
 (kind `inventory:summary`, scope `account`), фронт — `web/crm/src/modules/inventory/`. Правила — README модуля finance.
@@ -359,8 +431,12 @@
   у WB открытый заказ FBW считается «в пути».
 - **Карточка площадки без товара** не теряется — блок «Не привязано к товарам». Неподключённая площадка — колонка
   `not-connected` и строка причины; закрытые фичи `ozon`/`wb` — площадку не спрашиваем вовсе.
-- Стор не ставит задачу при повторном входе (`ensure`), свежий срез — «Обновить»: WB-заказы — минуты из-за лимита
-  статистики 1/мин.
+- **Площадка экрана** (TASK-182): kind передаёт `marketplace` в `InventoryService.build` — остатки, движения и скорость
+  только её; свой склад общий, поэтому «дней хватит» на экране площадки = (свой склад + её склад) / её скорость и
+  по разным площадкам не складывается. Без `marketplace` сборка — по всем открытым площадкам: так её зовут правила
+  уведомлений (им нужен склад целиком). Товары по журналу — `findByJournalSkus` каждой площадки.
+- Стор не ставит задачу при повторном входе на ту же площадку (`ensure`), свежий срез — «Обновить»: WB-заказы —
+  минуты из-за лимита статистики 1/мин.
 
 ### «Передача остатков» (M22, TASK-143)
 
@@ -390,6 +466,10 @@
 месяцам; what-if по комиссии; необходимые закупки. Ядро — `src/modules/finance/{forecast,forecast-purchases}.ts`
 (листы) и `FinanceForecastService`, доставка — `src/modules/crm/forecast/` (kind-ы `forecast:summary` и
 `forecast:purchases`, scope `account`), фронт — `web/crm/src/modules/forecast/`. Правила — README модуля finance.
+Под /ozon и /wb (TASK-183) — то же по журналу и «к получению» площадки (`FinanceForecastService.build(…,
+marketplace)`; ИИ-инструмент `getForecast` зовёт без неё — ЯМ); закупки — остатки площадки через реестр, артикул
+площадки приводится к ключу журнала (артикул ЯМ карточки), имена — `findByJournalSkus`. Свой склад в закупки
+не входит ни у одной площадки (как было у ЯМ).
 
 - **Метод один и детерминированный** (решение `forecast_basis_selectable`): факт с 1 числа по ВЧЕРА + средний
   день за последние N дней × оставшиеся дни, считая сегодня. Сегодняшний день в журнале неполный: взятый
@@ -461,8 +541,25 @@
 - **Login is the Telegram nick (no `@`, case-insensitive) or the numeric id** —
   `UserAccessService.findByLogin` + pure `resolveAccount` in `crm-auth.domain.ts`. A nick found under
   two different ids is **409** «войдите по Telegram id» (nicks are not unique); several `botId` for
-  one id → the `approved` row decides. Only approved sellers **with a connected store**, and admins
-  from `TELEGRAM_ADMIN_IDS` with a store (they have no `UserAccess` row, so by id), get in.
+  one id → the `approved` row decides. Approved sellers and admins from `TELEGRAM_ADMIN_IDS` (they have
+  no `UserAccess` row, so by id) get in (`isAllowed`, same rule for «за продавца»).
+- **Without a marketplace only «Подключения», «Профиль», «Помощь»** (TASK-193, decision
+  `crm_audience_no_platform`). A marketplace (`hasPlatform`) is a YM store (`YandexMarketService.isConfigured`)
+  **or** any Ozon/WB `MarketplaceConnection` (`hasAny`, TASK-192). `isConfigured` itself is not widened —
+  the bot routes by it. A **rejected** key still counts (unlike `connectedUsers`, which skips it for the
+  nightly import): keys are replaced only in the CRM. Without one, `/auth/me` returns `store: null` and
+  `sections` cut to `NO_PLATFORM_SECTIONS`, and `CrmJwtGuard` answers **403 `NO_PLATFORM`** on every route
+  not marked `@AllowWithoutPlatform` (auth, `connections`, `marketplaces`, `profile`/`help`,
+  `PUT ozon/connection`, `PUT wb/connection`, `PUT ym/stores/token` — the last one so the YM card says
+  «подключите в боте», 409 `NO_STORE`). The web sends such a seller to «Подключения» (`useAuthGuard` on `store === null`, and
+  `installAuth` on any 403 `NO_PLATFORM` — a stale bookmark). The Ozon/WB key still needs the `ozon`/`wb`
+  feature, which the admin opens.
+  **Why:** before TASK-193 an approved seller without YM could not get in at all, and keys are entered only
+  in the CRM — a first Ozon/WB key was impossible. The owner chose this over a key form in the bot or a key
+  entered by the admin. **Why a guard, not just hidden sections:** direct URLs and jobs would otherwise run
+  against an empty account; the marker is an allow-list like `AllowPendingPasswordChange`, so a new
+  controller stays closed by default. The check (`hasPlatform`, 1–2 indexed reads) runs only on unmarked
+  routes; `crm-auth.test.ts` pins which controllers carry the marker.
 - **The account is created lazily** (`CrmCredential`, one per `telegramUserId`, no `botId` — the store
   is keyed the same way) on the first successful login with `CRM_INITIAL_PASSWORD` (default
   `tg_rules_2026`, the owner's decision), via `$setOnInsert` upsert so a race never overwrites a
@@ -548,7 +645,11 @@ impersonated-by:<admin>` (the admin log tags it «за продавца»); the 
   model). Both come from `visibleSections(features, placement, scope)` over `CRM_SECTIONS`
   (`crm-features.domain.ts`, section → any-of features). `featureMenuLayout` is not reused directly — it returns the
   bot's emoji labels, and «Прайс» has none. A section missing from the table is **hidden**, the safe drift direction;
-  `crm-features.test.ts` reads `web/crm/src/navigation.ts` as text and pins the two lists equal. Until `/auth/me` loads,
+  `crm-features.test.ts` imports `allNavNames()` from `web/crm/src/navigation.sections.ts` (an import-free file, so the
+  root vitest can load it) and pins the two lists equal — for every marketplace. Per-marketplace sections
+  (`CRM_MARKETPLACE_SECTIONS`) expand to `ym-*`/`ozon-*`/`wb-*`; an `ozon-*`/`wb-*` one is shown only while the
+  marketplace's own feature (`ozon`/`wb`, default off) is open, so `ozon`/`wb` are a section gate, not an entry
+  of `FEATURES_WITHOUT_SECTION` (TASK-178, decision ozon_wb_crm_variant_a). Until `/auth/me` loads,
   the sidebar is empty rather than full.
 - **Every CRM request is journalled by a middleware, not an interceptor** (`CrmActionLogMiddleware`, on
   `crm/{*path}` — Nest prepends `/api` itself, pinned by an HTTP test). Interceptors run **after** guards, so a 401 or
@@ -562,7 +663,7 @@ impersonated-by:<admin>` (the admin log tags it «за продавца»); the 
 ### Фоновые задачи CRM (`src/modules/crm/jobs/`, очередь `crm-jobs`)
 
 Долгие отчёты (прибыль, FBY, платежи, отчёты Маркета — десятки секунд и минуты) веб не ждёт по
-HTTP: `POST /api/crm/ym/jobs {kind, params, store}` → `{jobId, created}`, `GET /jobs/:id` → статус и
+HTTP: `POST /api/crm/jobs {kind, params, store}` → `{jobId, created}`, `GET /jobs/:id` → статус и
 `data`, `GET /jobs/:id/file` → xlsx. Процессоры бота не тронуты — CRM регистрирует **kind** в
 `CrmJobsRegistry` и в `run` зовёт те же сервисы; доставка другая, логика одна.
 
@@ -584,6 +685,15 @@ HTTP: `POST /api/crm/ym/jobs {kind, params, store}` → `{jobId, created}`, `GET
 - **Kind уровня аккаунта — `scope: 'account'`** (TASK-124, `finance:pnl`; так же `overview:*`): магазин не нужен и не
   резолвится, фичи проверяются без модели магазина, замок `<telegramUserId>:<kind>`, `campaignId` в
   payload нет. Умолчание — `store`: забытое поле оставляет отчёт магазинным, а не открывает его без магазина.
+  **Аккаунтному kind-у ЯМ не обязателен** (TASK-179): нет документа YandexMarket — `context.store = null`,
+  ЯМ-часть kind-а пуста (`accountStores(null)` → `[]`, `ratesOf(store ?? {})`), а продавец только с Ozon/WB
+  получает свои отчёты. Магазинный kind без документа — по-прежнему «Магазин не подключён».
+- **Маршрут — `/api/crm/jobs`, `/api/crm/ym/jobs` — алиас** (TASK-179, решение `crm_jobs_route`): задачи
+  общие для экранов всех площадок, сегмент `ym` в API остаётся только у данных ЯМ. Алиас нужен вкладкам,
+  открытым до деплоя; новых вызовов туда нет.
+- **Площадка экрана — `params.marketplace`, одно правило `parseJobMarketplace`** (TASK-179): POST задачи
+  отбивает мусор 400, закрытую фичу площадки — 403 `FEATURE_DISABLED` до очереди; kind (`finance:pnl`) зовёт
+  ту же функцию ещё раз для задач, поставленных раньше. Нет параметра — ЯМ, он открыт всегда.
 - **`concurrency: CRM_JOBS_CONCURRENCY` (4), не дефолтная 1** (TASK-090): с одной задачей за раз главная
   собиралась по очереди, плитки заказов стояли за «Прибылью», а тяжёлый отчёт одного продавца задерживал
   всех. Лимиты очередью здесь не держатся (`activeKey`, `FbyStockService`, квоты Маркета), запись остатков —

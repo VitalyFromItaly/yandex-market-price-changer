@@ -1,13 +1,19 @@
 import type { ICrmOverviewStoreProblem } from './crm-overview.domain';
+import type { TMarketplace } from '../../../shared/marketplace';
+import type { IReportPeriod } from '../../yandex/reports/report-period';
 import type { ICrmJobContext, ICrmJobOutput } from '../jobs/crm-jobs.domain';
 import type { OnModuleInit } from '@nestjs/common';
 
 import { Injectable } from '@nestjs/common';
 
+import { ProductService } from '../../../database/services/product.service';
 import { PurchasePriceService } from '../../../database/services/purchase-price.service';
+import { MARKETPLACE_LABEL } from '../../../shared/marketplace';
 import { FinanceCashflowService } from '../../finance/finance-cashflow.service';
 import { financeToday } from '../../finance/finance-period';
 import { FinanceService } from '../../finance/finance.service';
+import { IN_TRANSIT_STAGES, NOT_CONNECTED_TEXT } from '../../inventory/inventory.domain';
+import { MarketplaceNotConnectedError } from '../../marketplaces/marketplace-adapter';
 import { MarketplaceRegistry } from '../../marketplaces/marketplace-registry.service';
 import { availableBySku } from '../../marketplaces/marketplace-stocks';
 import {
@@ -19,21 +25,22 @@ import { fbyStockUnavailableLine } from '../../yandex/fby/fby-message';
 import { OrderReportsService } from '../../yandex/reports/order-reports.service';
 import { applyDiscounts, ratesOf } from '../../yandex/reports/profit';
 import { reportErrorMessage } from '../../yandex/reports/report-message';
-import { DEFAULT_PERIOD } from '../../yandex/reports/report-period';
+import { DEFAULT_PERIOD, PERIOD } from '../../yandex/reports/report-period';
 import { REPORT } from '../../yandex/reports/report-status-map';
 import { accountStores } from '../../yandex/stores/stores.domain';
 import { YandexDateRangeError } from '../../yandex/yandex-date-window';
-import { CrmJobError, withoutIcon } from '../jobs/crm-jobs.domain';
+import { CrmJobError, parseJobMarketplace, withoutIcon } from '../jobs/crm-jobs.domain';
 import { CrmJobsRegistry } from '../jobs/crm-jobs.registry';
-import { ymStocks } from '../jobs/crm-marketplace-stocks';
+import { byPurchaseKey, marketplaceAvailable, ymStocks } from '../jobs/crm-marketplace-stocks';
 
 import {
-  CANCELLED_RANGE_UNSUPPORTED_TEXT,
+  CANCELLED_NO_ORDERS_TEXT,
   OVERVIEW_CANCELLED_KIND,
   OVERVIEW_RANGE_INVALID_TEXT,
   OVERVIEW_STOCKS_KIND,
   OVERVIEW_SUMMARY_KIND,
   cancelledPeriodOf,
+  cancelledRangeUnsupportedText,
   parseOverviewRanges,
   stockValueOf,
   toCrmOverviewSummary,
@@ -54,6 +61,11 @@ import {
  * Магазины обходятся по очереди: квоты Partner API — на токен, а лимит отчёта
  * остатков FBY держит `FbyStockService`. Сбой магазина — строка с причиной, а
  * не ноль в сумме и не отказ всего экрана.
+ *
+ * Площадка — экрана (`params.marketplace`, TASK-183): /ym — журнал и магазины
+ * ЯМ, как было; /ozon, /wb — журнал площадки, её остатки и заказы через реестр
+ * (`stocks`, `orders`). ЯМ на экране Ozon не спрашивается вовсе. Площадка эхом в
+ * ответе — по ней фронт узнаёт свой ответ.
  */
 @Injectable()
 export class CrmOverviewKinds implements OnModuleInit {
@@ -64,6 +76,7 @@ export class CrmOverviewKinds implements OnModuleInit {
     private readonly marketplaces: MarketplaceRegistry,
     private readonly reports: OrderReportsService,
     private readonly purchasePrices: PurchasePriceService,
+    private readonly products: ProductService,
   ) {}
 
   onModuleInit(): void {
@@ -87,16 +100,19 @@ export class CrmOverviewKinds implements OnModuleInit {
   async summary(context: ICrmJobContext, now: Date = new Date()): Promise<ICrmJobOutput> {
     const ranges = parseOverviewRanges(context.params);
     if (!ranges) throw new CrmJobError(OVERVIEW_RANGE_INVALID_TEXT);
+    const marketplace = this.marketplaceOf(context);
     const { telegramUserId } = context;
     const [current, previous, receivable] = await Promise.all([
-      this.finance.build(telegramUserId, ranges.current, now, { flat: false }),
-      this.finance.build(telegramUserId, ranges.previous, now, { flat: false }),
-      this.cashflow.receivable(telegramUserId, now),
+      this.finance.build(telegramUserId, ranges.current, now, { flat: false, marketplace }),
+      this.finance.build(telegramUserId, ranges.previous, now, { flat: false, marketplace }),
+      this.cashflow.receivable(telegramUserId, now, marketplace),
     ]);
-    return { data: toCrmOverviewSummary(current, previous, receivable) };
+    return { data: { ...toCrmOverviewSummary(current, previous, receivable), marketplace } };
   }
 
   async stocks(context: ICrmJobContext, now: Date = new Date()): Promise<ICrmJobOutput> {
+    const marketplace = this.marketplaceOf(context);
+    if (marketplace !== 'ym') return this.marketplaceStocks(context, marketplace, now);
     const inTransitOpen = isFeatureEnabled(context.features, REPORT_TO_FEATURE[REPORT.IN_TRANSIT]);
     const deepHistory = isFeatureEnabled(context.features, FEATURE.DEEP_HISTORY);
     const stores = accountStores(context.store);
@@ -139,6 +155,7 @@ export class CrmOverviewKinds implements OnModuleInit {
 
     return {
       data: {
+        marketplace,
         takenAt: now.toISOString(),
         stockValueKopecks: total.kopecks,
         stockUnits: total.units,
@@ -150,23 +167,108 @@ export class CrmOverviewKinds implements OnModuleInit {
     };
   }
 
+  /**
+   * Срез «сейчас» Ozon/WB: остатки — по всем местам площадки, стоимость — по
+   * текущему закупу карточки (артикул площадки → ключ закупа); в пути — заказы
+   * площадки за её окно «всего» (последние 30 дней) по этапу. Сумма в пути
+   * неизвестна, если неизвестна цена хоть одного заказа, — null, не ноль.
+   */
+  private async marketplaceStocks(
+    context: ICrmJobContext,
+    marketplace: TMarketplace,
+    now: Date,
+  ): Promise<ICrmJobOutput> {
+    const { telegramUserId } = context;
+    const storeName = MARKETPLACE_LABEL[marketplace];
+    const problems: ICrmOverviewStoreProblem[] = [];
+    const total = { kopecks: 0, units: 0, withoutCost: { skus: 0, units: 0 } };
+
+    const stock = await marketplaceAvailable(this.marketplaces, telegramUserId, marketplace, now);
+    if (stock.problem !== null) {
+      problems.push({ storeName, problem: stock.problem });
+    } else {
+      const products = await this.products.findByJournalSkus(
+        telegramUserId,
+        marketplace,
+        Object.keys(stock.available),
+      );
+      const available = byPurchaseKey(stock.available, products);
+      const rows = await this.purchasePrices.findBySkus(telegramUserId, Object.keys(available));
+      const value = stockValueOf(available, applyDiscounts(rows, ratesOf(context.store ?? {})));
+      Object.assign(total, value);
+    }
+
+    let inTransit: { orders: number; units: number; salesKopecks: number | null } | null = null;
+    const source = this.marketplaces.capability(marketplace, 'orders');
+    if (source) {
+      try {
+        const { orders } = await source.listOrders(
+          { telegramUserId, marketplace },
+          { key: PERIOD.ALL },
+          now,
+        );
+        const moving = orders.filter((order) => IN_TRANSIT_STAGES.has(order.stage));
+        let salesKopecks: number | null = 0;
+        let units = 0;
+        for (const order of moving) {
+          for (const item of order.items) units += item.count;
+          salesKopecks =
+            salesKopecks === null || order.sales === null
+              ? null
+              : salesKopecks + Math.round(order.sales * 100);
+        }
+        inTransit = { orders: moving.length, units, salesKopecks };
+      } catch (error) {
+        // Не подключено — уже сказано строкой остатков; второй раз не повторяем.
+        if (!(error instanceof MarketplaceNotConnectedError) || stock.problem === null) {
+          problems.push({ storeName, problem: reportErrorMessage(error) });
+        }
+      }
+    }
+
+    return {
+      data: {
+        marketplace,
+        takenAt: now.toISOString(),
+        stockValueKopecks: total.kopecks,
+        stockUnits: total.units,
+        withoutCost: total.withoutCost,
+        inTransit,
+        stores: 1,
+        problems,
+      },
+    };
+  }
+
   async cancelled(context: ICrmJobContext, now: Date = new Date()): Promise<ICrmJobOutput> {
     const ranges = parseOverviewRanges(context.params);
     if (!ranges) throw new CrmJobError(OVERVIEW_RANGE_INVALID_TEXT);
+    const marketplace = this.marketplaceOf(context);
     const { from, to } = ranges.current;
     const period = cancelledPeriodOf(ranges.current, financeToday(now));
-    const stores = accountStores(context.store);
     if (!period) {
       const data = {
+        marketplace,
         from,
         to,
         count: null,
-        note: CANCELLED_RANGE_UNSUPPORTED_TEXT,
+        note: cancelledRangeUnsupportedText(marketplace),
         stores: 0,
         problems: [],
       };
       return { data };
     }
+    if (marketplace !== 'ym') {
+      return {
+        data: {
+          marketplace,
+          from,
+          to,
+          ...(await this.marketplaceCancelled(context, marketplace, period, now)),
+        },
+      };
+    }
+    const stores = accountStores(context.store);
 
     const deepHistory = isFeatureEnabled(context.features, FEATURE.DEEP_HISTORY);
     const problems: ICrmOverviewStoreProblem[] = [];
@@ -178,13 +280,54 @@ export class CrmOverviewKinds implements OnModuleInit {
       } catch (error) {
         // День глубже 30 дней без deep_history — ожидаемый отказ, один на все магазины.
         if (error instanceof YandexDateRangeError) {
-          return {
-            data: { from, to, count: null, note: error.userMessage, stores: 0, problems: [] },
-          };
+          const data = { marketplace, from, to, count: null, note: error.userMessage, stores: 0 };
+          return { data: { ...data, problems: [] } };
         }
         problems.push({ storeName: store.name ?? '', problem: reportErrorMessage(error) });
       }
     }
-    return { data: { from, to, count, note: null, stores: stores.length, problems } };
+    return { data: { marketplace, from, to, count, note: null, stores: stores.length, problems } };
+  }
+
+  /** Отмены Ozon/WB за период — из заказов площадки; заказов она не отдаёт — причина. */
+  private async marketplaceCancelled(
+    context: ICrmJobContext,
+    marketplace: TMarketplace,
+    period: IReportPeriod,
+    now: Date,
+  ): Promise<{
+    count: number | null;
+    note: string | null;
+    stores: number;
+    problems: ICrmOverviewStoreProblem[];
+  }> {
+    const source = this.marketplaces.capability(marketplace, 'orders');
+    if (!source) {
+      return { count: null, note: CANCELLED_NO_ORDERS_TEXT(marketplace), stores: 0, problems: [] };
+    }
+    const { telegramUserId } = context;
+    try {
+      const { cancelled } = await source.listOrders({ telegramUserId, marketplace }, period, now);
+      return { count: cancelled.length, note: null, stores: 1, problems: [] };
+    } catch (error) {
+      const problem =
+        error instanceof MarketplaceNotConnectedError
+          ? NOT_CONNECTED_TEXT(marketplace)
+          : reportErrorMessage(error);
+      return {
+        // Источник один — причина в подписи карточки, а не отдельной строкой.
+        count: null,
+        note: problem,
+        stores: 1,
+        problems: [],
+      };
+    }
+  }
+
+  /** Площадка экрана; мусор и закрытая фича площадки — отказ задачи. */
+  private marketplaceOf(context: ICrmJobContext): TMarketplace {
+    const parsed = parseJobMarketplace(context.params, context.features ?? {});
+    if ('error' in parsed) throw new CrmJobError(parsed.text);
+    return parsed.marketplace;
   }
 }

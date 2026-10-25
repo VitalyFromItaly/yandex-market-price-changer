@@ -34,10 +34,21 @@ describe('стор «Обзора»', () => {
       to: '2026-10-15',
       prevFrom: '2026-09-01',
       prevTo: '2026-09-15',
+      marketplace: 'ym',
     };
     expect(jobs.start).toHaveBeenCalledWith('overview:summary', period, '');
     expect(jobs.start).toHaveBeenCalledWith('overview:cancelled', period, '');
-    expect(jobs.start).toHaveBeenCalledWith('overview:stocks', {}, '');
+    expect(jobs.start).toHaveBeenCalledWith('overview:stocks', { marketplace: 'ym' }, '');
+  });
+
+  it('площадка экрана (TASK-183) — в params всех трёх задач; reset возвращает ЯМ', () => {
+    const store = useOverviewStore();
+    store.selectMarketplace('ozon');
+    store.load(true);
+    const params = jobs.start.mock.calls.map(([, p]) => (p as { marketplace: string }).marketplace);
+    expect(params).toEqual(['ozon', 'ozon', 'ozon']);
+    store.reset();
+    expect(store.marketplace).toBe('ym');
   });
 
   it('без «Финансов» сводка денег не ставится — её отбил бы гейт', () => {
@@ -59,6 +70,7 @@ describe('стор «Обзора»', () => {
       to: '2026-09-30',
       prevFrom: '2026-08-01',
       prevTo: '2026-08-31',
+      marketplace: 'ym',
     });
   });
 

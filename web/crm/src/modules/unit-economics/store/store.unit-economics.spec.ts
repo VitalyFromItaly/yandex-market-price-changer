@@ -31,7 +31,13 @@ describe('стор «Unit-экономики»', () => {
     store.load();
     expect(jobs.start).toHaveBeenCalledWith(
       'unit-economics:skus',
-      { from: '2026-10-01', to: '2026-10-15', prevFrom: '2026-09-01', prevTo: '2026-09-15' },
+      {
+        from: '2026-10-01',
+        to: '2026-10-15',
+        prevFrom: '2026-09-01',
+        prevTo: '2026-09-15',
+        marketplace: 'ym',
+      },
       '',
     );
   });
@@ -45,6 +51,7 @@ describe('стор «Unit-экономики»', () => {
       to: '2026-09-30',
       prevFrom: '2026-08-01',
       prevTo: '2026-08-31',
+      marketplace: 'ym',
     });
   });
 
@@ -56,5 +63,16 @@ describe('стор «Unit-экономики»', () => {
     expect(store.opened).toBeNull();
     expect(store.query).toBe('');
     expect(store.preset).toBe('month');
+  });
+
+  it('площадка экрана (TASK-181) — в params задачи; reset возвращает ЯМ', () => {
+    const store = useUnitEconomicsStore();
+    store.selectMarketplace('ozon');
+    store.load();
+    expect(jobs.start.mock.calls[0]?.[0]).toBe('unit-economics:skus');
+    expect(jobs.start.mock.calls[0]?.[1]).toMatchObject({ marketplace: 'ozon' });
+    expect(store.marketplace).toBe('ozon');
+    store.reset();
+    expect(store.marketplace).toBe('ym');
   });
 });

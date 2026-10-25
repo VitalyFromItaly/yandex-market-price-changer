@@ -1,4 +1,4 @@
-/** Фоновая задача CRM: /api/crm/ym/jobs. Статусы — те же, что в CrmJobResult. */
+/** Фоновая задача CRM: /api/crm/jobs. Статусы — те же, что в CrmJobResult. */
 export type JobStatus = 'queued' | 'active' | 'done' | 'failed';
 
 export interface JobStartResponse {

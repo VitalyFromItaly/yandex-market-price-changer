@@ -10,6 +10,7 @@ import type {
   TFinanceMarketplace,
 } from '../../database/postgres/finance.schema';
 import type { YandexApiClient } from '../yandex/yandex-api.client';
+import type { TSleep } from '../yandex/yandex-retry';
 
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
@@ -23,11 +24,13 @@ import { YandexMarketService } from '../../database/services/yandex-market.servi
 import { ErrorReporter } from '../errors/error-reporter.service';
 import { pollReportFile } from '../yandex/report-poll';
 import { unzipReportJson } from '../yandex/report-zip';
+import { YandexRateLimitError } from '../yandex/yandex-api.errors';
 import {
   unitedMarketplaceServicesGeneratePath,
   unitedNettingGeneratePath,
 } from '../yandex/yandex-api.paths';
 import { YandexClientFactory } from '../yandex/yandex-client.factory';
+import { realSleep } from '../yandex/yandex-retry';
 
 import { FinanceAnomalyService } from './finance-anomaly.service';
 import { correctionSideOf, pairCorrections } from './finance-corrections';
@@ -110,6 +113,34 @@ export type TFinanceManualImportResult =
       unknown: number;
     });
 
+/**
+ * united-netting/generate: лимит Маркета — 1 генерация в минуту на кабинет
+ * («1 points per 1 minute … for businessId»). Ночной проход заказывает подряд
+ * текущий и прошлый месяц (по понедельникам ещё позапрошлый), кнопка CRM — несколько
+ * месяцев сразу; повторы клиента (1–2–4 с) минуту не пережидают. Поэтому на 420/429
+ * этого метода — пауза больше минуты и ещё попытка. Generate данных не меняет,
+ * повтор безвреден; очередь `finance-import` одна на concurrency 1 — ждёт только она.
+ */
+export const NETTING_GENERATE_ATTEMPTS = 3;
+export const NETTING_GENERATE_PAUSE_MS = 65_000;
+
+/** generate с ожиданием минутного лимита; остальные ошибки — как были (их повторил клиент). */
+export async function generateWithMinuteLimit(
+  generate: () => Promise<string>,
+  sleep: TSleep = realSleep,
+): Promise<string> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await generate();
+    } catch (error) {
+      if (!(error instanceof YandexRateLimitError) || attempt >= NETTING_GENERATE_ATTEMPTS) {
+        throw error;
+      }
+      await sleep(NETTING_GENERATE_PAUSE_MS);
+    }
+  }
+}
+
 /** У продавца нет магазина с business_id — некуда отнести журнал. */
 export class FinanceNoStoreError extends Error {
   constructor() {
@@ -143,6 +174,12 @@ export interface IFinanceJournalBatch {
   reportUnknown(ops: readonly IFinanceOperationRow[]): Promise<number>;
   /** Обновлять артикул у уже записанных строк (Ozon: ключ закупа по каталогу). */
   refreshSku?: boolean;
+  /**
+   * Пустая выплата новой версии не стирает записанную (Ozon, TASK-184): метод
+   * начислений выплат не несёт, `paidAt` проставляет раскладка выплат после
+   * импорта — без флага каждая новая версия обнуляла бы её до следующей раскладки.
+   */
+  keepPayment?: boolean;
   /**
    * Заказы площадки для сверки (TASK-132, Ozon — отправления). Нет — сверки у
    * площадки нет, период «не проверен» (`RECONCILE_NOT_IMPLEMENTED`).
@@ -222,6 +259,9 @@ function isUniqueViolation(error: unknown): boolean {
 @Injectable()
 export class FinanceImportService {
   private readonly logger = new Logger(FinanceImportService.name);
+
+  /** Пауза перед повтором generate на минутном лимите; тесты подменяют. */
+  sleep: TSleep = realSleep;
 
   // Правило max-params отключено осознанно: импорт — точка, где журнал, версия,
   // корректировки, статус, сверка, аномалии и итоги актов складываются в одну
@@ -383,6 +423,7 @@ export class FinanceImportService {
         documentVersion: document.version,
         marketplace: scope.marketplace,
         refreshSku: batch.refreshSku,
+        keepPayment: batch.keepPayment,
         now,
       });
       await this.documents.markImported(telegramUserId, document.id, ops.length, tx);
@@ -578,10 +619,14 @@ export class FinanceImportService {
     // Незакрытый месяц запрашивается по сегодня, но хранится целым месяцем —
     // см. requestRange.
     const range = requestRange(period, financeToday(now));
-    const reportId = await client.generateReport(
-      unitedNettingGeneratePath(),
-      { businessId: Number(store.business_id), dateFrom: range.from, dateTo: range.to },
-      'JSON',
+    const reportId = await generateWithMinuteLimit(
+      () =>
+        client.generateReport(
+          unitedNettingGeneratePath(),
+          { businessId: Number(store.business_id), dateFrom: range.from, dateTo: range.to },
+          'JSON',
+        ),
+      this.sleep,
     );
     const fileUrl = await pollReportFile(client, reportId, {
       intervalMs: 5000,
@@ -1075,6 +1120,7 @@ export class FinanceImportService {
       /** Чей журнал; по умолчанию ЯМ. */
       marketplace?: TFinanceMarketplace;
       refreshSku?: boolean;
+      keepPayment?: boolean;
       now: Date;
     },
   ) {
@@ -1097,6 +1143,7 @@ export class FinanceImportService {
 
     const { inserted, matched } = await this.operations.upsertMany(ops, tx, {
       refreshSku: input.refreshSku,
+      keepPayment: input.keepPayment,
     });
 
     const stale = await this.operations.findStale(

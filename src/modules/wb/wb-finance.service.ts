@@ -11,6 +11,7 @@ import { financeToday, requestRange, shiftDay } from '../finance/finance-period'
 import {
   reportWbUnknownArticles,
   wbFinanceOriginal,
+  wbPayoutByReport,
   wbRowToOperation,
   wbRowsInPeriod,
 } from '../finance/wb-journal';
@@ -46,9 +47,10 @@ export function wbPurchaseKeys(
 }
 
 /**
- * Импорт отчёта реализации WB (TASK-136): reportDetailByPeriod за месяц →
+ * Импорт отчёта реализации WB (TASK-136): sales-reports/detailed за месяц →
  * строки журнала → та же версия, upsert и корректировки, что у ЯМ и Ozon
- * (`FinanceImportService.importBatchAndRecord`). Только чтение у WB.
+ * (`FinanceImportService.importBatchAndRecord`). Только чтение у WB. Выплата
+ * (TASK-185) — из самой строки (`wbPaidAtOf`), отдельного прохода, как у Ozon, нет.
  *
  * Токен — на каждый вызов (`wbSellerClient`); нет токена —
  * `WbNotConnectedError` ДО записи статуса: «не подключён» — не сбой периода.
@@ -97,6 +99,10 @@ export class WbFinanceService {
 
         const keys = await this.purchaseKeys(telegramUserId, rows);
         const skuOf = (vendorCode: string) => keys.get(vendorCode);
+        // Сумма поручения — по всему ответу, до фильтра месяца: строки отчёта на
+        // стыке лежат в двух месяцах, а запрос с запасом накрывает неделю целиком.
+        const payouts = wbPayoutByReport(raws);
+        const payoutOf = (reportId: string) => payouts.get(reportId);
         return {
           businessId: sellerId,
           original: {
@@ -104,7 +110,7 @@ export class WbFinanceService {
             filename: `wb-realization-${period.from}-${period.to}.json`,
             contentType: 'application/json',
           },
-          toOperations: (ctx) => rows.map((raw) => wbRowToOperation(raw, ctx, skuOf)),
+          toOperations: (ctx) => rows.map((raw) => wbRowToOperation(raw, ctx, skuOf, payoutOf)),
           reportUnknown: (ops) => reportWbUnknownArticles(this.errors, ops, telegramUserId),
           refreshSku: true,
         };

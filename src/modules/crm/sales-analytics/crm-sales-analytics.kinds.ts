@@ -7,7 +7,7 @@ import { Injectable } from '@nestjs/common';
 import { ProductService } from '../../../database/services/product.service';
 import { FinanceService } from '../../finance/finance.service';
 import { FEATURE } from '../../telegram/bots/shared/features.domain';
-import { CrmJobError } from '../jobs/crm-jobs.domain';
+import { CrmJobError, parseJobMarketplace } from '../jobs/crm-jobs.domain';
 import { CrmJobsRegistry } from '../jobs/crm-jobs.registry';
 import { parseOverviewRanges } from '../overview/crm-overview.domain';
 
@@ -25,6 +25,10 @@ import {
  * «Обзором» `parseOverviewRanges`. Фича одна: `sales_analytics` требует
  * `finance` сама (`requires`). Бренд не хранится — выводится из названия и
  * категории товара (`brandOf`), поэтому из базы товаров берутся оба поля.
+ *
+ * Площадка — `params.marketplace` (TASK-181), умолчание ЯМ: журнал своей площадки
+ * (`FinanceService.build`), товары — по артикулу журнала
+ * (`findByJournalSkus`: ключ закупа = артикул ЯМ, без карточки ЯМ — артикул площадки).
  */
 @Injectable()
 export class CrmSalesAnalyticsKinds implements OnModuleInit {
@@ -45,11 +49,14 @@ export class CrmSalesAnalyticsKinds implements OnModuleInit {
   async summary(context: ICrmJobContext, now: Date = new Date()): Promise<ICrmJobOutput> {
     const ranges = parseOverviewRanges(context.params);
     if (!ranges) throw new CrmJobError(SALES_ANALYTICS_RANGE_INVALID_TEXT);
+    const parsed = parseJobMarketplace(context.params, context.features ?? {});
+    if ('error' in parsed) throw new CrmJobError(parsed.text);
+    const { marketplace } = parsed;
 
     const { telegramUserId } = context;
     const [current, previous] = await Promise.all([
-      this.finance.build(telegramUserId, ranges.current, now, { flat: false }),
-      this.finance.build(telegramUserId, ranges.previous, now, { flat: false }),
+      this.finance.build(telegramUserId, ranges.current, now, { flat: false, marketplace }),
+      this.finance.build(telegramUserId, ranges.previous, now, { flat: false, marketplace }),
     ]);
 
     // Бренд прошлого периода нужен тоже: иначе товар, проданный только тогда,
@@ -57,13 +64,12 @@ export class CrmSalesAnalyticsKinds implements OnModuleInit {
     const skus = [
       ...new Set([...current.pnl.skus.skus, ...previous.pnl.skus.skus].map((sku) => sku.sku)),
     ];
-    const found = skus.length ? await this.products.findByYmSkus(telegramUserId, skus) : [];
+    const found = await this.products.findByJournalSkus(telegramUserId, marketplace, skus);
     const products = new Map<string, IBrandSource>();
-    for (const product of found) {
-      const ym = product.marketplaceSkus?.ym;
-      if (ym) products.set(ym, { name: product.name, category: product.category });
+    for (const [sku, product] of found) {
+      products.set(sku, { name: product.name, category: product.category });
     }
 
-    return { data: toCrmSalesAnalytics(current, previous, products) };
+    return { data: toCrmSalesAnalytics(current, previous, products, marketplace) };
   }
 }

@@ -1,7 +1,7 @@
 import type { FinanceMarketplace } from './constants/marketplaces.finance';
 import type { IUnconfirmedProfit } from '../../../../../src/shared/profit-confirmation';
 
-export type { FinanceMarketplace } from './constants/marketplaces.finance';
+export type { FinanceMarketplace, FinanceUnsupported } from './constants/marketplaces.finance';
 /**
  * Раздел «Финансы» (TASK-124): P&L месяца из журнала операций Маркета —
  * уровни прибыли, статьи с раскрытием до операций и оригинала отчёта; ДДС
@@ -332,8 +332,6 @@ export interface CashflowModel {
 // ── Константы ─────────────────────────────────────────────────
 
 export const FINANCE_PNL_KIND = 'finance:pnl';
-
-export const FINANCE_ROUTE_NAME = 'ym-finance';
 
 export interface FinanceTabMeta {
   key: 'pnl' | 'cashflow' | 'audit' | 'anomalies' | 'upload';

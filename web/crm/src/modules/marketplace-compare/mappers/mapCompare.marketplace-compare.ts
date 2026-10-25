@@ -6,21 +6,14 @@ import type {
   MarketplaceCompareResponse,
   MetricFormat,
 } from '../marketplace-compare.domain';
-import type { BarPoint, ChartTone, Segment } from '@/components/ui/chart';
+import type { BarPoint, Segment } from '@/components/ui/chart';
 import type { DayRange } from '@/shared/utils';
 import type { RouteLocationRaw } from 'vue-router';
 
 import { COMPARE_METRICS } from '../marketplace-compare.domain';
 
-import { rangeQuery } from '@/shared/period';
+import { MARKETPLACE_TONE, financeLink } from '@/shared/marketplaces';
 import { formatCount, formatKopecks } from '@/shared/utils';
-
-/** Цвет площадки на графиках — один на экран, легенда подписывает его словами. */
-export const MARKETPLACE_TONE: Record<CompareMarketplace, ChartTone> = {
-  ym: 'c1',
-  ozon: 'c2',
-  wb: 'c3',
-};
 
 export function formatShare(share: number): string {
   return `${(share * 100).toFixed(1).replace('.', ',')} %`;
@@ -31,15 +24,6 @@ export function formatMetric(value: number | null, format: MetricFormat): string
   if (format === 'money') return formatKopecks(value);
   if (format === 'count') return formatCount(value);
   return formatShare(value);
-}
-
-/** Ячейка ведёт в «Прибыль» своей площадки за тот же период. */
-export function financeLink(marketplace: CompareMarketplace, period: DayRange): RouteLocationRaw {
-  return {
-    name: 'ym-finance',
-    params: { tab: 'pnl' },
-    query: { ...rangeQuery(period), marketplace },
-  };
 }
 
 export interface CompareCell {

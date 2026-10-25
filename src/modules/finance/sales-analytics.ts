@@ -114,6 +114,7 @@ export function salesFigures(
 export function salesAnalyticsOf(
   pnl: IPnl,
   products: ReadonlyMap<string, IBrandSource>,
+  marketplace: TMarketplace = 'ym',
 ): ISalesAnalytics {
   const periodDays = periodDaysOf(pnl.period);
   const figures = (revenue: number, units: number, orders: number) =>
@@ -169,7 +170,7 @@ export function salesAnalyticsOf(
     skus,
     brands,
     rest: { revenueKopecks: pnl.skus.rest.columns.revenue, units: pnl.skus.rest.units },
-    // Журнал пока только ЯМ (FINANCE_READY): его строка и есть итог.
-    marketplaces: [{ marketplace: 'ym', ...totals }],
+    // P&L — журнал одной площадки (TASK-181): её строка и есть итог.
+    marketplaces: [{ marketplace, ...totals }],
   };
 }

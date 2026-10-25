@@ -31,7 +31,13 @@ describe('стор «Аналитики продаж»', () => {
     store.load();
     expect(jobs.start).toHaveBeenCalledWith(
       'sales-analytics:summary',
-      { from: '2026-10-01', to: '2026-10-15', prevFrom: '2026-09-01', prevTo: '2026-09-15' },
+      {
+        from: '2026-10-01',
+        to: '2026-10-15',
+        prevFrom: '2026-09-01',
+        prevTo: '2026-09-15',
+        marketplace: 'ym',
+      },
       '',
     );
   });
@@ -45,6 +51,7 @@ describe('стор «Аналитики продаж»', () => {
       to: '2026-10-14',
       prevFrom: '2026-10-01',
       prevTo: '2026-10-07',
+      marketplace: 'ym',
     });
   });
 
@@ -61,5 +68,16 @@ describe('стор «Аналитики продаж»', () => {
     expect(store.metric).toBe('revenue');
     expect(store.query).toBe('');
     expect(store.preset).toBe('month');
+  });
+
+  it('площадка экрана (TASK-181) — в params задачи; reset возвращает ЯМ', () => {
+    const store = useSalesAnalyticsStore();
+    store.selectMarketplace('ozon');
+    store.load();
+    expect(jobs.start.mock.calls[0]?.[0]).toBe('sales-analytics:summary');
+    expect(jobs.start.mock.calls[0]?.[1]).toMatchObject({ marketplace: 'ozon' });
+    expect(store.marketplace).toBe('ozon');
+    store.reset();
+    expect(store.marketplace).toBe('ym');
   });
 });

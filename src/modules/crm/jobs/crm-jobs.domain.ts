@@ -1,6 +1,10 @@
 import type { ICrmJobFile } from '../../../database/schemas/crm-job-result.schema';
 import type { YandexMarketDocument } from '../../../database/schemas/yandex-market.schema';
+import type { TMarketplace } from '../../../shared/marketplace';
 import type { TFeatureKey } from '../../telegram/bots/shared/features.domain';
+
+import { MARKETPLACE_LABEL, isMarketplace } from '../../../shared/marketplace';
+import { isMarketplaceFeatureOpen } from '../../marketplaces/marketplace-connections.domain';
 
 /**
  * Потолок результата в документе. Лимит документа Mongo — 16 МБ; запас на
@@ -48,7 +52,11 @@ export interface ICrmJobPayload {
 
 export interface ICrmJobContext {
   telegramUserId: string;
-  store: YandexMarketDocument;
+  /**
+   * Документ ЯМ (у `store`-kind-а — перекрытый магазином из веба). `null`
+   * бывает только у `account`-kind-а: у продавца нет ЯМ, только Ozon/WB.
+   */
+  store: YandexMarketDocument | null;
   params: Record<string, unknown>;
   /** Модификаторы вроде deep_history; пустой объект — умолчания реестра фич. */
   features: Record<string, boolean>;
@@ -63,7 +71,8 @@ export interface ICrmJobOutput {
  * Чей отчёт считает kind. `store` (умолчание) — магазина, открытого в вебе:
  * POST несёт ключ магазина, замок — на кампанию. `account` — продавца целиком
  * (финжурнал бизнесовый, статусы помесячные на продавца): магазин не нужен,
- * замок — на продавца, процессор отдаёт документ активного магазина.
+ * замок — на продавца, процессор отдаёт документ активного магазина ЯМ, если
+ * он есть (`null` — продавец только с Ozon/WB, TASK-179).
  */
 export type TCrmJobScope = 'store' | 'account';
 
@@ -105,3 +114,32 @@ export function withoutIcon(text: string): string {
 
 /** MIME xlsx — у всех kind-ов, отдающих книгу. */
 export const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+export const JOB_MARKETPLACE_INVALID_TEXT = 'Площадка указана неверно.';
+
+export function jobMarketplaceClosedText(marketplace: TMarketplace): string {
+  return `Функция «${MARKETPLACE_LABEL[marketplace]}» закрыта — данные этой площадки недоступны.`;
+}
+
+export type TJobMarketplace =
+  | { marketplace: TMarketplace }
+  | { error: 'invalid' | 'closed'; text: string };
+
+/**
+ * Площадка экрана — `params.marketplace` (TASK-179): одно правило на все kind-ы,
+ * его зовут и POST задачи (400/403 до очереди), и kind (страховка для задач,
+ * поставленных раньше). Нет параметра — ЯМ, как было; мусор — отказ, а не тихий
+ * ЯМ под чужим именем; закрытая фича площадки — отказ.
+ */
+export function parseJobMarketplace(
+  params: Readonly<Record<string, unknown>>,
+  features: Readonly<Record<string, boolean>>,
+): TJobMarketplace {
+  const value = params.marketplace;
+  const marketplace = value === undefined || value === null || value === '' ? 'ym' : value;
+  if (!isMarketplace(marketplace)) return { error: 'invalid', text: JOB_MARKETPLACE_INVALID_TEXT };
+  if (!isMarketplaceFeatureOpen(features, marketplace)) {
+    return { error: 'closed', text: jobMarketplaceClosedText(marketplace) };
+  }
+  return { marketplace };
+}

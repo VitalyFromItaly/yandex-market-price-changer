@@ -14,6 +14,7 @@ import { CrmCredential } from '../../src/database/schemas/crm-credential.schema'
 import { ProductCardIssue } from '../../src/database/schemas/product-card-issue.schema';
 import { Product } from '../../src/database/schemas/product.schema';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
+import { MarketplaceConnection } from '../../src/database/schemas/marketplace-connection.schema';
 import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { ActionLogService } from '../../src/database/services/action-log.service';
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
@@ -23,6 +24,7 @@ import { ProductCardIssueService } from '../../src/database/services/product-car
 import { ProductService } from '../../src/database/services/product.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
+import { MarketplaceConnectionService } from '../../src/database/services/marketplace-connection.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { FEATURE_DISABLED } from '../../src/modules/crm/crm-features.domain';
 import { CrmProductsModule } from '../../src/modules/crm/products/crm-products.module';
@@ -132,6 +134,8 @@ describe('CRM «Товары» по HTTP', { timeout: 60_000 }, () => {
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
+        { provide: getModelToken(MarketplaceConnection.name), useValue: inMemoryModel() },
         ProductService,
         CostHistoryService,
         ProductCardIssueService,
@@ -155,6 +159,7 @@ describe('CRM «Товары» по HTTP', { timeout: 60_000 }, () => {
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
         ProductService,
         CostHistoryService,
         ProductCardIssueService,

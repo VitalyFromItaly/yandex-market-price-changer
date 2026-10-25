@@ -1,13 +1,16 @@
+import type { MarketplaceKey } from '@/navigation.sections';
 import type { RouteRecordRaw } from 'vue-router';
 
-import { RETURNS_ANALYTICS_ROUTE_NAME } from '../returns-analytics.domain';
+import { sectionRoute } from '@/router/sectionRoute';
 
-/** «Аналитика возвратов» — раздел аккаунта; имя — ключ пункта меню `ym-returns-analytics`. */
-export const returnsAnalyticsRoutes: RouteRecordRaw[] = [
-  {
-    path: '/ym/returns-analytics',
-    name: RETURNS_ANALYTICS_ROUTE_NAME,
-    component: () => import('@/modules/returns-analytics/pages/ReturnsAnalyticsPage.vue'),
-    meta: { title: 'Аналитика возвратов' },
-  },
-];
+/** «Аналитика возвратов» — раздел площадки: `/<площадка>/returns-analytics`, имя `<площадка>-returns-analytics` — ключ пункта меню. */
+export function returnsAnalyticsRoutes(mp: MarketplaceKey): RouteRecordRaw[] {
+  return [
+    sectionRoute(
+      mp,
+      'returns-analytics',
+      () => import('@/modules/returns-analytics/pages/ReturnsAnalyticsPage.vue'),
+      'Аналитика возвратов',
+    ),
+  ];
+}

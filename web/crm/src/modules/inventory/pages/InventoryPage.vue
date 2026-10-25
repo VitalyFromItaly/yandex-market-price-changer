@@ -23,9 +23,13 @@ import { PageHeader } from '@/components/ui/page-header';
 import { RefreshIndicator } from '@/components/ui/refresh-indicator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuthStore } from '@/modules/auth/store/store.auth';
+import { useMarketplace } from '@/shared/composables';
 
 const store = useInventoryStore();
 const auth = useAuthStore();
+// Площадка — из адреса (/ozon/inventory, TASK-182): остатки, движения и скорость своей площадки.
+const routeMarketplace = useMarketplace();
+const marketplace = computed(() => routeMarketplace.value ?? 'ym');
 const { data, isLoading, isRefreshing, savedAt, error } = storeToRefs(store);
 
 const ready = computed(() => auth.me !== null);
@@ -36,9 +40,9 @@ const columns = computed(() => (data.value ? tableColumns(data.value) : []));
 const taken = computed(() => (data.value ? takenAtLines(data.value) : []));
 
 watch(
-  () => ready.value && withFinance.value,
-  (open) => {
-    if (open) store.ensure();
+  () => (ready.value && withFinance.value ? marketplace.value : null),
+  (mp) => {
+    if (mp !== null) store.ensure(mp);
   },
   { immediate: true },
 );

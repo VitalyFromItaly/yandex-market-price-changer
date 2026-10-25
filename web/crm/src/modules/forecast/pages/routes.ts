@@ -1,13 +1,16 @@
+import type { MarketplaceKey } from '@/navigation.sections';
 import type { RouteRecordRaw } from 'vue-router';
 
-import { FORECAST_ROUTE_NAME } from '../forecast.domain';
+import { sectionRoute } from '@/router/sectionRoute';
 
-/** «Прогнозы» — раздел аккаунта; имя — ключ пункта меню `ym-forecast`. */
-export const forecastRoutes: RouteRecordRaw[] = [
-  {
-    path: '/ym/forecast',
-    name: FORECAST_ROUTE_NAME,
-    component: () => import('@/modules/forecast/pages/ForecastPage.vue'),
-    meta: { title: 'Прогнозы' },
-  },
-];
+/** «Прогнозы» — раздел площадки: `/<площадка>/forecast`, имя `<площадка>-forecast` — ключ пункта меню. */
+export function forecastRoutes(mp: MarketplaceKey): RouteRecordRaw[] {
+  return [
+    sectionRoute(
+      mp,
+      'forecast',
+      () => import('@/modules/forecast/pages/ForecastPage.vue'),
+      'Прогнозы',
+    ),
+  ];
+}

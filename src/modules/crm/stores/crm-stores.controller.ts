@@ -18,6 +18,7 @@ import {
 import { validateStep } from '../../telegram/bots/price-changer-bot/onboarding';
 import { storeLabel } from '../../telegram/bots/price-changer-bot/store-picker';
 import { StoresService } from '../../yandex/stores/stores.service';
+import { AllowWithoutPlatform } from '../crm-auth.decorators';
 import { CrmJwtGuard, IRequestWithCrmUser } from '../crm-jwt.guard';
 import { NO_STORE, NO_STORE_TEXT } from '../settings/crm-settings.domain';
 
@@ -61,8 +62,13 @@ export class CrmStoresController {
    * «сломать» подключение из веба нельзя).
    *
    * Объявлен ДО `:key`, иначе `token` разобрался бы как ключ магазина.
+   *
+   * Открыт и без площадки (TASK-193): карточка ЯМ на «Подключениях» зовёт его и
+   * у продавца без магазина — пусть он услышит «подключите в боте» (409 NO_STORE),
+   * а не «сначала подключите площадку», стоя на том самом экране.
    */
   @Put('token')
+  @AllowWithoutPlatform()
   async replaceToken(
     @Req() request: IRequestWithCrmUser,
     @Body() body: unknown,

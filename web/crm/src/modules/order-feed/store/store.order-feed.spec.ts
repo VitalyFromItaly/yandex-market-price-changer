@@ -63,7 +63,11 @@ describe('стор «Ленты заказов»', () => {
     store.ensure();
     store.ensure();
     expect(jobs.start).toHaveBeenCalledTimes(1);
-    expect(jobs.start).toHaveBeenCalledWith('order-feed:list', { period: { key: 'week' } }, '');
+    expect(jobs.start).toHaveBeenCalledWith(
+      'order-feed:list',
+      { period: { key: 'week' }, marketplace: 'ym' },
+      '',
+    );
   });
 
   it('смена периода ставит задачу с новым периодом; reset — снова неделя', () => {
@@ -72,11 +76,29 @@ describe('стор «Ленты заказов»', () => {
     store.selectPeriod({ key: 'month', day: null });
     expect(jobs.start).toHaveBeenLastCalledWith(
       'order-feed:list',
-      { period: { key: 'month' } },
+      { period: { key: 'month' }, marketplace: 'ym' },
       '',
     );
     store.reset();
     expect(store.period).toEqual({ key: 'week', day: null });
+  });
+
+  it('площадка экрана (TASK-182) — в params задачи; смена ставит новую, reset возвращает ЯМ', () => {
+    const store = useOrderFeedStore();
+    store.ensure();
+    store.selectMarketplace('ozon');
+    store.ensure();
+    expect(jobs.start).toHaveBeenCalledTimes(2);
+    expect(jobs.start).toHaveBeenLastCalledWith(
+      'order-feed:list',
+      { period: { key: 'week' }, marketplace: 'ozon' },
+      '',
+    );
+    store.selectMarketplace('ozon');
+    store.ensure();
+    expect(jobs.start).toHaveBeenCalledTimes(2);
+    store.reset();
+    expect(store.marketplace).toBe('ym');
   });
 
   it('открытый заказ: строка сразу, история — запросом площадки и номера журнала', async () => {

@@ -33,4 +33,8 @@ export {
 } from './range';
 export type { RangePreset } from './range';
 export { useLinkedRange } from './useLinkedRange';
+export { useRangeWithPrevious } from './useRangeWithPrevious';
+export type { RangeWithPrevious } from './useRangeWithPrevious';
 export { monthLabel, recentMonths } from './month';
+export { bucketKey, bucketLabel } from './timeBucket';
+export type { TimeGrain } from './timeBucket';

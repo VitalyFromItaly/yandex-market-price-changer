@@ -14,7 +14,7 @@ import { connectionsView } from '../../marketplaces/marketplace-connections.doma
 import { parseOzonCredentials } from '../../ozon/ozon-connection.domain';
 import { OzonConnectionService } from '../../ozon/ozon-connection.service';
 import { FEATURE } from '../../telegram/bots/shared/features.domain';
-import { RequireFeature } from '../crm-auth.decorators';
+import { AllowWithoutPlatform, RequireFeature } from '../crm-auth.decorators';
 import { CrmJwtGuard, IRequestWithCrmUser } from '../crm-jwt.guard';
 
 import {
@@ -41,6 +41,7 @@ export class CrmOzonController {
   constructor(private readonly ozon: OzonConnectionService) {}
 
   @Put('connection')
+  @AllowWithoutPlatform()
   async connect(
     @Req() request: IRequestWithCrmUser,
     @Body() body: unknown,

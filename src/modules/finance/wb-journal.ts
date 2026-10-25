@@ -1,5 +1,5 @@
 /**
- * Журнал отчёта реализации WB (reportDetailByPeriod, TASK-136): ключ дедупа,
+ * Журнал отчёта реализации WB (sales-reports/detailed в прежних именах полей, TASK-136): ключ дедупа,
  * разбор строки отчёта в строку журнала, сводка нераспознанного. Чистые
  * функции — без Nest и базы; аналог `ozon-journal.ts`.
  *
@@ -15,6 +15,10 @@
  * `realizationreport_id` = к перечислению за неделю. `rebill_logistic_cost` в
  * сумму не входит: входит ли он уже в `delivery_rub`, на живом отчёте не
  * проверено (known-gaps).
+ *
+ * Выплата (TASK-185) — тоже из строки, метода выплат у WB нет: день — `create_dt`
+ * отчёта (решение `wb_payout_by_create_dt`), поручение — номер отчёта, сумма
+ * поручения — Σ его строк (`wb_payout_bank_order_report`).
  */
 
 import type { IFinanceOperationContext, IFinanceOperationRow } from './finance-journal';
@@ -55,6 +59,18 @@ export function wbRowIdOf(raw: TRaw): string {
 /** Номер недельного отчёта реализации — по нему сверяется «к перечислению». */
 export function wbReportIdOf(raw: TRaw): string {
   return text(raw.realizationreport_id);
+}
+
+const moscowStart = (day: string) => new Date(`${day}T00:00:00+03:00`);
+
+/**
+ * День выплаты строки — начало дня `create_dt` по Москве (решение
+ * `wb_payout_by_create_dt`): отчёт формируется после недели, тогда же WB
+ * перечисляет «к оплате». Пусто или не дата — выплаты нет, строка ждёт её.
+ */
+export function wbPaidAtOf(raw: TRaw): Date | undefined {
+  const at = parseWbDateTime(raw.create_dt);
+  return at ? moscowStart(financeToday(at)) : undefined;
 }
 
 /**
@@ -134,12 +150,15 @@ function rowArticle(raw: TRaw, parts: readonly IOperationBreakdownPart[]): TArti
  * «строка на ноль», а форма ответа, которой мы не знаем.
  *
  * `skuOf` — артикул продавца (`sa_name`) → ключ закупа (товар → артикул ЯМ),
- * резолвится при импорте, как SKU Ozon.
+ * резолвится при импорте, как SKU Ozon. `payoutOf` — номер отчёта → Σ его
+ * строк по всему ответу (`wbPayoutByReport`): отчёт на стыке месяцев делится
+ * между двумя импортами, а поручение у него одно.
  */
 export function wbRowToOperation(
   raw: TRaw,
   ctx: IFinanceOperationContext,
   skuOf: (vendorCode: string) => string | undefined = () => undefined,
+  payoutOf: (reportId: string) => number | undefined = () => undefined,
 ): IFinanceOperationRow {
   const rrdId = wbRowIdOf(raw);
   if (!rrdId) throw new Error('Строка отчёта WB без rrd_id');
@@ -150,6 +169,9 @@ export function wbRowToOperation(
   const amountKopecks = parts.reduce((sum, part) => sum + part.kopecks, 0);
   const articles = new Set(parts.map((part) => part.article));
   const vendorCode = text(raw.sa_name);
+  // Поручения без дня выплаты не бывает: номер и сумма — только вместе с `paidAt`.
+  const paidAt = wbPaidAtOf(raw);
+  const reportId = paidAt ? wbReportIdOf(raw) : '';
 
   return {
     marketplace: 'wb',
@@ -165,6 +187,9 @@ export function wbRowToOperation(
     transactionType: text(raw.supplier_oper_name),
     transactionSource: text(raw.doc_type_name) || undefined,
     accruedAt,
+    paidAt,
+    bankOrderId: reportId || undefined,
+    bankSumKopecks: reportId ? payoutOf(reportId) : undefined,
     documentId: ctx.documentId,
     documentVersion: ctx.documentVersion,
     periodKey: ctx.periodKey,

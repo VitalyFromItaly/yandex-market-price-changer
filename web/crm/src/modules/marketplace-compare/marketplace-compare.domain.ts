@@ -1,3 +1,4 @@
+import type { RangeWithPrevious } from '@/shared/period';
 import type { DayRange } from '@/shared/utils';
 
 /** «Сравнение площадок» (TASK-137): ЯМ, Ozon и WB за один период рядом. */
@@ -97,10 +98,8 @@ export interface MarketplaceCompareResponse {
   taxIsDefault: boolean;
 }
 
-export interface CompareRequest {
-  range: DayRange;
-  previous: DayRange;
-}
+/** Период и прошлый период — общий тип экранов сравнения (`useRangeWithPrevious`). */
+export type CompareRequest = RangeWithPrevious;
 
 /** Строка таблицы: что показать и как форматировать. */
 export type MetricFormat = 'money' | 'count' | 'share';

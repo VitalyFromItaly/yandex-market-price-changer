@@ -4,10 +4,8 @@ import { defineStore } from 'pinia';
 
 import { MARKETPLACE_COMPARE_KIND } from '../marketplace-compare.domain';
 
-import { useComparePeriod } from './composables/useComparePeriod.marketplace-compare';
-
 import { useReportJob } from '@/shared/composables';
-import { sameRange } from '@/shared/period';
+import { sameRange, useRangeWithPrevious } from '@/shared/period';
 
 /**
  * Стор «Сравнения площадок» — фасад: период и фоновая задача уровня аккаунта
@@ -15,7 +13,7 @@ import { sameRange } from '@/shared/period';
  * эхом обоих периодов: быстрое переключение иначе показало бы прошлый.
  */
 export const useMarketplaceCompareStore = defineStore('marketplace-compare', () => {
-  const period = useComparePeriod();
+  const period = useRangeWithPrevious();
 
   const job = useReportJob<MarketplaceCompareResponse, CompareRequest>({
     launch: (request) => ({

@@ -4,6 +4,7 @@ import {
   ApiError,
   NETWORK_ERROR_STATUS,
   http,
+  onForbidden,
   onUnauthorized,
   setTokenProvider,
 } from './httpClient';
@@ -22,6 +23,7 @@ describe('httpClient', () => {
     vi.stubGlobal('fetch', fetchMock);
     setTokenProvider(() => null);
     onUnauthorized(null);
+    onForbidden(null);
   });
 
   afterEach(() => {
@@ -87,6 +89,20 @@ describe('httpClient', () => {
       jsonResponse(401, { statusCode: 401, message: 'Сессия истекла, войдите заново' }),
     );
 
+    await expect(http.get('/auth/me')).rejects.toBeInstanceOf(ApiError);
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('403 зовёт onForbidden с кодом и всё равно бросает; 401 его не зовёт', async () => {
+    const handler = vi.fn();
+    onForbidden(handler);
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(403, { statusCode: 403, code: 'NO_PLATFORM', message: 'Сначала площадка' }),
+    );
+    await expect(http.get('/ym/finance')).rejects.toMatchObject({ code: 'NO_PLATFORM' });
+    expect(handler).toHaveBeenCalledOnce();
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { statusCode: 401, message: 'x' }));
     await expect(http.get('/auth/me')).rejects.toBeInstanceOf(ApiError);
     expect(handler).toHaveBeenCalledOnce();
   });

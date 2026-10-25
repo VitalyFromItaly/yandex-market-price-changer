@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bull';
 import { Module, forwardRef } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
+import { PostgresModule } from '../../database/postgres/postgres.module';
 import { AiAnalystModule } from '../ai-analyst/ai-analyst.module';
 import { FinanceModule } from '../finance/finance.module';
 import { HealthModule } from '../health/health.module';
@@ -77,6 +78,8 @@ import { QUEUE_NAMES } from './index';
 @Module({
   imports: [
     DatabaseModule,
+    // Кнопка «Загрузить из Маркета» сверяет кулдаун со строкой периода (finance_periods).
+    PostgresModule,
     YandexModule,
     FinanceModule,
     NotificationsModule,

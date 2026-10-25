@@ -1,13 +1,16 @@
+import type { MarketplaceKey } from '@/navigation.sections';
 import type { RouteRecordRaw } from 'vue-router';
 
-import { ORDER_FEED_ROUTE_NAME } from '../order-feed.domain';
+import { sectionRoute } from '@/router/sectionRoute';
 
-/** «Лента заказов» — раздел аккаунта; имя — ключ пункта меню `ym-order-feed`. */
-export const orderFeedRoutes: RouteRecordRaw[] = [
-  {
-    path: '/ym/order-feed',
-    name: ORDER_FEED_ROUTE_NAME,
-    component: () => import('@/modules/order-feed/pages/OrderFeedPage.vue'),
-    meta: { title: 'Лента заказов' },
-  },
-];
+/** «Лента заказов» — раздел площадки: `/<площадка>/order-feed`, имя `<площадка>-order-feed` — ключ пункта меню. */
+export function orderFeedRoutes(mp: MarketplaceKey): RouteRecordRaw[] {
+  return [
+    sectionRoute(
+      mp,
+      'order-feed',
+      () => import('@/modules/order-feed/pages/OrderFeedPage.vue'),
+      'Лента заказов',
+    ),
+  ];
+}

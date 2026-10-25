@@ -26,6 +26,7 @@ import { CrmJobsModule } from './modules/crm/jobs/crm-jobs.module';
 import { CrmMarketReportsModule } from './modules/crm/market-reports/crm-market-reports.module';
 import { CrmMarketplaceCompareModule } from './modules/crm/marketplace-compare/crm-marketplace-compare.module';
 import { CrmMarketplacesModule } from './modules/crm/marketplaces/crm-marketplaces.module';
+import { CrmMarketplacesDashboardModule } from './modules/crm/marketplaces-dashboard/crm-marketplaces-dashboard.module';
 import { CrmNotificationsModule } from './modules/crm/notifications/crm-notifications.module';
 import { CrmOrderFeedModule } from './modules/crm/order-feed/crm-order-feed.module';
 import { CrmOrdersModule } from './modules/crm/orders/crm-orders.module';
@@ -128,6 +129,7 @@ import { YandexModule } from './modules/yandex/yandex.module';
     CrmReturnsAnalyticsModule,
     CrmNotificationsModule,
     CrmMarketplaceCompareModule,
+    CrmMarketplacesDashboardModule,
     CrmInventoryModule,
     CrmOrderFeedModule,
     CrmStockPushModule,

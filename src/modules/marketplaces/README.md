@@ -69,14 +69,14 @@ Ozon и Wildberries должны ложиться в те же журнал, т�
     пишутся руками.
 - **Через реестр ходят:**
 
-  | Потребитель                                                         | Возможность                                                                       |
-  | ------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-  | процессор очереди `finance-import`, `scripts/import-finance.ts`     | `finance`                                                                         |
-  | kind-ы CRM `stocks:by-sku`, `overview:stocks`, `forecast:purchases` | `stocks`, магазин — кампанией (`ymStocks` в `crm/jobs/crm-marketplace-stocks.ts`) |
-  | kind CRM `inventory:summary` («Склад»)                              | `stocks` всех площадок, `orders` Ozon/WB                                          |
-  | `StockPushService` (`src/modules/stock-push/`)                      | `stocks`, `orders`                                                                |
-  | «Подключения» (`MarketplaceConnectionsService`)                     | `connection`                                                                      |
-  | `scripts/sync-ozon-catalog.ts`                                      | `catalog`, `stocks` Ozon и WB                                                     |
+  | Потребитель                                                         | Возможность                                                                                                                           |
+  | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+  | процессор очереди `finance-import`, `scripts/import-finance.ts`     | `finance`                                                                                                                             |
+  | kind-ы CRM `stocks:by-sku`, `overview:stocks`, `forecast:purchases` | `stocks`, магазин — кампанией (`ymStocks` в `crm/jobs/crm-marketplace-stocks.ts`); Ozon/WB — `marketplaceAvailable` там же (TASK-183) |
+  | kind CRM `inventory:summary` («Склад»)                              | `stocks` всех площадок, `orders` Ozon/WB                                                                                              |
+  | `StockPushService` (`src/modules/stock-push/`)                      | `stocks`, `orders`                                                                                                                    |
+  | «Подключения» (`MarketplaceConnectionsService`)                     | `connection`                                                                                                                          |
+  | `scripts/sync-ozon-catalog.ts`                                      | `catalog`, `stocks` Ozon и WB                                                                                                         |
 
   Адаптеры `MarketplacesModule` не экспортирует (наружу — только реестр и сервис подключений), а
   `marketplace-boundaries.test.ts` текстом пиннит, что `finance`, `crm`, `products` и (с TASK-163)

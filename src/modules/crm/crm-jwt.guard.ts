@@ -3,8 +3,12 @@ import type { CanActivate, ExecutionContext } from '@nestjs/common';
 import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 
-import { ALLOW_PENDING_PASSWORD_CHANGE, REQUIRE_FEATURE } from './crm-auth.decorators';
-import { PASSWORD_CHANGE_REQUIRED } from './crm-auth.domain';
+import {
+  ALLOW_PENDING_PASSWORD_CHANGE,
+  ALLOW_WITHOUT_PLATFORM,
+  REQUIRE_FEATURE,
+} from './crm-auth.decorators';
+import { NO_PLATFORM, PASSWORD_CHANGE_REQUIRED } from './crm-auth.domain';
 import { CrmAuthService, ICrmUser } from './crm-auth.service';
 import { featureBlock, needsPlacement } from './crm-features.domain';
 
@@ -56,8 +60,27 @@ export class CrmJwtGuard implements CanActivate {
       }
     }
 
+    await this.checkPlatform(context, user);
     await this.checkFeatures(context, user);
     return true;
+  }
+
+  /**
+   * Без площадки — только маршруты `@AllowWithoutPlatform` (решение
+   * crm_audience_no_platform). Площадку не кладём в `verify`: помеченным
+   * маршрутам (вход, `me`, «Подключения») лишние чтения ни к чему.
+   */
+  private async checkPlatform(context: ExecutionContext, user: ICrmUser): Promise<void> {
+    const allowed = this.reflector.getAllAndOverride<boolean>(ALLOW_WITHOUT_PLATFORM, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (allowed || (await this.auth.hasPlatform(user.telegramUserId))) return;
+    throw new ForbiddenException({
+      statusCode: 403,
+      code: NO_PLATFORM,
+      message: 'Сначала подключите площадку в разделе «Подключения»',
+    });
   }
 
   /**

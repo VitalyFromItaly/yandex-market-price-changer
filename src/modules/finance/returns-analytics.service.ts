@@ -43,13 +43,15 @@ export class ReturnsAnalyticsService {
       ? await this.operations.liveByOrderIds(telegramUserId, orderIds, marketplace)
       : [];
 
-    // Артикул журнала у всех площадок — ключ закупа (артикул ЯМ товара), как у P&L.
+    // Артикул журнала — ключ закупа: артикул ЯМ товара, у Ozon/WB без карточки ЯМ —
+    // offer_id/vendorCode (`findByJournalSkus`, как у аналитики продаж).
     const skus = [...new Set(lines.map((line) => line.sku).filter(Boolean))] as string[];
-    const found = skus.length ? await this.products.findByYmSkus(telegramUserId, skus) : [];
+    const found = skus.length
+      ? await this.products.findByJournalSkus(telegramUserId, marketplace, skus)
+      : new Map();
     const products = new Map<string, IBrandSource>();
-    for (const product of found) {
-      const ym = product.marketplaceSkus?.ym;
-      if (ym) products.set(ym, { name: product.name, category: product.category });
+    for (const [sku, product] of found) {
+      products.set(sku, { name: product.name, category: product.category });
     }
 
     return returnsAnalyticsOf({ marketplace, period, lines, orderOperations, products });

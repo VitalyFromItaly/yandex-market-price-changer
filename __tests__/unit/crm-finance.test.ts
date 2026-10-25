@@ -24,11 +24,13 @@ import { ActionLog } from '../../src/database/schemas/action-log.schema';
 import { AdminCredential } from '../../src/database/schemas/admin-credential.schema';
 import { CrmCredential } from '../../src/database/schemas/crm-credential.schema';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
+import { MarketplaceConnection } from '../../src/database/schemas/marketplace-connection.schema';
 import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { ActionLogService } from '../../src/database/services/action-log.service';
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
 import { CrmCredentialService } from '../../src/database/services/crm-credential.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
+import { MarketplaceConnectionService } from '../../src/database/services/marketplace-connection.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { FEATURE_DISABLED } from '../../src/modules/crm/crm-features.domain';
 import { CrmModule } from '../../src/modules/crm/crm.module';
@@ -43,6 +45,10 @@ import type { IAnomaly } from '../../src/modules/finance/finance-anomalies';
 import { FinanceCashflowService } from '../../src/modules/finance/finance-cashflow.service';
 import { FinanceExpensesService } from '../../src/modules/finance/finance-expenses.service';
 import { FinanceImportService } from '../../src/modules/finance/finance-import.service';
+import {
+  FinanceImportScheduler,
+  FinancePullNotAllowedError,
+} from '../../src/modules/telegram/queue/services/finance-import.scheduler';
 import {
   financePeriodKey,
   financeToday,
@@ -167,8 +173,8 @@ function financeService() {
 }
 
 const kinds = () => new CrmFinanceKinds({ register: vi.fn() } as never, financeService());
-const contextOf = (params: Record<string, unknown>) =>
-  ({ telegramUserId: SELLER, store: {} as never, params, features: {} }) as const;
+const contextOf = (params: Record<string, unknown>, features: Record<string, boolean> = {}) =>
+  ({ telegramUserId: SELLER, store: {} as never, params, features }) as const;
 
 describe('kind finance:pnl', () => {
   beforeEach(async () => {
@@ -212,6 +218,18 @@ describe('kind finance:pnl', () => {
     }
   });
 
+  it('продавец только с Ozon (TASK-179): без документа ЯМ «Прибыль» Ozon считается', async () => {
+    const ozonOnly = { ...contextOf({ month: '2026-09', marketplace: 'ozon' }), store: null };
+    const { data } = await kinds().run({ ...ozonOnly, features: { [FEATURE.OZON]: true } }, OCT_15);
+    expect(data).toMatchObject({ month: '2026-09', marketplace: 'ozon' });
+
+    // Закрытая площадка и мусор — отказ той же функцией, что у POST задачи.
+    await expect(kinds().run(ozonOnly, OCT_15)).rejects.toThrow('«Ozon» закрыта');
+    await expect(
+      kinds().run(contextOf({ month: '2026-09', marketplace: 'amazon' }), OCT_15),
+    ).rejects.toThrow('Площадка указана неверно');
+  });
+
   it('мусор вместо месяца — понятный отказ, а не сбой', async () => {
     await expect(kinds().run(contextOf({ month: '09-2026' }), OCT_15)).rejects.toBeInstanceOf(
       CrmJobError,
@@ -224,8 +242,16 @@ describe('CRM «Финансы» по HTTP', { timeout: 60_000 }, () => {
   let base: string;
   let token: string;
 
+  const pulls = {
+    pullNow: vi.fn(async (_user: string, _mp: string, months: { month: string }[]) => ({
+      queued: months.map((month) => month.month),
+      cooldown: [],
+    })),
+  };
+
   async function boot(features: Record<string, boolean> = { [FEATURE.FINANCE]: true }) {
     await pg.reset();
+    pulls.pullNow.mockClear();
     const crm = inMemoryModel();
     crm.uniqueBy('telegramUserId');
     const admin = inMemoryModel();
@@ -239,6 +265,8 @@ describe('CRM «Финансы» по HTTP', { timeout: 60_000 }, () => {
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
+        { provide: getModelToken(MarketplaceConnection.name), useValue: inMemoryModel() },
         { provide: getModelToken(ActionLog.name), useValue: inMemoryModel() },
         { provide: getModelToken(AdminCredential.name), useValue: admin },
         { provide: getModelToken(CrmCredential.name), useValue: crm },
@@ -271,6 +299,7 @@ describe('CRM «Финансы» по HTTP', { timeout: 60_000 }, () => {
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
         AppConfigService,
       ],
     })
@@ -287,6 +316,7 @@ describe('CRM «Финансы» по HTTP', { timeout: 60_000 }, () => {
         { provide: FinanceExpenseRepository, useValue: new FinanceExpenseRepository(pg.db) },
         { provide: FinancePurchaseRepository, useValue: new FinancePurchaseRepository(pg.db) },
         { provide: FinanceOperationRepository, useValue: operations },
+        { provide: FinanceImportScheduler, useValue: pulls },
         {
           provide: FinanceImportService,
           useValue: new FinanceImportService(
@@ -375,6 +405,43 @@ describe('CRM «Финансы» по HTTP', { timeout: 60_000 }, () => {
       body: form,
     });
   }
+
+  it('«Загрузить из Маркета»: только при finance И finance_pull (403 FEATURE_DISABLED)', async () => {
+    await boot({ [FEATURE.FINANCE]: true });
+    const response = await call('POST', '/pull', { months: [uploadMonth()] });
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as { code: string }).code).toBe(FEATURE_DISABLED);
+    expect(pulls.pullNow).not.toHaveBeenCalled();
+  });
+
+  it('«Загрузить из Маркета»: месяцы — от свежего, без повторов; 202 с итогом планировщика', async () => {
+    await boot({ [FEATURE.FINANCE]: true, [FEATURE.FINANCE_PULL]: true });
+    const [current, previous] = screenMonths(financeToday(new Date()));
+
+    const response = await call('POST', '/pull', {
+      months: [previous.month, current.month, previous.month],
+    });
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ queued: [current.month, previous.month], cooldown: [] });
+    const [user, marketplace, months] = pulls.pullNow.mock.calls[0];
+    expect([user, marketplace]).toEqual([SELLER, 'ym']);
+    expect(months).toEqual([current, previous]);
+  });
+
+  it('«Загрузить из Маркета»: 400 на пустой, чужой и мусорный месяц; 409, если журнал не положен', async () => {
+    await boot({ [FEATURE.FINANCE]: true, [FEATURE.FINANCE_PULL]: true });
+    for (const months of [undefined, [], ['2020-01'], ['10-2026'], 'x']) {
+      const response = await call('POST', '/pull', { months });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ field: 'months' });
+    }
+    expect(pulls.pullNow).not.toHaveBeenCalled();
+
+    pulls.pullNow.mockRejectedValueOnce(new FinancePullNotAllowedError());
+    const refused = await call('POST', '/pull', { months: [uploadMonth()] });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ code: 'FINANCE_PULL_NOT_ALLOWED' });
+  });
 
   it('загрузка отчёта — только при finance И finance_upload (403 FEATURE_DISABLED)', async () => {
     await boot({ [FEATURE.FINANCE]: true });
@@ -686,6 +753,139 @@ describe('CRM «Финансы» по HTTP', { timeout: 60_000 }, () => {
     await call('POST', '/anomalies/review', { keys: [other.key], reviewed: true });
     await call('POST', '/anomalies/review', { keys: [other.key], reviewed: false });
     expect((await list()).unreviewed).toBe(2);
+  });
+
+  it('площадка экрана (TASK-180): вкладки ЯМ и Ozon не смешивают журнал; нет вкладки — причина', async () => {
+    await boot({
+      [FEATURE.FINANCE]: true,
+      [FEATURE.FINANCE_ANOMALIES]: true,
+      [FEATURE.OZON]: true,
+    });
+    const ozonKey = financePeriodKey('ozon-transaction-list', SEPT);
+    const periodRow = (marketplace: 'ym' | 'ozon', reportType: string, periodKey: string) => ({
+      marketplace,
+      telegramUserId: SELLER,
+      reportType,
+      periodKey,
+      periodFrom: SEPT.from,
+      periodTo: SEPT.to,
+      status: 'preliminary' as const,
+      lastOutcome: 'imported' as const,
+      documentVersion: 1,
+      unknownCount: 0,
+      changedCount: 0,
+      removedCount: 0,
+      discrepancyCount: 0,
+      reconcileState: null,
+      reconcileNote: null,
+      error: null,
+      checkedAt: OCT_15,
+    });
+    await periods.upsert(periodRow('ozon', 'ozon-transaction-list', ozonKey));
+
+    const discrepancies = new FinanceDiscrepancyRepository(pg.db);
+    const finding = (detail: string) => ({
+      kind: 'payment_mismatch' as const,
+      bankOrderId: 'P1',
+      operationIds: [],
+      operationCount: 1,
+      detail,
+    });
+    const ym = { marketplace: 'ym' as const, telegramUserId: SELLER, periodKey: SEPT_KEY };
+    const ozon = { marketplace: 'ozon' as const, telegramUserId: SELLER, periodKey: ozonKey };
+    await discrepancies.replacePeriod(ym, [finding('ym')]);
+    await discrepancies.replacePeriod(ozon, [finding('ozon-1'), finding('ozon-2')]);
+
+    const ymDocument = await seed([row()]);
+    const { document: ozonDocument } = await documents.registerVersion({
+      marketplace: 'ozon',
+      telegramUserId: SELLER,
+      businessId: 'b1',
+      reportType: 'ozon-transaction-list',
+      periodFrom: SEPT.from,
+      periodTo: SEPT.to,
+      buffer: Buffer.from('json'),
+      filename: 'ozon.json',
+      contentType: 'application/json',
+    });
+    const side = {
+      operationKey: 'k',
+      amountKopecks: 100,
+      accruedAt: new Date('2026-09-16T11:05:00Z'),
+      article: 'sales',
+      transactionType: 'Начисление',
+    };
+    const corrections = new FinanceCorrectionRepository(pg.db);
+    for (const [scope, document] of [
+      [ym, ymDocument],
+      [ozon, ozonDocument],
+    ] as const) {
+      await corrections.record(
+        { ...scope, businessId: 'b1', documentId: document.id, documentVersion: 2 },
+        [{ kind: 'changed', before: side, after: { ...side, amountKopecks: 90 } }],
+      );
+    }
+    // Аномалия Ozon под ключом периода ЯМ — фильтр по площадке, а не только по ключу.
+    await new FinanceAnomalyRepository(pg.db).replacePeriod(
+      { ...ym, marketplace: 'ozon' },
+      [anomaly()],
+      OCT_15,
+    );
+
+    const json = async (path: string) => (await call('GET', path)).json() as Promise<any>;
+
+    const ymMonths = (await json('/months')).months as { month: string; status: unknown }[];
+    const ozonMonths = (await json('/months?marketplace=ozon')).months as typeof ymMonths;
+    expect(ymMonths.find((m) => m.month === '2026-09')?.status).toBeNull();
+    expect(ozonMonths.find((m) => m.month === '2026-09')?.status).toBe('preliminary');
+
+    expect((await json('/discrepancies?month=2026-09')).total).toBe(1);
+    expect((await json('/discrepancies?month=2026-09&marketplace=ym')).total).toBe(1);
+    expect((await json('/discrepancies?month=2026-09&marketplace=ozon')).total).toBe(2);
+    expect((await json('/corrections?month=2026-09')).total).toBe(1);
+    expect((await json('/corrections?month=2026-09&marketplace=ozon')).total).toBe(1);
+    expect((await json('/anomalies?month=2026-09')).total).toBe(0);
+
+    // ДДС Ozon (TASK-184) — из журнала площадки, а не причина.
+    const ozonFlow = await json('/cashflow?month=2026-09&marketplace=ozon');
+    expect(ozonFlow.unsupported).toBeUndefined();
+    expect(ozonFlow).toHaveProperty('receivable');
+
+    // Нет вкладки у площадки — причина, а не нули и не пустой список.
+    for (const path of ['/anomalies?month=2026-09&marketplace=ozon']) {
+      const view = await json(path);
+      expect(view, path).toMatchObject({ unsupported: true });
+      expect(view.note, path).toContain('Ozon');
+      expect(view.total, path).toBeUndefined();
+    }
+    const review = await call('POST', '/anomalies/review?marketplace=ozon', {
+      keys: ['x'],
+      reviewed: true,
+    });
+    expect(review.status).toBe(400);
+
+    // Мусор — 400, закрытая площадка — 403.
+    const bad = await call('GET', '/months?marketplace=amazon');
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toMatchObject({ code: INVALID_FINANCE_REQUEST, field: 'marketplace' });
+    const closed = await call('GET', '/discrepancies?month=2026-09&marketplace=wb');
+    expect(closed.status).toBe(403);
+    expect(((await closed.json()) as { code: string }).code).toBe(FEATURE_DISABLED);
+  });
+
+  it('WB: сверки нет — причина (TASK-180); ДДС — из журнала (TASK-185); корректировки — свои', async () => {
+    await boot({ [FEATURE.FINANCE]: true, [FEATURE.WB]: true });
+    const discrepancies = await call('GET', '/discrepancies?month=2026-09&marketplace=wb');
+    expect(discrepancies.status).toBe(200);
+    expect(await discrepancies.json()).toMatchObject({ unsupported: true });
+    const cashflow = await call('GET', '/cashflow?month=2026-09&marketplace=wb');
+    expect(cashflow.status).toBe(200);
+    const flow = (await cashflow.json()) as Record<string, unknown>;
+    expect(flow.unsupported).toBeUndefined();
+    expect(flow).toHaveProperty('receivable');
+    expect(
+      await (await call('GET', '/corrections?month=2026-09&marketplace=wb')).json(),
+    ).toEqual({ total: 0, items: [] });
   });
 
   it('отметка аномалий: 400 на пустой список и не-boolean', async () => {

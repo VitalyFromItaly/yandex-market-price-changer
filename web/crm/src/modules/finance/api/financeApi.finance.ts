@@ -4,8 +4,10 @@ import type {
   FinanceCorrection,
   FinanceUploadResponse,
   FinanceDiscrepancy,
+  FinanceMarketplace,
   FinanceMonth,
   FinancePage,
+  FinanceUnsupported,
 } from '../finance.domain';
 
 import { http } from '@/shared/http';
@@ -13,28 +15,45 @@ import { http } from '@/shared/http';
 const BASE = '/ym/finance';
 const q = (value: string | number) => encodeURIComponent(String(value));
 
-/** P&L месяца — фоновая задача `finance:pnl` (см. usePnl); здесь — быстрые запросы раздела. */
+/**
+ * P&L месяца — фоновая задача `finance:pnl` (см. usePnl); здесь — быстрые запросы раздела.
+ * Площадка экрана — `?marketplace=` (TASK-180), адрес остаётся `/ym/finance`.
+ */
 export const financeApi = {
-  months: async (): Promise<FinanceMonth[]> =>
-    (await http.get<{ months: FinanceMonth[] }>(`${BASE}/months`)).months,
+  months: async (marketplace: FinanceMarketplace): Promise<FinanceMonth[]> =>
+    (await http.get<{ months: FinanceMonth[] }>(`${BASE}/months?marketplace=${q(marketplace)}`))
+      .months,
 
-  cashflow: (month: string): Promise<Cashflow> =>
-    http.get<Cashflow>(`${BASE}/cashflow?month=${q(month)}`),
-
-  discrepancies: (month: string, skip: number, limit: number) =>
-    http.get<FinancePage<FinanceDiscrepancy>>(
-      `${BASE}/discrepancies?month=${q(month)}&skip=${q(skip)}&limit=${q(limit)}`,
+  cashflow: (marketplace: FinanceMarketplace, month: string) =>
+    http.get<Cashflow | FinanceUnsupported>(
+      `${BASE}/cashflow?month=${q(month)}&marketplace=${q(marketplace)}`,
     ),
 
-  anomalies: (month: string, skip: number, limit: number, unreviewedOnly: boolean) =>
-    http.get<FinanceAnomalies>(
+  discrepancies: (marketplace: FinanceMarketplace, month: string, skip: number, limit: number) =>
+    http.get<FinancePage<FinanceDiscrepancy> | FinanceUnsupported>(
+      `${BASE}/discrepancies?month=${q(month)}&skip=${q(skip)}&limit=${q(limit)}` +
+        `&marketplace=${q(marketplace)}`,
+    ),
+
+  anomalies: (
+    marketplace: FinanceMarketplace,
+    month: string,
+    skip: number,
+    limit: number,
+    unreviewedOnly: boolean,
+  ) =>
+    http.get<FinanceAnomalies | FinanceUnsupported>(
       `${BASE}/anomalies?month=${q(month)}&skip=${q(skip)}&limit=${q(limit)}` +
+        `&marketplace=${q(marketplace)}` +
         (unreviewedOnly ? '&unreviewed=1' : ''),
     ),
 
   /** «Просмотрено» / «вернуть»; ответ — сколько ключей нашлось у продавца. */
-  reviewAnomalies: (keys: readonly string[], reviewed: boolean) =>
-    http.post<{ updated: number }>(`${BASE}/anomalies/review`, { keys, reviewed }),
+  reviewAnomalies: (marketplace: FinanceMarketplace, keys: readonly string[], reviewed: boolean) =>
+    http.post<{ updated: number }>(`${BASE}/anomalies/review?marketplace=${q(marketplace)}`, {
+      keys,
+      reviewed,
+    }),
 
   /** Отчёт по платежам файлом (TASK-114) — в журнал месяца `month`. */
   upload: (file: File, month: string): Promise<FinanceUploadResponse> => {
@@ -44,8 +63,9 @@ export const financeApi = {
     return http.upload<FinanceUploadResponse>(`${BASE}/upload`, form);
   },
 
-  corrections: (month: string, skip: number, limit: number) =>
+  corrections: (marketplace: FinanceMarketplace, month: string, skip: number, limit: number) =>
     http.get<FinancePage<FinanceCorrection>>(
-      `${BASE}/corrections?month=${q(month)}&skip=${q(skip)}&limit=${q(limit)}`,
+      `${BASE}/corrections?month=${q(month)}&skip=${q(skip)}&limit=${q(limit)}` +
+        `&marketplace=${q(marketplace)}`,
     ),
 };

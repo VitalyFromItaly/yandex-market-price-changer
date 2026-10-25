@@ -181,6 +181,33 @@ describe('ProductService', () => {
     expect(found.map((p) => p.purchase?.price)).toEqual([1]);
   });
 
+  it('артикулы журнала площадки (TASK-181): сначала артикул ЯМ, без карточки ЯМ — свой артикул', async () => {
+    model.documents.push(
+      {
+        telegramUserId: USER,
+        internalSku: 'L',
+        name: 'Связанный',
+        marketplaceSkus: { ym: 'A1', ozon: 'OZ-1' },
+      },
+      {
+        telegramUserId: USER,
+        internalSku: 'O',
+        name: 'Только Ozon',
+        marketplaceSkus: { ozon: 'OZ-2' },
+      },
+      { telegramUserId: '222', internalSku: 'X', name: 'Чужой', marketplaceSkus: { ozon: 'OZ-3' } },
+    );
+
+    const ozon = await service.findByJournalSkus(USER, 'ozon', ['A1', 'OZ-2', 'OZ-3', 'нет']);
+    expect([...ozon].map(([sku, p]) => [sku, p.name])).toEqual([
+      ['A1', 'Связанный'],
+      ['OZ-2', 'Только Ozon'],
+    ]);
+    // ЯМ — только артикул ЯМ: чужой артикул площадки ЯМ-журнал не подписывает.
+    const ym = await service.findByJournalSkus(USER, 'ym', ['A1', 'OZ-2']);
+    expect([...ym.keys()]).toEqual(['A1']);
+  });
+
   it('поиск по словам: подстрока без регистра, все слова, ввод — текст, чужой продавец не виден', async () => {
     await service.upsertFromPriceList(USER, [
       { sku: 'F91W-1', price: 1, name: 'Casio F-91W-1YEF' },

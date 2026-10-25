@@ -1,3 +1,4 @@
+import type { TMarketplace } from '../../../shared/marketplace';
 import type { IForecast, TForecastBasisDays, TForecastResult } from '../../finance/forecast';
 import type { IPurchaseNeedRow, IPurchaseNeeds } from '../../finance/forecast-purchases';
 
@@ -66,6 +67,8 @@ export interface ICrmStoreProblem {
 }
 
 export interface ICrmForecastPurchases extends Omit<IPurchaseNeeds, 'rows'> {
+  /** Площадка экрана (TASK-183) — эхом, по ней фронт узнаёт свой ответ. */
+  marketplace: TMarketplace;
   today: string;
   takenAt: string;
   /** null — прогноза нет (журнал или продажи), причина в `reason`. */

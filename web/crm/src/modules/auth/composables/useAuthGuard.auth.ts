@@ -1,11 +1,13 @@
 import type { NavigationGuard, RouteLocationNormalized, RouteLocationRaw } from 'vue-router';
 
-import { AUTH_ROUTE, HOME_PATH } from '../constants/routeNames.auth';
+import { AUTH_ROUTE, HOME_PATH, NO_STORE_HOME_PATH } from '../constants/routeNames.auth';
 import { useAuthStore } from '../store/store.auth';
 
 export interface AuthRouteState {
   isAuthenticated: boolean;
   mustChangePassword: boolean;
+  /** Есть ли магазин ЯМ; null — профиль ещё не известен (сбой сети), главная прежняя. */
+  hasStore: boolean | null;
 }
 
 interface RouteTarget {
@@ -19,7 +21,9 @@ interface RouteTarget {
  *  - без сессии — только публичные маршруты, остальное на вход с возвратом;
  *  - пока стартовый пароль не сменён — только экран смены (решение
  *    crm_initial_password: «заставить сменить»), ручной переход по адресу тоже;
- *  - вошедшему нечего делать на входе и на принудительной смене.
+ *  - вошедшему нечего делать на входе и на принудительной смене;
+ *  - продавца без магазина ЯМ главная ведёт в «Подключения»: все входы (корень,
+ *    старые адреса, после входа и «за продавца») приходят на HOME_PATH.
  */
 export function resolveAuthRoute(state: AuthRouteState, to: RouteTarget): true | RouteLocationRaw {
   // Вход «за продавца» заменяет любую сессию вкладки — пускать при любом состоянии.
@@ -34,9 +38,11 @@ export function resolveAuthRoute(state: AuthRouteState, to: RouteTarget): true |
       ? true
       : { name: AUTH_ROUTE.FORCE_PASSWORD.name };
   }
+  const home = state.hasStore === false ? NO_STORE_HOME_PATH : HOME_PATH;
   if (to.name === AUTH_ROUTE.LOGIN.name || to.name === AUTH_ROUTE.FORCE_PASSWORD.name) {
-    return HOME_PATH;
+    return home;
   }
+  if (to.fullPath === HOME_PATH && home !== HOME_PATH) return home;
   return true;
 }
 
@@ -58,7 +64,11 @@ export function useAuthGuard(): NavigationGuard {
       await auth.loadMe().catch(() => undefined);
     }
     return resolveAuthRoute(
-      { isAuthenticated: auth.isAuthenticated, mustChangePassword: auth.mustChangePassword },
+      {
+        isAuthenticated: auth.isAuthenticated,
+        mustChangePassword: auth.mustChangePassword,
+        hasStore: auth.me ? auth.me.store !== null : null,
+      },
       { name: to.name, fullPath: to.fullPath, isPublic: to.meta.public === true },
     );
   };

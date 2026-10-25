@@ -59,6 +59,16 @@ export class MarketplaceConnectionService {
   }
 
   /**
+   * Есть ли у продавца хоть одно подключение Ozon/WB — вход в CRM без магазина ЯМ
+   * (TASK-192). Отвергнутый ключ СЧИТАЕТСЯ, в отличие от `connectedUsers`: ключ
+   * заменяют только в CRM, и не пустить продавца — значит не дать его починить.
+   */
+  async hasAny(telegramUserId: string): Promise<boolean> {
+    const doc = await this.model.findOne({ telegramUserId }).select('_id').lean().exec();
+    return doc !== null;
+  }
+
+  /**
    * Кто из списка подключил площадку — одним `$in` (TASK-131, ночная загрузка
    * финансов), а не запросом на продавца. Отвергнутый площадкой ключ не
    * считается: ночной импорт с ним только упал бы алертом каждую ночь.

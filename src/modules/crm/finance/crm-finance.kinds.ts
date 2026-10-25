@@ -5,16 +5,12 @@ import { Injectable } from '@nestjs/common';
 
 import { FinanceService } from '../../finance/finance.service';
 import { FEATURE } from '../../telegram/bots/shared/features.domain';
-import { CrmJobError } from '../jobs/crm-jobs.domain';
+import { CrmJobError, parseJobMarketplace } from '../jobs/crm-jobs.domain';
 import { CrmJobsRegistry } from '../jobs/crm-jobs.registry';
 
 import {
-  FINANCE_MARKETPLACE_INVALID_TEXT,
   FINANCE_PERIOD_INVALID_TEXT,
   FINANCE_PNL_KIND,
-  financeMarketplaceClosedText,
-  isFinanceMarketplaceOpen,
-  parseFinanceMarketplace,
   parseFinanceRangeParams,
   toCrmPnlView,
 } from './crm-finance.domain';
@@ -60,11 +56,9 @@ export class CrmFinanceKinds implements OnModuleInit {
           : FINANCE_MONTH_INVALID_TEXT,
       );
     }
-    const marketplace = parseFinanceMarketplace(context.params.marketplace);
-    if (!marketplace) throw new CrmJobError(FINANCE_MARKETPLACE_INVALID_TEXT);
-    if (!isFinanceMarketplaceOpen(context.features ?? {}, marketplace)) {
-      throw new CrmJobError(financeMarketplaceClosedText(marketplace));
-    }
+    const parsed = parseJobMarketplace(context.params, context.features ?? {});
+    if ('error' in parsed) throw new CrmJobError(parsed.text);
+    const { marketplace } = parsed;
     const report = await this.finance.build(context.telegramUserId, request.period, now, {
       marketplace,
     });

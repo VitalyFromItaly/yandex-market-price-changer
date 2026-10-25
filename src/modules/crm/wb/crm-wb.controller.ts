@@ -12,7 +12,7 @@ import {
 import { FEATURE } from '../../telegram/bots/shared/features.domain';
 import { parseWbToken } from '../../wb/wb-connection.domain';
 import { WbConnectionService } from '../../wb/wb-connection.service';
-import { RequireFeature } from '../crm-auth.decorators';
+import { AllowWithoutPlatform, RequireFeature } from '../crm-auth.decorators';
 import { CrmJwtGuard, IRequestWithCrmUser } from '../crm-jwt.guard';
 
 import {
@@ -39,6 +39,7 @@ export class CrmWbController {
   constructor(private readonly wb: WbConnectionService) {}
 
   @Put('connection')
+  @AllowWithoutPlatform()
   @HttpCode(200)
   async connect(
     @Req() request: IRequestWithCrmUser,

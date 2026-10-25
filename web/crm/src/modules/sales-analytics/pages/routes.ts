@@ -1,13 +1,16 @@
+import type { MarketplaceKey } from '@/navigation.sections';
 import type { RouteRecordRaw } from 'vue-router';
 
-import { SALES_ANALYTICS_ROUTE_NAME } from '../sales-analytics.domain';
+import { sectionRoute } from '@/router/sectionRoute';
 
-/** «Аналитика продаж» — раздел аккаунта; имя — ключ пункта меню `ym-sales-analytics`. */
-export const salesAnalyticsRoutes: RouteRecordRaw[] = [
-  {
-    path: '/ym/sales-analytics',
-    name: SALES_ANALYTICS_ROUTE_NAME,
-    component: () => import('@/modules/sales-analytics/pages/SalesAnalyticsPage.vue'),
-    meta: { title: 'Аналитика продаж' },
-  },
-];
+/** «Аналитика продаж» — раздел площадки: `/<площадка>/sales-analytics`, имя `<площадка>-sales-analytics` — ключ пункта меню. */
+export function salesAnalyticsRoutes(mp: MarketplaceKey): RouteRecordRaw[] {
+  return [
+    sectionRoute(
+      mp,
+      'sales-analytics',
+      () => import('@/modules/sales-analytics/pages/SalesAnalyticsPage.vue'),
+      'Аналитика продаж',
+    ),
+  ];
+}

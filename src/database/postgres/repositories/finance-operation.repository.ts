@@ -7,6 +7,7 @@ import type {
 } from '../../../modules/finance/finance-reconcile';
 import type { IFinanceScreenOperation } from '../../../modules/finance/finance-screen';
 import type { IOperationBreakdownPart } from '../../../modules/finance/operation-breakdown';
+import type { IOzonPayoutLine } from '../../../modules/finance/ozon-payouts';
 import type { IPnlOperation } from '../../../modules/finance/pnl';
 import type { TFinanceDb, TFinanceExecutor } from '../finance-db';
 import type { TFinanceMarketplace } from '../finance.schema';
@@ -29,18 +30,37 @@ import { financeOperations } from '../finance.schema';
  */
 const UPSERT_CHUNK_SIZE = 1000;
 
+/** Число из суммы начисления Ozon `{amount: "…"}` — только если это число, иначе NULL (без сбоя приведения). */
+const ozonMoney = (path: ReturnType<typeof sql>) =>
+  sql`CASE WHEN (${path}) ~ '^-?[0-9]+(\.[0-9]+)?$' THEN abs((${path})::numeric) END`;
+
 /**
  * Штуки строки для себестоимости, строкой — как их разбирает `countOf`. У ЯМ —
- * колонка `count` отчёта; у Ozon колонки нет, позиция операции — штука
- * (`items[]`, по позиции на единицу — на живом ответе не сверено, known-gaps).
- * У WB — колонка `quantity` строки отчёта реализации.
+ * колонка `count` отчёта. У WB — колонка `quantity` строки отчёта реализации.
+ *
+ * У Ozon колонки нет. Строки /v3/finance/transaction/list (до TASK-194) — по
+ * позиции `items[]` на штуку. Начисления /v1/finance/accrual/by-day — Σ по
+ * товарам отправления `sale_amount / seller_price` («реализовано на сумму» /
+ * «цена за единицу»): количества у метода нет. Нет цены у любого товара — NULL
+ * целиком, дробное частное отсеет `countOf`: закуп не угадывается. На живом
+ * ответе не сверено (known-gaps).
  * Выражение ЯМ не тронуто: его числа сверены с кабинетом.
  */
 const COUNT_OF: Record<TFinanceMarketplace, ReturnType<typeof sql<string | null>>> = {
   ym: sql<string | null>`${financeOperations.raw}->>'count'`,
-  ozon: sql<
-    string | null
-  >`CASE WHEN jsonb_typeof(${financeOperations.raw}->'items') = 'array' THEN jsonb_array_length(${financeOperations.raw}->'items')::text END`,
+  ozon: sql<string | null>`CASE
+    WHEN jsonb_typeof(${financeOperations.raw}->'items') = 'array'
+      THEN jsonb_array_length(${financeOperations.raw}->'items')::text
+    WHEN jsonb_typeof(${financeOperations.raw}->'posting'->'products') = 'array'
+      THEN (
+        SELECT CASE WHEN count(*) > 0 AND count(*) = count(q) THEN sum(q)::text END
+        FROM (
+          SELECT ${ozonMoney(sql`p->'commission'->'sale_amount'->>'amount'`)}
+            / NULLIF(${ozonMoney(sql`p->'commission'->'seller_price'->>'amount'`)}, 0) AS q
+          FROM jsonb_array_elements(${financeOperations.raw}->'posting'->'products') AS p
+        ) AS units
+      )
+  END`,
   wb: sql<string | null>`${financeOperations.raw}->>'quantity'`,
 };
 
@@ -631,6 +651,70 @@ export class FinanceOperationRepository {
       byArticle.set(part.article, entry);
     }
     return [...byArticle.values()];
+  }
+
+  /**
+   * Живые строки, начисленные в окне `[from, to)`, — кандидаты раскладки
+   * выплат Ozon по FIFO (TASK-184, `ozonPaidDays`).
+   */
+  async liveForPayout(
+    telegramUserId: string,
+    from: Date,
+    to: Date,
+    marketplace: TFinanceMarketplace,
+    executor: TFinanceExecutor = this.db,
+  ): Promise<IOzonPayoutLine[]> {
+    return await executor
+      .select({
+        id: t.id,
+        article: t.article,
+        amountKopecks: t.amountKopecks,
+        accruedAt: t.accruedAt,
+      })
+      .from(t)
+      .where(
+        and(
+          eq(t.marketplace, marketplace),
+          eq(t.telegramUserId, telegramUserId),
+          isNull(t.supersededAt),
+          gte(t.accruedAt, from),
+          lt(t.accruedAt, to),
+        ),
+      );
+  }
+
+  /**
+   * Проставить выплату строкам (TASK-184): id → момент выплаты, `null` —
+   * выплаты ещё нет. Один UPDATE на каждый день: строк месяца тысячи, дней
+   * выплат — единицы. Номер и сумма поручения не трогаются — у Ozon их нет.
+   */
+  async setPaidAt(
+    telegramUserId: string,
+    marketplace: TFinanceMarketplace,
+    paidAt: ReadonlyMap<string, Date | null>,
+    executor: TFinanceExecutor = this.db,
+  ): Promise<void> {
+    const byMoment = new Map<number | null, { at: Date | null; ids: string[] }>();
+    for (const [id, at] of paidAt) {
+      const key = at ? at.getTime() : null;
+      const group = byMoment.get(key) ?? { at, ids: [] };
+      group.ids.push(id);
+      byMoment.set(key, group);
+    }
+    for (const { at, ids } of byMoment.values()) {
+      for (let i = 0; i < ids.length; i += UPSERT_CHUNK_SIZE) {
+        await executor
+          .update(t)
+          .set({ paidAt: at, updatedAt: sql`now()` })
+          .where(
+            and(
+              eq(t.marketplace, marketplace),
+              eq(t.telegramUserId, telegramUserId),
+              inArray(t.id, ids.slice(i, i + UPSERT_CHUNK_SIZE)),
+            ),
+          );
+      }
+    }
   }
 
   /**

@@ -1,5 +1,6 @@
 import type { IFinancePeriod } from './finance-period';
 import type { TForecastBasisDays, TForecastResult } from './forecast';
+import type { TFinanceMarketplace } from '../../database/postgres/finance.schema';
 
 import { Injectable } from '@nestjs/common';
 
@@ -16,7 +17,8 @@ import { forecastOf, forecastPlan } from './forecast';
  *
  * Все периоды плана — `FinanceService.build` без плоской оценки (`flat: false`:
  * она — Маркет и десятки секунд, прогнозу не нужна), «к получению» — тот же
- * `receivable`, что у ДДС. Формулы — чистая `forecastOf`.
+ * `receivable`, что у ДДС. Формулы — чистая `forecastOf`. Площадка — экрана
+ * (TASK-183): журнал и «к получению» только её; ИИ-инструмент зовёт без неё — ЯМ.
  */
 export interface IForecastBuild {
   result: TForecastResult;
@@ -40,17 +42,18 @@ export class FinanceForecastService {
     telegramUserId: string,
     basisDays: TForecastBasisDays,
     now: Date = new Date(),
+    marketplace: TFinanceMarketplace = 'ym',
   ): Promise<IForecastBuild> {
     const plan = forecastPlan(financeToday(now), basisDays);
     const build = (period: { from: string; to: string }) =>
-      this.finance.build(telegramUserId, period, now, { flat: false });
+      this.finance.build(telegramUserId, period, now, { flat: false, marketplace });
 
     const [basis, monthFact, yearFact, receivable, taxSnapshot, ...marginMonths] =
       await Promise.all([
         build(plan.basis),
         plan.monthFact ? build(plan.monthFact) : Promise.resolve(null),
         plan.yearFact ? build(plan.yearFact) : Promise.resolve(null),
-        this.cashflow.receivable(telegramUserId, now),
+        this.cashflow.receivable(telegramUserId, now, marketplace),
         this.taxes.snapshot(telegramUserId),
         ...plan.marginMonths.map(build),
       ]);

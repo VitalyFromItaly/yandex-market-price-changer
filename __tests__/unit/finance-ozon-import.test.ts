@@ -16,18 +16,22 @@ import { FinanceCorrectionRepository } from '../../src/database/postgres/reposit
 import { FinanceDiscrepancyRepository } from '../../src/database/postgres/repositories/finance-discrepancy.repository';
 import { FinanceDocumentRepository } from '../../src/database/postgres/repositories/finance-document.repository';
 import { FinanceExpenseRepository } from '../../src/database/postgres/repositories/finance-expense.repository';
+import { FinancePurchaseRepository } from '../../src/database/postgres/repositories/finance-purchase.repository';
 import { FinanceOperationRepository } from '../../src/database/postgres/repositories/finance-operation.repository';
 import { FinancePeriodRepository } from '../../src/database/postgres/repositories/finance-period.repository';
 import { FinanceTaxSettingsRepository } from '../../src/database/postgres/repositories/finance-tax-settings.repository';
+import { FinanceCashflowService } from '../../src/modules/finance/finance-cashflow.service';
 import { FinanceExpensesService } from '../../src/modules/finance/finance-expenses.service';
 import { FinanceImportService } from '../../src/modules/finance/finance-import.service';
 import { financePeriodKey, monthPeriod } from '../../src/modules/finance/finance-period';
+import { FinancePurchasesService } from '../../src/modules/finance/finance-purchases.service';
 import { FinanceReconcileService } from '../../src/modules/finance/finance-reconcile.service';
 import { FinanceTaxService } from '../../src/modules/finance/finance-tax.service';
 import { FLAT_YM_ONLY, FinanceService } from '../../src/modules/finance/finance.service';
 import { OZON_UNKNOWN_ARTICLE_CONTEXT } from '../../src/modules/finance/ozon-journal';
 import {
   OZON_FINANCE_SKU_CONTEXT,
+  OZON_PAYOUTS_CONTEXT,
   OzonFinanceService,
   ozonPurchaseKeys,
 } from '../../src/modules/ozon/ozon-finance.service';
@@ -35,9 +39,10 @@ import { OzonNotConnectedError } from '../../src/modules/ozon/ozon-seller-client
 import { createTestFinanceDb } from '../helpers/test-postgres';
 
 /**
- * Импорт финансовых операций Ozon (TASK-131) на PGlite: настоящие репозитории и
- * транзакция версии, «Ozon» и Mongo-двери — заглушки. Форма операции — по
- * Go-клиенту; живой ответ не сверен (known-gaps).
+ * Импорт финансовых операций Ozon (TASK-131, TASK-194) на PGlite: настоящие
+ * репозитории и транзакция версии, «Ozon» и Mongo-двери — заглушки. Форма
+ * начисления — по спецификации /v1/finance/accrual/by-day; живой ответ не сверен
+ * (known-gaps).
  */
 
 const SELLER = '111';
@@ -46,36 +51,42 @@ const OZON_KEY = financePeriodKey('ozon-transaction-list', SEPT);
 // 18-10-2026: сентябрь закрыт.
 const NOW = new Date('2026-10-18T07:00:00Z');
 
-const sale = (id: number, over: Record<string, unknown> = {}) => ({
-  operation_id: id,
-  operation_type: 'OperationAgentDeliveredToCustomer',
-  operation_type_name: 'Доставка покупателю',
-  operation_date: '2026-09-16 00:00:00',
-  type: 'orders',
-  accruals_for_sale: 2000,
-  sale_commission: -300,
-  delivery_charge: 0,
-  return_delivery_charge: 0,
-  amount: 1700,
-  posting: { delivery_schema: 'FBS', posting_number: `P-${id}` },
-  items: [{ name: 'Часы', sku: 900001 }],
-  services: [],
-  ...over,
+const rub = (amount: string) => ({ amount, currency: 'RUB' });
+
+/** Продажа по отправлению `P-<id>`: выручка 2000, комиссия −300 → 1700. */
+const sale = (
+  id: number,
+  { sale = '2000', commission = '-300', total = '1700', services = [] as unknown[] } = {},
+) => ({
+  accrual_id: id,
+  date: '2026-09-16',
+  unit_number: `P-${id}`,
+  accrued_category: 'POSTING',
+  total_amount: rub(total),
+  posting: {
+    delivery_schema: 'FBS',
+    products: [
+      {
+        sku: 900001,
+        commission: {
+          sale_amount: rub(sale),
+          seller_price: rub('2000'),
+          commission: rub(commission),
+        },
+        delivery: { services },
+      },
+    ],
+  },
 });
 
-const storage = (id: number, date = '2026-09-20 00:00:00') => ({
-  operation_id: id,
-  operation_type: 'OperationMarketplaceServiceStorage',
-  operation_date: date,
-  type: 'services',
-  accruals_for_sale: 0,
-  sale_commission: 0,
-  delivery_charge: 0,
-  return_delivery_charge: 0,
-  amount: -100,
-  posting: {},
-  items: [],
-  services: [],
+/** Хранение — сбор продавца без отправления. */
+const storage = (id: number, date = '2026-09-20') => ({
+  accrual_id: id,
+  date,
+  unit_number: '',
+  accrued_category: 'NON_ITEM',
+  total_amount: rub('-100'),
+  non_item_fee: { type_id: 46, accrued: rub('-100') },
 });
 
 /** Отправление в форме клиента Ozon: оформлено `day`, статус Ozon `status`. */
@@ -103,6 +114,8 @@ describe('Ozon → журнал finance_operations', () => {
   let operations: Record<string, unknown>[];
   let fbs: IOzonPosting[];
   let catalog: () => Promise<unknown[]>;
+  /** Сальдо дня «Ozon»: по умолчанию выплат нет. */
+  let balanceOf: (day: string) => Promise<{ openingKopecks: number; paymentsKopecks: number }>;
   let credentials: Record<string, string> | null;
   let report: ReturnType<typeof vi.fn>;
   let ozon: OzonFinanceService;
@@ -113,6 +126,7 @@ describe('Ozon → журнал finance_operations', () => {
     operations = [sale(1), sale(2), storage(3)];
     fbs = [posting('P-1', '2026-09-10'), posting('P-2', '2026-08-25')];
     catalog = async () => [{ offerId: 'OF-1', sku: '900001', skus: ['900001', '900002'] }];
+    balanceOf = async () => ({ openingKopecks: 0, paymentsKopecks: 0 });
     credentials = { clientId: 'client-1', apiKey: 'SECRET' };
     report = vi.fn(async () => undefined);
     operationsRepo = new FinanceOperationRepository(test.db);
@@ -143,7 +157,11 @@ describe('Ozon → журнал finance_operations', () => {
       actServices,
     );
     const client = {
-      listFinanceOperations: vi.fn(async () => operations),
+      listAccruals: vi.fn(async () => operations),
+      listAccrualTypes: vi.fn(async () => [
+        { id: '46', name: 'Placements', description: 'Размещение товаров' },
+        { id: '28', name: 'LastMile', description: 'Последняя миля' },
+      ]),
       listProducts: vi.fn(() => catalog()),
       listFbsPostings: vi.fn(async (since: Date, to: Date) =>
         fbs.filter((p) => {
@@ -152,6 +170,7 @@ describe('Ozon → журнал finance_operations', () => {
         }),
       ),
       listFboPostings: vi.fn(async () => []),
+      balanceOfDay: vi.fn((day: string) => balanceOf(day)),
     };
     ozon = new OzonFinanceService(
       { forCredentials: () => client } as never,
@@ -161,6 +180,7 @@ describe('Ozon → журнал finance_operations', () => {
       } as never,
       imports,
       { report } as never,
+      operationsRepo,
     );
   });
 
@@ -174,7 +194,7 @@ describe('Ozon → журнал finance_operations', () => {
     expect(written).toHaveLength(3);
     // SKU Ozon → offer_id → товар → артикул ЯМ: по нему ищется закуп.
     expect(
-      written.filter((r) => r.transactionType.startsWith('OperationAgent')).map((r) => r.sku),
+      written.filter((r) => r.transactionType === 'POSTING_SALE').map((r) => r.sku),
     ).toEqual(['A1', 'A1']);
     expect(written.every((r) => r.periodKey === OZON_KEY)).toBe(true);
 
@@ -184,7 +204,7 @@ describe('Ozon → журнал finance_operations', () => {
 
   it('пропавшая операция снимается, пересчитанная — корректировка «изменено»', async () => {
     await run();
-    operations = [sale(1, { amount: 1690, sale_commission: -310 }), storage(3)];
+    operations = [sale(1, { commission: '-310', total: '1690' }), storage(3)];
 
     expect(await run()).toMatchObject({
       status: 'imported',
@@ -211,6 +231,25 @@ describe('Ozon → журнал finance_operations', () => {
     expect(await operationsRepo.liveForPnl(SELLER, from, to, 'ozon')).not.toEqual([]);
   });
 
+  it('штуки начисления — sale_amount / seller_price по товарам; без цены — неизвестно', async () => {
+    const twoUnits = sale(1, { sale: '4000', total: '3700' });
+    const noPrice = sale(2);
+    delete (noPrice.posting.products[0].commission as Record<string, unknown>).seller_price;
+    operations = [twoUnits, noPrice, storage(3)];
+    await run();
+    const live = await operationsRepo.liveForPnl(
+      SELLER,
+      new Date('2026-09-01T00:00:00+03:00'),
+      new Date('2026-10-01T00:00:00+03:00'),
+      'ozon',
+    );
+    const countOf = (orderId: string | null) =>
+      live.find((r) => r.orderId === orderId)?.count ?? null;
+    expect(Number(countOf('P-1'))).toBe(2);
+    expect(countOf('P-2')).toBeNull();
+    expect(countOf(null)).toBeNull();
+  });
+
   const septStatus = async () => {
     const [state] = await test.db
       .select()
@@ -230,7 +269,7 @@ describe('Ozon → журнал finance_operations', () => {
   describe('сверка с отправлениями (TASK-132)', () => {
     /** Август и октябрь загружены — соседи сентября есть. */
     const importNeighbours = async () => {
-      operations.push(storage(10, '2026-08-20 00:00:00'), storage(11, '2026-10-05 00:00:00'));
+      operations.push(storage(10, '2026-08-20'), storage(11, '2026-10-05'));
       await ozon.importPeriod(SELLER, monthPeriod(2026, 8), NOW);
       await ozon.importPeriod(SELLER, monthPeriod(2026, 10), NOW);
     };
@@ -250,7 +289,7 @@ describe('Ozon → журнал finance_operations', () => {
     it('выкуплен без продажи и начисление по чужому отправлению — находки Ozon', async () => {
       // P-3 выкуплен в сентябре, продажи нет; P-404 — начисление без отправления.
       fbs.push(posting('P-3', '2026-09-12'), posting('P-4', '2026-09-13', 'cancelled'));
-      operations.push(sale(404, { amount: -50, accruals_for_sale: 0, sale_commission: -50 }));
+      operations.push(sale(404, { sale: '0', commission: '-50', total: '-50' }));
       await importNeighbours();
       await run();
 
@@ -277,7 +316,9 @@ describe('Ozon → журнал finance_operations', () => {
   });
 
   it('незнакомое — в журнал статьёй unknown и один алерт', async () => {
-    operations = [sale(1, { services: [{ name: 'BrandNew', price: -5 }], amount: 1695 })];
+    operations = [
+      sale(1, { services: [{ type_id: 999, accrued: rub('-5') }], total: '1695' }),
+    ];
     expect(await run()).toMatchObject({ status: 'imported', unknown: 1 });
     expect(report).toHaveBeenCalledWith(
       expect.objectContaining({ context: OZON_UNKNOWN_ARTICLE_CONTEXT }),
@@ -296,6 +337,80 @@ describe('Ozon → журнал finance_operations', () => {
     // Тот же ответ Ozon, но другие ключи закупа — новая версия, не unchanged.
     expect(await run()).toMatchObject({ status: 'imported', inserted: 0, superseded: 0 });
     expect((await rows()).find((r) => r.orderId === 'P-1')?.sku).toBe('A1');
+  });
+
+  describe('выплаты по сальдо (TASK-184)', () => {
+    const moscow = (day: string) => new Date(`${day}T00:00:00+03:00`).toISOString();
+    const payouts: Record<string, number> = {};
+
+    beforeEach(() => {
+      for (const day of Object.keys(payouts)) delete payouts[day];
+      // Долг Ozon на 1.09 — 500 ₽: первая выплата гасит его, а не сентябрь.
+      payouts['2026-09-10'] = 50000;
+      payouts['2026-09-25'] = 340000;
+      operations = [sale(1), sale(2), storage(3, '2026-09-28')];
+      balanceOf = async (day) => ({
+        openingKopecks: day === SEPT.from ? 50000 : 0,
+        paymentsKopecks: payouts[day] ?? 0,
+      });
+    });
+
+    it('FIFO: сальдо, затем строки по начислению; позже выплаты — «к получению»', async () => {
+      await run();
+      const byAmount = Object.fromEntries((await rows()).map((r) => [r.amountKopecks, r.paidAt]));
+      expect(byAmount[170000]?.toISOString()).toBe(moscow('2026-09-25'));
+      expect(byAmount[-10000]).toBeNull();
+      // Номера и суммы поручения у Ozon нет — ДДС группирует по дню, сверка не шумит.
+      expect((await rows()).every((r) => r.bankOrderId === null && r.bankSumKopecks === null)).toBe(
+        true,
+      );
+
+      const cashflow = new FinanceCashflowService(
+        operationsRepo,
+        new FinanceExpensesService(new FinanceExpenseRepository(test.db)),
+        new FinancePurchasesService(new FinancePurchaseRepository(test.db)),
+      );
+      const ozonFlow = await cashflow.build(SELLER, SEPT, NOW, 'ozon');
+      expect(ozonFlow.cashflow.payouts).toEqual([
+        {
+          bankOrderId: null,
+          day: '2026-09-25',
+          kopecks: 340000,
+          linesKopecks: 340000,
+          operationCount: 2,
+          mismatch: false,
+        },
+      ]);
+      expect(ozonFlow.receivable.totalKopecks).toBe(-10000);
+      // ЯМ по умолчанию выплат Ozon не видит.
+      expect((await cashflow.build(SELLER, SEPT, NOW)).cashflow.payouts).toEqual([]);
+    });
+
+    it('новая выплата при тех же начислениях — unchanged, но строка выплачена', async () => {
+      await run();
+      payouts['2026-10-02'] = 1;
+      expect(await run()).toMatchObject({ status: 'unchanged' });
+      const storageRow = (await rows()).find((r) => r.amountKopecks === -10000);
+      expect(storageRow?.paidAt?.toISOString()).toBe(moscow('2026-10-02'));
+    });
+
+    it('новая версия не стирает выплату; сбой сальдо — алерт, импорт цел', async () => {
+      await run();
+      operations = [sale(1), sale(2), storage(3, '2026-09-28'), storage(4, '2026-09-29')];
+      balanceOf = async () => {
+        throw new Error('Ozon 500');
+      };
+
+      expect(await run()).toMatchObject({ status: 'imported', inserted: 1 });
+      const sales = (await rows()).filter((r) => r.amountKopecks === 170000);
+      expect(sales.map((r) => r.paidAt?.toISOString())).toEqual([
+        moscow('2026-09-25'),
+        moscow('2026-09-25'),
+      ]);
+      expect(report).toHaveBeenCalledWith(
+        expect.objectContaining({ context: OZON_PAYOUTS_CONTEXT }),
+      );
+    });
   });
 
   it('P&L Ozon тем же движком: выручка, комиссия и закуп продажи — по разу', async () => {

@@ -3,24 +3,36 @@ import type {
   DiscrepancyRow,
   FinanceCorrection,
   FinanceDiscrepancy,
+  FinanceMarketplace,
   FinancePage,
+  FinanceUnsupported,
 } from '../../finance.domain';
+import type { Ref } from 'vue';
 
 import { computed, ref } from 'vue';
 
 import { financeApi } from '../../api/financeApi.finance';
+import { isFinanceUnsupported } from '../../constants/marketplaces.finance';
 import { AUDIT_PAGE_SIZE } from '../../finance.domain';
 import { toCorrectionRow, toDiscrepancyRow } from '../../mappers/mapAudit.finance';
 
 import { useBaseState } from '@/shared/composables';
 
-type Loader<T> = (month: string, skip: number, limit: number) => Promise<FinancePage<T>>;
+type Loader<T> = (
+  month: string,
+  skip: number,
+  limit: number,
+) => Promise<FinancePage<T> | FinanceUnsupported>;
 
-/** Одна постраничная выборка месяца: поздний ответ прежнего месяца или страницы отбрасывается. */
+/**
+ * Одна постраничная выборка месяца: поздний ответ прежнего месяца или страницы
+ * отбрасывается. Выборки, которой у площадки нет, — причина в `note`.
+ */
 function usePagedList<T, R>(load: Loader<T>, map: (item: T, index: number) => R, failure: string) {
   const [page, setPage, isLoading, resetPage] = useBaseState<FinancePage<R> | null>(null);
   const index = ref(1);
   const error = ref<string | null>(null);
+  const note = ref<string | null>(null);
   let month: string | null = null;
   let generation = 0;
 
@@ -33,7 +45,12 @@ function usePagedList<T, R>(load: Loader<T>, map: (item: T, index: number) => R,
     try {
       const skip = (nextIndex - 1) * AUDIT_PAGE_SIZE;
       const result = await load(nextMonth, skip, AUDIT_PAGE_SIZE);
-      if (run === generation) {
+      if (run !== generation) return;
+      if (isFinanceUnsupported(result)) {
+        note.value = result.note;
+        setPage(null);
+      } else {
+        note.value = null;
         setPage({ total: result.total, items: result.items.map((item, i) => map(item, skip + i)) });
       }
     } catch (e) {
@@ -57,20 +74,21 @@ function usePagedList<T, R>(load: Loader<T>, map: (item: T, index: number) => R,
     resetPage();
     index.value = 1;
     error.value = null;
+    note.value = null;
   }
 
-  return { page, index, pages, isLoading, error, fetch, turn, reset };
+  return { page, index, pages, isLoading, error, note, fetch, turn, reset };
 }
 
-/** Сверка месяца: расхождения с заказами и выплатами и корректировки Маркета. */
-export function useAudit() {
+/** Сверка месяца площадки экрана: расхождения с заказами и выплатами и корректировки. */
+export function useAudit(marketplace: Readonly<Ref<FinanceMarketplace>>) {
   const discrepancies = usePagedList<FinanceDiscrepancy, DiscrepancyRow>(
-    financeApi.discrepancies,
+    (month, skip, limit) => financeApi.discrepancies(marketplace.value, month, skip, limit),
     toDiscrepancyRow,
     'Не удалось загрузить расхождения',
   );
   const corrections = usePagedList<FinanceCorrection, CorrectionRow>(
-    financeApi.corrections,
+    (month, skip, limit) => financeApi.corrections(marketplace.value, month, skip, limit),
     toCorrectionRow,
     'Не удалось загрузить корректировки',
   );
@@ -90,6 +108,7 @@ export function useAudit() {
     discrepanciesPages: discrepancies.pages,
     discrepanciesLoading: discrepancies.isLoading,
     discrepanciesError: discrepancies.error,
+    discrepanciesNote: discrepancies.note,
     turnDiscrepancies: discrepancies.turn,
     corrections: corrections.page,
     correctionsPage: corrections.index,

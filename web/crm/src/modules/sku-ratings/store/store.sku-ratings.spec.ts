@@ -31,7 +31,13 @@ describe('стор «Рейтингов»', () => {
     store.load();
     expect(jobs.start).toHaveBeenCalledWith(
       'sku-ratings:summary',
-      { from: '2026-09-16', to: '2026-10-15', prevFrom: '2026-08-17', prevTo: '2026-09-15' },
+      {
+        from: '2026-09-16',
+        to: '2026-10-15',
+        prevFrom: '2026-08-17',
+        prevTo: '2026-09-15',
+        marketplace: 'ym',
+      },
       '',
     );
   });
@@ -49,5 +55,16 @@ describe('стор «Рейтингов»', () => {
     expect(store.xyz).toBe('all');
     expect(store.query).toBe('');
     expect(store.preset).toBe('30d');
+  });
+
+  it('площадка экрана (TASK-181) — в params задачи; reset возвращает ЯМ', () => {
+    const store = useSkuRatingsStore();
+    store.selectMarketplace('ozon');
+    store.load();
+    expect(jobs.start.mock.calls[0]?.[0]).toBe('sku-ratings:summary');
+    expect(jobs.start.mock.calls[0]?.[1]).toMatchObject({ marketplace: 'ozon' });
+    expect(store.marketplace).toBe('ozon');
+    store.reset();
+    expect(store.marketplace).toBe('ym');
   });
 });

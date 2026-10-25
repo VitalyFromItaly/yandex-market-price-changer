@@ -14,9 +14,13 @@ import {
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
 import { JOB_TYPES } from '../../src/modules/telegram';
 import { FinanceImportScheduler } from '../../src/modules/telegram/queue/services/finance-import.scheduler';
+import { FinancePullNotAllowedError } from '../../src/modules/telegram/queue/services/finance-import.scheduler';
 import {
+  FINANCE_PULL_COOLDOWN_MS,
   financeCron,
   financeJobId,
+  financePullCooldownUntil,
+  financePullJobId,
   parseFinanceJobId,
   pickFinanceUsers,
 } from '../../src/modules/telegram/queue/services/finance-schedule';
@@ -244,6 +248,7 @@ function build(
   accounts: unknown[],
   storeIds: string[],
   adminIds: number[] = [],
+  periods: unknown = { find: vi.fn(async () => null) },
 ) {
   const access = { list: vi.fn(async () => accounts) };
   const stores = {
@@ -269,6 +274,7 @@ function build(
       config as never,
       errors as never,
       { connectedUsers: vi.fn(async () => new Set<string>()) } as never,
+      periods as never,
     ),
   };
 }
@@ -350,5 +356,94 @@ describe('FinanceImportScheduler', () => {
     expect(errors.report).toHaveBeenCalledWith(
       expect.objectContaining({ context: 'finance-import:schedule' }),
     );
+  });
+});
+
+describe('«Загрузить из Маркета» (pullNow)', () => {
+  const NOW = new Date('2026-10-20T12:00:00+03:00');
+  const OCT = { month: '2026-10', period: monthPeriod(2026, 10) };
+  const SEP = { month: '2026-09', period: monthPeriod(2026, 9) };
+
+  /** Разовые задачи не повторяемые — заглушке репитов они не нужны, только `add`. */
+  function pullQueue() {
+    return { ...fakeQueue(), add: vi.fn(async () => undefined) };
+  }
+
+  it('id разовой загрузки не похож на задачу расписания: сверка и «Очереди» её не тронут', () => {
+    const id = financePullJobId('111', 'ym', '2026-10');
+    expect(id).toBe('finpull-ym-111-2026-10');
+    expect(parseFinanceJobId(id)).toBeNull();
+    expect(id).not.toContain(':');
+  });
+
+  it('кулдаун — 15 минут от последней попытки', () => {
+    expect(financePullCooldownUntil(null, NOW)).toBeNull();
+    const recent = new Date(NOW.getTime() - 60_000);
+    expect(financePullCooldownUntil(recent, NOW)).toEqual(
+      new Date(recent.getTime() + FINANCE_PULL_COOLDOWN_MS),
+    );
+    expect(financePullCooldownUntil(new Date(NOW.getTime() - FINANCE_PULL_COOLDOWN_MS), NOW)).toBeNull();
+  });
+
+  it('ставит по задаче на месяц: payload без токена, одна попытка, удаляется после', async () => {
+    const queue = pullQueue();
+    const { scheduler } = build(queue as never, [SELLER], ['111']);
+
+    expect(await scheduler.pullNow('111', 'ym', [OCT, SEP], NOW)).toEqual({
+      queued: ['2026-10', '2026-09'],
+      cooldown: [],
+    });
+    expect(queue.add.mock.calls).toEqual([
+      [
+        JOB_TYPES.IMPORT_FINANCE,
+        { telegramUserId: '111', marketplace: 'ym', ...OCT.period },
+        { jobId: 'finpull-ym-111-2026-10', removeOnComplete: true, removeOnFail: true, attempts: 1 },
+      ],
+      [
+        JOB_TYPES.IMPORT_FINANCE,
+        { telegramUserId: '111', marketplace: 'ym', ...SEP.period },
+        { jobId: 'finpull-ym-111-2026-09', removeOnComplete: true, removeOnFail: true, attempts: 1 },
+      ],
+    ]);
+  });
+
+  it('месяц, грузившийся меньше 15 минут назад, — в cooldown, остальные ставятся', async () => {
+    const queue = pullQueue();
+    const checkedAt = new Date(NOW.getTime() - 5 * 60_000);
+    const periods = {
+      find: vi.fn(async ({ periodKey }: { periodKey: string }) =>
+        periodKey.includes('2026-10-01') ? { checkedAt } : null,
+      ),
+    };
+    const { scheduler } = build(queue as never, [SELLER], ['111'], [], periods);
+
+    const result = await scheduler.pullNow('111', 'ym', [OCT, SEP], NOW);
+    expect(result).toEqual({
+      queued: ['2026-09'],
+      cooldown: [
+        {
+          month: '2026-10',
+          checkedAt: checkedAt.toISOString(),
+          until: new Date(checkedAt.getTime() + FINANCE_PULL_COOLDOWN_MS).toISOString(),
+        },
+      ],
+    });
+    expect(queue.add).toHaveBeenCalledTimes(1);
+  });
+
+  it('журнал не положен (фича закрыта, магазина нет, площадка не подключена) — отказ без задачи', async () => {
+    const queue = pullQueue();
+    const closed = { telegramUserId: '111', status: 'approved', features: {} };
+    for (const [accounts, stores, marketplace] of [
+      [[closed], ['111'], 'ym'],
+      [[SELLER], [], 'ym'],
+      [[SELLER], ['111'], 'ozon'],
+    ] as const) {
+      const { scheduler } = build(queue as never, [...accounts], [...stores]);
+      await expect(scheduler.pullNow('111', marketplace, [OCT], NOW)).rejects.toBeInstanceOf(
+        FinancePullNotAllowedError,
+      );
+    }
+    expect(queue.add).not.toHaveBeenCalled();
   });
 });

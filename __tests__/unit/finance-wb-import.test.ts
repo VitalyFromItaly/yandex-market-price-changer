@@ -15,6 +15,7 @@ import { FinanceExpenseRepository } from '../../src/database/postgres/repositori
 import { FinanceOperationRepository } from '../../src/database/postgres/repositories/finance-operation.repository';
 import { FinancePeriodRepository } from '../../src/database/postgres/repositories/finance-period.repository';
 import { FinanceTaxSettingsRepository } from '../../src/database/postgres/repositories/finance-tax-settings.repository';
+import { payoutsOf } from '../../src/modules/finance/cashflow';
 import { FinanceExpensesService } from '../../src/modules/finance/finance-expenses.service';
 import {
   FinanceImportService,
@@ -48,6 +49,7 @@ const sale = (rrdId: number, over: Record<string, unknown> = {}) => ({
   rrd_id: rrdId,
   realizationreport_id: 555,
   rr_dt: '2026-09-16',
+  create_dt: '2026-09-22',
   supplier_oper_name: 'Продажа',
   doc_type_name: 'Продажа',
   sa_name: 'VC-1',
@@ -157,6 +159,39 @@ describe('WB → журнал finance_operations', () => {
     const total = (await rows()).reduce((sum, r) => sum + r.amountKopecks, 0);
     // 1600 + 1600 − 75 ₽.
     expect(total).toBe(312500);
+  });
+
+  it('выплата (TASK-185): день create_dt, поручение — отчёт, сумма — Σ всего отчёта', async () => {
+    // Строка 4 того же отчёта лежит в августе: в журнал сентября не идёт, в сумму поручения — да.
+    await run();
+    const written = await rows();
+    expect(written.map((r) => r.paidAt?.toISOString())).toEqual(
+      written.map(() => '2026-09-21T21:00:00.000Z'),
+    );
+    expect(written.every((r) => r.bankOrderId === '555')).toBe(true);
+    // 1600 + 1600 − 75 + 1600 (август) ₽.
+    expect(written.every((r) => r.bankSumKopecks === 472500)).toBe(true);
+  });
+
+  it('ДДС WB: выплата недели — в «поступило» месяца, Ozon и ЯМ её не видят', async () => {
+    await run();
+    const from = new Date('2026-09-01T00:00:00+03:00');
+    const to = new Date('2026-10-01T00:00:00+03:00');
+    const paid = await operationsRepo.livePaidBetween(SELLER, from, to, 'wb');
+    expect(paid.reduce((sum, r) => sum + r.amountKopecks, 0)).toBe(312500);
+    // Выплата — сумма поручения; август не загружен, поэтому строк меньше, чем выплачено.
+    expect(payoutsOf(paid, SEPT)).toEqual([
+      {
+        bankOrderId: '555',
+        day: '2026-09-22',
+        kopecks: 472500,
+        linesKopecks: 312500,
+        operationCount: 3,
+        mismatch: true,
+      },
+    ]);
+    expect(await operationsRepo.livePaidBetween(SELLER, from, to)).toEqual([]);
+    expect(await operationsRepo.livePaidBetween(SELLER, from, to, 'ozon')).toEqual([]);
   });
 
   it('пересчитанная строка — корректировка «изменено», пропавшая — «удалено»', async () => {

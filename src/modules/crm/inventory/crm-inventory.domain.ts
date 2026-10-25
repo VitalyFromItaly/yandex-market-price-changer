@@ -49,6 +49,8 @@ export interface ICrmInventoryRow {
 }
 
 export interface ICrmInventoryView {
+  /** Площадка экрана (эхо `params.marketplace`) — стор сверяет по ней свой ответ. */
+  marketplace: TMarketplace;
   takenAt: string;
   basisDays: number;
   lowDays: number;
@@ -77,6 +79,7 @@ export function toCrmInventory(
   inventory: IInventory,
   extra: {
     now: Date;
+    marketplace: TMarketplace;
     columns: ICrmInventoryColumn[];
     problems: ICrmInventoryProblem[];
     notes: string[];
@@ -109,6 +112,7 @@ export function toCrmInventory(
   });
 
   return {
+    marketplace: extra.marketplace,
     takenAt: extra.now.toISOString(),
     basisDays: inventory.basisDays,
     lowDays: inventory.lowDays,

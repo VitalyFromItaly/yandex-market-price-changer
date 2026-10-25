@@ -1,5 +1,6 @@
 import type { ICashflow, IReceivable } from './cashflow';
 import type { IFinancePeriod } from './finance-period';
+import type { TFinanceMarketplace } from '../../database/postgres/finance.schema';
 
 import { Injectable } from '@nestjs/common';
 
@@ -39,10 +40,16 @@ export class FinanceCashflowService {
     private readonly purchases: FinancePurchasesService,
   ) {}
 
+  /**
+   * Площадка — чьи выплаты и «к получению» (Ozon — TASK-184); без неё — ЯМ,
+   * как было. Расходы, закупки и уплаченные налоги — кабинета целиком, как в
+   * P&L площадки (`FinanceService.build`): по площадкам они не делятся.
+   */
   async build(
     telegramUserId: string,
     period: IFinancePeriod,
     now: Date = new Date(),
+    marketplace: TFinanceMarketplace = 'ym',
   ): Promise<ICashflowReport> {
     try {
       assertFinancePeriod(period);
@@ -53,10 +60,10 @@ export class FinanceCashflowService {
     const to = new Date(moscowStart(period.to).getTime() + DAY_MS);
 
     const [paid, expenses, entries, receivable] = await Promise.all([
-      this.operations.livePaidBetween(telegramUserId, from, to),
+      this.operations.livePaidBetween(telegramUserId, from, to, marketplace),
       this.expenses.snapshot(telegramUserId),
       this.purchases.between(telegramUserId, period.from, period.to),
-      this.receivable(telegramUserId, now),
+      this.receivable(telegramUserId, now, marketplace),
     ]);
 
     const cashflow = cashflowOf({
@@ -71,15 +78,17 @@ export class FinanceCashflowService {
 
   /**
    * Только «к получению» — одна агрегирующая выборка, без периода. Её же берёт
-   * `build`, поэтому «Обзор» (TASK-125) и ДДС не могут разойтись.
+   * `build`, поэтому «Обзор» (TASK-125) и ДДС не могут разойтись. Площадка —
+   * экрана «Обзора» Ozon/WB (TASK-183); без неё — ЯМ, как было.
    */
   async receivable(
     telegramUserId: string,
     now: Date = new Date(),
+    marketplace: TFinanceMarketplace = 'ym',
   ): Promise<ICashflowReport['receivable']> {
     const today = financeToday(now);
     const tomorrow = new Date(moscowStart(today).getTime() + DAY_MS);
-    const rows = await this.operations.receivableByArticle(telegramUserId, tomorrow);
+    const rows = await this.operations.receivableByArticle(telegramUserId, tomorrow, marketplace);
     return { asOf: today, ...receivableOf(rows) };
   }
 }

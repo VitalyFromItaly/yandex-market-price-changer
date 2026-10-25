@@ -24,7 +24,30 @@ describe('стор «Прогнозов»', () => {
   it('прогноз — задача аккаунта с окном 28 дней по умолчанию', () => {
     const store = useForecastStore();
     store.load();
-    expect(jobs.start).toHaveBeenCalledWith('forecast:summary', { basisDays: 28 }, '');
+    expect(jobs.start).toHaveBeenCalledWith(
+      'forecast:summary',
+      { basisDays: 28, marketplace: 'ym' },
+      '',
+    );
+  });
+
+  it('площадка экрана (TASK-183) — в params обеих задач; reset возвращает ЯМ', () => {
+    const store = useForecastStore();
+    store.selectMarketplace('ozon');
+    store.load();
+    store.loadPurchases();
+    expect(jobs.start).toHaveBeenCalledWith(
+      'forecast:summary',
+      { basisDays: 28, marketplace: 'ozon' },
+      '',
+    );
+    expect(jobs.start).toHaveBeenCalledWith(
+      'forecast:purchases',
+      { basisDays: 28, coverDays: 30, marketplace: 'ozon' },
+      '',
+    );
+    store.reset();
+    expect(store.marketplace).toBe('ym');
   });
 
   it('закупки — только по кнопке, с окном и днями запаса', () => {
@@ -34,7 +57,7 @@ describe('стор «Прогнозов»', () => {
     store.loadPurchases();
     expect(jobs.start).toHaveBeenCalledWith(
       'forecast:purchases',
-      { basisDays: 56, coverDays: 45 },
+      { basisDays: 56, coverDays: 45, marketplace: 'ym' },
       '',
     );
   });

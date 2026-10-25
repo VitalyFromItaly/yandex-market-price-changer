@@ -15,6 +15,7 @@ import { displayNameOf } from '@/modules/auth/mappers/mapMe.auth';
 import { useAuthStore } from '@/modules/auth/store/store.auth';
 import { useStoresStore } from '@/modules/stores/store/store.stores';
 import { sidebarGroups } from '@/navigation';
+import { useMarketplace } from '@/shared/composables/useMarketplace';
 
 /*
  * Сайдбар — по макету MarketHub (решение crm_redesign_markethub_dark): своя
@@ -36,13 +37,17 @@ const { logout } = useLogout();
 const who = computed(() => (auth.me === null ? null : displayNameOf(auth.me)));
 
 const stores = useStoresStore();
+const marketplace = useMarketplace();
 
 /*
  * Закрытые администратором разделы в меню не попадают. Разделы аккаунта — из
  * /auth/me; сверху — разделы последнего открытого магазина из его вида (по ЕГО
- * модели), подписанные его именем: видно, чьи это отчёты.
+ * модели), подписанные его именем: видно, чьи это отчёты. Разделы площадки — той,
+ * что в адресе (`/ozon/...` — свои разделы Ozon и общие).
  */
-const groups = computed(() => sidebarGroups(auth.me?.sections ?? null, stores.current));
+const groups = computed(() =>
+  sidebarGroups(marketplace.value, auth.me?.sections ?? null, stores.current),
+);
 
 /*
  * Пункт с пустым путём — корень магазина («Главная»). Для такой ссылки Vue

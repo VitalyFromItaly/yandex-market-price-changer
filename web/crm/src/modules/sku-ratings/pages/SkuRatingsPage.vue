@@ -39,10 +39,30 @@ import { PageHeader } from '@/components/ui/page-header';
 import { RefreshIndicator } from '@/components/ui/refresh-indicator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuthStore } from '@/modules/auth/store/store.auth';
+import { ALL_MARKETPLACES } from '@/navigation';
+import { sectionName } from '@/navigation.sections';
+import { useMarketplace } from '@/shared/composables';
+import { JournalPull, useFinanceJournal } from '@/shared/finance-journal';
 import { RangePicker, rangeLabel, rangeQuery } from '@/shared/period';
 
 const store = useSkuRatingsStore();
 const auth = useAuthStore();
+// Площадка — из адреса (`/<площадка>/…`, TASK-181): журнал и товары своей площадки.
+const routeMarketplace = useMarketplace();
+const marketplace = computed(() => routeMarketplace.value ?? 'ym');
+store.selectMarketplace(marketplace.value);
+
+// Журнал периода не загружен — баннер с «Загрузить из Маркета», а не пустой экран.
+const journal = useFinanceJournal(
+  () => (store.range ? { marketplace: marketplace.value, ...store.range } : null),
+  () => store.load(),
+);
+// Подпись источника: у ЯМ — прежняя («журнал Маркета»), у Ozon/WB — имя площадки.
+const source = computed(() => {
+  if (marketplace.value === 'ym') return { of: 'Маркета', name: 'Маркет' };
+  const label = ALL_MARKETPLACES.find((m) => m.key === marketplace.value)?.label ?? '';
+  return { of: label, name: label };
+});
 const { data, isRefreshing, savedAt, error, top, abc, xyz, query, visibleSkus } =
   storeToRefs(store);
 
@@ -81,7 +101,11 @@ const summaries = computed(() =>
 );
 const financeLink = computed(() =>
   store.range
-    ? { name: 'ym-finance', params: { tab: 'pnl' }, query: rangeQuery(store.range) }
+    ? {
+        name: sectionName(marketplace.value, 'finance'),
+        params: { tab: 'pnl' },
+        query: rangeQuery(store.range),
+      }
     : null,
 );
 const statusTone = computed(() => {
@@ -93,9 +117,10 @@ const statusTone = computed(() => {
 watch(
   () =>
     ready.value && withFinance.value && store.request
-      ? `${store.request.range.from}:${store.request.range.to}`
+      ? `${marketplace.value}:${store.request.range.from}:${store.request.range.to}`
       : null,
   (key) => {
+    store.selectMarketplace(marketplace.value);
     if (key !== null) store.load();
   },
   { immediate: true },
@@ -157,11 +182,13 @@ watch(
       </span>
     </div>
 
+    <JournalPull :journal="journal" />
+
     <EmptyState
       v-if="isEmpty"
       :icon="Trophy"
       title="За период продаж нет"
-      description="Журнал Маркета за эти даты пуст или ещё не загружен."
+      :description="`Журнал ${source.of} за эти даты пуст или ещё не загружен.`"
     />
 
     <template v-else>
@@ -250,7 +277,7 @@ watch(
         {{ DEMAND_NOTE }}
         <template v-if="hasNoCost">{{ NO_COST_NOTE }}</template>
         <template v-if="data.status !== 'verified'">
-          Числа могут измениться, пока Маркет не закрыл период.
+          Числа могут измениться, пока {{ source.name }} не закрыл период.
         </template>
       </p>
     </template>

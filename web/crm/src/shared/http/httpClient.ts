@@ -1,7 +1,7 @@
 /**
  * Единственный HTTP-клиент CRM. Все запросы — к /api/crm (бэкенд CRM), с
  * `Authorization: Bearer`. Токен и реакцию на 401 даёт модуль auth через
- * setTokenProvider / onUnauthorized — shared не знает о сторах.
+ * setTokenProvider / onUnauthorized / onForbidden — shared не знает о сторах.
  */
 const API_PREFIX = '/api/crm';
 
@@ -26,6 +26,7 @@ export const NETWORK_ERROR_STATUS = 0;
 
 let tokenProvider: () => string | null = () => null;
 let unauthorizedHandler: ((error: ApiError) => void) | null = null;
+let forbiddenHandler: ((error: ApiError) => void) | null = null;
 
 export function setTokenProvider(provider: () => string | null): void {
   tokenProvider = provider;
@@ -33,6 +34,11 @@ export function setTokenProvider(provider: () => string | null): void {
 
 export function onUnauthorized(handler: ((error: ApiError) => void) | null): void {
   unauthorizedHandler = handler;
+}
+
+/** 403 с любого запроса — код разбирает тот, кто ставит обработчик (модуль auth). */
+export function onForbidden(handler: ((error: ApiError) => void) | null): void {
+  forbiddenHandler = handler;
 }
 
 interface NestErrorBody {
@@ -68,7 +74,7 @@ function bodyOf(body: unknown): BodyInit | undefined {
 }
 
 /**
- * Общий путь всех запросов: заголовки, сетевой сбой, разбор ошибки и 401.
+ * Общий путь всех запросов: заголовки, сетевой сбой, разбор ошибки, 401 и 403.
  * Отдаёт ответ только когда он `ok` — тело разбирает вызывающий (JSON или файл).
  */
 async function send(
@@ -108,6 +114,7 @@ async function send(
     errorBody as Record<string, unknown> | null,
   );
   if (response.status === 401 && unauthorizedHandler !== null) unauthorizedHandler(error);
+  if (response.status === 403 && forbiddenHandler !== null) forbiddenHandler(error);
   throw error;
 }
 

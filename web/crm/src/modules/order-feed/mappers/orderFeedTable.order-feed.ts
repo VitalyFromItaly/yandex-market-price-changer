@@ -1,7 +1,6 @@
 import type {
   OrderFeedArticle,
   OrderFeedFilters,
-  OrderFeedMarketplace,
   OrderFeedRow,
   OrderFeedTotals,
   OrderStage,
@@ -11,9 +10,7 @@ import { PROFIT_GAP_TEXT } from '../order-feed.domain';
 
 import { formatCount, formatDay, formatKopecks, formatRub, plural } from '@/shared/utils';
 
-const MARKETPLACES: readonly OrderFeedMarketplace[] = ['ym', 'ozon', 'wb'];
-
-/** Строки под фильтры: площадка, этап, товар (артикул или название, без регистра). */
+/** Строки под фильтры: этап, товар (артикул или название, без регистра). */
 export function filterRows(
   rows: readonly OrderFeedRow[],
   filters: OrderFeedFilters,
@@ -21,7 +18,6 @@ export function filterRows(
   const needle = filters.product.trim().toLowerCase();
   return rows.filter(
     (row) =>
-      (filters.marketplace === null || row.marketplace === filters.marketplace) &&
       (filters.stage === null || row.stage === filters.stage) &&
       (needle === '' ||
         row.items.some(
@@ -85,20 +81,6 @@ export function totalsLines(totals: readonly OrderFeedTotals[]): string[] {
         : 'прибыли пока нет — операций в журнале нет';
     return `${t.label}: ${orders}, ${counted}`;
   });
-}
-
-/** Варианты фильтра площадки — только те, что в ответе. */
-export function marketplaceOptions(
-  present: readonly { marketplace: OrderFeedMarketplace; label: string }[],
-): { value: OrderFeedMarketplace | 'all'; label: string }[] {
-  const known = MARKETPLACES.filter((mp) => present.some((p) => p.marketplace === mp));
-  return [
-    { value: 'all', label: 'Все' },
-    ...known.map((mp) => ({
-      value: mp,
-      label: present.find((p) => p.marketplace === mp)?.label ?? mp,
-    })),
-  ];
 }
 
 export function stageOptions(

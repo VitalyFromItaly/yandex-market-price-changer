@@ -7,7 +7,6 @@ import type {
 import type { Product } from '../../database/schemas/product.schema';
 import type { YandexMarketDocument } from '../../database/schemas/yandex-market.schema';
 import type { TMarketplace } from '../../shared/marketplace';
-import type { TOrderStage } from '../../shared/order-stage';
 import type {
   IInventoryAmount,
   IInventoryLevels,
@@ -47,19 +46,13 @@ import {
   INVENTORY_BASIS_DAYS,
   INVENTORY_PLACE_LABEL,
   MARKETPLACE_ORDERS_WINDOW_NOTE,
+  IN_TRANSIT_STAGES,
   NOT_CONNECTED_TEXT,
   NO_JOURNAL_TEXT,
   OZON_RETURNS_UNAVAILABLE_TEXT,
   WB_TRANSIT_NOTE,
   YM_REPORT_CLOSED_TEXT,
 } from './inventory.domain';
-
-/** «В пути к покупателю» по общему этапу заказа — тот же срез, что «Едет до клиента» ЯМ. */
-const IN_TRANSIT_STAGES: ReadonlySet<TOrderStage> = new Set<TOrderStage>([
-  'handed_over',
-  'in_transit',
-  'delivered',
-]);
 
 /** Что собрано о площадке, кроме скорости продаж. */
 interface IMarketplaceFacts {
@@ -79,6 +72,12 @@ export interface IInventoryBuildInput {
    * уведомлений — нет.
    */
   movements: boolean;
+  /**
+   * Площадка экрана «Склада» (TASK-182): только она — её остатки, движения и
+   * скорость по её журналу. Без неё — все открытые площадки (правилам
+   * уведомлений нужен склад целиком).
+   */
+  marketplace?: TMarketplace;
 }
 
 /**
@@ -108,6 +107,7 @@ export class InventoryService {
 
     const open = MARKETPLACES.filter(
       (marketplace) =>
+        (input.marketplace === undefined || marketplace === input.marketplace) &&
         isMarketplaceFeatureOpen(features, marketplace) &&
         this.marketplaces.capability(marketplace, 'stocks') !== null,
     );
@@ -351,9 +351,12 @@ export class InventoryService {
       ]);
       add(await this.products.findByMarketplaceSkus(telegramUserId, input.marketplace, [...skus]));
     }
-    const journalSkus = new Set<string>();
-    for (const units of journals.values()) for (const sku of units.keys()) journalSkus.add(sku);
-    add(await this.products.findByYmSkus(telegramUserId, [...journalSkus]));
+    for (const [marketplace, units] of journals) {
+      const found = await this.products.findByJournalSkus(telegramUserId, marketplace, [
+        ...units.keys(),
+      ]);
+      add([...found.values()]);
+    }
     add(await this.products.findWithOwnStock(telegramUserId));
     return [...byId.values()];
   }

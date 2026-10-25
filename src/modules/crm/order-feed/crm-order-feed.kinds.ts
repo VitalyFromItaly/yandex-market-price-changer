@@ -12,7 +12,7 @@ import type { OnModuleInit } from '@nestjs/common';
 
 import { Injectable } from '@nestjs/common';
 
-import { MARKETPLACES, MARKETPLACE_LABEL } from '../../../shared/marketplace';
+import { MARKETPLACE_LABEL } from '../../../shared/marketplace';
 import { OrderFeedService } from '../../finance/order-feed.service';
 import { MarketplaceNotConnectedError } from '../../marketplaces/marketplace-adapter';
 import { MarketplaceRegistry } from '../../marketplaces/marketplace-registry.service';
@@ -22,7 +22,7 @@ import { OrderReportsService } from '../../yandex/reports/order-reports.service'
 import { reportErrorMessage } from '../../yandex/reports/report-message';
 import { placementOfCampaign } from '../../yandex/stocks/placement';
 import { accountStores } from '../../yandex/stores/stores.domain';
-import { isFinanceMarketplaceOpen } from '../finance/crm-finance.domain';
+import { CrmJobError, parseJobMarketplace } from '../jobs/crm-jobs.domain';
 import { CrmJobsRegistry } from '../jobs/crm-jobs.registry';
 import { parsePeriodParams } from '../jobs/crm-period.domain';
 
@@ -43,11 +43,12 @@ interface ICollected {
 
 /**
  * «Лента заказов» (TASK-144) — kind уровня аккаунта под `order_feed` (она
- * требует `finance` сама). Только чтение. Заказы: ЯМ — по каждому магазину
- * кабинета (`collectPlacedOrders`, как «Обзор»: адаптер ЯМ знает один активный
- * магазин), Ozon/WB — возможность `orders` реестра под своими фичами. Прибыль —
- * `OrderFeedService` по журналу каждой площадки отдельно. Магазины и площадки
- * — по очереди (квоты на токен), сбой каждой — строка с причиной, а не пустота.
+ * требует `finance` сама). Только чтение. Площадка — экрана (`params.marketplace`,
+ * TASK-182): /ym — только ЯМ, /ozon — только Ozon. Заказы: ЯМ — по каждому
+ * магазину кабинета (`collectPlacedOrders`, как «Обзор»: адаптер ЯМ знает один
+ * активный магазин), Ozon/WB — возможность `orders` реестра. Прибыль —
+ * `OrderFeedService` по журналу площадки. Магазины — по очереди (квоты на
+ * токен), сбой каждого — строка с причиной, а не пустота.
  */
 @Injectable()
 export class CrmOrderFeedKinds implements OnModuleInit {
@@ -68,44 +69,49 @@ export class CrmOrderFeedKinds implements OnModuleInit {
 
   async list(context: ICrmJobContext, now: Date = new Date()): Promise<ICrmJobOutput> {
     const period = parsePeriodParams(context.params);
-    const features = context.features ?? {};
+    const parsed = parseJobMarketplace(context.params, context.features ?? {});
+    if ('error' in parsed) throw new CrmJobError(parsed.text);
+    const { marketplace } = parsed;
     const problems: ICrmOrderFeedProblem[] = [];
     const notes: string[] = [];
 
-    const open = MARKETPLACES.filter(
-      (marketplace) =>
-        isFinanceMarketplaceOpen(features, marketplace) &&
-        this.marketplaces.capability(marketplace, 'orders') !== null,
-    );
-
     const states: ICrmOrderFeedMarketplace[] = [];
     const feeds: IOrderFeed[] = [];
-    for (const marketplace of open) {
+    if (this.marketplaces.capability(marketplace, 'orders') !== null) {
       const collected =
         marketplace === 'ym'
           ? await this.ymOrders(context, period, now, problems)
           : await this.marketplaceOrders(context, marketplace, period, now, problems);
       states.push({ marketplace, label: MARKETPLACE_LABEL[marketplace], state: collected.state });
-      if (collected.state !== 'ok') continue;
-      try {
-        feeds.push(
-          await this.orderFeed.list(context.telegramUserId, marketplace, collected.orders),
-        );
-      } catch (error) {
-        problems.push({
-          marketplace,
-          storeName: null,
-          problem: `Журнал ${MARKETPLACE_LABEL[marketplace]} не прочитан: ${reportErrorMessage(error)}`,
-        });
+      if (collected.state === 'ok') {
+        try {
+          feeds.push(
+            await this.orderFeed.list(context.telegramUserId, marketplace, collected.orders),
+          );
+        } catch (error) {
+          problems.push({
+            marketplace,
+            storeName: null,
+            problem: `Журнал ${MARKETPLACE_LABEL[marketplace]} не прочитан: ${reportErrorMessage(error)}`,
+          });
+        }
       }
     }
 
-    if (open.includes('ym')) notes.push(ORDER_FEED_ACT_NOTE);
-    if (open.includes('ozon')) notes.push(ORDER_FEED_OZON_RETURNS_NOTE);
-    if (open.includes('wb')) notes.push(ORDER_FEED_WB_NOTE);
+    if (marketplace === 'ym') notes.push(ORDER_FEED_ACT_NOTE);
+    if (marketplace === 'ozon') notes.push(ORDER_FEED_OZON_RETURNS_NOTE);
+    if (marketplace === 'wb') notes.push(ORDER_FEED_WB_NOTE);
 
     return {
-      data: toCrmOrderFeed({ period, now, marketplaces: states, feeds, problems, notes }),
+      data: toCrmOrderFeed({
+        period,
+        now,
+        marketplace,
+        marketplaces: states,
+        feeds,
+        problems,
+        notes,
+      }),
     };
   }
 

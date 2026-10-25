@@ -1,13 +1,16 @@
+import type { MarketplaceKey } from '@/navigation.sections';
 import type { RouteRecordRaw } from 'vue-router';
 
-import { OVERVIEW_ROUTE_NAME } from '../overview.domain';
+import { sectionRoute } from '@/router/sectionRoute';
 
-/** «Обзор» — раздел аккаунта; имя — ключ пункта меню `ym-overview`. */
-export const overviewRoutes: RouteRecordRaw[] = [
-  {
-    path: '/ym/overview',
-    name: OVERVIEW_ROUTE_NAME,
-    component: () => import('@/modules/overview/pages/OverviewPage.vue'),
-    meta: { title: 'Обзор' },
-  },
-];
+/** «Обзор» — раздел площадки: `/<площадка>/overview`, имя `<площадка>-overview` — ключ пункта меню. */
+export function overviewRoutes(mp: MarketplaceKey): RouteRecordRaw[] {
+  return [
+    sectionRoute(
+      mp,
+      'overview',
+      () => import('@/modules/overview/pages/OverviewPage.vue'),
+      'Обзор',
+    ),
+  ];
+}

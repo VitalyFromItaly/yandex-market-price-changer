@@ -7,7 +7,6 @@ import {
   formatRate,
   isQuiet,
   kpisOf,
-  marketplaceRows,
   restRow,
   skuRow,
 } from './mapReturnsAnalytics.returns-analytics';
@@ -63,11 +62,6 @@ describe('вид «Аналитики возвратов»', () => {
     expect(kpis[0]?.caption).toBe('2 заказа');
     expect(kpis[1]?.caption).toBe('выкуплено 30 шт.');
     expect(kpis[4]?.value).toMatch(/^420\s₽$/);
-  });
-
-  it('площадки — по строке на каждую, без итога', () => {
-    const rows = marketplaceRows([mp('ym', 'Яндекс Маркет'), mp('wb', 'Wildberries')]);
-    expect(rows.map((r) => r.title)).toEqual(['Яндекс Маркет', 'Wildberries']);
   });
 
   it('товар без названия — артикулом; пустое «не отнесено» не показывается', () => {

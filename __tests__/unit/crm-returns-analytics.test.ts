@@ -10,7 +10,10 @@ import { FinancePeriodRepository } from '../../src/database/postgres/repositorie
 import { FinanceTaxSettingsRepository } from '../../src/database/postgres/repositories/finance-tax-settings.repository';
 import { CRM_SECTIONS } from '../../src/modules/crm/crm-features.domain';
 import { CrmJobError } from '../../src/modules/crm/jobs/crm-jobs.domain';
-import { RETURNS_ANALYTICS_KIND } from '../../src/modules/crm/returns-analytics/crm-returns-analytics.domain';
+import {
+  RETURNS_ANALYTICS_KIND,
+  RETURNS_ANALYTICS_YM_NOTE,
+} from '../../src/modules/crm/returns-analytics/crm-returns-analytics.domain';
 import { CrmReturnsAnalyticsKinds } from '../../src/modules/crm/returns-analytics/crm-returns-analytics.kinds';
 import { FinanceExpensesService } from '../../src/modules/finance/finance-expenses.service';
 import { financePeriodKey, monthPeriod } from '../../src/modules/finance/finance-period';
@@ -100,12 +103,17 @@ beforeEach(async () => {
   await pg.reset();
 });
 
-async function seed(rows: Record<string, unknown>[], period = SEPT) {
+async function seed(
+  rows: Record<string, unknown>[],
+  period = SEPT,
+  marketplace: 'ym' | 'ozon' = 'ym',
+) {
+  const reportType = marketplace === 'ym' ? 'united-netting' : 'ozon-transaction-list';
   const { document } = await documents.registerVersion({
-    marketplace: 'ym',
+    marketplace,
     telegramUserId: SELLER,
     businessId: 'b1',
-    reportType: 'united-netting',
+    reportType,
     periodFrom: period.from,
     periodTo: period.to,
     buffer: Buffer.from(JSON.stringify(rows)),
@@ -114,23 +122,39 @@ async function seed(rows: Record<string, unknown>[], period = SEPT) {
   });
   const keys = journalKeys(rows);
   await operations.upsertMany(
-    rows.map((r, i) =>
-      nettingRowToOperation(r, keys[i], {
+    // Ozon — те же строки под своей площадкой: экрану важна площадка журнала, не формат отчёта.
+    rows.map((r, i) => ({
+      ...nettingRowToOperation(r, keys[i], {
         telegramUserId: SELLER,
         businessId: 'b1',
         documentId: document.id,
         documentVersion: document.version,
-        periodKey: financePeriodKey('united-netting', period),
+        periodKey: financePeriodKey(reportType, period),
       }),
-    ),
+      marketplace,
+    })),
   );
 }
 
-const PRODUCTS = [{ marketplaceSkus: { ym: 'A1' }, name: 'Casio G-Shock GA-2100' }];
+const PRODUCTS: { marketplaceSkus: Partial<Record<'ym' | 'ozon', string>>; name: string }[] = [
+  { marketplaceSkus: { ym: 'A1' }, name: 'Casio G-Shock GA-2100' },
+  { marketplaceSkus: { ozon: 'OZ1' }, name: 'Часы только на Ozon' },
+];
 
 function kinds() {
   const returns = new ReturnsAnalyticsService(operations, {
-    findByYmSkus: async () => PRODUCTS,
+    // Как `ProductService.findByJournalSkus`: сначала артикул ЯМ, затем артикул площадки.
+    findByJournalSkus: async (_uid: string, marketplace: 'ym' | 'ozon', skus: string[]) =>
+      new Map(
+        skus.flatMap((sku) => {
+          const found =
+            PRODUCTS.find((p) => p.marketplaceSkus.ym === sku) ??
+            (marketplace === 'ym'
+              ? undefined
+              : PRODUCTS.find((p) => p.marketplaceSkus[marketplace] === sku));
+          return found ? [[sku, found] as const] : [];
+        }),
+      ),
   } as never);
   return new CrmReturnsAnalyticsKinds({ register: vi.fn() } as never, returns);
 }
@@ -208,11 +232,52 @@ describe('«Аналитика возвратов» — из того же жу�
     expect(view.period).toEqual(SEPT);
   });
 
-  it('площадки — только открытые продавцу, каждая своим блоком', async () => {
-    const view = (await kinds().summary(
-      contextOf({ from: SEPT.from, to: SEPT.to }, { [FEATURE.WB]: true }),
-    )).data as ICrmReturnsAnalytics;
-    expect(view.marketplaces.map((m) => m.marketplace)).toEqual(['ym', 'wb']);
+  it('площадка экрана (TASK-182): /ozon — только журнал Ozon и его артикулы, /ym не изменился', async () => {
+    await seedMonths();
+    const range = { from: SEPT.from, to: SEPT.to };
+    const ymBefore = (await kinds().summary(contextOf(range))).data as ICrmReturnsAnalytics;
+
+    await seed(
+      [
+        row({ orderId: 9, shopSku: 'OZ1', count: 1, transactionSum: 3000 }),
+        row({
+          orderId: 9,
+          shopSku: 'OZ1',
+          transactionType: 'Возврат',
+          transactionSource: 'Возврат платежа покупателя',
+          count: 1,
+          transactionSum: -3000,
+          transactionDate: '15.09.2026 10:00',
+        }),
+      ],
+      SEPT,
+      'ozon',
+    );
+    const ym = (await kinds().summary(contextOf(range))).data as ICrmReturnsAnalytics;
+    const ozon = (
+      await kinds().summary(contextOf({ ...range, marketplace: 'ozon' }, { [FEATURE.OZON]: true }))
+    ).data as ICrmReturnsAnalytics;
+
+    expect(ym).toEqual(ymBefore);
+    expect([ym.marketplace, ozon.marketplace]).toEqual(['ym', 'ozon']);
+    expect(ym.marketplaces.map((m) => m.marketplace)).toEqual(['ym']);
+    expect(ozon.marketplaces.map((m) => [m.marketplace, m.label])).toEqual([['ozon', 'Ozon']]);
+    expect(ozon.marketplaces[0].totals.returnedAmountKopecks).toBe(300_000);
+    // Товар без карточки ЯМ на Ozon — с названием (`findByJournalSkus`).
+    expect(ozon.marketplaces[0].skus.map((s) => [s.sku, s.name])).toEqual([
+      ['OZ1', 'Часы только на Ozon'],
+    ]);
+    expect(ozon.notes).not.toContain(RETURNS_ANALYTICS_YM_NOTE);
+  });
+
+  it('площадка: мусор и закрытая фича — отказ, а не тихий ЯМ', async () => {
+    const range = { from: SEPT.from, to: SEPT.to };
+    await expect(kinds().summary(contextOf({ ...range, marketplace: 'amazon' }))).rejects.toThrow(
+      'Площадка указана неверно',
+    );
+    await expect(kinds().summary(contextOf({ ...range, marketplace: 'wb' }))).rejects.toThrow(
+      '«Wildberries» закрыта',
+    );
   });
 
   it('кривой период — понятный отказ продавцу, а не сбой', async () => {

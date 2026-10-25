@@ -13,6 +13,7 @@ import { CrmCredential } from '../../src/database/schemas/crm-credential.schema'
 import { SellerNotificationSettings } from '../../src/database/schemas/seller-notification-settings.schema';
 import { SellerNotification } from '../../src/database/schemas/seller-notification.schema';
 import { UserAccess } from '../../src/database/schemas/user-access.schema';
+import { MarketplaceConnection } from '../../src/database/schemas/marketplace-connection.schema';
 import { YandexMarket } from '../../src/database/schemas/yandex-market.schema';
 import { ActionLogService } from '../../src/database/services/action-log.service';
 import { AdminCredentialService } from '../../src/database/services/admin-credential.service';
@@ -20,6 +21,7 @@ import { CrmCredentialService } from '../../src/database/services/crm-credential
 import { SellerNotificationSettingsService } from '../../src/database/services/seller-notification-settings.service';
 import { SellerNotificationService } from '../../src/database/services/seller-notification.service';
 import { UserAccessService } from '../../src/database/services/user-access.service';
+import { MarketplaceConnectionService } from '../../src/database/services/marketplace-connection.service';
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { FEATURE_DISABLED } from '../../src/modules/crm/crm-features.domain';
 import { CrmModule } from '../../src/modules/crm/crm.module';
@@ -88,6 +90,8 @@ describe('CRM «Уведомления» по HTTP', { timeout: 60_000 }, () => 
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
+        { provide: getModelToken(MarketplaceConnection.name), useValue: inMemoryModel() },
         SellerNotificationService,
         SellerNotificationSettingsService,
         { provide: getModelToken(ActionLog.name), useValue: inMemoryModel() },
@@ -119,6 +123,7 @@ describe('CRM «Уведомления» по HTTP', { timeout: 60_000 }, () => 
         CrmCredentialService,
         UserAccessService,
         YandexMarketService,
+        MarketplaceConnectionService,
         SellerNotificationService,
         SellerNotificationSettingsService,
         SellerNotificationsScheduler,

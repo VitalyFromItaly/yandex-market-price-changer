@@ -9,12 +9,13 @@ import { describe, expect, it } from 'vitest';
 import {
   compareRows,
   costSharePoints,
-  financeLink,
   numberedColumns,
   revenueSegments,
   schemeRows,
   statusTone,
 } from './mapCompare.marketplace-compare';
+
+import { financeLink } from '@/shared/marketplaces';
 
 const SEPT = { from: '2026-09-01', to: '2026-09-30' };
 
@@ -93,9 +94,9 @@ describe('маппер «Сравнения площадок»', () => {
     const revenue = rows.find((row) => row.key === 'revenue');
     expect(revenue?.cells[0]?.to).toEqual(financeLink('ozon', SEPT));
     expect(financeLink('ozon', SEPT)).toEqual({
-      name: 'ym-finance',
+      name: 'ozon-finance',
       params: { tab: 'pnl' },
-      query: { from: '2026-09-01', to: '2026-09-30', marketplace: 'ozon' },
+      query: { from: '2026-09-01', to: '2026-09-30' },
     });
   });
 

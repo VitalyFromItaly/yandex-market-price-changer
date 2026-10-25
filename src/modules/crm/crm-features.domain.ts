@@ -23,14 +23,65 @@ export const FEATURE_DISABLED = 'FEATURE_DISABLED';
 export const FBY_ONLY = 'FBY_ONLY';
 
 /**
- * Раздел CRM (имя маршрута из `web/crm/src/navigation.ts`) → фичи, ЛЮБОЙ из которых
+ * Разделы вида «площадка» (`web/crm/src/navigation.sections.ts`, решение
+ * ozon_wb_crm_variant_a): у каждой площадки свой — `ym-finance`, `ozon-finance`,
+ * `wb-finance`, с теми же фичами. Раздел Ozon/WB вдобавок требует открытой фичи
+ * площадки (`CRM_MARKETPLACE_GATE`). Совпадение с разделами вида `marketplace`
+ * фронта пинит `crm-features.test.ts`.
+ */
+export const CRM_MARKETPLACE_SECTIONS = {
+  // Финансы — аккаунта: журнал бизнесовый, статус и сверка — помесячно на продавца.
+  finance: [FEATURE.FINANCE],
+  // Обзор (главная v2) — аккаунта: деньги из бизнесового журнала, по всему кабинету.
+  overview: [FEATURE.OVERVIEW],
+  // Unit-экономика — аккаунта: журнал бизнесовый, товар продаётся во всех магазинах.
+  'unit-economics': [FEATURE.UNIT_ECONOMICS],
+  // Аналитика продаж — аккаунта: журнал бизнесовый, разрезы — по всему кабинету.
+  'sales-analytics': [FEATURE.SALES_ANALYTICS],
+  // Рейтинги и классификации — аккаунта: тот же бизнесовый журнал, что у аналитики продаж.
+  'sku-ratings': [FEATURE.SKU_RATINGS],
+  // Склад — аккаунта: товар один на все магазины и площадки, остатки сводятся к нему.
+  inventory: [FEATURE.INVENTORY],
+  // Лента заказов — аккаунта: заказы всех магазинов ЯМ и площадок одним списком.
+  'order-feed': [FEATURE.ORDER_FEED],
+  // Аналитика возвратов — аккаунта: журналы площадок бизнесовые, разрезы — по всему кабинету.
+  'returns-analytics': [FEATURE.RETURNS_ANALYTICS],
+  // Прогнозы — аккаунта: база — бизнесовый журнал, закупки — по всем магазинам кабинета.
+  forecast: [FEATURE.FORECAST],
+} as const satisfies Record<string, readonly TFeatureKey[]>;
+
+export type TCrmMarketplaceSection = keyof typeof CRM_MARKETPLACE_SECTIONS;
+
+/** Площадки с разделами в CRM. */
+export type TCrmMarketplace = 'ym' | 'ozon' | 'wb';
+
+/**
+ * Фича, без которой разделы площадки скрыты целиком (default off): пока она
+ * закрыта, Ozon/WB у продавца — «скоро». У ЯМ гейта нет.
+ */
+export const CRM_MARKETPLACE_GATE: Readonly<Partial<Record<TCrmMarketplace, TFeatureKey>>> = {
+  ozon: FEATURE.OZON,
+  wb: FEATURE.WB,
+};
+
+function marketplaceSections(mp: TCrmMarketplace): Record<string, readonly TFeatureKey[]> {
+  return Object.fromEntries(
+    Object.entries(CRM_MARKETPLACE_SECTIONS).map(([section, keys]) => [`${mp}-${section}`, keys]),
+  );
+}
+
+/** Дашборд «Площадки» (TASK-191): виден при фиче и ≥2 подключённых открытых площадках. */
+export const MARKETPLACES_DASHBOARD_SECTION = 'ym-marketplaces-dashboard';
+
+/**
+ * Раздел CRM (имя маршрута CRM) → фичи, ЛЮБОЙ из которых
  * достаточно, чтобы раздел показать. Пустой список — раздел не гейтится
  * (главная, магазин, настройки, профиль): закрыть их флагом значит запереть
  * продавца снаружи собственных настроек — тот же довод, что у бота.
  *
  * Белый список: раздел, которого здесь нет, фронт НЕ показывает. Забытая строка
  * прячет новый раздел, а не открывает закрытый — безопасное направление дрейфа.
- * Совпадение ключей с `navigation.ts` пинит `crm-features.test.ts`.
+ * Совпадение ключей с `navigation.sections.ts` фронта пинит `crm-features.test.ts`.
  */
 export const CRM_SECTIONS: Readonly<Record<string, readonly TFeatureKey[]>> = {
   'ym-dashboard': [],
@@ -65,28 +116,13 @@ export const CRM_SECTIONS: Readonly<Record<string, readonly TFeatureKey[]>> = {
   'ym-taxes': [FEATURE.TAXES],
   // Закупки и ДДС — аккаунта: партия покупается на бизнес, выплаты — по кабинету целиком.
   'ym-purchases': [FEATURE.PURCHASES],
-  // Финансы — аккаунта: журнал бизнесовый, статус и сверка — помесячно на продавца.
-  'ym-finance': [FEATURE.FINANCE],
-  // Обзор (главная v2) — аккаунта: деньги из бизнесового журнала, по всему кабинету.
-  'ym-overview': [FEATURE.OVERVIEW],
-  // Unit-экономика — аккаунта: журнал бизнесовый, товар продаётся во всех магазинах.
-  'ym-unit-economics': [FEATURE.UNIT_ECONOMICS],
-  // Аналитика продаж — аккаунта: журнал бизнесовый, разрезы — по всему кабинету.
-  'ym-sales-analytics': [FEATURE.SALES_ANALYTICS],
   // Сравнение площадок — аккаунта: журналы площадок бизнесовые, сравнение по кабинету.
   'ym-marketplace-compare': [FEATURE.MARKETPLACE_COMPARE],
-  // Рейтинги и классификации — аккаунта: тот же бизнесовый журнал, что у аналитики продаж.
-  'ym-sku-ratings': [FEATURE.SKU_RATINGS],
-  // Склад — аккаунта: товар один на все магазины и площадки, остатки сводятся к нему.
-  'ym-inventory': [FEATURE.INVENTORY],
-  // Лента заказов — аккаунта: заказы всех магазинов ЯМ и площадок одним списком.
-  'ym-order-feed': [FEATURE.ORDER_FEED],
-  // Аналитика возвратов — аккаунта: журналы площадок бизнесовые, разрезы — по всему кабинету.
-  'ym-returns-analytics': [FEATURE.RETURNS_ANALYTICS],
+  // Дашборд «Площадки» — аккаунта; кроме фичи нужен ≥2 подключённых открытых площадок —
+  // это не фича, поэтому `/auth/me` скрывает раздел через `hidden` (TASK-191).
+  [MARKETPLACES_DASHBOARD_SECTION]: [FEATURE.MARKETPLACES_DASHBOARD],
   // Передача остатков — аккаунта: свой склад один на все магазины и площадки.
   'ym-stock-push': [FEATURE.STOCK_PUSH],
-  // Прогнозы — аккаунта: база — бизнесовый журнал, закупки — по всем магазинам кабинета.
-  'ym-forecast': [FEATURE.FORECAST],
   // Калькулятор цен — аккаунта: ставки из бизнесового журнала; тариф ЯМ — по магазину задачи.
   'ym-price-calculator': [FEATURE.PRICE_CALCULATOR],
   // «ИИ-аналитик» — аккаунта: журнал бизнесовый; ai и finance свёрнуты в фичу (requires).
@@ -101,7 +137,21 @@ export const CRM_SECTIONS: Readonly<Record<string, readonly TFeatureKey[]>> = {
   connections: [],
   profile: [],
   help: [],
+  ...marketplaceSections('ym'),
+  ...marketplaceSections('ozon'),
+  ...marketplaceSections('wb'),
 };
+
+/**
+ * Разделы продавца без единой площадки (решение crm_audience_no_platform):
+ * завести первый ключ и посмотреть свой профиль. Маршруты API этих разделов
+ * помечены `@AllowWithoutPlatform`, остальные `CrmJwtGuard` закрывает.
+ */
+export const NO_PLATFORM_SECTIONS: ReadonlySet<string> = new Set([
+  'connections',
+  'profile',
+  'help',
+]);
 
 /**
  * Разделы ВНУТРИ магазина (`/ym/stores/:store/...`) — отчёты считаются по
@@ -126,18 +176,31 @@ export const CRM_STORE_SECTIONS: ReadonlySet<string> = new Set([
 
 export type TSectionScope = 'account' | 'store';
 
+/** Фича площадки, без которой раздел скрыт: `ozon-finance` → ozon; у ЯМ и общих — нет. */
+function marketplaceGateOf(name: string): TFeatureKey | undefined {
+  const mp = name.split('-')[0] as TCrmMarketplace;
+  return CRM_MARKETPLACE_GATE[mp];
+}
+
 /**
  * Разделы, которые показать в навигации, — в порядке таблицы. `scope` сужает
  * до разделов аккаунта (`/auth/me`) или магазина (`/stores/:key`, с моделью
- * ЭТОГО магазина); без него — все.
+ * ЭТОГО магазина); без него — все. `hidden` — разделы, закрытые не фичей, а данными
+ * продавца (дашборд «Площадки» при одной площадке).
  */
 export function visibleSections(
   features: TFeatureMap,
   placementType?: string | null,
   scope?: TSectionScope,
+  hidden: ReadonlySet<string> = new Set(),
 ): string[] {
   return Object.entries(CRM_SECTIONS)
+    .filter(([name]) => !hidden.has(name))
     .filter(([name]) => !scope || CRM_STORE_SECTIONS.has(name) === (scope === 'store'))
+    .filter(([name]) => {
+      const gate = marketplaceGateOf(name);
+      return gate === undefined || isFeatureOpen(features, gate, placementType);
+    })
     .filter(
       ([, keys]) =>
         keys.length === 0 || keys.some((key) => isFeatureOpen(features, key, placementType)),

@@ -1,27 +1,26 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
 
-import { CRM_SECTIONS } from '../../src/modules/crm/crm-features.domain';
+import { CRM_MARKETPLACE_GATE, CRM_SECTIONS } from '../../src/modules/crm/crm-features.domain';
 import {
   BOT_SCREEN_SECTIONS,
   FEATURES_WITHOUT_SECTION,
 } from '../../src/modules/crm/crm-parity.domain';
 import { MENU } from '../../src/modules/telegram/bots/price-changer-bot/menu.constants';
 import { FEATURE_KEYS, FEATURE_META } from '../../src/modules/telegram/bots/shared/features.domain';
+import { allNavNames } from '../../web/crm/src/navigation.sections';
 
 /**
  * Паритет «бот ↔ CRM» (TASK-088): новая фича или кнопка бота без места в CRM
  * роняет CI, а не всплывает жалобой продавца.
  */
 
-const sectioned = new Set(Object.values(CRM_SECTIONS).flat());
+// Фича площадки (ozon, wb) — гейт её разделов `ozon-*`/`wb-*`, а не исключение.
+const sectioned = new Set([
+  ...Object.values(CRM_SECTIONS).flat(),
+  ...Object.values(CRM_MARKETPLACE_GATE),
+]);
 
-function navNames(): string[] {
-  const source = readFileSync(join(__dirname, '../../web/crm/src/navigation.ts'), 'utf8');
-  return [...source.matchAll(/\bname: '([^']+)'/g)].map((m) => m[1]);
-}
+const navNames = allNavNames;
 
 describe('паритет фич бота и разделов CRM', () => {
   it('каждая фича — в разделе CRM или в исключениях с причиной', () => {
@@ -49,10 +48,10 @@ describe('паритет фич бота и разделов CRM', () => {
         'fby_supply',
         'feedback_ai_reply',
         'finance_anomalies',
+        'finance_pull',
         'finance_upload',
         'hosting_reminder',
         'notifications_telegram',
-        'ozon',
         'profit_actual',
         'promotion',
         'stock_push_write_ym',
@@ -60,7 +59,6 @@ describe('паритет фич бота и разделов CRM', () => {
         'stock_push_write_wb',
         'stock_push_schedule',
         'tax_year',
-        'wb',
       ].sort(),
     );
   });

@@ -19,9 +19,14 @@ import {
   CRM_BCRYPT_ROUNDS,
   CrmCredentialService,
 } from '../../database/services/crm-credential.service';
+import { MarketplaceConnectionService } from '../../database/services/marketplace-connection.service';
 import { UserAccessService } from '../../database/services/user-access.service';
 import { YandexMarketService } from '../../database/services/yandex-market.service';
 import { LoginThrottle, minutesLeft } from '../admin/login-throttle';
+import {
+  DASHBOARD_MIN_MARKETPLACES,
+  connectedOpenMarketplaces,
+} from '../marketplaces/marketplace-connections.domain';
 import { storeTitle } from '../telegram/bots/price-changer-bot/store-title';
 import { allFeaturesEnabled, resolveFeatures } from '../telegram/bots/shared/features.domain';
 import { placementOfCampaign } from '../yandex/stocks/placement';
@@ -37,7 +42,11 @@ import {
   resolveAccount,
   validateNewPassword,
 } from './crm-auth.domain';
-import { visibleSections } from './crm-features.domain';
+import {
+  MARKETPLACES_DASHBOARD_SECTION,
+  NO_PLATFORM_SECTIONS,
+  visibleSections,
+} from './crm-features.domain';
 
 /** Сколько живёт выданный токен — как у админ-панели. */
 export const CRM_TOKEN_TTL = '7d';
@@ -121,7 +130,7 @@ function stateOf(credential: CrmCredentialDocument): ICrmAccountState {
 }
 
 const WRONG_CREDENTIALS = 'Неверный логин или пароль';
-const NO_ACCESS = 'Нет доступа к CRM: заявка в боте не одобрена или магазин не подключён';
+const NO_ACCESS = 'Нет доступа к CRM: заявка в боте не одобрена или площадка не подключена';
 
 /**
  * Вход продавцов в CRM. Устроен по образцу AdminAuthService.
@@ -143,6 +152,7 @@ export class CrmAuthService {
     private readonly adminCredentials: AdminCredentialService,
     private readonly access: UserAccessService,
     private readonly stores: YandexMarketService,
+    private readonly connections: MarketplaceConnectionService,
     private readonly config: AppConfigService,
     private readonly jwt: JwtService,
   ) {}
@@ -197,8 +207,7 @@ export class CrmAuthService {
     const passwordOk = await bcrypt.compare(password, passwordHash);
 
     const allowed =
-      account.kind === 'found' &&
-      (await this.isAllowed(account.telegramUserId, account.access?.status));
+      account.kind === 'found' && this.isAllowed(account.telegramUserId, account.access?.status);
 
     if (!passwordOk || !allowed) {
       this.throttle.registerFailure(login, now);
@@ -284,7 +293,7 @@ export class CrmAuthService {
    * (`AccessController.impersonateCrm`), админ взят из её JWT.
    *
    * Продавец должен быть таким, которого CRM пустила бы саму: одобрен (или
-   * админ) и с магазином. Учётка CRM продавцу не нужна и не создаётся: токен не
+   * админ); без площадки — те же три раздела, что у него самого. Учётка CRM продавцу не нужна и не создаётся: токен не
    * привязан к его паролю (`pwdv: 0`), а «последний вход» продавца остаётся его.
    */
   async impersonate(adminId: string, telegramUserId: string): Promise<ICrmSession> {
@@ -292,10 +301,8 @@ export class CrmAuthService {
     const rows = await this.access.findByLogin(telegramUserId);
     const account = resolveAccount(rows, telegramUserId);
     const status = account.kind === 'found' ? account.access?.status : undefined;
-    if (!(await this.isAllowed(telegramUserId, status))) {
-      throw new ConflictException(
-        'Продавец не может войти в CRM: доступ не одобрен или магазин не подключён',
-      );
+    if (!this.isAllowed(telegramUserId, status)) {
+      throw new ConflictException('Продавец не может войти в CRM: доступ не одобрен');
     }
 
     const payload: ICrmTokenPayload = { sub: telegramUserId, pwdv: 0, imp: adminId };
@@ -463,8 +470,17 @@ export class CrmAuthService {
 
   /** Профиль вошедшего — без идентификаторов магазина и токена Маркета. */
   async me(user: ICrmUser): Promise<ICrmMe> {
-    const store = await this.stores.findByTelegramUser(user.telegramUserId);
+    const [store, connections, hasPlatform] = await Promise.all([
+      this.stores.findByTelegramUser(user.telegramUserId),
+      this.connections.findForUser(user.telegramUserId),
+      this.hasPlatform(user.telegramUserId),
+    ]);
     const placementType = store ? placementOfCampaign(store.stores, store.campaign_id) : undefined;
+    // Дашборд «Площадки» сравнивает площадки — с одной ему нечего показать (TASK-191).
+    const live = connectedOpenMarketplaces(store, connections, user.features);
+    const hidden = new Set(
+      live.length < DASHBOARD_MIN_MARKETPLACES ? [MARKETPLACES_DASHBOARD_SECTION] : [],
+    );
 
     return {
       telegramUserId: user.telegramUserId,
@@ -479,19 +495,32 @@ export class CrmAuthService {
       features: user.features,
       // Разделы аккаунта; разделы магазина отдаёт `/ym/stores/:key` — по модели
       // магазина, открытого в вебе, а не активного в боте.
-      sections: visibleSections(user.features, placementType, 'account'),
+      // Без площадки — только то, что открыто и гвардом (crm_audience_no_platform).
+      sections: visibleSections(user.features, placementType, 'account', hidden).filter(
+        (name) => hasPlatform || NO_PLATFORM_SECTIONS.has(name),
+      ),
       impersonation: user.impersonatedBy ? { adminId: user.impersonatedBy } : null,
     };
   }
 
   /**
    * Пускать ли в CRM: только тех, кто уже пользуется ботом (решение
-   * crm_audience) — одобренный продавец или админ, и в обоих случаях с
-   * подключённым магазином.
+   * crm_audience) — одобренный продавец или админ. Площадка для входа не нужна
+   * (решение crm_audience_no_platform): без неё открыты только «Подключения»,
+   * профиль и помощь — это сторожит `CrmJwtGuard` по `hasPlatform`.
    */
-  private async isAllowed(telegramUserId: string, status: string | undefined): Promise<boolean> {
-    if (!this.config.isAdmin(telegramUserId) && status !== 'approved') return false;
-    return await this.stores.isConfigured(telegramUserId);
+  private isAllowed(telegramUserId: string, status: string | undefined): boolean {
+    return this.config.isAdmin(telegramUserId) || status === 'approved';
+  }
+
+  /**
+   * Есть ли у продавца площадка: магазин ЯМ или подключение Ozon/WB (TASK-192;
+   * отвергнутый площадкой ключ считается — менять его в CRM и надо).
+   * `isConfigured` не расширяется — по нему маршрутизирует бот.
+   */
+  async hasPlatform(telegramUserId: string): Promise<boolean> {
+    if (await this.stores.isConfigured(telegramUserId)) return true;
+    return await this.connections.hasAny(telegramUserId);
   }
 
   private async sign(telegramUserId: string, passwordChangedAt: Date): Promise<string> {

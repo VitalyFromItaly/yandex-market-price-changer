@@ -36,6 +36,9 @@ import { FinancePurchasesService } from '../../src/modules/finance/finance-purch
 import { FinanceTaxService } from '../../src/modules/finance/finance-tax.service';
 import { FinanceService } from '../../src/modules/finance/finance.service';
 import { FORECAST_NO_JOURNAL } from '../../src/modules/finance/forecast';
+import { OZON_SALE_TYPES } from '../../src/modules/finance/ozon-articles';
+import { NOT_CONNECTED_TEXT } from '../../src/modules/inventory/inventory.domain';
+import { MarketplaceNotConnectedError } from '../../src/modules/marketplaces/marketplace-adapter';
 import { journalKeys, nettingRowToOperation } from '../../src/modules/finance/ym-journal';
 import {
   FEATURE,
@@ -114,13 +117,18 @@ beforeEach(async () => {
   await pg.reset();
 });
 
-async function seed(rows: Record<string, unknown>[], period: IFinancePeriod) {
-  const periodKey = financePeriodKey('united-netting', period);
+async function seed(
+  rows: Record<string, unknown>[],
+  period: IFinancePeriod,
+  marketplace: 'ym' | 'ozon' = 'ym',
+) {
+  const reportType = marketplace === 'ym' ? 'united-netting' : 'ozon-transaction-list';
+  const periodKey = financePeriodKey(reportType, period);
   const { document } = await documents.registerVersion({
-    marketplace: 'ym',
+    marketplace,
     telegramUserId: SELLER,
     businessId: 'b1',
-    reportType: 'united-netting',
+    reportType,
     periodFrom: period.from,
     periodTo: period.to,
     buffer: Buffer.from(JSON.stringify(rows)),
@@ -129,21 +137,32 @@ async function seed(rows: Record<string, unknown>[], period: IFinancePeriod) {
   });
   const keys = journalKeys(rows);
   await operations.upsertMany(
-    rows.map((r, i) =>
-      nettingRowToOperation(r, keys[i], {
+    // Ozon — те же строки под своей площадкой: прогнозу важна площадка журнала, не формат
+    // отчёта. Продажа двигает товар у Ozon только своим типом операции (`ozonGoodsMovement`),
+    // а штуки у Ozon — позиции `items[]` сырой строки, по позиции на штуку.
+    rows.map((r, i) => {
+      const op = nettingRowToOperation(r, keys[i], {
         telegramUserId: SELLER,
         businessId: 'b1',
         documentId: document.id,
         documentVersion: document.version,
         periodKey,
-      }),
-    ),
+      });
+      if (marketplace === 'ym') return op;
+      const sale = op.article === 'sales';
+      return {
+        ...op,
+        marketplace,
+        transactionType: sale ? [...OZON_SALE_TYPES][0] : op.transactionType,
+        raw: { ...r, items: Array.from({ length: Number(r.count ?? 0) }, () => ({ sku: 0 })) },
+      };
+    }),
   );
   // Без строки статуса журнал считается «не загружен».
   await periods.upsert({
-    marketplace: 'ym',
+    marketplace,
     telegramUserId: SELLER,
-    reportType: 'united-netting',
+    reportType,
     periodKey,
     periodFrom: period.from,
     periodTo: period.to,
@@ -161,7 +180,7 @@ async function seed(rows: Record<string, unknown>[], period: IFinancePeriod) {
   });
 }
 
-async function seedBoth() {
+async function seedBoth(marketplace: 'ym' | 'ozon' = 'ym') {
   await seed(
     [
       row({ orderId: 1, transactionDate: '20.09.2026 10:00' }),
@@ -178,6 +197,7 @@ async function seedBoth() {
       }),
     ],
     SEPT,
+    marketplace,
   );
   await seed(
     [
@@ -185,23 +205,49 @@ async function seedBoth() {
       row({ orderId: 4, count: 2, transactionSum: 10000, transactionDate: '12.10.2026 10:00' }),
     ],
     OCT,
+    marketplace,
   );
 }
 
 const contextOf = (params: Record<string, unknown>, store: Record<string, unknown> = {}) =>
   ({ telegramUserId: SELLER, store: store as never, params, features: {} }) as const;
 
-function kinds(listStocks = vi.fn(async () => ymLevels({ A1: 3 }))) {
+const ozonContextOf = (params: Record<string, unknown>) => ({
+  ...contextOf({ ...params, marketplace: 'ozon' }),
+  features: { [FEATURE.OZON]: true },
+});
+
+/** Карточка с артикулами ЯМ и Ozon: ключ журнала и закупа — артикул ЯМ. */
+const CARD = { marketplaceSkus: { ym: 'A1', ozon: 'OZ-A1' }, name: 'Casio F-91W' };
+
+function kinds(
+  listStocks = vi.fn(async () => ymLevels({ A1: 3 })),
+  ozonStocks = vi.fn(async () => ymLevels({})),
+) {
   const register = vi.fn();
+  const require = vi.fn((marketplace: string) => ({
+    listStocks: marketplace === 'ym' ? listStocks : ozonStocks,
+  }));
   const instance = new CrmForecastKinds(
     { register } as never,
     forecasts,
     finance,
-    { require: () => ({ listStocks }) } as never,
+    { require } as never,
     { findBySkus: async () => new Map([['A1', { price: 3000 }]]) } as never,
-    { findByYmSkus: async () => [{ marketplaceSkus: { ym: 'A1' }, name: 'Casio F-91W' }] } as never,
+    {
+      // Как `ProductService.findByJournalSkus`: сначала артикул ЯМ, затем артикул площадки.
+      findByJournalSkus: async (_uid: string, marketplace: 'ym' | 'ozon', skus: string[]) =>
+        new Map(
+          skus.flatMap((sku) =>
+            CARD.marketplaceSkus.ym === sku ||
+            (marketplace !== 'ym' && CARD.marketplaceSkus[marketplace] === sku)
+              ? [[sku, CARD] as const]
+              : [],
+          ),
+        ),
+    } as never,
   );
-  return { instance, register, listStocks };
+  return { instance, register, listStocks, ozonStocks, require };
 }
 
 describe('«Прогнозы» = «Финансам» по построению', () => {
@@ -286,6 +332,85 @@ describe('закупки', () => {
     ]);
     // Закуп — прайс 3 000 ₽ минус общая скидка по умолчанию 10 %, как в «Обзоре».
     expect(view.totalKopecks).toBe(4 * 270_000);
+  });
+});
+
+describe('площадка экрана (TASK-183)', () => {
+  it('Ozon — прогноз по журналу Ozon; журнала Ozon нет — причина, хоть ЯМ и загружен', async () => {
+    await seedBoth();
+    const { instance } = kinds();
+    const empty = await instance.summary(ozonContextOf({ basisDays: 28 }), OCT_17);
+    expect(empty.data).toMatchObject({
+      marketplace: 'ozon',
+      forecast: null,
+      reason: FORECAST_NO_JOURNAL('09.2026'),
+    });
+
+    await seedBoth('ozon');
+    const ozon = (await instance.summary(ozonContextOf({ basisDays: 28 }), OCT_17))
+      .data as ICrmForecast;
+    const fact = await finance.build(SELLER, { from: '2026-10-01', to: '2026-10-16' }, OCT_17, {
+      flat: false,
+      marketplace: 'ozon',
+    });
+    expect(ozon.reason).toBeNull();
+    expect(ozon.forecast.month.fact.revenueKopecks).toBe(fact.pnl.revenueKopecks);
+    const ym = (await instance.summary(contextOf({ basisDays: 28 }), OCT_17)).data;
+    expect(ym).toMatchObject({ marketplace: 'ym' });
+  });
+
+  it('закупки Ozon: остатки Ozon по всем местам под ключом журнала, ЯМ не спрашивается', async () => {
+    await seedBoth('ozon');
+    const ozonStocks = vi.fn(async () => ({
+      takenAt: new Date(),
+      placement: null,
+      byLocation: {
+        seller: { 'OZ-A1': { available: 1, reserved: null } },
+        marketplace: { 'OZ-A1': { available: 1, reserved: null } },
+      },
+    }));
+    const { instance, listStocks, require } = kinds(undefined, ozonStocks);
+    const { data } = await instance.purchases(
+      ozonContextOf({ basisDays: 28, coverDays: 28 }),
+      OCT_17,
+    );
+    const view = data as ICrmForecastPurchases;
+    expect(view.marketplace).toBe('ozon');
+    expect(view.stores).toBe(1);
+    expect(view.problems).toEqual([]);
+    // Продано 5 шт., на Ozon 1 + 1 = 2 — докупить 3.
+    expect(view.rows).toEqual([
+      expect.objectContaining({ sku: 'A1', name: 'Casio F-91W', stock: 2, needUnits: 3 }),
+    ]);
+    expect(listStocks).not.toHaveBeenCalled();
+    expect(require.mock.calls.map(([marketplace]) => marketplace)).toEqual(['ozon']);
+  });
+
+  it('Ozon не подключён — строка причины, остаток неизвестен, а не ноль', async () => {
+    await seedBoth('ozon');
+    const { instance } = kinds(
+      undefined,
+      vi.fn(async () => {
+        throw new MarketplaceNotConnectedError('ozon', SELLER, 'no-credentials', 'stocks');
+      }),
+    );
+    const { data } = await instance.purchases(
+      ozonContextOf({ basisDays: 28, coverDays: 28 }),
+      OCT_17,
+    );
+    const view = data as ICrmForecastPurchases;
+    expect(view.problems).toEqual([{ storeName: 'Ozon', problem: NOT_CONNECTED_TEXT('ozon') }]);
+    expect(view.rows).toEqual([expect.objectContaining({ sku: 'A1', stock: null })]);
+  });
+
+  it('площадка: мусор и закрытая фича — отказ, а не тихий ЯМ', async () => {
+    const { instance } = kinds();
+    await expect(
+      instance.summary(contextOf({ basisDays: 28, marketplace: 'amazon' }), OCT_17),
+    ).rejects.toBeInstanceOf(CrmJobError);
+    await expect(
+      instance.purchases(contextOf({ basisDays: 28, coverDays: 28, marketplace: 'ozon' }), OCT_17),
+    ).rejects.toThrow('«Ozon» закрыта');
   });
 });
 

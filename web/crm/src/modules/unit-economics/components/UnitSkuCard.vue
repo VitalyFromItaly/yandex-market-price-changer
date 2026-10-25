@@ -1,20 +1,21 @@
 <script setup lang="ts">
 /**
- * Карточка товара: показатели строками, площадки — колонками. Числа есть
+ * Карточка товара: показатели строками, площадки — колонками. На ЯМ числа есть
  * только у Маркета; Ozon и Wildberries — «скоро», без нулей: ноль читался бы
- * как «там не продаётся» (решение `ozon_wb_skipped_for_now`).
+ * как «там не продаётся» (решение `ozon_wb_skipped_for_now`). На Ozon/WB —
+ * одна колонка своей площадки (`unitPlatforms`, TASK-181).
  */
 import type { Tone, UnitSku } from '../unit-economics.domain';
+import type { MarketplaceKey } from '@/navigation.sections';
 
 import { computed } from 'vue';
 
-import { formatShare, unitCardLines } from '../mappers/mapUnitEconomics.unit-economics';
 import {
-  MIN_PRICE_HINT,
-  NO_COST_NOTE,
-  PRICE_CALCULATOR_ROUTE,
-  UNIT_PLATFORMS,
-} from '../unit-economics.domain';
+  formatShare,
+  unitCardLines,
+  unitPlatforms,
+} from '../mappers/mapUnitEconomics.unit-economics';
+import { MIN_PRICE_HINT, NO_COST_NOTE, PRICE_CALCULATOR_ROUTE } from '../unit-economics.domain';
 
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -40,9 +41,12 @@ const props = defineProps<{
   periodLabel: string;
   /** Раздел «Калькулятор цен» открыт — ссылка «Рассчитать цену» с этим товаром. */
   withCalculator?: boolean;
+  /** Площадка экрана: её числа — первой колонкой (TASK-181). */
+  marketplace?: MarketplaceKey;
 }>();
 const emit = defineEmits<{ close: [] }>();
 
+const platforms = computed(() => unitPlatforms(props.marketplace ?? 'ym'));
 const lines = computed(() => (props.sku ? unitCardLines(props.sku) : []));
 
 const TONE_CLASS: Record<Tone, string> = {
@@ -74,7 +78,7 @@ function onOpenChange(open: boolean): void {
           <TableRow>
             <TableHead>Показатель</TableHead>
             <TableHead
-              v-for="platform in UNIT_PLATFORMS"
+              v-for="platform in platforms"
               :key="platform.key"
               class="text-right"
               :class="platform.ready ? '' : 'hidden sm:table-cell'"
@@ -106,7 +110,7 @@ function onOpenChange(open: boolean): void {
               <div v-if="line.hint" class="text-xs text-muted-foreground">{{ line.hint }}</div>
             </TableCell>
             <TableCell
-              v-for="platform in UNIT_PLATFORMS.filter((p) => !p.ready)"
+              v-for="platform in platforms.filter((p) => !p.ready)"
               :key="platform.key"
               class="hidden text-right text-xs text-muted-foreground sm:table-cell"
             >

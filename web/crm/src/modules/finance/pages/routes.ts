@@ -1,13 +1,17 @@
+import type { MarketplaceKey } from '@/navigation.sections';
 import type { RouteRecordRaw } from 'vue-router';
 
-/** Имя — ключ пункта меню `ym-finance`: маршрут вытесняет заглушку раздела. */
-export const financeRoutes: RouteRecordRaw[] = [
-  {
-    path: '/ym/finance/:tab?',
-    name: 'ym-finance',
-    component: () => import('@/modules/finance/pages/FinancePage.vue'),
-    meta: { title: 'Финансы' },
-  },
-  // ДДС жил вкладкой «Закупок» (TASK-122) — старая ссылка ведёт на его новое место.
-  { path: '/ym/purchases/cashflow', redirect: '/ym/finance/cashflow' },
-];
+import { sectionRoute } from '@/router/sectionRoute';
+
+/** «Финансы» — раздел площадки: `/<площадка>/finance`, имя `<площадка>-finance` — ключ пункта меню. */
+export function financeRoutes(mp: MarketplaceKey): RouteRecordRaw[] {
+  return [
+    sectionRoute(
+      mp,
+      'finance',
+      () => import('@/modules/finance/pages/FinancePage.vue'),
+      'Финансы',
+      '/:tab?',
+    ),
+  ];
+}

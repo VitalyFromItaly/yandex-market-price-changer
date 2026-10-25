@@ -48,10 +48,16 @@ import { PageHeader } from '@/components/ui/page-header';
 import { RefreshIndicator } from '@/components/ui/refresh-indicator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuthStore } from '@/modules/auth/store/store.auth';
+import { useMarketplace } from '@/shared/composables';
+import { JournalPull, useFinanceJournal } from '@/shared/finance-journal';
+import { shiftDay } from '@/shared/period';
 import { formatCount, formatKopecks, formatSavedAt } from '@/shared/utils';
 
 const store = useForecastStore();
 const auth = useAuthStore();
+const routeMarketplace = useMarketplace();
+const marketplace = computed(() => routeMarketplace.value ?? 'ym');
+store.selectMarketplace(marketplace.value);
 const {
   data,
   isRefreshing,
@@ -70,6 +76,19 @@ const withFinance = computed(() => auth.me?.features?.[FINANCE_FEATURE] === true
 const withCalculator = computed(() => auth.me?.sections.includes(PRICE_CALCULATOR_ROUTE) === true);
 
 const forecast = computed(() => data.value?.forecast ?? null);
+
+// Прогноз — по журналу последних дней и месяца: не загружен — «Загрузить из Маркета».
+const journal = useFinanceJournal(
+  () =>
+    data.value
+      ? {
+          marketplace: marketplace.value,
+          from: shiftDay(data.value.today, -data.value.basisDays),
+          to: data.value.today,
+        }
+      : null,
+  () => store.load(),
+);
 const month = computed(() => (forecast.value ? monthCards(forecast.value) : []));
 const year = computed(() => (forecast.value ? yearCards(forecast.value) : []));
 const margins = computed(() => (forecast.value ? marginBars(forecast.value) : []));
@@ -93,10 +112,13 @@ function setCover(raw: string | number | undefined): void {
   }
 }
 
+// Площадка из адреса — в ключе: /ym/forecast → /ozon/forecast пересчитывает по Ozon.
 watch(
-  () => (ready.value && withFinance.value ? basisDays.value : null),
+  () => (ready.value && withFinance.value ? `${marketplace.value}:${basisDays.value}` : null),
   (key) => {
-    if (key !== null) store.load();
+    if (key === null) return;
+    store.selectMarketplace(marketplace.value);
+    store.load();
   },
   { immediate: true },
 );
@@ -139,9 +161,13 @@ watch(
     :icon="TrendingUp"
     title="Прогноза нет"
     :description="data.reason ?? ''"
-  />
+  >
+    <JournalPull :journal="journal" only-missing class="mt-2 w-full max-w-md text-left" />
+  </EmptyState>
 
   <div v-else class="flex flex-col gap-6">
+    <JournalPull :journal="journal" only-missing />
+
     <RefreshIndicator
       :refreshing="isRefreshing"
       :saved-at="savedAt"
@@ -213,7 +239,11 @@ watch(
           Рассчитать закупки
         </Button>
         <span class="text-muted-foreground">
-          Остатки берутся у Маркета по всем магазинам — это займёт время.
+          {{
+            marketplace === 'ym'
+              ? 'Остатки берутся у Маркета по всем магазинам — это займёт время.'
+              : 'Остатки берутся у площадки по всем её складам — это займёт время.'
+          }}
         </span>
       </div>
       <Alert v-if="purchasesError">{{ purchasesError }}</Alert>

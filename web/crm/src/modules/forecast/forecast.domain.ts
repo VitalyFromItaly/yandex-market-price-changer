@@ -1,4 +1,5 @@
 import type { IUnconfirmedProfit } from '../../../../../src/shared/profit-confirmation';
+import type { MarketplaceKey } from '@/navigation.sections';
 /**
  * «Прогнозы» (TASK-151, ТЗ п.13) — выручка, чистая, налог, возвраты и
  * поступления до конца месяца, продажи до конца года, рентабельность по
@@ -12,7 +13,6 @@ import type { IUnconfirmedProfit } from '../../../../../src/shared/profit-confir
  */
 import type { DayRange } from '@/shared/utils';
 
-export const FORECAST_ROUTE_NAME = 'ym-forecast';
 export const FORECAST_KIND = 'forecast:summary';
 export const FORECAST_PURCHASES_KIND = 'forecast:purchases';
 /** Без «Финансов» прогноза нет: задача получила бы 403 гейта. */
@@ -84,6 +84,8 @@ export interface Forecast {
 }
 
 export interface ForecastResponse {
+  /** Эхо площадки (TASK-183); в ответах до неё его нет — это ЯМ. */
+  marketplace?: MarketplaceKey;
   basisDays: BasisDays;
   today: string;
   forecast: Forecast | null;
@@ -102,6 +104,7 @@ export interface PurchaseRow {
 }
 
 export interface PurchasesResponse {
+  marketplace?: MarketplaceKey;
   today: string;
   takenAt: string;
   coverDays: number;

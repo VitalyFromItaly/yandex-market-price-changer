@@ -15,6 +15,7 @@ import type {
 import type { BarPoint } from '@/components/ui/chart';
 
 import { fillDays } from '@/components/ui/chart';
+import { bucketKey, bucketLabel } from '@/shared/period';
 import { deltaCaption, deltaPercent, formatCount, formatKopecks, plural } from '@/shared/utils';
 
 /**
@@ -23,22 +24,10 @@ import { deltaCaption, deltaPercent, formatCount, formatKopecks, plural } from '
  * скорость приходят с сервера.
  */
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const VELOCITY = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
 
-const dayMs = (iso: string): number => Date.parse(`${iso}T00:00:00Z`);
-const isoOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
-/** «2026-09-24» → «24-09». */
-const shortDay = (iso: string): string => `${iso.slice(8, 10)}-${iso.slice(5, 7)}`;
-
-/** Ключ корзины дня: сам день, понедельник его недели или месяц. */
-export function bucketKey(day: string, grain: TimeGrain): string {
-  if (grain === 'day') return day;
-  if (grain === 'month') return day.slice(0, 7);
-  const ms = dayMs(day);
-  const weekday = (new Date(ms).getUTCDay() + 6) % 7; // понедельник — 0
-  return isoOf(ms - weekday * DAY_MS);
-}
+/** Ключ корзины — общее правило `shared/period` (тем же группирует дашборд «Площадки»). */
+export { bucketKey };
 
 /**
  * Корзины периода: пустые дни — нулями по границам периода (иначе неделя без
@@ -72,14 +61,8 @@ export function bucketsOf(data: SalesAnalyticsResponse, grain: TimeGrain): Sales
   }
   return [...buckets.values()].map(({ first, last, ...bucket }) => ({
     ...bucket,
-    label: labelOf(grain, first, last),
+    label: bucketLabel(grain, first, last),
   }));
-}
-
-function labelOf(grain: TimeGrain, first: string, last: string): string {
-  if (grain === 'day') return shortDay(first);
-  if (grain === 'month') return `${first.slice(5, 7)}-${first.slice(0, 4)}`;
-  return first === last ? shortDay(first) : `${shortDay(first)}–${shortDay(last)}`;
 }
 
 const METRIC_VALUE: Record<SalesMetric, (b: SalesBucket) => number> = {

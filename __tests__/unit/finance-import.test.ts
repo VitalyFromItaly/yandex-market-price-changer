@@ -21,6 +21,9 @@ import { FinanceAdminController } from '../../src/modules/finance/finance-admin.
 import { pairCorrections } from '../../src/modules/finance/finance-corrections';
 import {
   FinanceImportService,
+  generateWithMinuteLimit,
+  NETTING_GENERATE_ATTEMPTS,
+  NETTING_GENERATE_PAUSE_MS,
   YM_NETTING_REPORT_TYPE,
 } from '../../src/modules/finance/finance-import.service';
 import { monthPeriod, parseMonthArg } from '../../src/modules/finance/finance-period';
@@ -29,6 +32,7 @@ import { nettingRowsOf } from '../../src/modules/finance/ym-journal';
 import { YM_UNKNOWN_ARTICLE_CONTEXT } from '../../src/modules/finance/ym-unknown-articles';
 import { FinanceImportProcessor } from '../../src/modules/telegram/queue/processors/finance-import.processor';
 import { ReportGenerationError } from '../../src/modules/yandex/report-generation.error';
+import { YandexRateLimitError } from '../../src/modules/yandex/yandex-api.errors';
 import { createTestFinanceDb } from '../helpers/test-postgres';
 
 const SEPTEMBER = monthPeriod(2026, 9);
@@ -124,6 +128,39 @@ describe('FinanceImportService — импорт united-netting', () => {
     expect(path).toMatch(/united-netting\/generate$/);
     expect(body).toEqual({ businessId: 164225008, dateFrom: '2026-09-01', dateTo: '2026-09-30' });
     expect(format).toBe('JSON');
+  });
+
+  it('лимит «1 генерация в минуту» у united-netting — пауза больше минуты и ещё попытка', async () => {
+    const sleep = vi.fn(async () => undefined);
+    service.sleep = sleep;
+    const limit = new YandexRateLimitError('Hit rate limit of 1 points per 1 minute', 420, {});
+    client.generateReport.mockRejectedValueOnce(limit).mockResolvedValueOnce('rep-2');
+
+    const result = await run();
+    expect(result.status).toBe('imported');
+    expect(client.generateReport).toHaveBeenCalledTimes(2);
+    expect(sleep.mock.calls).toEqual([[NETTING_GENERATE_PAUSE_MS]]);
+    expect(NETTING_GENERATE_PAUSE_MS).toBeGreaterThan(60_000);
+  });
+
+  it('лимит не отпустил за три попытки — ошибка как была; чужие ошибки не пережидаются', async () => {
+    const sleep = vi.fn(async () => undefined);
+    const limit = new YandexRateLimitError('rate limit', 420, {});
+    const always = vi.fn(async () => {
+      throw limit;
+    });
+    await expect(generateWithMinuteLimit(always, sleep)).rejects.toBe(limit);
+    expect(always).toHaveBeenCalledTimes(NETTING_GENERATE_ATTEMPTS);
+    expect(sleep).toHaveBeenCalledTimes(NETTING_GENERATE_ATTEMPTS - 1);
+
+    sleep.mockClear();
+    const other = new Error('Partner API не вернул reportId');
+    await expect(
+      generateWithMinuteLimit(async () => {
+        throw other;
+      }, sleep),
+    ).rejects.toBe(other);
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it('первый импорт: версия 1, операции со статьёй и ключом периода', async () => {
@@ -290,7 +327,10 @@ describe('FinanceImportProcessor', () => {
       require: vi.fn((marketplace: string, capability: string) => {
         expect([marketplace, capability]).toEqual(['ym', 'finance']);
         return {
-          importFinance: (ref: { telegramUserId: string; marketplace: string }, period: unknown) => {
+          importFinance: (
+            ref: { telegramUserId: string; marketplace: string },
+            period: unknown,
+          ) => {
             expect(ref.marketplace).toBe('ym');
             return importAndRecord({ telegramUserId: ref.telegramUserId, period });
           },

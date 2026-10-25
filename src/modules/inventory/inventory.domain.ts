@@ -1,4 +1,5 @@
 import type { TMarketplace } from '../../shared/marketplace';
+import type { TOrderStage } from '../../shared/order-stage';
 import type { IInventory } from '../finance/inventory';
 
 import { MARKETPLACE_LABEL } from '../../shared/marketplace';
@@ -32,6 +33,16 @@ export const MARKETPLACE_ORDERS_WINDOW_NOTE =
 
 export const YM_REPORT_CLOSED_TEXT = (report: string) =>
   `Отчёт «${report}» закрыт — эти числа у ЯМ не собирались.`;
+
+/**
+ * «В пути к покупателю» по общему этапу заказа Ozon/WB — тот же срез, что «Едет
+ * до клиента» ЯМ. Общий у «Склада» и «Обзора» (TASK-183).
+ */
+export const IN_TRANSIT_STAGES: ReadonlySet<TOrderStage> = new Set<TOrderStage>([
+  'handed_over',
+  'in_transit',
+  'delivered',
+]);
 
 export const NOT_CONNECTED_TEXT = (marketplace: TMarketplace) =>
   `${MARKETPLACE_LABEL[marketplace]} не подключён — ключ задаётся в «Подключениях».`;

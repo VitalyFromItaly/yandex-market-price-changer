@@ -7,7 +7,6 @@
 
 import type { ReportPeriod } from '@/shared/period';
 
-export const ORDER_FEED_ROUTE_NAME = 'ym-order-feed';
 export const ORDER_FEED_KIND = 'order-feed:list';
 export const FINANCE_FEATURE = 'finance';
 export const DEEP_HISTORY_FEATURE = 'deep_history';
@@ -93,6 +92,8 @@ export interface OrderFeedProblem {
 
 /** Ответ задачи `order-feed:list` как есть. */
 export interface OrderFeedResponse {
+  /** Площадка экрана (эхо `params.marketplace`, TASK-182); старый ответ без неё — ЯМ. */
+  marketplace?: OrderFeedMarketplace;
   period: ReportPeriod;
   periodTitle: string;
   marketplaces: OrderFeedMarketplaceState[];
@@ -127,15 +128,14 @@ export interface OrderDetailResponse {
   history: OrderHistoryOperation[];
 }
 
-/** Фильтры таблицы; `null` — «все». Живут в query адреса. */
+/** Фильтры таблицы; `null` — «все». Живут в query адреса. Площадка — из адреса раздела. */
 export interface OrderFeedFilters {
-  marketplace: OrderFeedMarketplace | null;
   stage: OrderStage | null;
   /** Поиск товара: артикул или название, без регистра. */
   product: string;
 }
 
-export const EMPTY_FILTERS: OrderFeedFilters = { marketplace: null, stage: null, product: '' };
+export const EMPTY_FILTERS: OrderFeedFilters = { stage: null, product: '' };
 
 export const PROFIT_GAP_TEXT: Record<OrderProfitGap, string> = {
   'no-operations': 'операций в журнале ещё нет',

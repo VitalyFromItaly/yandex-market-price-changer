@@ -41,7 +41,7 @@ import {
  * сервиса по снимку features. Ставит `SYNC_STOCKS` с
  * `source: 'push'` в ту же очередь file-processing, что прайс: запись остатков
  * — одна за раз на оба канала. Итог — `CrmJobResult`, веб опрашивает его
- * обычным `GET /crm/ym/jobs/:id`.
+ * обычным `GET /crm/jobs/:id`.
  */
 @Controller('crm/ym/stock-push')
 @UseGuards(CrmJwtGuard)

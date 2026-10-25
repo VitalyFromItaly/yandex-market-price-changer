@@ -86,12 +86,13 @@ export function parseDayRange(from: unknown, to: unknown): IFinancePeriod | null
 export const YM_NETTING_REPORT_TYPE = 'united-netting';
 
 /**
- * Тип «отчёта» Ozon — список операций /v3/finance/transaction/list (TASK-131).
+ * Тип «отчёта» Ozon — список операций /v3/finance/transaction/list (TASK-131); с TASK-194
+ * источник — /v1/finance/accrual/by-day, имя типа оставлено, чтобы ключи загруженных периодов не разъехались.
  * Свой, а не общий с ЯМ: ключ периода несёт тип, и у площадок он не совпадёт.
  */
 export const OZON_TRANSACTIONS_REPORT_TYPE = 'ozon-transaction-list';
 
-/** Тип «отчёта» WB — отчёт реализации reportDetailByPeriod (TASK-136). */
+/** Тип «отчёта» WB — отчёт реализации (sales-reports/detailed, до 2026 — reportDetailByPeriod; TASK-136). */
 export const WB_REALIZATION_REPORT_TYPE = 'wb-realization-report';
 
 /** Тип журнала площадки — ключ периода, версии документа и статуса месяца. */

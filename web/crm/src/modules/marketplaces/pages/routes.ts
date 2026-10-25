@@ -2,7 +2,7 @@ import type { RouteRecordRaw } from 'vue-router';
 
 import { CONNECTIONS_ROUTE_NAME } from '../marketplaces.domain';
 
-import { UPCOMING_MARKETPLACES } from '@/navigation';
+import { ALL_MARKETPLACES } from '@/navigation';
 
 /**
  * «Подключения» (TASK-161) — раздел аккаунта, имя совпадает с пунктом меню.
@@ -26,18 +26,18 @@ export const MARKETPLACE_UPCOMING_ROUTE_NAME = 'marketplace-upcoming';
 
 /**
  * Всё прочее под `/ozon` и `/wb` — страница площадки «скоро», а не разделы ЯМ
- * и не catch-all в список магазинов: когда у площадки появятся разделы с
- * данными (Ozon — TASK-130…131, WB — TASK-134…136), она уйдёт из
- * `UPCOMING_MARKETPLACES`. Статические пути выше роутер ставит выше этого шаблона.
+ * и не catch-all в список магазинов. Шаблон стоит всегда: живая ли площадка,
+ * решает сервер на каждом переходе (`useMarketplaceGuard`), а не список на
+ * момент загрузки. Готовые разделы (`READY_SECTIONS`) — статические пути и
+ * ранжируются выше шаблона; закрытые у продавца гард переводит сюда по имени.
  */
-export const marketplacesRoutes: RouteRecordRaw[] =
-  UPCOMING_MARKETPLACES.length === 0
-    ? []
-    : [
-        {
-          path: `/:mp(${UPCOMING_MARKETPLACES.map((m) => m.key).join('|')})/:rest(.*)*`,
-          name: MARKETPLACE_UPCOMING_ROUTE_NAME,
-          component: () => import('@/modules/marketplaces/pages/MarketplaceUpcomingPage.vue'),
-          meta: { title: 'Площадка' },
-        },
-      ];
+export const marketplacesRoutes: RouteRecordRaw[] = [
+  {
+    path: `/:mp(${ALL_MARKETPLACES.filter((m) => m.key !== 'ym')
+      .map((m) => m.key)
+      .join('|')})/:rest(.*)*`,
+    name: MARKETPLACE_UPCOMING_ROUTE_NAME,
+    component: () => import('@/modules/marketplaces/pages/MarketplaceUpcomingPage.vue'),
+    meta: { title: 'Площадка' },
+  },
+];

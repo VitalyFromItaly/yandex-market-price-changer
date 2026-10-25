@@ -1,11 +1,11 @@
-import type { FinanceMarketplace, PnlModel, PnlRequest, PnlResponse } from '../../finance.domain';
+import type { PnlModel, PnlRequest, PnlResponse } from '../../finance.domain';
 
 import { computed } from 'vue';
 
 import { FINANCE_PNL_KIND } from '../../finance.domain';
 import { toPnlModel } from '../../mappers/mapPnl.finance';
 
-import { useBaseState, useReportJob } from '@/shared/composables';
+import { useReportJob } from '@/shared/composables';
 
 /**
  * P&L месяца — фоновая задача уровня аккаунта (`finance:pnl`, магазина нет):
@@ -13,6 +13,7 @@ import { useBaseState, useReportJob } from '@/shared/composables';
  * Замок задачи — на продавца, поэтому ответ сверяется с эхом месяца или
  * периода: месяц и произвольный период — разные запросы, даже на тех же днях.
  * Площадка (TASK-137) — тоже часть эха: Ozon и ЯМ одного месяца — разные ответы.
+ * Какую площадку просить, решает страница по адресу (TASK-180).
  */
 export function usePnl() {
   const job = useReportJob<PnlResponse, PnlRequest>({
@@ -23,8 +24,6 @@ export function usePnl() {
         ? data.month === current.month
         : data.month === null && data.from === current.from && data.to === current.to),
   });
-  const [pnlMarketplace, setPnlMarketplace, , resetMarketplace] =
-    useBaseState<FinanceMarketplace>('ym');
 
   const pnl = computed<PnlModel | null>(() =>
     job.data.value === null ? null : toPnlModel(job.data.value),
@@ -36,17 +35,12 @@ export function usePnl() {
 
   return {
     pnl,
-    pnlMarketplace,
-    selectPnlMarketplace: setPnlMarketplace,
     pnlLoading: job.isLoading,
     pnlRefreshing: job.isRefreshing,
     pnlSavedAt: job.savedAt,
     pnlError: job.error,
     loadPnl,
     retryPnl: job.retry,
-    reset() {
-      resetMarketplace();
-      job.reset();
-    },
+    reset: job.reset,
   };
 }

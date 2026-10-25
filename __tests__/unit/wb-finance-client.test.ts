@@ -10,6 +10,7 @@ import {
   WB_CATEGORY_HOSTS,
   WB_PATHS,
   WB_REPORT_DETAIL_LIMIT,
+  WB_REPORT_FIELDS,
   WB_STATISTICS_INTERVAL_MS,
   WB_STATISTICS_MAX_PAGES,
   WbClient,
@@ -17,24 +18,25 @@ import {
 } from '../../src/modules/wb/wb.client';
 
 /**
- * Отчёт реализации WB (TASK-136): клиент reportDetailByPeriod (курсор `rrdid`,
- * пауза «Статистики», неполный ответ — ошибка), возможность `finance` в реестре
- * и площадки ночной загрузки.
+ * Отчёт реализации WB (TASK-136): клиент `POST finance-api …/sales-reports/detailed`
+ * (заменил reportDetailByPeriod; курсор `rrdId`, пауза лимита, неполный ответ —
+ * ошибка, поля — в прежних именах), возможность `finance` в реестре и площадки
+ * ночной загрузки.
  */
 
 const TOKEN = 'header.payload.SECRETsignatureSECRET0123456789abcdef';
-const URL = `${WB_CATEGORY_HOSTS.statistics}${WB_PATHS.reportDetail}`;
+const URL = `${WB_CATEGORY_HOSTS.finance}${WB_PATHS.reportDetail}`;
 
-function stubGet(answer: (params: any) => unknown) {
+function stubGet(answer: (body: any) => unknown) {
   const calls: any[] = [];
   vi.spyOn(axios, 'create').mockImplementation(
     () =>
       ({
         interceptors: { response: { use: () => undefined } },
-        get: async (url: string, config?: any) => {
+        post: async (url: string, body?: any) => {
           expect(url).toBe(URL);
-          calls.push(config?.params);
-          return { data: await answer(config?.params) };
+          calls.push(body);
+          return { data: await answer(body) };
         },
       }) as never,
   );
@@ -44,13 +46,13 @@ function stubGet(answer: (params: any) => unknown) {
 afterEach(() => vi.restoreAllMocks());
 
 describe('WbClient.listRealizationReport', () => {
-  it('курсор rrdid до пустого ответа, пауза лимита перед каждой следующей страницей', async () => {
+  it('POST в «Финансы», курсор rrdId до пустого ответа, пауза лимита перед каждой следующей страницей', async () => {
     const pages: Record<string, unknown> = {
-      '0': [{ rrd_id: 1 }, { rrd_id: 2 }],
-      '2': [{ rrd_id: 3 }],
+      '0': [{ rrdId: 1 }, { rrdId: 2 }],
+      '2': [{ rrdId: 3 }],
       '3': [],
     };
-    const calls = stubGet((params) => pages[params.rrdid]);
+    const calls = stubGet((body) => pages[String(body.rrdId)]);
     const sleep = vi.fn(async () => undefined);
 
     const rows = await new WbClient(TOKEN, { sleep }).listRealizationReport(
@@ -64,11 +66,12 @@ describe('WbClient.listRealizationReport', () => {
         dateFrom: '2026-08-26',
         dateTo: '2026-10-06',
         limit: WB_REPORT_DETAIL_LIMIT,
-        rrdid: '0',
+        rrdId: 0,
         period: 'weekly',
+        fields: WB_REPORT_FIELDS,
       },
-      expect.objectContaining({ rrdid: '2' }),
-      expect.objectContaining({ rrdid: '3' }),
+      expect.objectContaining({ rrdId: 2 }),
+      expect.objectContaining({ rrdId: 3 }),
     ]);
     expect(sleep.mock.calls).toEqual([[WB_STATISTICS_INTERVAL_MS], [WB_STATISTICS_INTERVAL_MS]]);
   });
@@ -81,7 +84,7 @@ describe('WbClient.listRealizationReport', () => {
   });
 
   it('курсор не сдвинулся — неполный ответ, а не тихий стоп', async () => {
-    stubGet(() => [{ rrd_id: 5 }]);
+    stubGet(() => [{ rrdId: 5 }]);
     const client = new WbClient(TOKEN, { sleep: async () => undefined });
     const error = await client.listRealizationReport('a', 'b').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(WbIncompleteResponseError);
@@ -90,21 +93,67 @@ describe('WbClient.listRealizationReport', () => {
 
   it('потолок страниц — ошибка', async () => {
     let id = 0;
-    stubGet(() => [{ rrd_id: (id += 1) }]);
+    stubGet(() => [{ rrdId: (id += 1) }]);
     await expect(
       new WbClient(TOKEN, { sleep: async () => undefined }).listRealizationReport('a', 'b'),
     ).rejects.toThrow(String(WB_STATISTICS_MAX_PAGES));
   });
 
-  it('маппер: мусор без rrd_id отброшен, счётчик и курсор — по пришедшему', () => {
+  it('маппер: мусор без rrdId отброшен, счётчик и курсор — по пришедшему', () => {
     expect(
-      mapWbRealization([{ rrd_id: 7 }, { rrd_id: 'x' }, null, { foo: 1 }, { rrd_id: '9' }]),
+      mapWbRealization([{ rrdId: 7 }, { rrdId: 'x' }, null, { foo: 1 }, { rrdId: '9' }]),
     ).toEqual({
       rows: [{ rrd_id: 7 }, { rrd_id: '9' }],
       count: 4,
       lastRrdId: '9',
     });
     expect(mapWbRealization(null)).toEqual({ rows: [], count: 0, lastRrdId: '' });
+  });
+
+  it('маппер: новые имена → прежние (журнал читает их), деньги строками — как пришли; ответ под data', () => {
+    const row = {
+      rrdId: 11,
+      reportId: 555,
+      createDate: '2026-10-06',
+      rrDate: '2026-10-01',
+      docTypeName: 'Продажа',
+      sellerOperName: 'Продажа',
+      vendorCode: 'CASIO-1',
+      srid: 'abc',
+      retailPriceWithDisc: '1000.50',
+      acquiringFee: '15.01',
+      forPay: '850.00',
+      deliveryService: '60',
+      returnAmount: 0,
+      paidStorage: '1.5',
+      paidAcceptance: '0',
+      additionalPayment: '0',
+      title: 'Часы',
+      sku: '2000000000001',
+    };
+    const legacy = {
+      rrd_id: 11,
+      realizationreport_id: 555,
+      create_dt: '2026-10-06',
+      rr_dt: '2026-10-01',
+      doc_type_name: 'Продажа',
+      supplier_oper_name: 'Продажа',
+      sa_name: 'CASIO-1',
+      srid: 'abc',
+      retail_price_withdisc_rub: '1000.50',
+      acquiring_fee: '15.01',
+      ppvz_for_pay: '850.00',
+      delivery_rub: '60',
+      return_amount: 0,
+      storage_fee: '1.5',
+      acceptance: '0',
+      additional_payment: '0',
+      title: 'Часы',
+      barcode: '2000000000001',
+    };
+    expect(mapWbRealization([row]).rows).toEqual([legacy]);
+    expect(mapWbRealization({ data: [row] }).rows).toEqual([legacy]);
+    expect(mapWbRealization({ data: { details: [row] } }).rows).toEqual([legacy]);
   });
 });
 

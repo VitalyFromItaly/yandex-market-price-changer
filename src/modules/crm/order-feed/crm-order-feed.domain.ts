@@ -84,6 +84,8 @@ export interface ICrmOrderFeedTotals {
 }
 
 export interface ICrmOrderFeedView {
+  /** Площадка экрана (эхо `params.marketplace`) — стор сверяет по ней свой ответ. */
+  marketplace: TMarketplace;
   /** Эхо запрошенного периода: фронт распознаёт по нему ответ чужой задачи. */
   period: ICrmPeriodEcho;
   periodTitle: string;
@@ -100,6 +102,7 @@ export interface ICrmOrderFeedView {
 export interface ICrmOrderFeedInput {
   period: IReportPeriod;
   now: Date;
+  marketplace: TMarketplace;
   marketplaces: ICrmOrderFeedMarketplace[];
   feeds: IOrderFeed[];
   problems: ICrmOrderFeedProblem[];
@@ -135,6 +138,7 @@ export function toCrmOrderFeed(input: ICrmOrderFeedInput): ICrmOrderFeedView {
 
   const hasUnknown = rows.some((row) => row.stage === 'unknown');
   return {
+    marketplace: input.marketplace,
     period: periodEcho(input.period),
     periodTitle: periodTitle(input.period, input.now),
     marketplaces: input.marketplaces,

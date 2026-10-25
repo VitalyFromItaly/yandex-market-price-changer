@@ -86,8 +86,10 @@ export function botStoreAfterToken(
  * Магазины кабинета из кэша `stores`, каждый — перекрытый `scopeStore`
  * документ. Кэша нет (старый документ) — один активный магазин. Для kind-ов
  * уровня аккаунта, которым нужен срез по всем магазинам («Обзор», «Прогнозы»).
+ * Документа нет (продавец только с Ozon/WB, TASK-179) — магазинов ЯМ нет.
  */
-export function accountStores(doc: YandexMarketDocument): YandexMarketDocument[] {
+export function accountStores(doc: YandexMarketDocument | null): YandexMarketDocument[] {
+  if (!doc) return [];
   const scoped = (doc.stores ?? [])
     .filter((entry) => entry?.campaignId)
     .map((entry) => scopeStore(doc, entry.campaignId))

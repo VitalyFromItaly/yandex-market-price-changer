@@ -367,9 +367,6 @@ export interface PriceListInfo {
   updatedAt: string | null;
 }
 
-/** Площадки «скоро» — общий список с сайдбаром, живёт в навигации. */
-export { UPCOMING_MARKETPLACES } from '@/navigation';
-
 /** Строка блока «Заказы», готовая к показу: мета, модель и состояние источника. */
 export interface OrderRowView {
   key: OrderRowKey;
