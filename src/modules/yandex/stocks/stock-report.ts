@@ -51,7 +51,7 @@ export function formatStockReport(result: IStockSyncResult): string {
 
   // «Записано: 0» при запрете — строка, которая только путает: она выглядит как
   // неудача записи, тогда как записи не было и не должно было быть.
-  if (!result.dryRun && !result.writeSkipReason) {
+  if (!result.dryRun && !result.writeSkipReason && !result.stocksByPlan) {
     lines.push(`📤 Записано: ${b(result.updated)}`);
   }
 
@@ -165,6 +165,13 @@ function headlineParts(result: IStockSyncResult): IHeadlineParts {
   if (result.dryRun) {
     return { icon: '🔍', title: 'Пробная сверка', rest: ' — в Яндекс ничего не записано' };
   }
+  if (result.stocksByPlan) {
+    return {
+      icon: '✅',
+      title: 'Прайс загружен',
+      rest: ' — остатки запишутся на площадки по плану ниже',
+    };
+  }
   return { icon: '✅', title: 'Остатки обновлены', rest: '' };
 }
 
@@ -268,8 +275,12 @@ export interface ICrmStockView {
   catalogSize: number;
   matched: number;
   zeroed: number;
-  /** `null` — записи не было и не должно было быть (сверка или запрет). */
+  /** `null` — записи не было и не должно было быть (сверка, запрет или план). */
   updated: number | null;
+  /** Остатки пишет план на той же странице, а не файл. */
+  stocksByPlan: boolean;
+  /** Товары с закупом из файла и привязанные из них к Ozon/WB; `null` — не считали. */
+  purchaseCoverage: { products: number; ozon: number; wb: number } | null;
   purchasePricesSaved: number;
   purchasePricesSkipped: boolean;
   matchedBy: Record<string, number>;
@@ -289,7 +300,10 @@ export function toCrmStockView(result: IStockSyncResult): ICrmStockView {
     catalogSize: result.catalogSize,
     matched: result.matched,
     zeroed: result.zeroed,
-    updated: !result.dryRun && !result.writeSkipReason ? result.updated : null,
+    updated:
+      !result.dryRun && !result.writeSkipReason && !result.stocksByPlan ? result.updated : null,
+    stocksByPlan: result.stocksByPlan ?? false,
+    purchaseCoverage: result.purchaseCoverage ?? null,
     purchasePricesSaved: result.purchasePricesSaved,
     purchasePricesSkipped: result.purchasePricesSkipped ?? false,
     matchedBy: result.matchedBy,

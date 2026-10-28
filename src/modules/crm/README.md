@@ -440,7 +440,8 @@
 
 ### «Передача остатков» (M22, TASK-143)
 
-Раздел аккаунта `/ym/stock-push` под фичей `stock_push` (default off): сквозной FBS-остаток — свой склад из
+**С 2026-10-28 своего раздела нет — план и запись живут на «Прайсе»** (`ym-price-list`, см. ниже), фича та же
+`stock_push` (default off). Сквозной FBS-остаток — свой склад из
 последнего прайса минус продажи со своего склада на всех площадках после загрузки — и план «было → станет» по
 каждой площадке. Кнопка «Записать остатки» — под фичами записи площадок `stock_push_write_ym` /
 `stock_push_write_ozon` / `stock_push_write_wb` (default off, `requires: [stock_push]` плюс `ozon`/`wb`, в
@@ -776,8 +777,20 @@ HTTP: `POST /api/crm/jobs {kind, params, store}` → `{jobId, created}`, `GET /j
 ### «Прайс» в CRM (`src/modules/crm/price-list/`, фронт `web/crm/src/modules/price-list/`)
 
 Загрузка прайса (остатки + закуп) и список закупочных цен — вкладки раздела `ym-price-list`
-(«Загрузка» под любой из двух фич, «Закупочные цены» — только под `purchase_prices`, иначе вела бы
-в 403). `CRM_SECTIONS`/`navigation.ts` не менялись.
+(«Загрузка» под любой из `purchase_prices`/`stock_update`/`stock_push`, «Закупочные цены» — только под
+`purchase_prices`, иначе вела бы в 403).
+
+- **Одна страница: файл → план → площадки → запись** (2026-10-28, раздел «Передача остатков» слит сюда).
+  При открытой `stock_push` загрузка ставит `stocksByPlan: true` в `ICrmStockSyncJob`: `sync()` сохраняет
+  свой склад и закуп, но остатки не пишет (ранний слой — `decidePlanUpload`: ни env, ни модель не нужны,
+  предупреждения FBY нет — файл в Маркет ничего не пишет; «Только проверка» игнорируется и на экране
+  скрыта). Под итогом — `PushPlanBlock`: kind `stock-push:plan` (задача аккаунта, `store: ''`), галочки
+  площадок (`usePushSelection`: по умолчанию все `willWrite`, новый план — снова все) и кнопка «Записать
+  остатки (N)» в шапке → `POST /ym/stock-push/apply {planHash, marketplaces}`. Новый прайс пересчитывает
+  план сам. Без `stock_push` страница — как раньше: сырая запись файла в ЯМ под `stock_update`.
+- **Закуп — не по площадкам.** Он один на товар и действует везде через привязку карточек; итог загрузки
+  несёт `purchaseCoverage` (`ProductService.purchaseCoverage`: товары файла и сколько из них привязано к
+  Ozon/WB), фронт пишет строку только про открытые продавцу площадки.
 
 - **Путь записи — ботовый, целиком.** `POST /api/crm/ym/price-list/upload` (multipart, поле `file` +
   `dryRun`) → `StockUploadPolicyService` → `SYNC_STOCKS` в **ту же** очередь `file-processing` →

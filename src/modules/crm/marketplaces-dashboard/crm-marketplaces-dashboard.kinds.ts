@@ -63,10 +63,9 @@ export class CrmMarketplacesDashboardKinds implements OnModuleInit {
     );
     if (!isDashboardEnough(live)) throw new CrmJobError(DASHBOARD_NEEDS_SECOND_TEXT);
 
-    const [current, previous] = await Promise.all([
-      this.finance.compare(telegramUserId, ranges.current, live),
-      this.finance.compare(telegramUserId, ranges.previous, live),
-    ]);
+    // По очереди, а не `Promise.all`: пул Postgres — 10 соединений (README finance).
+    const current = await this.finance.compare(telegramUserId, ranges.current, live);
+    const previous = await this.finance.compare(telegramUserId, ranges.previous, live);
     return {
       data: toCrmMarketplacesDashboard(ranges.current, ranges.previous, live, current, previous),
     };

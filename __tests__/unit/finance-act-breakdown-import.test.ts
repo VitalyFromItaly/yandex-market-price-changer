@@ -11,9 +11,11 @@ import { FinanceOperationRepository } from '../../src/database/postgres/reposito
 import { FinancePeriodRepository } from '../../src/database/postgres/repositories/finance-period.repository';
 import {
   FinanceImportService,
+  NETTING_GENERATE_PAUSE_MS,
   YM_ACT_BREAKDOWN_CONTEXT,
 } from '../../src/modules/finance/finance-import.service';
 import { monthPeriod } from '../../src/modules/finance/finance-period';
+import { YandexRateLimitError } from '../../src/modules/yandex/yandex-api.errors';
 import { createTestFinanceDb } from '../helpers/test-postgres';
 
 const OCTOBER = monthPeriod(2026, 10);
@@ -211,6 +213,25 @@ describe('FinanceImportService — расшифровка сводной стр�
     expect(report).toHaveBeenCalledWith(
       expect.objectContaining({ context: YM_ACT_BREAKDOWN_CONTEXT, telegramUserId: '111' }),
     );
+  });
+
+  it('лимит «1 генерация в минуту» у отчёта услуг — пауза и ещё попытка, расшифровка легла', async () => {
+    const sleep = vi.fn(async () => undefined);
+    service.sleep = sleep;
+    let limited = false;
+    generateReport.mockImplementation(async (path: string) => {
+      if (!path.includes('united-marketplace-services')) return 'netting';
+      if (limited) return 'services';
+      limited = true;
+      throw new YandexRateLimitError('Hit rate limit of 1 points per 1 minute', 420, {});
+    });
+
+    await run();
+
+    expect(servicesCalls()).toHaveLength(2);
+    expect(sleep).toHaveBeenCalledWith(NETTING_GENERATE_PAUSE_MS);
+    expect((await summaryOp())?.breakdown?.reduce((s, p) => s + p.kopecks, 0)).toBe(-5185200);
+    expect(report).not.toHaveBeenCalled();
   });
 
   it('тот же журнал повторно: расшифровка дописывается, если её не было', async () => {

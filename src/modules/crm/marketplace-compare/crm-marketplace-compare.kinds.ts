@@ -48,10 +48,9 @@ export class CrmMarketplaceCompareKinds implements OnModuleInit {
     const open = FINANCE_MARKETPLACES.filter((marketplace) =>
       isFinanceMarketplaceOpen(context.features ?? {}, marketplace),
     );
-    const [current, previous] = await Promise.all([
-      this.finance.compare(telegramUserId, ranges.current, open),
-      this.finance.compare(telegramUserId, ranges.previous, open),
-    ]);
+    // По очереди, а не `Promise.all`: пул Postgres — 10 соединений (README finance).
+    const current = await this.finance.compare(telegramUserId, ranges.current, open);
+    const previous = await this.finance.compare(telegramUserId, ranges.previous, open);
     return {
       data: toCrmMarketplaceCompare(
         ranges.current,

@@ -190,9 +190,12 @@ export class FinanceService {
       this.stores.findByTelegramUser(telegramUserId),
     ]);
     const tax = { ...taxSnapshot.settings, recognition: 'realization' as const };
-    const journals = await Promise.all(
-      marketplaces.map((marketplace) => this.journal(telegramUserId, period, marketplace, store)),
-    );
+    // Площадки по очереди, а не `Promise.all`: каждая — тяжёлое чтение журнала, и веер
+    // площадок × вызовов CRM выбирал пул Postgres из 10 (довод налогового года).
+    const journals: Awaited<ReturnType<FinanceService['journal']>>[] = [];
+    for (const marketplace of marketplaces) {
+      journals.push(await this.journal(telegramUserId, period, marketplace, store));
+    }
     const revenues = journals.map(
       ({ lines, costOf }) =>
         pnlOf({ lines, period, costOf, expenses: emptyAllocation(), tax }).revenueKopecks,
@@ -336,16 +339,20 @@ export class FinanceService {
     period: IFinancePeriod,
     marketplace: TFinanceMarketplace = 'ym',
   ): Promise<IPnlMonthStatus[]> {
-    return Promise.all(
-      monthsOf(period).map(async (month) => {
-        const row = await this.periods.find({
-          marketplace,
-          telegramUserId,
-          periodKey: financePeriodKey(FINANCE_REPORT_TYPE[marketplace], month),
-        });
-        return { from: month.from, to: month.to, status: row?.status ?? null };
-      }),
+    const months = monthsOf(period).map((month) => ({
+      month,
+      key: financePeriodKey(FINANCE_REPORT_TYPE[marketplace], month),
+    }));
+    const rows = await this.periods.findMany(
+      { marketplace, telegramUserId },
+      months.map(({ key }) => key),
     );
+    const statusOf = new Map(rows.map((row) => [row.periodKey, row.status]));
+    return months.map(({ month, key }) => ({
+      from: month.from,
+      to: month.to,
+      status: statusOf.get(key) ?? null,
+    }));
   }
 
   /**

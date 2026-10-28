@@ -4,6 +4,7 @@ import axios, { type AxiosError, type AxiosInstance } from 'axios';
 import { type IRetryOptions, type TSleep, realSleep } from '../yandex/yandex-retry';
 
 import { WB_RETRY, withWbRetry } from './wb-retry';
+import { WbStatisticsPacer } from './wb-statistics-pacer';
 import { type WbApiError, WbIncompleteResponseError, toWbApiError } from './wb.errors';
 
 /**
@@ -201,12 +202,11 @@ export const WB_MAX_PAGES = 1000;
  */
 export const WB_STOCKS_SINCE = '2019-06-20';
 /**
- * Лимит «Статистики» — 1 запрос в минуту на продавца. `withWbRetry` паузы
- * длиннее 30 с не ждёт, поэтому клиент выдерживает интервал сам перед каждым
- * вызовом статистики, кроме первого: иначе вторая страница или выкупы после
- * заказов упали бы в 429.
+ * Лимит «Статистики» — 1 запрос в минуту на продавца: интервал перед каждым вызовом
+ * статистики, кроме первого для токена, иначе вторая страница, выкупы после заказов
+ * или следующий месяц импорта упали бы в 429. Очередь — `WbStatisticsPacer`.
  */
-export const WB_STATISTICS_INTERVAL_MS = 61_000;
+export { WB_STATISTICS_INTERVAL_MS } from './wb-statistics-pacer';
 /** Строк в одном ответе orders/sales статистики — больше WB не отдаёт. */
 export const WB_STATISTICS_PAGE_ROWS = 80_000;
 /** Потолок страниц статистики: при 80 тыс. строк это миллионы строк — дальше только круг. */
@@ -220,6 +220,11 @@ export interface IWbClientOptions {
   retry?: IRetryOptions;
   sleep?: TSleep;
   timeoutMs?: number;
+  /**
+   * Очередь вызовов статистики по токену. Фабрика отдаёт общую на процесс; без неё —
+   * своя у клиента (выдержка только между вызовами этого экземпляра).
+   */
+  pacer?: WbStatisticsPacer;
 }
 
 export interface IWbSellerInfo {
@@ -329,12 +334,15 @@ export class WbClient {
   private readonly http: AxiosInstance;
   private readonly retry: IRetryOptions;
   private readonly sleep: TSleep;
-  /** Был ли уже вызов «Статистики» этим клиентом — следующий ждёт интервал. */
-  private statisticsCalled = false;
+  private readonly pacer: WbStatisticsPacer;
 
-  constructor(token: string, options: IWbClientOptions = {}) {
+  constructor(
+    private readonly token: string,
+    options: IWbClientOptions = {},
+  ) {
     this.retry = options.retry ?? WB_RETRY;
     this.sleep = options.sleep ?? realSleep;
+    this.pacer = options.pacer ?? new WbStatisticsPacer();
 
     this.http = axios.create({
       timeout: options.timeoutMs ?? WB_TIMEOUT_MS,
@@ -512,18 +520,21 @@ export class WbClient {
    * переехал, и общая с ней: заказы и отчёт одного токена не идут разом.
    */
   private async financeReport(body: Record<string, unknown>): Promise<unknown> {
-    if (this.statisticsCalled) await this.sleep(WB_STATISTICS_INTERVAL_MS);
-    this.statisticsCalled = true;
+    await this.paceStatistics();
     return this.call(() =>
       this.http.post(`${WB_CATEGORY_HOSTS.finance}${WB_PATHS.reportDetail}`, body),
     );
   }
 
-  /** Вызов «Статистики» с выдержкой лимита 1/мин между вызовами этого клиента. */
+  /** Вызов «Статистики» с выдержкой лимита 1/мин на токен. */
   private async statistics(path: string, params: Record<string, unknown>): Promise<unknown> {
-    if (this.statisticsCalled) await this.sleep(WB_STATISTICS_INTERVAL_MS);
-    this.statisticsCalled = true;
+    await this.paceStatistics();
     return this.call(() => this.http.get(`${WB_CATEGORY_HOSTS.statistics}${path}`, { params }));
+  }
+
+  private async paceStatistics(): Promise<void> {
+    const wait = this.pacer.reserve(this.token);
+    if (wait > 0) await this.sleep(wait);
   }
 
   /** Склады продавца (FBS). */

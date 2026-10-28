@@ -74,6 +74,8 @@ export function uploadProgressText(progress: TUploadProgress): string {
       return '⏳ Загружаю остатки, закупочные цены не сохраняю…';
     case 'stocks':
       return '⏳ Загружаю остатки, это займёт минуту…';
+    case 'plan':
+      return '🔍 Разбираю файл — сохраню свой склад и закуп, затем покажу план по площадкам…';
   }
 }
 

@@ -1,3 +1,4 @@
+import { DrizzleQueryError } from 'drizzle-orm';
 import { describe, it, expect, vi } from 'vitest';
 
 import { ErrorReporter, SYSTEM_USER } from '../../src/modules/errors/error-reporter.service';
@@ -129,6 +130,43 @@ describe('ErrorReporter', () => {
     expect(entry.errorType).toBe('PolzaInsufficientFundsError');
     expect(entry.httpStatus).toBe(402);
     expect(entry.requestUrl).toBe('POST /v1/chat/completions');
+  });
+
+  it('сбой запроса drizzle: причина и код Postgres — впереди SQL, тип не «Error»', async () => {
+    const { reporter, record, send } = build();
+    const cause = Object.assign(new Error('canceling statement due to statement timeout'), {
+      code: '57014',
+    });
+    const sql = `select ${'"column", '.repeat(80)} from "finance_periods"`;
+    const error = new DrizzleQueryError(sql, ['ym', '406937947'], cause);
+
+    await reporter.report({ error, source: 'queue', context: 'finance:anomalies' });
+
+    const entry = record.mock.calls[0][0];
+    expect(entry.errorType).toBe('DrizzleQueryError:57014');
+    expect(entry.error).toMatch(
+      /^canceling statement due to statement timeout \[57014\] · Failed query/,
+    );
+    expect(entry.stack).toContain('canceling statement');
+    expect(send.mock.calls[0][0]).toContain('canceling statement due to statement timeout');
+  });
+
+  it('у причины без кода тип — просто DrizzleQueryError', async () => {
+    const { reporter, record } = build();
+    const error = new DrizzleQueryError(
+      'select 1',
+      [],
+      new Error('timeout exceeded when trying to connect'),
+    );
+
+    await reporter.report({ error, source: 'crm', context: 'crm-job:sales-analytics:summary' });
+
+    expect(record.mock.calls[0][0]).toMatchObject({
+      errorType: 'DrizzleQueryError',
+      error: expect.stringMatching(
+        /^timeout exceeded when trying to connect · Failed query: select 1/,
+      ),
+    });
   });
 
   it('вырезает подписанный токен, но НЕ трогает числа', async () => {

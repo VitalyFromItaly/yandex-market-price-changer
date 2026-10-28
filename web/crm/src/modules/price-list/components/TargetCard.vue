@@ -1,10 +1,10 @@
 <script setup lang="ts">
 /** Площадка (магазин ЯМ, Ozon, WB): статус, причина блокировки и строки «было → станет». */
-import type { StockPushTarget } from '../stock-push.domain';
+import type { StockPushTarget } from '../price-list.domain';
 
 import { computed } from 'vue';
 
-import { deltaText, targetStatus } from '../mappers/mapStockPush.stock-push';
+import { deltaText, targetStatus } from '../mappers/mapStockPush.price-list';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,6 +24,7 @@ const counts = computed(() => {
   const t = props.target;
   const parts = [`без изменений: ${t.unchanged}`];
   if (t.notListed) parts.push(`нет в остатках площадки: ${t.notListed}`);
+  if (t.notWritable) parts.push(`площадка не примет (размеры или нет штрихкода): ${t.notWritable}`);
   if (t.zeroed) parts.push(`обнулится: ${t.zeroed}`);
   return parts.join(' · ');
 });

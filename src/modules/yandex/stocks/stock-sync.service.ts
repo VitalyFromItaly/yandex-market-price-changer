@@ -77,6 +77,18 @@ export interface IStockSyncResult {
    * `dryRun` при этом остаётся ОТДЕЛЬНЫМ полем: это не отказ, а просьба.
    */
   writeSkipReason?: TWriteSkipReason;
+  /**
+   * true — остатки файл не пишет: их пишет план «Передачи остатков» на
+   * «Прайсе» CRM (свой склад − продано после загрузки, по выбранным площадкам).
+   * Не отказ и не проверка — третий режим, отсюда отдельное поле.
+   */
+  stocksByPlan?: boolean;
+  /**
+   * Товары с закупом из файла и сколько из них привязано к карточкам Ozon/WB:
+   * закуп один на товар, площадка видит его через привязку. Нет — закуп не
+   * сохранялся или подсчёт не удался (итог загрузки от этого не страдает).
+   */
+  purchaseCoverage?: { products: number; ozon: number; wb: number };
 }
 
 /**
@@ -114,6 +126,12 @@ export interface ISyncOptions {
    * `false` понижает запись до сверки с `writeSkipReason: 'feature-disabled'`.
    */
   stockWriteAllowed?: boolean;
+  /**
+   * Остатки не писать вовсе — их запишет план «Передачи остатков» (CRM при
+   * открытой `stock_push`): иначе в ЯМ было бы два писателя, и расписание плана
+   * затирало бы сырые числа файла. Закуп и свой склад — как всегда.
+   */
+  stocksByPlan?: boolean;
 }
 
 /**
@@ -167,6 +185,7 @@ export class StockSyncService {
     const dryRun = options.dryRun ?? false;
     const savePrices = options.savePurchasePrices ?? true;
     const stockWriteAllowed = options.stockWriteAllowed ?? true;
+    const stocksByPlan = options.stocksByPlan ?? false;
     const client = this.clients.forTenant(credentials);
 
     /**
@@ -192,11 +211,14 @@ export class StockSyncService {
      * прочитаны следом, — незаметен.
      */
     const placementType =
-      !writeEnabled || !stockWriteAllowed
+      !writeEnabled || !stockWriteAllowed || stocksByPlan
         ? undefined
         : await this.resolvePlacement(client, credentials.campaignId);
 
-    const writeSkipReason = skipReasonOf(writeEnabled, stockWriteAllowed, placementType);
+    // Режим плана: писать отсюда не будем, поводов «почему не записали» нет.
+    const writeSkipReason = stocksByPlan
+      ? undefined
+      : skipReasonOf(writeEnabled, stockWriteAllowed, placementType);
 
     const { rows, invalid } = parsePriceList(file);
 
@@ -293,6 +315,7 @@ export class StockSyncService {
       purchasePricesSaved: 0,
       placementType,
       writeSkipReason,
+      ...(stocksByPlan ? { stocksByPlan: true } : {}),
     };
 
     /**
@@ -308,6 +331,10 @@ export class StockSyncService {
      */
     if (savePrices) {
       result.purchasePricesSaved = await this.savePurchasePrices(options.telegramUserId, purchases);
+      if (result.purchasePricesSaved) {
+        const coverage = await this.purchaseCoverage(options.telegramUserId, purchases);
+        if (coverage) result.purchaseCoverage = coverage;
+      }
     } else {
       result.purchasePricesSkipped = true;
     }
@@ -318,6 +345,11 @@ export class StockSyncService {
 
     if (dryRun) {
       this.logger.log(`Сухой прогон: ${updates.length} из ${rows.length} нашлись, записи НЕ было`);
+      return result;
+    }
+
+    if (stocksByPlan) {
+      this.logger.log(`Прайс для плана: свой склад сохранён, остатки пишет «Передача остатков»`);
       return result;
     }
 
@@ -455,6 +487,22 @@ export class StockSyncService {
     await this.saveProducts(telegramUserId, rows);
     await this.saveCostHistory(telegramUserId, rows, previous);
     return saved;
+  }
+
+  /** Подсчёт для итога — сбой не роняет загрузку: закуп уже сохранён. */
+  private async purchaseCoverage(
+    telegramUserId: string,
+    purchases: readonly IPurchasePriceRow[],
+  ): Promise<IStockSyncResult['purchaseCoverage'] | undefined> {
+    try {
+      return await this.products.purchaseCoverage(
+        telegramUserId,
+        purchases.map((row) => row.sku),
+      );
+    } catch (error) {
+      this.logger.warn(`Не удалось посчитать привязки закупа: ${String(error)}`);
+      return undefined;
+    }
   }
 
   /**

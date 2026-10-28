@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { StockSyncService } from '../../src/modules/yandex/stocks/stock-sync.service';
-import { formatStockReport } from '../../src/modules/yandex/stocks/stock-report';
+import { formatStockReport, toCrmStockView } from '../../src/modules/yandex/stocks/stock-report';
 import { STOCKS_BATCH_SIZE } from '../../src/modules/yandex/yandex-api.paths';
 
 const FIXTURE = join(process.cwd(), '__tests__/fixtures/price-template.xlsx');
@@ -136,6 +136,34 @@ describe('StockSyncService', () => {
     // но сверку провёл
     expect(result.matched).toBe(1);
     expect(result.catalogSize).toBe(1);
+  });
+
+  it('остатки по плану: в Яндекс ничего, модель не спрашивается; закуп и свой склад — сохранены', async () => {
+    const client = fakeClient(['FAA02006M']);
+    const products = {
+      ...fakeProducts(),
+      purchaseCoverage: vi.fn(async () => ({ products: 1, ozon: 1, wb: 0 })),
+    };
+    const result = await serviceWith(client, fakePurchasePrices(), true, products as never).sync(
+      CREDENTIALS,
+      file,
+      { telegramUserId: USER, stocksByPlan: true },
+    );
+
+    expect(client.updateStocks).not.toHaveBeenCalled();
+    expect(client.listStores).not.toHaveBeenCalled();
+    expect(products.setStockFromPriceList).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      stocksByPlan: true,
+      dryRun: false,
+      writeSkipReason: undefined,
+      purchaseCoverage: { products: 1, ozon: 1, wb: 0 },
+    });
+    expect(result.purchasePricesSaved).toBeGreaterThan(0);
+    // Итог — не «проверка» и не «записано 0».
+    const view = toCrmStockView(result);
+    expect(view).toMatchObject({ stocksByPlan: true, updated: null, advice: null });
+    expect(view.headline).toContain('по плану');
   });
 
   it('позиции не из каталога пропускаются, а не роняют загрузку', async () => {

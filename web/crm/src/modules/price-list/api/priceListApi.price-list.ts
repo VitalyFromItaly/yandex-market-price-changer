@@ -2,6 +2,7 @@ import type {
   PurchasePricesPage,
   PurchasePricesQuery,
   PurchasePricesResponse,
+  StockPushMarketplace,
   UploadAccepted,
   UploadAcceptedResponse,
 } from '../price-list.domain';
@@ -25,6 +26,13 @@ export const priceListApi = {
     form.append('file', file, file.name);
     return mapUploadAccepted(await http.upload<UploadAcceptedResponse>(`${BASE}/upload`, form));
   },
+
+  /** Запись подтверждённого плана на отмеченные площадки — фоновая задача по jobId. */
+  applyStockPush: async (
+    planHash: string,
+    marketplaces: readonly StockPushMarketplace[],
+  ): Promise<{ jobId: string }> =>
+    await http.post<{ jobId: string }>('/ym/stock-push/apply', { planHash, marketplaces }),
 
   purchasePrices: async (query: PurchasePricesQuery): Promise<PurchasePricesPage> => {
     const params = new URLSearchParams({

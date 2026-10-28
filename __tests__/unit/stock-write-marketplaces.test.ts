@@ -134,7 +134,12 @@ describe('склад записи — ровно один FBS', () => {
         ],
       }),
     ).toEqual([{ id: '22', name: 'Склад', isRfbs: true, status: 'created' }]);
-    expect(mapWbWarehouses([{ id: 5, name: 'FBS', deliveryType: 1 }, { id: 6, name: 'X' }])).toEqual([
+    expect(
+      mapWbWarehouses([
+        { id: 5, name: 'FBS', deliveryType: 1 },
+        { id: 6, name: 'X' },
+      ]),
+    ).toEqual([
       { id: '5', name: 'FBS', deliveryType: 1 },
       { id: '6', name: 'X', deliveryType: null },
     ]);
@@ -143,7 +148,8 @@ describe('склад записи — ровно один FBS', () => {
 
 describe('OzonSellerClient.updateStocks — запись без повторов', () => {
   const sleep = vi.fn(async () => undefined);
-  const client = () => new OzonSellerClient('https://ozon', { clientId: '1', apiKey: 'k' }, { sleep });
+  const client = () =>
+    new OzonSellerClient('https://ozon', { clientId: '1', apiKey: 'k' }, { sleep });
 
   it('тело запроса и построчный ответ', async () => {
     const calls = stubHttp(() => ({
@@ -257,11 +263,15 @@ describe('WB: артикул → штрихкод', () => {
 /** Сервис записи с клиентом-заглушкой: видно, ушёл ли хоть один запрос. */
 function ozonWriter(opts: { enabled: boolean; warehouses?: IOzonWarehouse[] }) {
   const client = {
-    listWarehouses: vi.fn(async () => opts.warehouses ?? [
-      { id: '77', name: 'Дом', isRfbs: false, status: 'created' },
-    ]),
+    listWarehouses: vi.fn(
+      async () => opts.warehouses ?? [{ id: '77', name: 'Дом', isRfbs: false, status: 'created' }],
+    ),
     updateStocks: vi.fn(async (_id: string, items: Array<{ offerId: string }>) =>
-      items.map((item) => ({ offerId: item.offerId, updated: item.offerId !== 'BAD', message: 'x' })),
+      items.map((item) => ({
+        offerId: item.offerId,
+        updated: item.offerId !== 'BAD',
+        message: 'x',
+      })),
     ),
   };
   const service = new OzonStockWriteService(
@@ -274,7 +284,9 @@ function ozonWriter(opts: { enabled: boolean; warehouses?: IOzonWarehouse[] }) {
 
 function wbWriter(opts: { enabled: boolean; warehouses?: IWbWarehouse[] }) {
   const client = {
-    listWarehouses: vi.fn(async () => opts.warehouses ?? [{ id: '9', name: 'Дом', deliveryType: 1 }]),
+    listWarehouses: vi.fn(
+      async () => opts.warehouses ?? [{ id: '9', name: 'Дом', deliveryType: 1 }],
+    ),
     listCards: vi.fn(async () => [
       { nmID: '1', vendorCode: 'A', sizes: [{ chrtID: '1', barcodes: ['111'] }] },
       {
@@ -313,9 +325,9 @@ describe('OzonStockWriteService.writeStocks — барьеры внутри', ()
         { id: '78', name: 'Второй', isRfbs: true, status: 'created' },
       ],
     });
-    expect((await several.service.writeStocks('1', '77', [{ sku: 'A', count: 1 }])).skipReason).toBe(
-      'placement',
-    );
+    expect(
+      (await several.service.writeStocks('1', '77', [{ sku: 'A', count: 1 }])).skipReason,
+    ).toBe('placement');
     const other = ozonWriter({ enabled: true });
     expect((await other.service.writeStocks('1', '99', [{ sku: 'A', count: 1 }])).skipReason).toBe(
       'placement',
@@ -374,6 +386,16 @@ describe('WbStockWriteService.writeStocks — барьеры внутри', () =
       errors: [],
       skipped: [{ sku: 'B', reason: WB_SKIP_REASON.severalSizes }],
     });
+  });
+
+  it('склад записи для плана — с артикулами, которые запись пропустит; без записи', async () => {
+    const { service, client } = wbWriter({ enabled: true });
+    expect(await service.writeTarget('1')).toEqual({
+      kind: 'ok',
+      warehouse: { id: '9', name: 'Дом' },
+      unwritable: [{ sku: 'B', reason: WB_SKIP_REASON.severalSizes }],
+    });
+    expect(client.updateSellerStocks).not.toHaveBeenCalled();
   });
 
   it('сбой PUT — в ошибках батча, не повторяется', async () => {

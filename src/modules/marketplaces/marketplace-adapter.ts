@@ -196,7 +196,12 @@ export interface IStockWriteWarehouse {
  * неоднозначно (`several`) — план блокирует площадку, ничего не пишется.
  */
 export type TStockWriteTarget =
-  | { kind: 'ok'; warehouse: IStockWriteWarehouse }
+  | {
+      kind: 'ok';
+      warehouse: IStockWriteWarehouse;
+      /** Артикулы, которые `writeStocks` не отправит, с причиной (WB — размеры). */
+      unwritable?: { sku: string; reason: string }[];
+    }
   | { kind: 'none' }
   | { kind: 'several'; names: string[] };
 

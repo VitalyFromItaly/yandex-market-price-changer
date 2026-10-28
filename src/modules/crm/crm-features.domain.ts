@@ -93,8 +93,10 @@ export const CRM_SECTIONS: Readonly<Record<string, readonly TFeatureKey[]>> = {
   ],
   // Две вкладки — «Прибыль» и «Калькулятор»; раздел нужен, пока открыта хоть одна.
   'ym-profit': [FEATURE.REPORT_PROFIT, FEATURE.TARIFF_CALC],
-  // Прайс делает два независимых дела — раздел нужен, пока открыто хоть одно.
-  'ym-price-list': [FEATURE.PURCHASE_PRICES, FEATURE.STOCK_UPDATE],
+  // Прайс делает независимые дела — раздел нужен, пока открыто хоть одно. С `stock_push`
+  // на нём же план «Передачи остатков» и запись по выбранным площадкам (раздела у плана
+  // больше нет: свой склад приходит из прайса, и два экрана одного шага путали).
+  'ym-price-list': [FEATURE.PURCHASE_PRICES, FEATURE.STOCK_UPDATE, FEATURE.STOCK_PUSH],
   // Карантин бизнесовый, но раздел живёт в магазине: магазин задаёт кабинет.
   'ym-quarantine': [FEATURE.PRICE_QUARANTINE],
   // Отзывы тоже бизнесовые: магазин задаёт кабинет и токен.
@@ -121,8 +123,6 @@ export const CRM_SECTIONS: Readonly<Record<string, readonly TFeatureKey[]>> = {
   // Дашборд «Площадки» — аккаунта; кроме фичи нужен ≥2 подключённых открытых площадок —
   // это не фича, поэтому `/auth/me` скрывает раздел через `hidden` (TASK-191).
   [MARKETPLACES_DASHBOARD_SECTION]: [FEATURE.MARKETPLACES_DASHBOARD],
-  // Передача остатков — аккаунта: свой склад один на все магазины и площадки.
-  'ym-stock-push': [FEATURE.STOCK_PUSH],
   // Калькулятор цен — аккаунта: ставки из бизнесового журнала; тариф ЯМ — по магазину задачи.
   'ym-price-calculator': [FEATURE.PRICE_CALCULATOR],
   // «ИИ-аналитик» — аккаунта: журнал бизнесовый; ai и finance свёрнуты в фичу (requires).

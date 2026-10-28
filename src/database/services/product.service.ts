@@ -173,6 +173,28 @@ export class ProductService {
     return await this.write(telegramUserId, 'остаток прайса', operations);
   }
 
+  /**
+   * Сколько товаров с закупом из прайса привязано к карточкам Ozon и WB — итог
+   * загрузки на «Прайсе»: закуп один на товар, и площадка видит его только через
+   * привязку. Товары — тем же `resolveForPriceList`, что закуп и свой склад.
+   */
+  async purchaseCoverage(
+    telegramUserId: string,
+    skus: readonly string[],
+  ): Promise<{ products: number; ozon: number; wb: number }> {
+    const ids = [...new Set((await this.resolveForPriceList(telegramUserId, skus)).values())];
+    if (!ids.length) return { products: 0, ozon: 0, wb: 0 };
+    const products = await this.model
+      .find({ telegramUserId, _id: { $in: ids } }, { marketplaceSkus: 1 })
+      .lean()
+      .exec();
+    return {
+      products: products.length,
+      ozon: products.filter((product) => product.marketplaceSkus?.ozon).length,
+      wb: products.filter((product) => product.marketplaceSkus?.wb).length,
+    };
+  }
+
   /** Товары, у которых по последнему прайсу есть что-то на своём складе. */
   /**
    * Товары с ЛЮБЫМ количеством из прайса, включая ноль, — для «Передачи

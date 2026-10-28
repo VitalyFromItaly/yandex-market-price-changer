@@ -1,8 +1,17 @@
-import type { StockPushTarget } from '../stock-push.domain';
+import type { StockPushPlan, StockPushTarget } from '../price-list.domain';
 
 import { describe, expect, it } from 'vitest';
 
-import { applyLines, deltaText, mapApplyError, targetStatus } from './mapStockPush.stock-push';
+import {
+  applyLines,
+  confirmText,
+  coverageText,
+  deltaText,
+  mapApplyError,
+  marketplaceOptions,
+  optionNote,
+  targetStatus,
+} from './mapStockPush.price-list';
 
 import { ApiError } from '@/shared/http';
 
@@ -20,6 +29,7 @@ function target(over: Partial<StockPushTarget> = {}): StockPushTarget {
     zeroed: 0,
     unchanged: 3,
     notListed: 0,
+    notWritable: 0,
     willWrite: false,
     ...over,
   };
@@ -97,5 +107,49 @@ describe('маппер «Передачи остатков»', () => {
     const error = new ApiError('идёт', 409, 'PUSH_RUNNING', null, { jobId: 'j1' });
     expect(mapApplyError(error)).toEqual({ message: 'идёт', runningJobId: 'j1' });
     expect(mapApplyError(new Error('x')).runningJobId).toBeNull();
+  });
+
+  it('площадки плана: цели ЯМ сводятся в одну строку, писать можно только willWrite', () => {
+    const plan = {
+      targets: [
+        target({ key: 'c1', updates: [ROW], willWrite: true }),
+        target({ key: 'c2', name: 'Второй', updates: [ROW, ROW], willWrite: true }),
+        target({ marketplace: 'ozon', marketplaceLabel: 'Ozon', key: 'ozon', updates: [ROW] }),
+        target({
+          marketplace: 'wb',
+          marketplaceLabel: 'Wildberries',
+          key: 'wb',
+          blockedBy: 'several-warehouses',
+        }),
+      ],
+    } as StockPushPlan;
+    const options = marketplaceOptions(plan);
+    expect(options).toHaveLength(3);
+    const [ym, ozon, wb] = options as [
+      (typeof options)[number],
+      (typeof options)[number],
+      (typeof options)[number],
+    ];
+    expect(ym).toMatchObject({ marketplace: 'ym', writable: true, count: 3 });
+    expect(ym.targets).toHaveLength(2);
+    expect(ozon).toMatchObject({ writable: false, count: 0 });
+    expect(optionNote(ozon)).toMatch(/только просмотр/);
+    expect(optionNote(wb)).toMatch(/не пишется/);
+    expect(optionNote(ym)).toBe('запишем 3 поз.');
+    expect(confirmText([ym])).toMatch(
+      /^Будет записано 3 позиций: Яндекс Маркет «Магазин», Яндекс Маркет «Второй»/,
+    );
+  });
+
+  it('закуп по площадкам — только открытые, без закупа и без площадок молчим', () => {
+    const coverage = { products: 10, ozon: 7, wb: 10 };
+    expect(coverageText(coverage, ['ozon', 'wb'])).toMatch(
+      /Ozon — 7 из 10, Wildberries — 10 из 10/,
+    );
+    expect(coverageText(coverage, ['ozon'])).toMatch(/Непривязанные/);
+    expect(coverageText(coverage, ['wb'])).not.toMatch(/Непривязанные/);
+    expect(coverageText(coverage, [])).toBeNull();
+    expect(coverageText(null, ['ozon'])).toBeNull();
+    expect(coverageText({ products: 0, ozon: 0, wb: 0 }, ['ozon'])).toBeNull();
   });
 });

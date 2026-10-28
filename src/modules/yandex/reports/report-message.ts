@@ -183,7 +183,9 @@ export function reportErrorText(error: unknown): string {
  * чат. Одна функция на оба канала, иначе формулировки разъедутся.
  */
 export function reportErrorMessage(error: unknown): string {
-  return error instanceof YandexApiError
-    ? error.userMessage
-    : 'Не удалось собрать отчёт. Попробуйте позже.';
+  if (error instanceof YandexApiError) return error.userMessage;
+  // Ошибки Ozon/WB несут свой текст для продавца (`userMessage`), без ключа и
+  // внутренностей; импортировать их классы сюда незачем — хватает формы.
+  const own = (error as { userMessage?: unknown } | null | undefined)?.userMessage;
+  return typeof own === 'string' && own ? own : 'Не удалось собрать отчёт. Попробуйте позже.';
 }

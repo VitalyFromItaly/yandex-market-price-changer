@@ -52,10 +52,15 @@ export class CrmUnitEconomicsKinds implements OnModuleInit {
     const { marketplace } = parsed;
 
     const { telegramUserId } = context;
-    const [current, previous] = await Promise.all([
-      this.finance.build(telegramUserId, ranges.current, now, { flat: false, marketplace }),
-      this.finance.build(telegramUserId, ranges.previous, now, { flat: false, marketplace }),
-    ]);
+    // По очереди, а не `Promise.all`: пул Postgres — 10 соединений (README finance).
+    const current = await this.finance.build(telegramUserId, ranges.current, now, {
+      flat: false,
+      marketplace,
+    });
+    const previous = await this.finance.build(telegramUserId, ranges.previous, now, {
+      flat: false,
+      marketplace,
+    });
 
     const skus = current.pnl.skus.skus.map((sku) => sku.sku);
     const products = await this.products.findByJournalSkus(telegramUserId, marketplace, skus);

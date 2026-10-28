@@ -119,7 +119,7 @@ type TWriteResult = Omit<IMarketplaceStockWriteResult, 'skipReason'> & {
   skipReason?: TWriteSkipReason;
 };
 
-/** Ключ цели Ozon/WB с открытой записью: `<площадка>:<id склада>`. */
+/** Ключ цели Ozon/WB с однозначным складом: `<площадка>:<id склада>`. */
 function writeKeyOf(marketplace: TMarketplace, warehouseId: string): string {
   return `${marketplace}:${warehouseId}`;
 }
@@ -140,9 +140,10 @@ export interface IStockPushApplyResult {
  *
  * ЯМ пишет через `StockSyncService.writeStocks`, Ozon и WB (TASK-175) — через
  * возможность реестра `stockWrite` на единственный FBS-склад продавца; каждая
- * площадка — за своей фичей (`STOCK_PUSH_WRITE_FEATURE`). Площадка с закрытой
- * записью — источник продаж и просмотр «что бы записали». Магазины и площадки
- * опрашиваются по очереди: квоты — на токен.
+ * площадка — за своей фичей (`STOCK_PUSH_WRITE_FEATURE`). План от фичи записи
+ * не зависит (решение `stock_push_ozon_wb_same_as_ym`): площадка с закрытой
+ * записью — тот же просмотр «что бы записали», её не пишет только `write`.
+ * Магазины и площадки опрашиваются по очереди: квоты — на токен.
  */
 @Injectable()
 export class StockPushService {
@@ -210,6 +211,8 @@ export class StockPushService {
     features: Readonly<Record<string, boolean>>,
     planHash: string,
     now: Date = new Date(),
+    /** Отмеченные продавцом площадки; нет — все с открытой записью. */
+    marketplaces?: readonly TMarketplace[],
   ): Promise<IStockPushApplyResult> {
     // Повтор гварда маршрута — барьер не только в доставке (довод writeInBatches).
     if (!stockPushWriteOpen(features)) {
@@ -221,7 +224,9 @@ export class StockPushService {
     for (const target of plan.targets) {
       if (target.blockedBy === 'zeroing') this.alertZeroing(telegramUserId, target);
     }
-    return { plan, writes: await this.write(telegramUserId, features, plan) };
+    // Отпечаток — по всему плану: выбор площадок сужает запись, а не то, что продавец видел.
+    const only = marketplaces ? new Set(marketplaces) : undefined;
+    return { plan, writes: await this.write(telegramUserId, features, plan, only) };
   }
 
   /**
@@ -264,18 +269,37 @@ export class StockPushService {
     telegramUserId: string,
     features: Readonly<Record<string, boolean>>,
     plan: IStockPushPlan,
+    only?: ReadonlySet<TMarketplace>,
   ): Promise<IStockPushWriteOutcome[]> {
     const doc = await this.yandexMarket.findByTelegramUser(telegramUserId);
     const writes: IStockPushWriteOutcome[] = [];
     for (const target of plan.targets) {
       if (target.blockedBy !== null || !target.updates.length) continue;
+      if (only && !only.has(target.marketplace)) continue;
       if (!isFeatureEnabled(features, STOCK_PUSH_WRITE_FEATURE[target.marketplace])) continue;
 
       const updates = target.updates.map((row) => ({ sku: row.sku, count: row.to }));
-      const result =
-        target.marketplace === 'ym'
-          ? await this.writeYm(doc, target.key, updates, telegramUserId)
-          : await this.writeMarketplace(telegramUserId, target, updates);
+      let result: TWriteResult | null;
+      try {
+        result =
+          target.marketplace === 'ym'
+            ? await this.writeYm(doc, target.key, updates, telegramUserId)
+            : await this.writeMarketplace(telegramUserId, target, updates);
+      } catch (caught) {
+        // Сбой одной цели не отменяет уже записанное на другие: продавец должен
+        // видеть, что ушло, а что нет. Ошибка — админам и строкой результата.
+        void this.errors.report({
+          error: caught,
+          source: ERROR_SOURCE[target.marketplace],
+          context: 'stock-push:write',
+          telegramUserId,
+        });
+        result = {
+          written: 0,
+          errors: [{ batch: 0, message: reportErrorMessage(caught) }],
+          skipped: [],
+        };
+      }
       if (!result) continue;
 
       const outcome: IStockPushWriteOutcome = {
@@ -369,6 +393,7 @@ export class StockPushService {
         placement = placement ?? levels.placement ?? null;
       } catch (caught) {
         error = reportErrorMessage(caught);
+        this.reportReadFailure(caught, 'ym', telegramUserId, 'остатки');
       }
       targets.push({
         marketplace: 'ym',
@@ -383,10 +408,11 @@ export class StockPushService {
   }
 
   /**
-   * Ozon/WB: заказы — источник продаж, место «склад продавца» — цель. Пишется
-   * она, только если открыта фича записи площадки и метод записи есть; тогда же
-   * читается склад записи (единственный FBS). Возвращает причину, если площадка
-   * не спрашивалась вовсе: её продаж мы не знаем, и экран обязан это сказать.
+   * Ozon/WB: заказы — источник продаж, место «склад продавца» — цель. Как у ЯМ,
+   * цель строится одинаково при открытой и закрытой фиче записи: при методе
+   * записи читается склад записи (единственный FBS) и что запись пропустит.
+   * Возвращает причину, если площадка не спрашивалась вовсе: её продаж мы не
+   * знаем, и экран обязан это сказать.
    */
   private async marketplaceFacts(
     telegramUserId: string,
@@ -418,11 +444,10 @@ export class StockPushService {
         else available = sellerAvailable(levels);
       } catch (caught) {
         error = reportErrorMessage(caught);
+        this.reportReadFailure(caught, marketplace, telegramUserId, 'остатки');
       }
     }
-    const writer = isFeatureEnabled(features, STOCK_PUSH_WRITE_FEATURE[marketplace])
-      ? this.marketplaces.capability(marketplace, 'stockWrite')
-      : null;
+    const writer = this.marketplaces.capability(marketplace, 'stockWrite');
     let target: TStockWriteTarget | null = null;
     if (writer && !error) {
       try {
@@ -430,6 +455,7 @@ export class StockPushService {
       } catch (caught) {
         error = `склады продавца не прочитались: ${reportErrorMessage(caught)}`;
         available = null;
+        this.reportReadFailure(caught, marketplace, telegramUserId, 'склады');
       }
     }
     targets.push({
@@ -442,6 +468,9 @@ export class StockPushService {
       placement: 'FBS',
       available,
       canWrite: !!writer,
+      ...(target?.kind === 'ok' && target.unwritable?.length
+        ? { unwritable: Object.fromEntries(target.unwritable.map((u) => [u.sku, u.reason])) }
+        : {}),
       ...(target?.kind === 'none' ? { warehouseBlock: 'no-warehouse' as const } : {}),
       ...(target?.kind === 'several' ? { warehouseBlock: 'several-warehouses' as const } : {}),
       ...(error ? { error } : {}),
@@ -466,8 +495,31 @@ export class StockPushService {
         return { marketplace, source, orders: null, error: NOT_CONNECTED };
       }
       this.logger.warn(`Заказы ${source} не прочитались: ${String(error)}`);
+      this.reportReadFailure(error, marketplace, ref.telegramUserId, 'заказы');
       return { marketplace, source, orders: null, error: reportErrorMessage(error) };
     }
+  }
+
+  /**
+   * Исходная ошибка чтения площадки — админам, с запросом и ответом. Сводка блока
+   * («текущие остатки не прочитались…») говорит продавцу, ЧТО заблокировано, а
+   * причину («Не удалось собрать отчёт» у любой ошибки не Яндекса) теряла: по
+   * алерту было не понять, какой метод площадки упал. Место — со стороной чтения:
+   * троттлинг ErrorReporter — по паре «тип + место».
+   */
+  private reportReadFailure(
+    error: unknown,
+    marketplace: TMarketplace,
+    telegramUserId: string,
+    what: 'остатки' | 'склады' | 'заказы',
+  ): void {
+    void this.errors.report({
+      error,
+      source: ERROR_SOURCE[marketplace],
+      context: `stock-push:read:${marketplace}`,
+      action: what,
+      telegramUserId,
+    });
   }
 
   private alertZeroing(telegramUserId: string, target: IStockPushTargetPlan): void {
@@ -523,6 +575,13 @@ export class StockPushService {
         parts.push(`${label}: ${WRITE_SKIP_TEXT[w.skipReason]}, позиций ${w.requested}`);
       if (w.errors.length) parts.push(`${label}: отвергнуто батчей ${w.errors.length}`);
     }
+    for (const w of writes) {
+      if (w.skipped.length) {
+        parts.push(
+          `${MARKETPLACE_LABEL[w.marketplace]} «${w.name}»: не отправлено ${w.skipped.length}`,
+        );
+      }
+    }
     void this.actionLog.record({
       telegramUserId,
       botId: 'schedule',
@@ -552,7 +611,8 @@ export class StockPushService {
       kind: STOCK_PUSH_LOG_KIND,
       action:
         `передача остатков в ${MARKETPLACE_LABEL[target.marketplace]} «${target.name}»: ` +
-        `записано ${outcome.written} из ${outcome.requested}`,
+        `записано ${outcome.written} из ${outcome.requested}` +
+        (outcome.skipped.length ? `, не отправлено ${outcome.skipped.length}` : ''),
       status: outcome.errors.length || outcome.skipReason ? 'error' : 'ok',
       ...(outcome.skipReason ? { error: `запись пропущена: ${outcome.skipReason}` } : {}),
       context: `stock-push:${target.key}`,

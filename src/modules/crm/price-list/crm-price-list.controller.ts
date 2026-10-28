@@ -37,7 +37,11 @@ import { costsOn } from '../../products/cost-history.domain';
 import { JOB_TYPES, QUEUE_NAMES } from '../../telegram';
 import { FEATURE, isFeatureEnabled } from '../../telegram/bots/shared/features.domain';
 import { ratesOf } from '../../yandex/reports/profit';
-import { bothHalvesOff, checkUploadFile } from '../../yandex/stocks/stock-upload-policy';
+import {
+  bothHalvesOff,
+  checkUploadFile,
+  decidePlanUpload,
+} from '../../yandex/stocks/stock-upload-policy';
 import {
   StockUploadPolicyService,
   uploadCredentials,
@@ -111,7 +115,10 @@ export class CrmPriceListController {
     // Фичи — из того же снимка, что гейт; у админа там allFeaturesEnabled().
     const savePrices = isFeatureEnabled(user.features, FEATURE.PURCHASE_PRICES);
     const stockFeatureOn = isFeatureEnabled(user.features, FEATURE.STOCK_UPDATE);
-    if (bothHalvesOff(savePrices, stockFeatureOn)) throw uploadDisabled();
+    // Открыта «Передача остатков» — остатки пишет её план на этой же странице, по
+    // выбранным площадкам; файл даёт свой склад и закуп. Иначе — запись файлом в ЯМ.
+    const stocksByPlan = isFeatureEnabled(user.features, FEATURE.STOCK_PUSH);
+    if (!stocksByPlan && bothHalvesOff(savePrices, stockFeatureOn)) throw uploadDisabled();
 
     // Остатки пишутся на склад магазина, открытого в вебе, — не активного в боте.
     const storeKey = typeof body?.store === 'string' ? body.store : '';
@@ -134,12 +141,11 @@ export class CrmPriceListController {
       throw new ConflictException({ statusCode: 409, code: NO_STORE, message: NO_STORE_TEXT });
     }
 
-    const dryRun = parseDryRun(body?.dryRun);
-    const decision = await this.policy.decide(store, credentials, {
-      savePrices,
-      stockFeatureOn,
-      dryRun,
-    });
+    // «Только проверка» в режиме плана не нужна: запись — отдельной кнопкой плана.
+    const dryRun = !stocksByPlan && parseDryRun(body?.dryRun);
+    const decision = stocksByPlan
+      ? decidePlanUpload(savePrices)
+      : await this.policy.decide(store, credentials, { savePrices, stockFeatureOn, dryRun });
     if (!decision.accepted) throw uploadDisabled();
 
     const claim = await this.results.claim({
@@ -172,6 +178,7 @@ export class CrmPriceListController {
       savePurchasePrices: decision.savePurchasePrices,
       stockWriteAllowed: decision.stockWriteAllowed,
       campaignId: resolved.entry.campaignId,
+      ...(stocksByPlan ? { stocksByPlan: true } : {}),
     };
     try {
       // attempts: 1 — авто-повтор записи остатков жжёт квоту Partner API.

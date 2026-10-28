@@ -1,7 +1,8 @@
 /**
- * «Прайс» CRM: загрузка файла (остатки + закупочные цены) и список закупа.
- * Ответы — /api/crm/ym/price-list/*; итог загрузки — фоновая задача, её опрос
- * идёт через /api/crm/jobs/:id (общий useJob).
+ * «Прайс» CRM: загрузка файла (остатки + закупочные цены), план записи остатков
+ * на площадки («Передача остатков», при открытой `stock_push`) и список закупа.
+ * Ответы — /api/crm/ym/price-list/* и /api/crm/ym/stock-push/apply; итоги —
+ * фоновые задачи, их опрос идёт через /api/crm/jobs/:id (общий useJob).
  */
 
 export const PRICE_LIST_ROUTE_NAME = 'ym-price-list';
@@ -9,6 +10,8 @@ export const PRICE_LIST_ROUTE_NAME = 'ym-price-list';
 /** Фичи бота: закуп из прайса и остатки из прайса. */
 export const PURCHASE_PRICES_FEATURE = 'purchase_prices';
 export const STOCK_UPDATE_FEATURE = 'stock_update';
+/** План «Передачи остатков»: с ним файл остатки не пишет — их пишет план по площадкам. */
+export const STOCK_PUSH_FEATURE = 'stock_push';
 
 export const PRICE_LIST_TAB = {
   UPLOAD: 'upload',
@@ -28,7 +31,7 @@ export const PRICE_LIST_TABS: readonly PriceListTabMeta[] = [
   {
     key: PRICE_LIST_TAB.UPLOAD,
     label: 'Загрузка',
-    features: [STOCK_UPDATE_FEATURE, PURCHASE_PRICES_FEATURE],
+    features: [STOCK_UPDATE_FEATURE, PURCHASE_PRICES_FEATURE, STOCK_PUSH_FEATURE],
   },
   { key: PRICE_LIST_TAB.PRICES, label: 'Закупочные цены', features: [PURCHASE_PRICES_FEATURE] },
 ];
@@ -84,6 +87,10 @@ export interface StockSyncData {
   zeroed: number;
   /** `null` — записи не было и не должно было быть. */
   updated: number | null;
+  /** Остатки файл не писал — их пишет план ниже. Нет у задач до плана на «Прайсе». */
+  stocksByPlan?: boolean;
+  /** Товары с закупом из файла и привязанные из них к Ozon/WB; `null` — не считали. */
+  purchaseCoverage?: PurchaseCoverage | null;
   purchasePricesSaved: number;
   purchasePricesSkipped: boolean;
   matchedBy: Record<string, number>;
@@ -107,6 +114,9 @@ export interface StockSyncResult {
   advice: string | null;
   counts: StockSyncCount[];
   pricesSkippedNote: string | null;
+  /** Остатки запишет план на этой же странице. */
+  stocksByPlan: boolean;
+  purchaseCoverage: PurchaseCoverage | null;
   skipped: SkippedRow[];
   errors: Array<{ batch: number; count: number; message: string }>;
 }
@@ -161,4 +171,102 @@ export interface UploadErrors {
   form: string | null;
   /** Уже идёт загрузка — её id, чтобы подхватить опрос. */
   runningJobId: string | null;
+}
+
+/** Закуп один на товар: Ozon и WB видят его через привязку карточки к товару. */
+export interface PurchaseCoverage {
+  products: number;
+  ozon: number;
+  wb: number;
+}
+
+/* ── План «Передачи остатков» (TASK-143): свой склад − продано после прайса ── */
+
+export const STOCK_PUSH_KIND = 'stock-push:plan';
+export const PUSH_RUNNING = 'PUSH_RUNNING';
+
+export type StockPushMarketplace = 'ym' | 'ozon' | 'wb';
+
+export type StockPushBlock =
+  | 'placement'
+  | 'read-error'
+  | 'orders-unknown'
+  | 'zeroing'
+  | 'no-warehouse'
+  | 'several-warehouses'
+  | 'no-write-method';
+
+export interface StockPushRow {
+  internalSku: string;
+  name: string | null;
+  sku: string;
+  from: number;
+  to: number;
+  priceListStock: number;
+  sold: number;
+}
+
+export interface StockPushTarget {
+  marketplace: StockPushMarketplace;
+  marketplaceLabel: string;
+  key: string;
+  name: string;
+  placement: string | null;
+  blockedBy: StockPushBlock | null;
+  blockedText: string | null;
+  error: string | null;
+  updates: StockPushRow[];
+  zeroed: number;
+  unchanged: number;
+  notListed: number;
+  /** Площадка не примет (WB — несколько размеров или нет штрихкода). */
+  notWritable: number;
+  willWrite: boolean;
+}
+
+export interface StockPushPlan {
+  takenAt: string;
+  priceListDay: string | null;
+  planHash: string;
+  writeOpen: boolean;
+  writeCount: number;
+  ruleText: string;
+  notes: string[];
+  orderErrors: { marketplaceLabel: string; source: string; error: string }[];
+  notConsidered: { marketplaceLabel: string; reason: string }[];
+  targets: StockPushTarget[];
+  skipped: { internalSku: string; name: string | null; reason: string; reasonText: string }[];
+}
+
+export interface StockPushWrite {
+  marketplace: StockPushMarketplace;
+  key: string;
+  name: string;
+  requested: number;
+  written: number;
+  errors: { batch: number; message: string }[];
+  /** Позиции, которые площадке не отправлялись (WB — несколько размеров). */
+  skipped: { sku: string; reason: string }[];
+  skipReason?: 'placement' | 'write-disabled' | 'feature-disabled';
+}
+
+export interface StockPushApplyResult {
+  writes: StockPushWrite[];
+}
+
+/** Статус карточки площадки — одна подпись и один цвет на смысл. */
+export interface TargetStatus {
+  label: string;
+  variant: 'ok' | 'warn' | 'danger' | 'default';
+}
+
+/** Площадка в плане — строка выбора «куда записать». */
+export interface PushMarketplaceOption {
+  marketplace: StockPushMarketplace;
+  label: string;
+  /** Есть что записать и запись открыта — галочку можно поставить. */
+  writable: boolean;
+  /** Позиций к записи по всем её целям (у ЯМ — магазинам). */
+  count: number;
+  targets: StockPushTarget[];
 }

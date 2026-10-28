@@ -9,6 +9,7 @@ import type {
 
 import {
   toCrmStockPush,
+  parseMarketplaces,
   parsePlanHash,
 } from '../../src/modules/crm/stock-push/crm-stock-push.domain';
 import { STOCK_PUSH_MAX_ZEROED, stockPushPlanOf } from '../../src/modules/finance/stock-push';
@@ -18,6 +19,7 @@ import {
   StockPushPlanChangedError,
   StockPushService,
 } from '../../src/modules/stock-push/stock-push.service';
+import { OzonApiError } from '../../src/modules/ozon/ozon.errors';
 import { FEATURE, FEATURE_META } from '../../src/modules/telegram/bots/shared/features.domain';
 import { StockSyncProcessor } from '../../src/modules/telegram/queue/processors/stock-sync.processor';
 import { REQUIRE_FEATURE } from '../../src/modules/crm/crm-auth.decorators';
@@ -303,7 +305,9 @@ describe('фича и раздел', () => {
       ozon: FEATURE.STOCK_PUSH_WRITE_OZON,
       wb: FEATURE.STOCK_PUSH_WRITE_WB,
     });
-    expect(CRM_SECTIONS['ym-stock-push']).toEqual([FEATURE.STOCK_PUSH]);
+    // План живёт на «Прайсе» — своего раздела у него нет.
+    expect(CRM_SECTIONS['ym-price-list']).toContain(FEATURE.STOCK_PUSH);
+    expect(CRM_SECTIONS['ym-stock-push']).toBeUndefined();
   });
 
   it('гейт: маршрут записи — под планом и хоть одной фичей записи', async () => {
@@ -318,6 +322,18 @@ describe('фича и раздел', () => {
       controller.apply(request({ [FEATURE.STOCK_PUSH]: true }), { planHash: 'a'.repeat(64) }),
     ).rejects.toMatchObject({ status: 403 });
     expect(claim).not.toHaveBeenCalled();
+
+    // Площадки: пусто или чужое значение — 400, а не «писать всё».
+    const writer = request({ [FEATURE.STOCK_PUSH]: true, [FEATURE.STOCK_PUSH_WRITE_YM]: true });
+    for (const marketplaces of [[], ['ozon', 'avito'], 'ozon']) {
+      await expect(
+        controller.apply(writer, { planHash: 'a'.repeat(64), marketplaces }),
+      ).rejects.toMatchObject({ status: 400 });
+    }
+    expect(claim).not.toHaveBeenCalled();
+    expect(parseMarketplaces(['ozon', 'ozon', 'wb'])).toEqual(['ozon', 'wb']);
+    expect(parseMarketplaces(undefined)).toBeUndefined();
+
     const register = vi.fn();
     new CrmStockPushKinds({ register } as never, {} as never).onModuleInit();
     expect(register).toHaveBeenCalledWith(
@@ -596,85 +612,114 @@ describe('StockPushService', () => {
   });
 });
 
-/** Сервис плана с одной Ozon: заказы, остатки и запись — заглушки реестра. */
+/**
+ * Сервис плана с одной площадкой Ozon или WB: заказы, остатки и запись — заглушки
+ * реестра. `withYm` — ещё магазин ЯМ с тем же артикулом (выбор и сбой посреди записи).
+ */
 function ozonPushService(
   opts: {
+    marketplace?: 'ozon' | 'wb';
     target?: unknown;
-    targetFails?: boolean;
+    targetFails?: unknown;
     noWriter?: boolean;
+    ordersFail?: boolean;
+    zeroing?: boolean;
+    writeResult?: Record<string, unknown>;
+    writeThrows?: boolean;
+    withYm?: boolean;
   } = {},
 ) {
-  const writeStocks = vi.fn(async (_ref: unknown, _wh: string, updates: unknown[]) => ({
-    written: updates.length,
-    errors: [],
-    skipped: [],
-  }));
+  const mp = opts.marketplace ?? 'ozon';
+  const writeStocks = vi.fn(async (_ref: unknown, _wh: string, updates: unknown[]) => {
+    if (opts.writeThrows) throw new Error('socket hang up');
+    return { written: updates.length, errors: [], skipped: [], ...opts.writeResult };
+  });
   const writeTarget = vi.fn(async () => {
-    if (opts.targetFails) throw new Error('timeout');
+    if (opts.targetFails) throw opts.targetFails === true ? new Error('timeout') : opts.targetFails;
     return opts.target ?? { kind: 'ok', warehouse: { id: '77', name: 'Дом' } };
   });
+  const skus = opts.zeroing ? Array.from({ length: 6 }, (_, i) => `OZ-${i}`) : ['OZ-A'];
   const capabilities: Record<string, unknown> = {
     orders: {
-      listOrders: vi.fn(async () => ({
-        orders: [
-          {
-            scheme: 'FBS',
-            stage: 'awaiting_assembly',
-            createdDay: '2026-10-16',
-            items: [{ sku: 'OZ-A', count: 2 }],
-          },
-        ],
-        cancelled: [],
-      })),
+      listOrders: vi.fn(async () => {
+        if (opts.ordersFail) throw new Error('timeout');
+        return {
+          orders: [
+            {
+              scheme: 'FBS',
+              stage: 'awaiting_assembly',
+              createdDay: '2026-10-16',
+              items: [{ sku: 'OZ-A', count: 2 }],
+            },
+          ],
+          cancelled: [],
+        };
+      }),
     },
     stocks: {
       listStocks: vi.fn(async () => ({
         takenAt: new Date(),
-        byLocation: { seller: { 'OZ-A': { available: 10, reserved: 0 } } },
+        byLocation: {
+          seller: Object.fromEntries(skus.map((sku) => [sku, { available: 10, reserved: 0 }])),
+        },
         placement: null,
       })),
     },
     ...(opts.noWriter ? {} : { stockWrite: { writeTarget, writeStocks } }),
   };
   const registry = {
-    capability: vi.fn((mp: string, cap: string) =>
-      mp === 'ozon' ? (capabilities[cap] ?? null) : null,
+    capability: vi.fn((asked: string, cap: string) =>
+      asked === mp ? (capabilities[cap] ?? null) : null,
     ),
     require: vi.fn((_mp: string, cap: string) => capabilities[cap]),
   };
-  const products = [
-    {
-      _id: 'p1',
-      internalSku: 'A-1',
-      name: 'Часы',
-      stock: 10,
-      stockUpdatedAt: new Date('2026-10-15T09:00:00Z'),
-      marketplaceSkus: { ozon: 'OZ-A' },
-    },
-  ];
-  const ymWrite = vi.fn();
+  const products = skus.map((sku, i) => ({
+    _id: `p${i}`,
+    internalSku: `A-${i}`,
+    name: 'Часы',
+    stock: opts.zeroing ? 0 : 10,
+    stockUpdatedAt: new Date('2026-10-15T09:00:00Z'),
+    marketplaceSkus: { [mp]: sku, ...(opts.withYm ? { ym: sku } : {}) },
+  }));
+  const ymWrite = vi.fn(async (_c: unknown, updates: unknown[]) => ({
+    written: updates.length,
+    errors: [],
+  }));
+  const ymDoc = {
+    telegramUserId: '1',
+    token: 't',
+    campaign_id: 'c1',
+    business_id: 'b',
+    name: 'Магазин',
+    stores: [{ campaignId: 'c1', businessId: 'b', storeName: 'Магазин', placementType: 'FBS' }],
+  };
   const report = vi.fn(async () => undefined);
   const record = vi.fn(async () => undefined);
   const service = new StockPushService(
     registry as never,
     { findWithPriceListStock: vi.fn(async () => products) } as never,
-    { findByTelegramUser: vi.fn(async () => null) } as never,
+    { findByTelegramUser: vi.fn(async () => (opts.withYm ? ymDoc : null)) } as never,
     { writeStocks: ymWrite } as never,
     { record } as never,
     { report } as never,
   );
-  return { service, writeStocks, writeTarget, ymWrite, record };
+  return { service, writeStocks, writeTarget, ymWrite, record, report };
 }
 
 const OZON_PLAN = { [FEATURE.STOCK_PUSH]: true, [FEATURE.OZON]: true };
 const OZON_WRITE = { ...OZON_PLAN, [FEATURE.STOCK_PUSH_WRITE_OZON]: true };
 
 describe('StockPushService — запись в Ozon (TASK-175)', () => {
-  it('фича записи закрыта — только просмотр, склады не читаются', async () => {
-    const { service, writeTarget } = ozonPushService();
+  it('фича записи закрыта — тот же просмотр, что у ЯМ: цель по складу, но не пишется', async () => {
+    const { service, writeTarget, writeStocks } = ozonPushService();
     const { plan } = await service.plan('1', OZON_PLAN, NOW);
-    expect(plan.targets[0]).toMatchObject({ key: 'ozon', blockedBy: 'no-write-method' });
-    expect(writeTarget).not.toHaveBeenCalled();
+    expect(plan.targets[0]).toMatchObject({ key: 'ozon:77', blockedBy: null });
+    expect(writeTarget).toHaveBeenCalled();
+
+    const ymOnly = { ...OZON_PLAN, [FEATURE.STOCK_PUSH_WRITE_YM]: true };
+    const result = await service.apply('1', ymOnly, plan.planHash, NOW);
+    expect(result.writes).toEqual([]);
+    expect(writeStocks).not.toHaveBeenCalled();
   });
 
   it('фича открыта, но метода записи нет — только просмотр', async () => {
@@ -700,6 +745,18 @@ describe('StockPushService — запись в Ozon (TASK-175)', () => {
     );
   });
 
+  it('выбор площадок на «Прайсе»: не отмеченная площадка не пишется, отпечаток — по всему плану', async () => {
+    const { service, writeStocks } = ozonPushService();
+    const { plan } = await service.plan('1', OZON_WRITE, NOW);
+
+    const skipped = await service.apply('1', OZON_WRITE, plan.planHash, NOW, ['ym']);
+    expect(writeStocks).not.toHaveBeenCalled();
+    expect(skipped.writes).toEqual([]);
+
+    await service.apply('1', OZON_WRITE, plan.planHash, NOW, ['ozon']);
+    expect(writeStocks).toHaveBeenCalledTimes(1);
+  });
+
   it('несколько складов — блок, apply ничего не пишет', async () => {
     const { service, writeStocks } = ozonPushService({
       target: { kind: 'several', names: ['Дом', 'Второй'] },
@@ -717,15 +774,181 @@ describe('StockPushService — запись в Ozon (TASK-175)', () => {
     expect(plan.targets[0].error).toMatch(/склады продавца не прочитались/);
   });
 
+  it('сбой чтения — исходная ошибка админам (с запросом), продавцу — текст площадки', async () => {
+    const failure = new OzonApiError('Request failed with status code 404', 404).withRequest(
+      'post',
+      '/v1/warehouse/list',
+    );
+    const { service, report } = ozonPushService({ targetFails: failure });
+    const { plan } = await service.plan('1', OZON_WRITE, NOW);
+    expect(plan.targets[0].error).toBe(`склады продавца не прочитались: ${failure.userMessage}`);
+    expect(report).toHaveBeenCalledWith({
+      error: failure,
+      source: 'ozon',
+      context: 'stock-push:read:ozon',
+      action: 'склады',
+      telegramUserId: '1',
+    });
+  });
+
   it('фича Ozon закрыта к моменту записи — Ozon не пишется', async () => {
     const { service, writeStocks } = ozonPushService();
     const { plan } = await service.plan('1', OZON_WRITE, NOW);
     const ymOnly = { ...OZON_PLAN, [FEATURE.STOCK_PUSH_WRITE_YM]: true };
-    // План с закрытой записью Ozon другой (цель «только просмотр») — отпечаток не совпадёт.
-    await expect(service.apply('1', ymOnly, plan.planHash, NOW)).rejects.toBeInstanceOf(
-      StockPushPlanChangedError,
-    );
+    // План от фичи записи не зависит (как у ЯМ): отпечаток тот же, Ozon отсеивает запись.
+    const result = await service.apply('1', ymOnly, plan.planHash, NOW);
+    expect(result.writes).toEqual([]);
     expect(writeStocks).not.toHaveBeenCalled();
+  });
+
+  it('массовое обнуление — не пишется и алерт, как у ЯМ', async () => {
+    const { service, writeStocks, report } = ozonPushService({ zeroing: true });
+    const { plan } = await service.plan('1', OZON_WRITE, NOW);
+    expect(plan.targets[0].blockedBy).toBe('zeroing');
+    await service.apply('1', OZON_WRITE, plan.planHash, NOW);
+    expect(writeStocks).not.toHaveBeenCalled();
+    expect(report).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'ozon', context: 'stock-push:zeroing' }),
+    );
+  });
+
+  it('STOCK_WRITE_ENABLED=false — результат и журнал «пропущено», как у ЯМ', async () => {
+    const { service, record } = ozonPushService({ writeResult: { skipReason: 'write-disabled' } });
+    const { plan } = await service.plan('1', OZON_WRITE, NOW);
+    const result = await service.apply('1', OZON_WRITE, plan.planHash, NOW);
+    expect(result.writes[0]).toMatchObject({ written: 1, skipReason: 'write-disabled' });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'error', error: 'запись пропущена: write-disabled' }),
+    );
+  });
+
+  it('сбой чтения заказов — orders-unknown, ничего не пишется', async () => {
+    const { service, writeStocks } = ozonPushService({ ordersFail: true });
+    const { plan } = await service.plan('1', OZON_WRITE, NOW);
+    expect(plan.targets[0].blockedBy).toBe('orders-unknown');
+    await service.apply('1', OZON_WRITE, plan.planHash, NOW);
+    expect(writeStocks).not.toHaveBeenCalled();
+  });
+});
+
+const WB_PLAN = { [FEATURE.STOCK_PUSH]: true, [FEATURE.WB]: true };
+const WB_WRITE = { ...WB_PLAN, [FEATURE.STOCK_PUSH_WRITE_WB]: true };
+
+describe('StockPushService — WB тем же путём, что ЯМ и Ozon', () => {
+  it('склад один — цель по складу, apply пишет те же числа, журнал по WB', async () => {
+    const { service, writeStocks, record } = ozonPushService({ marketplace: 'wb' });
+    const { plan } = await service.plan('1', WB_WRITE, NOW);
+    expect(plan.targets[0]).toMatchObject({
+      key: 'wb:77',
+      name: 'Wildberries · Дом',
+      blockedBy: null,
+    });
+    expect(plan.targets[0].updates[0]).toMatchObject({ sku: 'OZ-A', from: 10, to: 8 });
+
+    const result = await service.apply('1', WB_WRITE, plan.planHash, NOW);
+    expect(writeStocks).toHaveBeenCalledWith({ telegramUserId: '1', marketplace: 'wb' }, '77', [
+      { sku: 'OZ-A', count: 8 },
+    ]);
+    expect(result.writes[0]).toMatchObject({ marketplace: 'wb', requested: 1, written: 1 });
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ details: expect.objectContaining({ marketplace: 'wb' }) }),
+    );
+  });
+
+  it('фича записи закрыта — просмотр, не пишется', async () => {
+    const { service, writeStocks } = ozonPushService({ marketplace: 'wb' });
+    const { plan } = await service.plan('1', WB_PLAN, NOW);
+    expect(plan.targets[0]).toMatchObject({ key: 'wb:77', blockedBy: null });
+    const ymOnly = { ...WB_PLAN, [FEATURE.STOCK_PUSH_WRITE_YM]: true };
+    expect((await service.apply('1', ymOnly, plan.planHash, NOW)).writes).toEqual([]);
+    expect(writeStocks).not.toHaveBeenCalled();
+  });
+
+  it('несколько складов — блок', async () => {
+    const { service, writeStocks } = ozonPushService({
+      marketplace: 'wb',
+      target: { kind: 'several', names: ['Дом', 'Второй'] },
+    });
+    const { plan } = await service.plan('1', WB_WRITE, NOW);
+    expect(plan.targets[0].blockedBy).toBe('several-warehouses');
+    await service.apply('1', WB_WRITE, plan.planHash, NOW);
+    expect(writeStocks).not.toHaveBeenCalled();
+  });
+
+  it('многоразмерная карточка видна в плане: не в «Запишем» и не в обнулении', async () => {
+    const { service } = ozonPushService({
+      marketplace: 'wb',
+      zeroing: true,
+      target: {
+        kind: 'ok',
+        warehouse: { id: '77', name: 'Дом' },
+        unwritable: [{ sku: 'OZ-0', reason: 'несколько размеров' }],
+      },
+    });
+    const { plan } = await service.plan('1', WB_WRITE, NOW);
+    // Шесть обнулений минус одна многоразмерная — пять, порог не превышен.
+    expect(plan.targets[0]).toMatchObject({ notWritable: 1, zeroed: 5, blockedBy: null });
+    expect(plan.targets[0].updates.map((row) => row.sku)).not.toContain('OZ-0');
+  });
+
+  it('пропущенные WB позиции — в журнале записи', async () => {
+    const { service, record } = ozonPushService({
+      marketplace: 'wb',
+      writeResult: {
+        written: 0,
+        skipped: [{ sku: 'OZ-A', reason: 'нет штрихкода в карточке WB' }],
+      },
+    });
+    const { plan } = await service.plan('1', WB_WRITE, NOW);
+    await service.apply('1', WB_WRITE, plan.planHash, NOW);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: expect.stringMatching(/не отправлено 1$/) }),
+    );
+  });
+
+  it('массовое обнуление и сбой заказов — как у ЯМ', async () => {
+    const zero = ozonPushService({ marketplace: 'wb', zeroing: true });
+    const zeroPlan = (await zero.service.plan('1', WB_WRITE, NOW)).plan;
+    expect(zeroPlan.targets[0].blockedBy).toBe('zeroing');
+    await zero.service.apply('1', WB_WRITE, zeroPlan.planHash, NOW);
+    expect(zero.report).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'wb', context: 'stock-push:zeroing' }),
+    );
+
+    const orders = ozonPushService({ marketplace: 'wb', ordersFail: true });
+    expect((await orders.service.plan('1', WB_WRITE, NOW)).plan.targets[0].blockedBy).toBe(
+      'orders-unknown',
+    );
+  });
+
+  it('сбой WB посреди записи — ЯМ, записанный раньше, остаётся в результате', async () => {
+    const both = { ...WB_WRITE, [FEATURE.STOCK_PUSH_WRITE_YM]: true };
+    const { service, ymWrite, report } = ozonPushService({
+      marketplace: 'wb',
+      withYm: true,
+      writeThrows: true,
+    });
+    const { plan } = await service.plan('1', both, NOW);
+    const result = await service.apply('1', both, plan.planHash, NOW);
+    expect(ymWrite).toHaveBeenCalled();
+    expect(result.writes.map((w) => [w.marketplace, w.written])).toEqual([
+      ['ym', 1],
+      ['wb', 0],
+    ]);
+    expect(result.writes[1].errors[0].message).toMatch(/socket hang up|Не удалось/);
+    expect(report).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'wb', context: 'stock-push:write' }),
+    );
+  });
+
+  it('проход по расписанию пишет WB и пишет строку прохода', async () => {
+    const { service, writeStocks, record } = ozonPushService({ marketplace: 'wb' });
+    const features = { ...WB_WRITE, [FEATURE.STOCK_PUSH_SCHEDULE]: true };
+    await service.runScheduled('1', features, NOW);
+    expect(writeStocks).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'stock-push-schedule', status: 'ok' }),
+    );
   });
 });
 
@@ -758,7 +981,7 @@ describe('StockSyncProcessor — запись плана', () => {
     const apply = vi.fn(async () => ({ writes: [{ key: 'c1', written: 1 }] }));
     const { processor, crmJobs } = processorWith(apply);
     await processor.run(job);
-    expect(apply).toHaveBeenCalledWith('1', WRITE, 'h');
+    expect(apply).toHaveBeenCalledWith('1', WRITE, 'h', expect.any(Date), undefined);
     expect(crmJobs.finishDone).toHaveBeenCalledWith(
       'j',
       { writes: [{ key: 'c1', written: 1 }] },

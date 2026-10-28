@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { DrizzleQueryError } from 'drizzle-orm';
 
 import { ActionLogService } from '../../database/services/action-log.service';
 import { PolzaApiError } from '../ai/polza.errors';
@@ -81,6 +82,32 @@ export interface IErrorReport {
   /** Адрес и User-Agent клиента — у HTTP-ошибок (AllExceptionsFilter). */
   ip?: string;
   userAgent?: string;
+}
+
+/** Ошибка драйвера pg внутри DrizzleQueryError: у неё есть `code` Postgres или Node. */
+function queryCauseOf(
+  error: DrizzleQueryError,
+): { message?: string; code?: string; stack?: string } | undefined {
+  const cause = error.cause as { message?: unknown; code?: unknown; stack?: unknown } | undefined;
+  if (!cause || typeof cause !== 'object') return undefined;
+  return {
+    message: typeof cause.message === 'string' ? cause.message : undefined,
+    code: typeof cause.code === 'string' ? cause.code : undefined,
+    stack: typeof cause.stack === 'string' ? cause.stack : undefined,
+  };
+}
+
+/**
+ * Причина сбоя запроса — ВПЕРЕДИ текста drizzle. Его `message` — это
+ * `Failed query: <весь SQL>\nparams: …`, а настоящая причина (обрыв, таймаут пула,
+ * ошибка Postgres) лежит в `cause`: без неё в алерте оставался один SQL, обрезанный
+ * на 500 символах (прод 26-10-2026).
+ */
+function causePrefixOf(error: unknown): string {
+  if (!(error instanceof DrizzleQueryError)) return '';
+  const cause = queryCauseOf(error);
+  if (!cause?.message) return '';
+  return `${cause.message}${cause.code ? ` [${cause.code}]` : ''} · `;
 }
 
 /** Как отправить алерт. Подставляется телеграм-слоем, см. ErrorAlertBridge. */
@@ -222,6 +249,12 @@ export class ErrorReporter {
   private typeOf(error: unknown): string {
     const { code } = telegramErrorInfo(error);
     if (code !== undefined) return `TelegramError:${code}`;
+    // `name` у класса drizzle не задан — без этого любой сбой Postgres был бы «Error».
+    // Код Postgres (57014, 53300…) в типе: таймаут и нехватку соединений троттлим раздельно.
+    if (error instanceof DrizzleQueryError) {
+      const pgCode = queryCauseOf(error)?.code;
+      return pgCode ? `DrizzleQueryError:${pgCode}` : 'DrizzleQueryError';
+    }
     if (error instanceof Error) return error.name || error.constructor.name;
     return typeof error === 'string' ? 'StringError' : 'UnknownError';
   }
@@ -234,6 +267,7 @@ export class ErrorReporter {
   private messageOf(error: unknown): string {
     const { retryAfter } = telegramErrorInfo(error);
     const raw =
+      causePrefixOf(error) +
       (error instanceof Error ? error.message : String(error)) +
       (retryAfter !== undefined ? ` · retry after ${retryAfter} s` : '');
     return truncate(maskOutgoing(raw || 'без сообщения'), 500);
@@ -241,7 +275,9 @@ export class ErrorReporter {
 
   private stackOf(error: unknown): string | undefined {
     if (!(error instanceof Error) || !error.stack) return undefined;
-    return truncate(maskOutgoing(error.stack), MAX_STACK_LENGTH);
+    const cause = error instanceof DrizzleQueryError ? queryCauseOf(error)?.stack : undefined;
+    const stack = cause ? `${cause}\n--- обёрнуто в ---\n${error.stack}` : error.stack;
+    return truncate(maskOutgoing(stack), MAX_STACK_LENGTH);
   }
 
   /** Отправка не ожидается: алерт не должен задерживать обработку ошибки. */

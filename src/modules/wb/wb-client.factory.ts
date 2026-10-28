@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
+import { WbStatisticsPacer } from './wb-statistics-pacer';
 import { type IWbClientOptions, WbClient } from './wb.client';
 
 /**
@@ -10,8 +11,11 @@ import { type IWbClientOptions, WbClient } from './wb.client';
  */
 @Injectable()
 export class WbClientFactory {
+  /** Один на процесс: лимит статистики — на продавца, а клиентов на токен много. */
+  private readonly pacer = new WbStatisticsPacer();
+
   forToken(token: string, options?: IWbClientOptions): WbClient {
     if (!token?.trim()) throw new Error('Нужен токен WB');
-    return new WbClient(token, options);
+    return new WbClient(token, { pacer: this.pacer, ...options });
   }
 }

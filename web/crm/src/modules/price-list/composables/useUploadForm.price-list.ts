@@ -12,6 +12,7 @@ import { usePriceListStore } from '../store/store.price-list';
  * будет: «проверка» или закрытая фича остатков.
  */
 export function useUploadForm(
+  /** Уйдут ли остатки файла в Маркет: фича открыта и их не пишет план по площадкам. */
   stockUpdateOpen: Readonly<Ref<boolean>>,
   /** Ключ открытого магазина — остатки пишутся на его склад. */
   storeKey: Readonly<Ref<string>>,

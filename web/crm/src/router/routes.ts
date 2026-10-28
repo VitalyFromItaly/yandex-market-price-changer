@@ -33,7 +33,6 @@ import { returnsAnalyticsRoutes } from '@/modules/returns-analytics/pages/routes
 import { salesAnalyticsRoutes } from '@/modules/sales-analytics/pages/routes';
 import { settingsRoutes } from '@/modules/settings/pages/routes';
 import { skuRatingsRoutes } from '@/modules/sku-ratings/pages/routes';
-import { stockPushRoutes } from '@/modules/stock-push/pages/routes';
 import { storeRoutes, storesRoutes } from '@/modules/stores/pages/routes';
 import { taxesRoutes } from '@/modules/taxes/pages/routes';
 import { unitEconomicsRoutes } from '@/modules/unit-economics/pages/routes';
@@ -88,7 +87,6 @@ const accountRoutes: RouteRecordRaw[] = [
   ...marketplaceRoutes,
   ...marketplacesDashboardRoutes,
   ...marketplaceCompareRoutes,
-  ...stockPushRoutes,
   ...productsRoutes,
   ...priceCalculatorRoutes,
   ...aiAnalystRoutes,

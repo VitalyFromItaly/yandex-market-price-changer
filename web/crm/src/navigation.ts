@@ -25,7 +25,6 @@ import {
   Plug,
   Receipt,
   ReceiptText,
-  RefreshCw,
   Settings,
   Shapes,
   ShieldAlert,
@@ -156,11 +155,6 @@ const NAV_META: Record<Section, SectionMeta> = {
     icon: Undo2,
     description: 'Возвраты, процент от выкупов и потери на них по брендам, товарам и площадкам',
   },
-  'stock-push': {
-    label: 'Передача остатков',
-    icon: RefreshCw,
-    description: 'Свой склад минус продажи на всех площадках — и что запишем на каждую',
-  },
   forecast: {
     label: 'Прогнозы',
     icon: TrendingUp,
@@ -205,7 +199,7 @@ const NAV_META: Record<Section, SectionMeta> = {
   'price-list': {
     label: 'Прайс',
     icon: FileSpreadsheet,
-    description: 'Загрузка остатков и закупочных цен',
+    description: 'Загрузка остатков и закупочных цен, запись остатков на площадки',
   },
   quarantine: {
     label: 'Карантин цен',

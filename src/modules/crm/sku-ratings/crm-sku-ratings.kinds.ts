@@ -54,10 +54,15 @@ export class CrmSkuRatingsKinds implements OnModuleInit {
     const { marketplace } = parsed;
 
     const { telegramUserId } = context;
-    const [current, previous] = await Promise.all([
-      this.finance.build(telegramUserId, ranges.current, now, { flat: false, marketplace }),
-      this.finance.build(telegramUserId, ranges.previous, now, { flat: false, marketplace }),
-    ]);
+    // По очереди, а не `Promise.all`: пул Postgres — 10 соединений (README finance).
+    const current = await this.finance.build(telegramUserId, ranges.current, now, {
+      flat: false,
+      marketplace,
+    });
+    const previous = await this.finance.build(telegramUserId, ranges.previous, now, {
+      flat: false,
+      marketplace,
+    });
 
     // Товар, проданный только в прошлом периоде, — в «падающем спросе»: ему тоже нужно название.
     const skus = [

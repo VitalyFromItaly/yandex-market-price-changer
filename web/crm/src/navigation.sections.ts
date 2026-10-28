@@ -37,7 +37,6 @@ export const SECTION_KIND = {
   inventory: 'marketplace',
   'order-feed': 'marketplace',
   'returns-analytics': 'marketplace',
-  'stock-push': 'account',
   forecast: 'marketplace',
   products: 'account',
   'price-calculator': 'ym',

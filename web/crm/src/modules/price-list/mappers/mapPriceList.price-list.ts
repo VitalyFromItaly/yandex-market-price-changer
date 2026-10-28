@@ -61,6 +61,8 @@ export function mapStockSync(data: StockSyncData): StockSyncResult {
     pricesSkippedNote: data.purchasePricesSkipped
       ? 'Закупочные цены не сохранялись — сохранение выключено администратором.'
       : null,
+    stocksByPlan: data.stocksByPlan === true,
+    purchaseCoverage: data.purchaseCoverage ?? null,
     skipped: data.skipped,
     errors: data.errors.map((error) => ({
       batch: error.batch,

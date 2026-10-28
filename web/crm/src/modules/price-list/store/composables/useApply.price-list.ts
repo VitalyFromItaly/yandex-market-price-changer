@@ -1,26 +1,29 @@
-import type { StockPushApplyResult } from '../../stock-push.domain';
+import type { StockPushApplyResult, StockPushMarketplace } from '../../price-list.domain';
 
 import { computed } from 'vue';
 
-import { stockPushApi } from '../../api/stockPushApi.stock-push';
-import { applyLines, mapApplyError } from '../../mappers/mapStockPush.stock-push';
+import { priceListApi } from '../../api/priceListApi.price-list';
+import { applyLines, mapApplyError } from '../../mappers/mapStockPush.price-list';
 
 import { useBaseState, useJob } from '@/shared/composables';
 
 /**
- * Запись плана: постановка задачи → опрос → итог. Барьеры (фичи, env, модель,
+ * Запись плана на отмеченные площадки: постановка задачи → опрос → итог. Барьеры (фичи, env, модель,
  * отпечаток плана, порог обнулений) решает сервер; здесь только показ.
  */
 export function useApply() {
   const [formError, setFormError, isSubmitting, resetFormError] = useBaseState<string | null>(null);
   const job = useJob<StockPushApplyResult>();
 
-  async function apply(planHash: string): Promise<void> {
+  async function apply(
+    planHash: string,
+    marketplaces: readonly StockPushMarketplace[],
+  ): Promise<void> {
     job.reset();
     resetFormError();
     isSubmitting.value = true;
     try {
-      const { jobId } = await stockPushApi.apply(planHash);
+      const { jobId } = await priceListApi.applyStockPush(planHash, marketplaces);
       job.track(jobId);
     } catch (caught) {
       const mapped = mapApplyError(caught);

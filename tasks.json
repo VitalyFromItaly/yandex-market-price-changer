@@ -45,8 +45,8 @@
       "M26": "ИИ v2 — инструменты чата (поиск товара, топы, деньги, налоги, цена), черновики ответов на отзывы, еженедельная ИИ-сводка в Telegram, контроль качества ответов",
       "M27": "Ozon и WB в CRM — вариант А: /ozon/… и /wb/… с теми же экранами, что у ЯМ, по своей площадке"
     },
-    "active_tasks": 5,
-    "archived_tasks": 178,
+    "active_tasks": 6,
+    "archived_tasks": 179,
     "archive_file": "tasks.archive.json"
   },
   "agent_instructions": {
@@ -340,7 +340,9 @@
       "wb_payout_by_create_dt": "2026-10-20 (TASK-185, владелец): у WB нет метода выплат и поля «дата выплаты» в отчёте реализации; день выплаты строки = начало дня create_dt её недельного отчёта по Москве (отчёт формируется после недели, тогда же WB перечисляет). Нет create_dt — выплаты нет. Ставится в самой строке (wbRowToOperation), без прохода после импорта и без keepPayment.",
       "wb_payout_bank_order_report": "2026-10-20 (TASK-185, владелец): bankOrderId = realizationreport_id, bankSumKopecks = Σ сумм ВСЕХ строк отчёта из ответа (wbPayoutByReport до фильтра месяца). Σ строк = выплате по построению (wb_finance_amount_formula), поэтому ДДС показывает выплату поручением; на стыке месяцев без соседнего месяца — mismatch, это честно.",
       "marketplaces_dashboard_profit_by_period": "2026-10-20 (TASK-191, владелец): на дашборде «Площадки» во времени — выручка и заказы по площадкам (pnl.salesByDay, = «Аналитике продаж»), прибыль и маржа — только за период, столбиками из FinanceService.compare. Дневной прибыли в журнальном P&L нет; новую формулу (налог и расходы по дням) не заводим.",
-      "crm_audience_no_platform": "2026-10-20 (TASK-193), владелец: одобренный продавец (или админ) без площадок входит в CRM; видны только «Подключения», «Профиль», «Помощь», остальные маршруты — 403 NO_PLATFORM в CrmJwtGuard (белый список — @AllowWithoutPlatform). Уточняет crm_audience/crm_audience_connections: «одобрен» — условие входа, площадка — условие остальных разделов. Ключ Ozon/WB по-прежнему требует открытой фичи ozon/wb (её открывает админ). Impersonate — по тому же правилу. isConfigured не расширяется. ЯМ без документа YandexMarket — только через бот. Отвергнуты: ключ в боте, ключ заводит админ."
+      "crm_audience_no_platform": "2026-10-20 (TASK-193), владелец: одобренный продавец (или админ) без площадок входит в CRM; видны только «Подключения», «Профиль», «Помощь», остальные маршруты — 403 NO_PLATFORM в CrmJwtGuard (белый список — @AllowWithoutPlatform). Уточняет crm_audience/crm_audience_connections: «одобрен» — условие входа, площадка — условие остальных разделов. Ключ Ozon/WB по-прежнему требует открытой фичи ozon/wb (её открывает админ). Impersonate — по тому же правилу. isConfigured не расширяется. ЯМ без документа YandexMarket — только через бот. Отвергнуты: ключ в боте, ключ заводит админ.",
+      "stock_push_ozon_wb_same_as_ym": "2026-10-28 владелец: Ozon и WB в плане «Прайса» ведут себя как ЯМ — ничего нового не добавлять; цены на площадки не пишем.",
+      "stock_push_no_per_store_pick": "2026-10-28 владелец: выбор в плане — вся площадка; галочек по отдельным магазинам ЯМ не делаем."
     },
     "price_template": {
       "fixture": "__tests__/fixtures/price-template.xlsx (Прайс 29.07.26.xlsx)",
@@ -491,6 +493,26 @@
         "TASK-187",
         "TASK-188"
       ],
+      "status": "pending"
+    },
+    {
+      "id": "TASK-196",
+      "milestone": "M27",
+      "category": "integration",
+      "priority": "high",
+      "description": "Живой предпросмотр плана (scripts/preview-stock-push.ts --user=309809755, 2026-10-28, TASK-195): Ozon с настоящим ключом не читается — POST /v1/warehouse/list → 400 «obsolete method cannot be used», POST /v3/posting/fbs/list → 404. Из-за непрочитанных заказов Ozon план «Передачи остатков» блокирует запись ВЕЗДЕ (orders-unknown), включая магазины ЯМ, пока у продавца открыта фича ozon. Продавцу при этом пишется «Ozon сейчас не отвечает» — ложь: это 4xx устаревшего метода. Перевести клиента Ozon на актуальные методы по документации Ozon Seller API (не по догадке) и дать 4xx честный текст.",
+      "acceptance_criteria": [
+        "Склады Ozon читаются актуальным методом; правило «ровно один FBS» и запись на склад работают на нём",
+        "Отправления FBS читаются без 404 (выяснить причину: путь, тело или права ключа)",
+        "400/404 Ozon не превращаются в «Ozon сейчас не отвечает»",
+        "preview-stock-push для 309809755 показывает Ozon без read-error и без orders-unknown у ЯМ"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run __tests__/unit/stock-write-marketplaces.test.ts и тесты клиента Ozon — зелёные",
+        "Шаг 2: npx ts-node scripts/preview-stock-push.ts --user=309809755 — «Заказы прочитаны: да», цель Ozon по складу",
+        "Шаг 3: tsc, lint, test, build — зелёные"
+      ],
+      "dependencies": [],
       "status": "pending"
     }
   ]

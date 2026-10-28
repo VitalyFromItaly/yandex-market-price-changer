@@ -2,8 +2,8 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 178,
-    "updated_at": "2026-10-20"
+    "archived_tasks": 179,
+    "updated_at": "2026-10-28"
   },
   "tasks": [
     {
@@ -4179,6 +4179,30 @@
       "dependencies": [
         "TASK-192"
       ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-195",
+      "milestone": "M27",
+      "category": "functional",
+      "priority": "high",
+      "description": "План «Передачи остатков» на «Прайсе»: Ozon и WB ведут себя ровно как ЯМ (владелец 2026-10-28: ничего нового, цены на площадки не писать). Расхождения: при закрытой записи Ozon/WB блокируются no-write-method и выпадают из хеша (ЯМ — нет); пропуски WB (несколько размеров/нет штрихкода) не видны в плане и считаются в обнулении; сбой одной площадки в write() роняет весь результат; у WB нет тестов через StockPushService. Плюс живая проверка в dev (STOCK_WRITE_ENABLED=false): загрузка → план → выбор площадок → запись.",
+      "acceptance_criteria": [
+        "Ozon/WB с закрытой stock_push_write_* — цель как у ЯМ: не заблокирована, строки в planHash, willWrite=false; no-write-method только при отсутствии capability stockWrite",
+        "Позиции WB, которые запись пропустит, видны в плане в skipped с причиной и не считаются в обнулении",
+        "Исключение при записи одной цели не теряет результаты остальных; ошибка уходит в ErrorReporter",
+        "Журнал stock-push показывает skipped WB",
+        "Тесты WB через StockPushService, Ozon/WB: порог обнуления, write-disabled, orders-unknown, расписание",
+        "В режиме плана прайс не зовёт ценовых методов площадок",
+        "Выбор магазинов ЯМ по отдельности не добавляется; флаги остаются defaultEnabled:false"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run __tests__/unit/stock-push.test.ts __tests__/unit/stocks-sync.test.ts __tests__/unit/stock-write-marketplaces.test.ts — зелёные",
+        "Шаг 2: npx ts-node scripts/preview-stock-push.ts --user=<id> — план по всем площадкам продавца",
+        "Шаг 3: dev (STOCK_WRITE_ENABLED=false): CRM «Прайс» — загрузка → план → галочки площадок → «Записать» → «не записано — запись остатков выключена на сервере», запросов записи нет",
+        "Шаг 4: tsc, lint, prettier:check, test, typecheck:crm, test:crm, build — зелёные"
+      ],
+      "dependencies": [],
       "status": "done"
     }
   ]

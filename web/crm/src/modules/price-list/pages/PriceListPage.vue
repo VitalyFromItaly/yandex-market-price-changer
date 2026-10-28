@@ -1,18 +1,22 @@
 <script setup lang="ts">
 /**
- * «Прайс»: загрузка файла поставщика (остатки + закупочные цены) и список
- * закупа. Файл обрабатывается ТЕМ ЖЕ путём, что в боте — одни барьеры записи,
- * одна очередь, один отчёт; здесь только ввод и показ.
+ * «Прайс»: загрузка файла поставщика, запись остатков на площадки и список
+ * закупа. Файл обрабатывается ТЕМ ЖЕ путём, что в боте. При открытой
+ * `stock_push` файл остатки не пишет: под ним план «Передачи остатков» —
+ * свой склад минус продажи — и запись на площадки, отмеченные галочками.
  */
-import { RotateCw, Upload } from 'lucide-vue-next';
+import { RefreshCw, RotateCw, Upload } from 'lucide-vue-next';
 import { storeToRefs } from 'pinia';
-import { watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import PurchasePricesTable from '../components/PurchasePricesTable.vue';
+import PushPlanBlock from '../components/PushPlanBlock.vue';
 import UploadForm from '../components/UploadForm.vue';
 import UploadResult from '../components/UploadResult.vue';
 import { usePriceListTabs } from '../composables/usePriceListTabs.price-list';
+import { usePushSelection } from '../composables/usePushSelection.price-list';
 import { useUploadForm } from '../composables/useUploadForm.price-list';
+import { coverageText } from '../mappers/mapStockPush.price-list';
 import { PRICE_LIST_TAB } from '../price-list.domain';
 import { usePriceListStore } from '../store/store.price-list';
 
@@ -34,25 +38,56 @@ const {
   isProcessing,
   uploadFailure,
   uploadResult,
+  plan,
+  planRefreshing,
+  isApplySubmitting,
+  isWriting,
   prices,
   pricesQuery,
   pricesLoading,
   pricesError,
 } = storeToRefs(store);
-const { open, active, activeKey, stockUpdateOpen } = usePriceListTabs();
-const form = useUploadForm(stockUpdateOpen, useStoreKey());
+const { open, active, activeKey, stockUpdateOpen, stockPushOpen, openMarketplaces } =
+  usePriceListTabs();
+// Файл пишет остатки сам, только когда их не пишет план по площадкам.
+const fileWritesStocks = computed(() => stockUpdateOpen.value && !stockPushOpen.value);
+const form = useUploadForm(fileWritesStocks, useStoreKey());
+const selection = usePushSelection(plan);
 const { text: searchText } = useDebouncedSearch(pricesQuery.value.q, (q) => {
   void store.searchPrices(q);
 });
 
-// Список закупа — при открытии его вкладки, не заранее.
+const onUploadTab = computed(() => active.value?.key === PRICE_LIST_TAB.UPLOAD);
+const showPlan = computed(() => stockPushOpen.value && onUploadTab.value);
+
+// Данные вкладки — при её открытии, не заранее; план — минуты чтения площадок.
 watch(
   () => active.value?.key,
   (key) => {
     if (key === PRICE_LIST_TAB.PRICES) void store.loadPrices();
+    if (key === PRICE_LIST_TAB.UPLOAD && stockPushOpen.value) store.ensurePlan();
   },
   { immediate: true },
 );
+
+// Новый прайс — новый свой склад: план пересчитывается от него.
+watch(uploadResult, (result) => {
+  if (result?.stocksByPlan) store.refreshPlan();
+});
+
+const pushConfirmOpen = ref(false);
+const pushBusy = computed(() => isApplySubmitting.value || isWriting.value);
+const canPush = computed(
+  () => showPlan.value && plan.value?.writeOpen === true && selection.count.value > 0,
+);
+const coverageNote = computed(() =>
+  coverageText(uploadResult.value?.purchaseCoverage ?? null, openMarketplaces.value),
+);
+
+async function confirmPush(): Promise<void> {
+  await store.applyPlan(selection.marketplaces.value);
+  pushConfirmOpen.value = false;
+}
 
 function queueText(ahead: number): string | null {
   return ahead > 0 ? `Перед вами в очереди файлов: ${ahead} — обработаю по порядку.` : null;
@@ -61,13 +96,22 @@ function queueText(ahead: number): string | null {
 
 <template>
   <PageHeader title="Прайс" :description="active?.label">
-    <template v-if="active?.key === PRICE_LIST_TAB.UPLOAD" #actions>
+    <template v-if="onUploadTab" #actions>
       <Button
+        :variant="canPush ? 'outline' : 'default'"
         :disabled="form.file.value === null || isSubmitting || isProcessing"
         @click="form.submit()"
       >
         <Upload />
         Загрузить
+      </Button>
+      <Button
+        v-if="canPush"
+        :disabled="pushBusy || planRefreshing || isProcessing"
+        @click="pushConfirmOpen = true"
+      >
+        <RefreshCw />
+        Записать остатки ({{ selection.count.value }})
       </Button>
     </template>
     <template v-if="open.length > 1" #filters>
@@ -87,13 +131,14 @@ function queueText(ahead: number): string | null {
     description="Его открывает администратор бота. Напишите ему, если он вам нужен."
   />
 
-  <div v-else-if="active?.key === PRICE_LIST_TAB.UPLOAD" class="flex flex-col gap-4">
+  <div v-else-if="onUploadTab" class="flex flex-col gap-4">
     <UploadForm
       v-model:dry-run="form.dryRun.value"
       :file="form.file.value"
       :file-error="uploadErrors.file"
       :disabled="isSubmitting || isProcessing"
-      :stock-update-open="stockUpdateOpen"
+      :stock-update-open="fileWritesStocks"
+      :stocks-by-plan="stockPushOpen"
       @update:file="form.selectFile"
     />
 
@@ -114,7 +159,14 @@ function queueText(ahead: number): string | null {
 
     <Alert v-else-if="uploadFailure">{{ uploadFailure }}</Alert>
 
-    <UploadResult v-else-if="uploadResult" :result="uploadResult" />
+    <UploadResult v-else-if="uploadResult" :result="uploadResult" :coverage-note="coverageNote" />
+
+    <PushPlanBlock
+      v-if="showPlan"
+      :options="selection.options.value"
+      :is-selected="selection.isSelected"
+      @toggle="selection.toggle"
+    />
   </div>
 
   <div v-else-if="pricesError" class="flex flex-col items-start gap-3">
@@ -141,5 +193,14 @@ function queueText(ahead: number): string | null {
     confirm-label="Записать"
     :busy="isSubmitting"
     @confirm="form.confirm()"
+  />
+
+  <ConfirmDialog
+    v-model:open="pushConfirmOpen"
+    title="Записать остатки на площадки?"
+    :description="selection.confirmDescription.value"
+    confirm-label="Записать"
+    :busy="pushBusy"
+    @confirm="confirmPush"
   />
 </template>

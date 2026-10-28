@@ -123,10 +123,18 @@ export interface IStockPushTargetInput {
   available: Readonly<Record<string, number>> | null;
   error?: string;
   /**
-   * Открыта ли запись на площадку: у ЯМ — всегда (фичу проверяет apply), у Ozon
-   * и WB — фича записи площадки открыта и метод записи зарегистрирован (TASK-175).
+   * Есть ли чем писать на площадку: у ЯМ — всегда, у Ozon и WB — метод записи
+   * зарегистрирован (TASK-175). Фичу записи площадки проверяет запись, не план:
+   * с закрытой фичей цель — тот же просмотр «что бы записали», что у ЯМ.
    */
   canWrite: boolean;
+  /**
+   * Артикулы, которые функция записи площадки не отправит, → причина (WB —
+   * несколько размеров или нет штрихкода, решение `stock_push_wb_single_barcode`).
+   * В план они не входят: иначе «Запишем N» и порог обнуления считали бы то,
+   * что площадке не уйдёт.
+   */
+  unwritable?: Readonly<Record<string, string>>;
   /**
    * Склад записи Ozon/WB не однозначен (решение `stock_push_single_fbs_warehouse`):
    * FBS-склада нет или складов несколько — площадка не пишется.
@@ -175,6 +183,8 @@ export interface IStockPushTargetPlan {
    * батч, а «поднять из ничего» — не то, ради чего функция существует.
    */
   notListed: number;
+  /** Товаров, которые площадка не примет (`unwritable` цели), — не пишутся. */
+  notWritable: number;
   error?: string;
 }
 
@@ -318,10 +328,15 @@ function targetPlanOf(
   const updates: IStockPushRow[] = [];
   let unchanged = 0;
   let notListed = 0;
+  let notWritable = 0;
 
   for (const product of products) {
     const sku = product.skus[target.marketplace];
     if (!sku) continue;
+    if (target.unwritable?.[sku]) {
+      notWritable += 1;
+      continue;
+    }
     const productSold = sold.get(product.id) ?? 0;
     const stock = product.stock ?? 0;
     // Не выше физического по построению: вычитаемое неотрицательно.
@@ -359,6 +374,7 @@ function targetPlanOf(
     zeroed,
     unchanged,
     notListed,
+    notWritable,
     ...(target.error ? { error: target.error } : {}),
   };
 }

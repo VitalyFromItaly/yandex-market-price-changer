@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MarketplaceNotConnectedError } from '../../src/modules/marketplaces/marketplace-adapter';
 import { pickFinanceMarketplaces } from '../../src/modules/telegram/queue/services/finance-schedule';
 import { WbMarketplaceAdapter } from '../../src/modules/wb/wb-marketplace.adapter';
+import { WbClientFactory } from '../../src/modules/wb/wb-client.factory';
 import { WbNotConnectedError } from '../../src/modules/wb/wb-seller-client';
+import { WbStatisticsPacer } from '../../src/modules/wb/wb-statistics-pacer';
 import { WbIncompleteResponseError } from '../../src/modules/wb/wb.errors';
 import {
   WB_CATEGORY_HOSTS,
@@ -53,12 +55,15 @@ describe('WbClient.listRealizationReport', () => {
       '3': [],
     };
     const calls = stubGet((body) => pages[String(body.rrdId)]);
-    const sleep = vi.fn(async () => undefined);
+    let clock = 0;
+    const sleep = vi.fn(async (ms: number) => {
+      clock += ms;
+    });
 
-    const rows = await new WbClient(TOKEN, { sleep }).listRealizationReport(
-      '2026-08-26',
-      '2026-10-06',
-    );
+    const rows = await new WbClient(TOKEN, {
+      sleep,
+      pacer: new WbStatisticsPacer(() => clock),
+    }).listRealizationReport('2026-08-26', '2026-10-06');
 
     expect(rows.map((r) => r.rrd_id)).toEqual([1, 2, 3]);
     expect(calls).toEqual([
@@ -74,6 +79,36 @@ describe('WbClient.listRealizationReport', () => {
       expect.objectContaining({ rrdId: 3 }),
     ]);
     expect(sleep.mock.calls).toEqual([[WB_STATISTICS_INTERVAL_MS], [WB_STATISTICS_INTERVAL_MS]]);
+  });
+
+  it('лимит — на токен, а не на экземпляр: новый клиент того же продавца ждёт остаток интервала', async () => {
+    stubGet(() => []);
+    let clock = 0;
+    const sleep = vi.fn(async (ms: number) => {
+      clock += ms;
+    });
+    const pacer = new WbStatisticsPacer(() => clock);
+    const month = (token: string) =>
+      new WbClient(token, { sleep, pacer }).listRealizationReport('a', 'b');
+
+    await month(TOKEN);
+    clock += 5_000;
+    await month(TOKEN);
+    await month('другой-токен');
+
+    // Второй месяц того же токена — через минуту после первого; чужой токен не ждёт.
+    expect(sleep.mock.calls).toEqual([[WB_STATISTICS_INTERVAL_MS - 5_000]]);
+  });
+
+  it('фабрика отдаёт клиентам одну очередь на процесс', async () => {
+    stubGet(() => []);
+    const sleep = vi.fn(async () => undefined);
+    const factory = new WbClientFactory();
+
+    await factory.forToken(TOKEN, { sleep }).listRealizationReport('a', 'b');
+    await factory.forToken(TOKEN, { sleep }).listRealizationReport('a', 'b');
+
+    expect(sleep).toHaveBeenCalledTimes(1);
   });
 
   it('204 без тела — конец отчёта', async () => {

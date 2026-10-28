@@ -28,6 +28,11 @@ per-user attribution and does not survive a restart.
   `toDomainError`, the one place where the address is known; before that it reached only the text of
   a log line, so "which request failed" was unanswerable. `source` is forced to `yandex` for these,
   whatever layer caught them — the layer stays in `context`.
+- **A failed drizzle query shows its cause first.** `DrizzleQueryError.message` is `Failed query: <whole SQL>`
+  plus params; the pg error (pool timeout, dropped connection, Postgres code) sits in `cause`. The message is
+  cut to 500 characters, so the alert used to carry only SQL and the type `Error` (prod 2026-10-26). Now the
+  message is `<cause> [<code>] · Failed query…`, the type is `DrizzleQueryError[:<pg code>]` (a timeout and a
+  lack of connections throttle separately), and the cause's stack goes before the wrapper's.
 - **Alerts to admins are throttled** (`AlertThrottle`, 15 min per `errorType + context`). One
   failing upstream produces a _stream_ of identical errors; without the throttle admins get a
   hundred messages and stop reading alerts entirely — the catcher would make observability worse

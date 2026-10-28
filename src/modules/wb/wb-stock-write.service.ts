@@ -66,6 +66,16 @@ export function wbStockWrites(
 }
 
 /**
+ * Артикулы карточек, которые `wbStockWrites` не отправит, — для плана: то же
+ * правило, что у записи, чтобы «Запишем N» и порог обнуления считали только
+ * то, что уйдёт в WB.
+ */
+export function wbUnwritable(cards: readonly IWbCard[]): { sku: string; reason: string }[] {
+  const updates = [...barcodesByVendorCode(cards).keys()].map((sku) => ({ sku, count: 0 }));
+  return wbStockWrites(cards, updates).skipped;
+}
+
+/**
  * Запись остатков FBS в WB (TASK-175). `writeStocks` — единственная функция
  * записи WB, все барьеры внутри: `STOCK_WRITE_ENABLED`, целые количества, склад
  * перечитан и тот же, что в плане. PUT без повторов
@@ -82,9 +92,12 @@ export class WbStockWriteService {
     private readonly connections: MarketplaceConnectionService,
   ) {}
 
+  /** Склад записи и, если он есть, артикулы, которые запись пропустит. */
   async writeTarget(telegramUserId: string): Promise<TStockWriteTarget> {
     const client = await wbSellerClient(this.clients, this.connections, telegramUserId);
-    return wbStockWriteTarget(await client.listWarehouses());
+    const target = wbStockWriteTarget(await client.listWarehouses());
+    if (target.kind !== 'ok') return target;
+    return { ...target, unwritable: wbUnwritable(await client.listCards()) };
   }
 
   async writeStocks(

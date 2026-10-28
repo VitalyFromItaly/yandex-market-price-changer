@@ -11,15 +11,21 @@ import { ApiError } from '@/shared/http';
 const api = vi.hoisted(() => ({
   upload: vi.fn(),
   purchasePrices: vi.fn(),
+  applyStockPush: vi.fn(),
   jobGet: vi.fn(),
+  jobStart: vi.fn(),
 }));
 
 vi.mock('../../api/priceListApi.price-list', () => ({
-  priceListApi: { upload: api.upload, purchasePrices: api.purchasePrices },
+  priceListApi: {
+    upload: api.upload,
+    purchasePrices: api.purchasePrices,
+    applyStockPush: api.applyStockPush,
+  },
 }));
 vi.mock('@/shared/jobs', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
-  jobsApi: { start: vi.fn(), get: api.jobGet, file: vi.fn() },
+  jobsApi: { start: api.jobStart, get: api.jobGet, file: vi.fn() },
 }));
 
 const file = (name = 'прайс.xlsx', size = 10) => ({ name, size }) as File;
@@ -150,5 +156,61 @@ describe('usePriceListStore: закупочные цены', () => {
     await first;
 
     expect(store.prices?.page).toBe(2);
+  });
+});
+
+describe('usePriceListStore: план записи остатков', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    api.jobStart.mockResolvedValue({ jobId: 'plan', created: true });
+    api.jobGet.mockResolvedValue({
+      jobId: 'plan',
+      kind: 'stock-push:plan',
+      status: 'running',
+      error: null,
+      file: null,
+      data: null,
+    });
+  });
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('план — задача аккаунта; повторный вход не ставит вторую', () => {
+    const store = usePriceListStore();
+    store.ensurePlan();
+    store.ensurePlan();
+    expect(api.jobStart).toHaveBeenCalledTimes(1);
+    expect(api.jobStart).toHaveBeenCalledWith('stock-push:plan', {}, '');
+  });
+
+  it('запись уходит с отпечатком плана и только отмеченными площадками', async () => {
+    vi.useFakeTimers();
+    api.jobGet.mockResolvedValue({
+      jobId: 'plan',
+      kind: 'stock-push:plan',
+      status: 'done',
+      error: null,
+      file: null,
+      data: { planHash: 'h'.repeat(64), targets: [] },
+    });
+    api.applyStockPush.mockResolvedValue({ jobId: 'w' });
+    const store = usePriceListStore();
+    store.ensurePlan();
+    await vi.advanceTimersByTimeAsync(FIRST_POLL_MS);
+    expect(store.plan?.planHash).toBe('h'.repeat(64));
+
+    await store.applyPlan([]);
+    expect(api.applyStockPush).not.toHaveBeenCalled();
+    await store.applyPlan(['ozon']);
+    expect(api.applyStockPush).toHaveBeenCalledWith('h'.repeat(64), ['ozon']);
+    vi.useRealTimers();
+  });
+
+  it('без плана или без площадок записывать нечего — запрос не уходит', async () => {
+    const store = usePriceListStore();
+    await store.applyPlan(['ym']);
+    expect(api.applyStockPush).not.toHaveBeenCalled();
+    expect(store.isWriting).toBe(false);
   });
 });

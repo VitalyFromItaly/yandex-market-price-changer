@@ -2,7 +2,7 @@ import type { TMarketplace } from '../../../shared/marketplace';
 import type { IStockPushPlan, TStockPushBlock, TStockPushSkip } from '../../finance/stock-push';
 import type { IStockPushPlanResult } from '../../stock-push/stock-push.service';
 
-import { MARKETPLACE_LABEL } from '../../../shared/marketplace';
+import { MARKETPLACES, MARKETPLACE_LABEL } from '../../../shared/marketplace';
 import {
   STOCK_PUSH_BLOCK_TEXT,
   STOCK_PUSH_MAX_ZEROED,
@@ -25,6 +25,8 @@ export const WRITE_CLOSED_TEXT =
   'Запись остатков закрыта: её открывает администратор отдельно для каждой площадки.';
 export const INVALID_PLAN = 'INVALID_PLAN';
 export const INVALID_PLAN_TEXT = 'Нет отпечатка плана — обновите план и подтвердите его ещё раз.';
+export const INVALID_MARKETPLACES = 'INVALID_MARKETPLACES';
+export const INVALID_MARKETPLACES_TEXT = 'Не выбрано, на какие площадки записать остатки.';
 
 /** Правило одной строкой — на экране под шапкой, чтобы число «станет» читалось. */
 export const STOCK_PUSH_RULE_TEXT =
@@ -63,7 +65,9 @@ export interface ICrmStockPushTarget {
   zeroed: number;
   unchanged: number;
   notListed: number;
-  /** Будет ли эта площадка записана кнопкой: ЯМ без блокировки и с изменениями. */
+  /** Товаров, которые площадка не примет (WB — несколько размеров). */
+  notWritable: number;
+  /** Будет ли цель записана кнопкой: запись площадки открыта, нет блокировки, есть изменения. */
   willWrite: boolean;
 }
 
@@ -71,7 +75,7 @@ export interface ICrmStockPush {
   takenAt: string;
   priceListDay: string | null;
   planHash: string;
-  /** Открыта ли продавцу кнопка записи (`stock_push_write_ym`). */
+  /** Открыта ли продавцу кнопка записи: хоть одна фича `stock_push_write_*`. */
   writeOpen: boolean;
   /** Сколько позиций уйдёт в запись по кнопке. */
   writeCount: number;
@@ -123,6 +127,7 @@ export function toCrmStockPush(
       zeroed: target.zeroed,
       unchanged: target.unchanged,
       notListed: target.notListed,
+      notWritable: target.notWritable,
       willWrite,
     };
   });
@@ -153,6 +158,18 @@ export function toCrmStockPush(
       reasonText: STOCK_PUSH_SKIP_TEXT[item.reason],
     })),
   };
+}
+
+/**
+ * Площадки, отмеченные на «Прайсе» (`ym|ozon|wb`, без повторов). `undefined` — поля
+ * нет: пишутся все, как до выбора. `null` — пусто или чужое значение: молча писать
+ * «всё» вместо выбранного нельзя.
+ */
+export function parseMarketplaces(value: unknown): TMarketplace[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || !value.length) return null;
+  if (!value.every((item) => MARKETPLACES.includes(item as TMarketplace))) return null;
+  return [...new Set(value as TMarketplace[])];
 }
 
 /** Отпечаток плана — sha256 hex: остальное до процессора не доходит. */

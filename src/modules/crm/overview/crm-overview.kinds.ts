@@ -102,11 +102,16 @@ export class CrmOverviewKinds implements OnModuleInit {
     if (!ranges) throw new CrmJobError(OVERVIEW_RANGE_INVALID_TEXT);
     const marketplace = this.marketplaceOf(context);
     const { telegramUserId } = context;
-    const [current, previous, receivable] = await Promise.all([
-      this.finance.build(telegramUserId, ranges.current, now, { flat: false, marketplace }),
-      this.finance.build(telegramUserId, ranges.previous, now, { flat: false, marketplace }),
-      this.cashflow.receivable(telegramUserId, now, marketplace),
-    ]);
+    // По очереди, а не `Promise.all`: пул Postgres — 10 соединений (README finance).
+    const current = await this.finance.build(telegramUserId, ranges.current, now, {
+      flat: false,
+      marketplace,
+    });
+    const previous = await this.finance.build(telegramUserId, ranges.previous, now, {
+      flat: false,
+      marketplace,
+    });
+    const receivable = await this.cashflow.receivable(telegramUserId, now, marketplace);
     return { data: { ...toCrmOverviewSummary(current, previous, receivable), marketplace } };
   }
 

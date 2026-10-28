@@ -24,6 +24,8 @@ import { RequireFeature } from '../crm-auth.decorators';
 import { CrmJwtGuard, IRequestWithCrmUser } from '../crm-jwt.guard';
 
 import {
+  INVALID_MARKETPLACES,
+  INVALID_MARKETPLACES_TEXT,
   INVALID_PLAN,
   INVALID_PLAN_TEXT,
   PUSH_RUNNING,
@@ -31,6 +33,7 @@ import {
   STOCK_PUSH_APPLY_KIND,
   WRITE_CLOSED,
   WRITE_CLOSED_TEXT,
+  parseMarketplaces,
   parsePlanHash,
 } from './crm-stock-push.domain';
 
@@ -56,7 +59,7 @@ export class CrmStockPushController {
   @HttpCode(HttpStatus.ACCEPTED)
   async apply(
     @Req() request: IRequestWithCrmUser,
-    @Body() body: { planHash?: unknown },
+    @Body() body: { planHash?: unknown; marketplaces?: unknown },
   ): Promise<{ jobId: string }> {
     const user = request.crmUser;
     if (!stockPushWriteOpen(user.features ?? {})) {
@@ -74,12 +77,20 @@ export class CrmStockPushController {
         message: INVALID_PLAN_TEXT,
       });
     }
+    const marketplaces = parseMarketplaces(body?.marketplaces);
+    if (marketplaces === null) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: INVALID_MARKETPLACES,
+        message: INVALID_MARKETPLACES_TEXT,
+      });
+    }
 
     const claim = await this.results.claim({
       jobId: randomUUID(),
       telegramUserId: user.telegramUserId,
       kind: STOCK_PUSH_APPLY_KIND,
-      params: { planHash },
+      params: { planHash, ...(marketplaces ? { marketplaces } : {}) },
     });
     // Отказ, а не «вот идущая задача»: подтверждены ДРУГИЕ числа (довод прайса).
     if (!claim.created) {
@@ -97,6 +108,7 @@ export class CrmStockPushController {
       telegramUserId: user.telegramUserId,
       planHash,
       features: { ...user.features },
+      ...(marketplaces ? { marketplaces } : {}),
     };
     try {
       // attempts: 1 — повтор записи вслепую = двойная запись и квота Partner API.

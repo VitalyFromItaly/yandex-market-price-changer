@@ -18,7 +18,10 @@ defineProps<{
   file: File | null;
   fileError: string | null;
   disabled: boolean;
+  /** Файл сам пишет остатки в Маркет — тогда есть «Только проверка». */
   stockUpdateOpen: boolean;
+  /** Остатки пишет план по площадкам ниже, файл — только свой склад и закуп. */
+  stocksByPlan: boolean;
 }>();
 const emit = defineEmits<{ 'update:file': [file: File | null] }>();
 const dryRun = defineModel<boolean>('dryRun', { default: false });
@@ -29,11 +32,16 @@ const dryRun = defineModel<boolean>('dryRun', { default: false });
     <CardHeader>
       <CardTitle>Прайс поставщика</CardTitle>
       <CardDescription>
-        {{
-          stockUpdateOpen
-            ? 'Из файла обновятся остатки на Маркете и сохранятся закупочные цены.'
-            : 'Из файла сохранятся закупочные цены — по ним считается «Прибыль».'
-        }}
+        <template v-if="stocksByPlan">
+          Из файла сохранятся свой склад и закупочные цены. Остатки запишутся на отмеченные площадки
+          — по плану ниже, отдельной кнопкой.
+        </template>
+        <template v-else-if="stockUpdateOpen">
+          Из файла обновятся остатки на Маркете и сохранятся закупочные цены.
+        </template>
+        <template v-else
+          >Из файла сохранятся закупочные цены — по ним считается «Прибыль».</template
+        >
       </CardDescription>
     </CardHeader>
     <CardContent class="flex flex-col gap-4">

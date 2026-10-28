@@ -17,7 +17,11 @@ import {
 import { cn } from '@/lib/utils';
 import { formatCount } from '@/shared/utils';
 
-defineProps<{ result: StockSyncResult }>();
+defineProps<{
+  result: StockSyncResult;
+  /** К скольким товарам Ozon/WB лёг закуп — строкой (только открытые площадки). */
+  coverageNote: string | null;
+}>();
 </script>
 
 <template>
@@ -51,6 +55,7 @@ defineProps<{ result: StockSyncResult }>();
         <p v-if="result.pricesSkippedNote" class="text-sm text-muted-foreground">
           {{ result.pricesSkippedNote }}
         </p>
+        <p v-if="coverageNote" class="text-sm text-muted-foreground">{{ coverageNote }}</p>
         <p v-if="result.advice" class="text-sm">{{ result.advice }}</p>
       </CardContent>
     </Card>

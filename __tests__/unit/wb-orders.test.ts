@@ -16,6 +16,7 @@ import {
 } from '../../src/modules/wb/wb-orders';
 import { WbOrdersService } from '../../src/modules/wb/wb-orders.service';
 import { WbNotConnectedError } from '../../src/modules/wb/wb-seller-client';
+import { WbStatisticsPacer } from '../../src/modules/wb/wb-statistics-pacer';
 import { WbIncompleteResponseError } from '../../src/modules/wb/wb.errors';
 import {
   WB_CATEGORY_HOSTS,
@@ -215,8 +216,12 @@ describe('WbClient: обход по lastChangeDate', () => {
           : [order('b', { lastChangeDate: '2026-10-11T00:00:00' })],
       [SALES_URL]: () => [{ srid: 'b', saleID: 'S1', lastChangeDate: '2026-10-12T00:00:00' }],
     });
-    const sleep = vi.fn(async () => undefined);
-    const client = new WbClient(TOKEN, { sleep });
+    // Часы двигает только пауза — интервал виден целиком, а не «минус миллисекунды теста».
+    let clock = 0;
+    const sleep = vi.fn(async (ms: number) => {
+      clock += ms;
+    });
+    const client = new WbClient(TOKEN, { sleep, pacer: new WbStatisticsPacer(() => clock) });
     const rows = await client.listSupplierOrders('2026-10-01');
     expect(rows).toHaveLength(WB_STATISTICS_PAGE_ROWS + 1);
     expect(calls.map((c) => c.config.params)).toEqual([
@@ -246,7 +251,12 @@ describe('WbClient: обход по lastChangeDate', () => {
     const calls = stubRoutes({
       [ORDERS_URL]: () => {
         page += 1;
-        return [...body, order(`last${page}`, { lastChangeDate: `2026-10-01T00:${String(page).padStart(2, '0')}:00` })];
+        return [
+          ...body,
+          order(`last${page}`, {
+            lastChangeDate: `2026-10-01T00:${String(page).padStart(2, '0')}:00`,
+          }),
+        ];
       },
     });
     await expect(

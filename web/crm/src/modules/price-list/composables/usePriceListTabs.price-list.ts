@@ -2,14 +2,19 @@ import type { PriceListTabMeta } from '../price-list.domain';
 
 import { computed } from 'vue';
 
-import { PRICE_LIST_ROUTE_NAME, PRICE_LIST_TABS, STOCK_UPDATE_FEATURE } from '../price-list.domain';
+import {
+  PRICE_LIST_ROUTE_NAME,
+  PRICE_LIST_TABS,
+  STOCK_PUSH_FEATURE,
+  STOCK_UPDATE_FEATURE,
+} from '../price-list.domain';
 
 import { useAuthStore } from '@/modules/auth/store/store.auth';
 import { useRouteTabs } from '@/shared/composables';
 
 /**
  * Вкладки, открытые продавцу. Раздел виден, если открыта хоть одна фича
- * прайса (CRM_SECTIONS: purchase_prices ИЛИ stock_update); список закупа —
+ * прайса (CRM_SECTIONS: purchase_prices, stock_update или stock_push); список закупа —
  * только под purchase_prices, иначе он вёл бы в 403.
  */
 export function openPriceListTabs(
@@ -32,5 +37,13 @@ export function usePriceListTabs() {
    */
   const stockUpdateOpen = computed(() => auth.me?.features[STOCK_UPDATE_FEATURE] === true);
 
-  return { open, active, activeKey, stockUpdateOpen };
+  /** Остатки пишет план по площадкам, а не файл (сервер решает так же — по той же фиче). */
+  const stockPushOpen = computed(() => auth.me?.features[STOCK_PUSH_FEATURE] === true);
+
+  /** Ozon/WB, открытые продавцу, — про них итог говорит, к скольким товарам лёг закуп. */
+  const openMarketplaces = computed(() =>
+    (['ozon', 'wb'] as const).filter((key) => auth.me?.features[key] === true),
+  );
+
+  return { open, active, activeKey, stockUpdateOpen, stockPushOpen, openMarketplaces };
 }

@@ -1,3 +1,5 @@
+import type { TMarketplace } from '../../../../shared/marketplace';
+
 import { OnQueueFailed, Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
@@ -65,6 +67,11 @@ export interface ICrmStockSyncJob extends IStockSyncJobBase {
    * магазина бота. Джобы до появления поля — по активному.
    */
   campaignId?: string;
+  /**
+   * Остатки файл не пишет — их пишет план «Передачи остатков» на той же
+   * странице (открыта `stock_push`). Джобы до появления поля — запись файлом.
+   */
+  stocksByPlan?: boolean;
 }
 
 /**
@@ -81,6 +88,8 @@ export interface IStockPushJob {
   planHash: string;
   /** Снимок фич продавца на момент нажатия (у админа записи доступа нет). */
   features: Record<string, boolean>;
+  /** Площадки, отмеченные на «Прайсе»; нет — все (джобы до выбора площадок). */
+  marketplaces?: TMarketplace[];
 }
 
 /**
@@ -272,7 +281,7 @@ export class StockSyncProcessor {
         return;
       }
 
-      const result = await this.sync(credentials, input.buffer, data);
+      const result = await this.sync(credentials, input.buffer, data, data.stocksByPlan);
       await this.crmJobs.finishDone(jobId, toCrmStockView(result), null);
     } catch (error) {
       void this.errors.report({
@@ -291,7 +300,13 @@ export class StockSyncProcessor {
     const { jobId, telegramUserId } = data;
     try {
       await this.crmJobs.markActive(jobId);
-      const result = await this.stockPush.apply(telegramUserId, data.features, data.planHash);
+      const result = await this.stockPush.apply(
+        telegramUserId,
+        data.features,
+        data.planHash,
+        new Date(),
+        data.marketplaces,
+      );
       await this.crmJobs.finishDone(jobId, { writes: result.writes }, null);
     } catch (error) {
       if (error instanceof StockPushPlanChangedError) {
@@ -357,6 +372,7 @@ export class StockSyncProcessor {
     credentials: NonNullable<ReturnType<typeof uploadCredentials>>,
     buffer: Buffer,
     data: IStockSyncJobBase,
+    stocksByPlan = false,
   ): Promise<IStockSyncResult> {
     const { telegramUserId, dryRun, savePurchasePrices, stockWriteAllowed } = data;
     const result = await this.stocks.sync(credentials, buffer, {
@@ -364,6 +380,8 @@ export class StockSyncProcessor {
       telegramUserId,
       savePurchasePrices,
       stockWriteAllowed,
+      // Только когда просили: опции бота остаются прежними.
+      ...(stocksByPlan ? { stocksByPlan } : {}),
     });
 
     this.logger.log(

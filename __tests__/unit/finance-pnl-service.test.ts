@@ -229,6 +229,28 @@ describe('FinanceService.build', () => {
   });
 });
 
+describe('FinanceService.monthStatuses', () => {
+  it('месяцы по порядку, незагруженный — null; один запрос на все месяцы, не веер по пулу', async () => {
+    await setStatus('verified');
+    const findMany = vi.spyOn(periods, 'findMany');
+    const find = vi.spyOn(periods, 'find');
+
+    const months = await service().monthStatuses(SELLER, { from: '2026-08-01', to: '2026-10-31' });
+
+    expect(months).toEqual([
+      { from: '2026-08-01', to: '2026-08-31', status: null },
+      { from: '2026-09-01', to: '2026-09-30', status: 'verified' },
+      { from: '2026-10-01', to: '2026-10-31', status: null },
+    ]);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(find).not.toHaveBeenCalled();
+    findMany.mockRestore();
+    find.mockRestore();
+    // Чужая площадка того же месяца — не наш статус.
+    expect((await service().monthStatuses(SELLER, SEPT, 'ozon'))[0].status).toBeNull();
+  });
+});
+
 describe('FinanceService.actualNet — «Фактическая чистая» в «Прибыли» (TASK-126)', () => {
   const PREV_MONTH = { key: 'prevmonth' } as const;
 
@@ -265,16 +287,14 @@ describe('FinanceService.actualNet — «Фактическая чистая» �
     await seed([row()]);
     await setStatus('verified');
 
-    expect((await service().actualNet(SELLER, { key: 'month' }, OCT_15)).state).toBe(
-      'preliminary',
-    );
+    expect((await service().actualNet(SELLER, { key: 'month' }, OCT_15)).state).toBe('preliminary');
     const all = await service().actualNet(SELLER, { key: 'all' }, OCT_15);
     expect(all).toEqual({ state: 'preliminary', reason: ACTUAL_ALL_REASON });
   });
 
   it('сбой базы — «недоступно», отчёт не падает, журнал без алерта', async () => {
     const broken = service();
-    vi.spyOn(periods, 'find').mockRejectedValueOnce(new Error('pg down'));
+    vi.spyOn(periods, 'findMany').mockRejectedValueOnce(new Error('pg down'));
 
     const actual = await broken.actualNet(SELLER, PREV_MONTH, OCT_15);
 

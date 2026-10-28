@@ -51,6 +51,27 @@ export class FinancePeriodRepository {
     return found ?? null;
   }
 
+  /**
+   * Несколько периодов площадки одним запросом — статусы месяцев отчёта. Запрос на
+   * месяц разом (`Promise.all`) на годовом диапазоне занимал 13 соединений пула из 10.
+   */
+  async findMany(
+    key: Omit<IFinancePeriodKey, 'periodKey'>,
+    periodKeys: readonly string[],
+  ): Promise<TFinancePeriodRow[]> {
+    if (!periodKeys.length) return [];
+    return await this.db
+      .select()
+      .from(t)
+      .where(
+        and(
+          eq(t.marketplace, key.marketplace),
+          eq(t.telegramUserId, key.telegramUserId),
+          inArray(t.periodKey, [...periodKeys]),
+        ),
+      );
+  }
+
   /** Одна строка на период: вставка или полная замена состояния. */
   async upsert(
     input: IFinancePeriodInput,

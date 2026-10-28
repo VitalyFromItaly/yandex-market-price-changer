@@ -114,8 +114,8 @@ export type TFinanceManualImportResult =
     });
 
 /**
- * united-netting/generate: лимит Маркета — 1 генерация в минуту на кабинет
- * («1 points per 1 minute … for businessId»). Ночной проход заказывает подряд
+ * united-netting/generate и united-marketplace-services/generate: лимит Маркета —
+ * 1 генерация в минуту на кабинет («1 points per 1 minute … for businessId»). Ночной проход заказывает подряд
  * текущий и прошлый месяц (по понедельникам ещё позапрошлый), кнопка CRM — несколько
  * месяцев сразу; повторы клиента (1–2–4 с) минуту не пережидают. Поэтому на 420/429
  * этого метода — пауза больше минуты и ещё попытка. Generate данных не меняет,
@@ -704,7 +704,8 @@ export class FinanceImportService {
 
   /**
    * Отчёт услуг united-marketplace-services под акты этого журнала — для двух
-   * вещей сразу, ОДНОЙ генерацией на акт (квота 100/ч):
+   * вещей сразу, ОДНОЙ генерацией на акт (квота 100/ч и 1/мин на кабинет —
+   * `generateWithMinuteLimit`):
    * - расшифровка сводной строки акта (TASK-155) — только под акт, у сводной
    *   строки которого расшифровки ещё нет;
    * - итог акта для сверки с журналом (TASK-158) — под закрытый акт, итога
@@ -859,10 +860,16 @@ export class FinanceImportService {
       monthPeriod(Number(actDay.slice(0, 4)), Number(actDay.slice(5, 7))),
       today,
     );
-    const reportId = await client.generateReport(
-      unitedMarketplaceServicesGeneratePath(),
-      { businessId, dateFrom: range.from, dateTo: range.to },
-      'JSON',
+    // Тот же минутный лимит на кабинет, что у united-netting: актов в журнале
+    // месяца два (M и M−1), а ночной проход идёт по месяцам подряд.
+    const reportId = await generateWithMinuteLimit(
+      () =>
+        client.generateReport(
+          unitedMarketplaceServicesGeneratePath(),
+          { businessId, dateFrom: range.from, dateTo: range.to },
+          'JSON',
+        ),
+      this.sleep,
     );
     const fileUrl = await pollReportFile(client, reportId, {
       intervalMs: 5000,

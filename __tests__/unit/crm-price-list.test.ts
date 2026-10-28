@@ -125,6 +125,7 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
               [FEATURE.STOCK_UPDATE]: false,
             }),
             seller('666', 'two'),
+            seller('777', 'plan', { [FEATURE.STOCK_PUSH]: true }),
           ]),
         },
         {
@@ -134,6 +135,7 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
             storeOf('333', 'FBY'),
             storeOf('444', 'FBS'),
             storeOf('555', 'FBS'),
+            storeOf('777', 'FBY'),
             {
               ...storeOf('666', 'FBS'),
               stores: [
@@ -365,6 +367,51 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
       updated: null,
     });
     expect((job.data as { headline: string }).headline).not.toContain('<b>');
+  });
+
+  it('открыта «Передача остатков»: файл не пишет остатки — свой склад и закуп, затем план', async () => {
+    sync.mockResolvedValue({
+      totalRows: 3,
+      matched: 2,
+      zeroed: 0,
+      updated: 0,
+      skipped: [],
+      matchedBy: {},
+      errors: [],
+      dryRun: false,
+      catalogSize: 10,
+      purchasePricesSaved: 3,
+      stocksByPlan: true,
+      purchaseCoverage: { products: 3, ozon: 2, wb: 0 },
+    });
+    const token = await tokenOf('plan');
+    // «Только проверка» в этом режиме не действует: запись — кнопкой плана.
+    const response = await upload(token, 'прайс.xlsx', Buffer.from(FILE_MARKER), true);
+
+    expect(response.status).toBe(202);
+    const accepted = (await response.json()) as {
+      jobId: string;
+      warning: unknown;
+      progress: string;
+    };
+    // FBY магазина не предупреждает: файл в Маркет ничего не пишет, барьеры — у плана.
+    expect(accepted.warning).toBeNull();
+    expect(accepted.progress).toContain('план по площадкам');
+    expect(placementFor).not.toHaveBeenCalled();
+    expect(lastPayload()).toMatchObject({ stocksByPlan: true, dryRun: false });
+
+    await processor.run({ data: lastPayload() } as never);
+    expect(sync.mock.calls[0][2]).toMatchObject({ telegramUserId: '777', stocksByPlan: true });
+    const job = (await results.findOne({ jobId: accepted.jobId }).exec()) as Record<
+      string,
+      unknown
+    >;
+    expect(job.data).toMatchObject({
+      stocksByPlan: true,
+      updated: null,
+      purchaseCoverage: { products: 3, ozon: 2, wb: 0 },
+    });
+    expect((job.data as { headline: string }).headline).toContain('по плану');
   });
 
   it('без магазина → 400, с чужим ключом → 404; в очередь ничего', async () => {

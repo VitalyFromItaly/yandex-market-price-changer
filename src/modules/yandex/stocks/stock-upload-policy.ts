@@ -87,7 +87,7 @@ export type TUploadWarning = 'stock-feature-off' | 'fby' | 'placement-unknown' |
  * админа. Перестать их различать значит перестать различать «я так попросил»
  * и «мне отказали».
  */
-export type TUploadProgress = 'prices-only' | 'check' | 'stocks-no-prices' | 'stocks';
+export type TUploadProgress = 'prices-only' | 'check' | 'stocks-no-prices' | 'stocks' | 'plan';
 
 export interface IUploadFacts {
   /** Фича «закуп из прайса» (админ уже учтён вызывающим). */
@@ -145,6 +145,25 @@ export function decideUpload(facts: IUploadFacts): TUploadDecision {
     placementType,
     warning: warningOf(facts, skipReason, stocksReadOnly),
     progress: progressOf(dryRun, stocksReadOnly, savePrices),
+  };
+}
+
+/**
+ * Загрузка, остатки которой пишет план «Передачи остатков» (CRM, открыта
+ * `stock_push`). Файл ничего не пишет в Маркет, поэтому ни env, ни модель здесь
+ * не решают: барьеры записи — у плана (`StockPushService.apply` →
+ * `writeStocks`/`stockWrite`). Файл нужен всегда — свой склад из него и есть
+ * основа плана, — поэтому без закупа он не отвергается, только предупреждает.
+ */
+export function decidePlanUpload(savePrices: boolean): TUploadDecision {
+  return {
+    accepted: true,
+    savePurchasePrices: savePrices,
+    stockWriteAllowed: false,
+    stocksReadOnly: true,
+    placementType: undefined,
+    warning: savePrices ? null : 'prices-off',
+    progress: 'plan',
   };
 }
 

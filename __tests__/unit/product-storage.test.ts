@@ -80,6 +80,25 @@ describe('ProductService', () => {
     expect(model.documents[0]).toMatchObject({ internalSku: 'A1', stock: 7, stockUpdatedAt: now });
   });
 
+  it('закуп по площадкам: сколько товаров файла привязано к Ozon и WB', async () => {
+    await service.upsertFromPriceList(USER, [
+      { sku: 'A1', price: 100 },
+      { sku: 'B1', price: 200 },
+      { sku: 'C1', price: 300 },
+    ]);
+    const [a, b] = model.documents as Array<{ marketplaceSkus: Record<string, string> }>;
+    a.marketplaceSkus.ozon = 'OZ-A';
+    a.marketplaceSkus.wb = 'WB-A';
+    b.marketplaceSkus.ozon = 'OZ-B';
+
+    expect(await service.purchaseCoverage(USER, ['A1', 'B1', 'C1', 'NEW'])).toEqual({
+      products: 3,
+      ozon: 2,
+      wb: 1,
+    });
+    expect(await service.purchaseCoverage(USER, [])).toEqual({ products: 0, ozon: 0, wb: 0 });
+  });
+
   it('прайс заводит товар с артикулом ЯМ и валютой, повтор — без дублей', async () => {
     const rows = [
       { sku: 'A1', price: 100, name: 'Casio A1', category: 'CASIO' },
