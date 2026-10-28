@@ -128,12 +128,20 @@ describe('склад записи — ровно один FBS', () => {
   it('мапперы складов: мусор отбрасывается, тип доставки WB читается', () => {
     expect(
       mapOzonWarehouses({
-        result: [
+        warehouses: [
           { warehouse_id: 22, name: 'Склад', is_rfbs: true, status: 'CREATED' },
           { name: 'без id' },
         ],
+        cursor: 'c',
+        has_next: true,
       }),
-    ).toEqual([{ id: '22', name: 'Склад', isRfbs: true, status: 'created' }]);
+    ).toEqual({
+      warehouses: [{ id: '22', name: 'Склад', isRfbs: true, status: 'created' }],
+      hasNext: true,
+      cursor: 'c',
+    });
+    // Конверт снятого /v1/warehouse/list — не наш ответ.
+    expect(mapOzonWarehouses({ result: [{ warehouse_id: 1 }] }).warehouses).toEqual([]);
     expect(
       mapWbWarehouses([
         { id: 5, name: 'FBS', deliveryType: 1 },

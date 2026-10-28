@@ -21,8 +21,7 @@ import {
   OZON_FBS_POSTINGS_LIMIT,
   OZON_PATHS,
   OzonSellerClient,
-  mapFboPostings,
-  mapFbsPostings,
+  mapPostingsPage,
 } from '../../src/modules/ozon/ozon.client';
 import { ORDER_STAGES } from '../../src/shared/order-stage';
 
@@ -58,7 +57,9 @@ const raw = (n: number, status = 'awaiting_packaging', extra: Record<string, unk
   status,
   substatus: 'posting_created',
   in_process_at: '2026-10-17T21:30:00Z',
-  products: [{ offer_id: 'A', name: 'Часы', quantity: 2, price: '1990.50', currency_code: 'RUB' }],
+  products: [
+    { offer_id: 'A', name: 'Часы', quantity: 2, price: { amount: '1990.50', currency: 'RUB' } },
+  ],
   ...extra,
 });
 
@@ -81,10 +82,15 @@ describe('статусы отправлений Ozon → этапы ТЗ', () =>
 });
 
 describe('разбор отправлений', () => {
-  it('FBS: result.postings и has_next; FBO: массив прямо в result; мусор отброшен', () => {
-    const fbs = mapFbsPostings({ result: { postings: [raw(1), null, { status: 'x' }], has_next: true } });
-    expect(fbs.hasNext).toBe(true);
-    expect(fbs.postings).toEqual([
+  it('страница FBS v4 / FBO v3: плоские postings, cursor и has_next; мусор отброшен', () => {
+    const page = mapPostingsPage({
+      postings: [raw(1), null, { status: 'x' }],
+      cursor: 'c1',
+      has_next: true,
+    });
+    expect(page.hasNext).toBe(true);
+    expect(page.cursor).toBe('c1');
+    expect(page.postings).toEqual([
       {
         postingNumber: 'P-1',
         orderNumber: 'O-1',
@@ -94,15 +100,13 @@ describe('разбор отправлений', () => {
         products: [{ offerId: 'A', name: 'Часы', quantity: 2, price: 1990.5, currency: 'RUB' }],
       },
     ]);
-    expect(mapFbsPostings(null)).toEqual({ postings: [], hasNext: false });
-    expect(mapFboPostings({ result: [raw(2, 'delivered')] }).map((p) => p.postingNumber)).toEqual([
-      'P-2',
-    ]);
-    expect(mapFboPostings({})).toEqual([]);
+    expect(mapPostingsPage(null)).toEqual({ postings: [], hasNext: false, cursor: '' });
+    // Старый конверт `result` снятых методов — не наш ответ: пусто, а не догадка.
+    expect(mapPostingsPage({ result: { postings: [raw(2)] } }).postings).toEqual([]);
   });
 
   it('отправление → заказ: день по Москве, продажи — Σ цена × штуки, не рубли — null', () => {
-    const [posting] = mapFbsPostings({ result: { postings: [raw(1)] } }).postings;
+    const [posting] = mapPostingsPage({ postings: [raw(1)] }).postings;
     expect(ozonMarketplaceOrder(posting, 'FBS')).toEqual({
       marketplace: 'ozon',
       id: 'P-1',
@@ -116,7 +120,10 @@ describe('разбор отправлений', () => {
       items: [{ sku: 'A', name: 'Часы', count: 2, price: 1990.5 }],
       sales: 3981,
     });
-    const usd = { ...posting, products: [{ offerId: 'B', quantity: 1, price: 10, currency: 'USD' }] };
+    const usd = {
+      ...posting,
+      products: [{ offerId: 'B', quantity: 1, price: 10, currency: 'USD' }],
+    };
     expect(ozonMarketplaceOrder(usd, 'FBO').sales).toBeNull();
     expect(ozonMarketplaceOrder(usd, 'FBO').items[0].price).toBeNull();
   });
@@ -125,36 +132,47 @@ describe('разбор отправлений', () => {
 describe('OzonSellerClient: обход отправлений', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('FBS — страницы offset до has_next: false, период в UTC', async () => {
+  it('FBS — по курсору до has_next: false, период в UTC', async () => {
     const calls = stubRoutes({
-      [OZON_PATHS.fbsPostings]: (body) => ({
-        result: { postings: [raw(body.offset)], has_next: body.offset === 0 },
-      }),
+      [OZON_PATHS.fbsPostings]: (body) =>
+        body.cursor
+          ? { postings: [raw(2)], cursor: '', has_next: false }
+          : { postings: [raw(1)], cursor: 'next', has_next: true },
     });
     const since = new Date('2026-10-01T00:00:00+03:00');
     const to = new Date('2026-10-18T23:59:59+03:00');
     const postings = await client().listFbsPostings(since, to);
-    expect(postings.map((p) => p.postingNumber)).toEqual(['P-0', `P-${OZON_FBS_POSTINGS_LIMIT}`]);
+    expect(postings.map((p) => p.postingNumber)).toEqual(['P-1', 'P-2']);
+    expect(OZON_PATHS.fbsPostings).toBe('/v4/posting/fbs/list');
     expect(calls[0].body).toEqual({
-      dir: 'ASC',
+      sort_dir: 'ASC',
       filter: { since: '2026-09-30T21:00:00.000Z', to: '2026-10-18T20:59:59.000Z' },
       limit: OZON_FBS_POSTINGS_LIMIT,
-      offset: 0,
+      cursor: '',
     });
+    expect(calls[1].body.cursor).toBe('next');
+    expect(OZON_FBS_POSTINGS_LIMIT).toBe(100);
   });
 
-  it('FBO — до неполной страницы (has_next у метода нет)', async () => {
+  it('FBO — тем же контрактом v3', async () => {
     const calls = stubRoutes({
-      [OZON_PATHS.fboPostings]: (body) => ({
-        result:
-          body.offset === 0
-            ? Array.from({ length: OZON_FBO_POSTINGS_LIMIT }, (_, i) => raw(i, 'delivered'))
-            : [raw(999, 'delivered')],
-      }),
+      [OZON_PATHS.fboPostings]: (body) =>
+        body.cursor
+          ? { postings: [raw(9, 'delivered')], has_next: false }
+          : { postings: [raw(8, 'delivered')], cursor: 'c', has_next: true },
     });
     const postings = await client().listFboPostings(NOW, NOW);
-    expect(postings).toHaveLength(OZON_FBO_POSTINGS_LIMIT + 1);
-    expect(calls.map((c) => c.body.offset)).toEqual([0, OZON_FBO_POSTINGS_LIMIT]);
+    expect(OZON_PATHS.fboPostings).toBe('/v3/posting/fbo/list');
+    expect(postings.map((p) => p.postingNumber)).toEqual(['P-8', 'P-9']);
+    expect(calls.map((c) => c.body.cursor)).toEqual(['', 'c']);
+    expect(calls[0].body.limit).toBe(OZON_FBO_POSTINGS_LIMIT);
+  });
+
+  it('тот же курсор по кругу — ошибка, а не обрезанный список', async () => {
+    stubRoutes({
+      [OZON_PATHS.fbsPostings]: () => ({ postings: [raw(1)], cursor: 'loop', has_next: true }),
+    });
+    await expect(client().listFbsPostings(NOW, NOW)).rejects.toThrow('тот же курсор');
   });
 });
 
@@ -168,14 +186,17 @@ describe('OzonOrdersService', () => {
     let fbsCall = 0;
     let fboCall = 0;
     const api = {
-      listFbsPostings: vi.fn(async () => mapFbsPostings({ result: { postings: fbs[fbsCall++] } }).postings),
-      listFboPostings: vi.fn(async () => mapFboPostings({ result: fbo[fboCall++] })),
+      listFbsPostings: vi.fn(async () => mapPostingsPage({ postings: fbs[fbsCall++] }).postings),
+      listFboPostings: vi.fn(async () => mapPostingsPage({ postings: fbo[fboCall++] }).postings),
     };
     const credentialsOf = vi.fn(async () => ({ clientId: '1', apiKey: API_KEY }));
     return {
       api,
       credentialsOf,
-      instance: new OzonOrdersService({ forCredentials: () => api } as never, { credentialsOf } as never),
+      instance: new OzonOrdersService(
+        { forCredentials: () => api } as never,
+        { credentialsOf } as never,
+      ),
     };
   }
 
@@ -238,11 +259,16 @@ describe('OzonMarketplaceAdapter: заказы', () => {
     expect(await ok.orders.listOrders(ref, { key: 'today' } as never, NOW)).toBe(placed);
     expect(listOrders).toHaveBeenCalledWith('111', { key: 'today' }, NOW);
 
-    const missing = new OzonMarketplaceAdapter({} as never, {} as never, {} as never, {
-      listOrders: async () => {
-        throw new OzonNotConnectedError('111');
-      },
-    } as never);
+    const missing = new OzonMarketplaceAdapter(
+      {} as never,
+      {} as never,
+      {} as never,
+      {
+        listOrders: async () => {
+          throw new OzonNotConnectedError('111');
+        },
+      } as never,
+    );
     await expect(missing.orders.listOrders(ref, { key: 'today' } as never)).rejects.toBeInstanceOf(
       MarketplaceNotConnectedError,
     );

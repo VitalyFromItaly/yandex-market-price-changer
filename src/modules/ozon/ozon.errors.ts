@@ -71,6 +71,26 @@ export class OzonServerError extends OzonApiError {
   }
 }
 
+/**
+ * 400/404 — Ozon отверг сам запрос: метод отключён (400 «obsolete method cannot be
+ * used», 404 снятой версии) или тело не то. Повтор бессмысленен, и «Ozon сейчас не
+ * отвечает» здесь ложь — Ozon ответил, ошибка наша (TASK-196). Ошибка уходит
+ * админам через ErrorReporter, поэтому продавцу честно «мы уже знаем».
+ */
+export class OzonRequestError extends OzonApiError {
+  /** Метод снят: 404 или 400 с «obsolete» в тексте. */
+  public get obsolete(): boolean {
+    return this.status === 404 || /obsolete/i.test(this.message);
+  }
+
+  public get userMessage(): string {
+    return this.obsolete
+      ? 'Ozon отключил метод API, которым бот читает эти данные. ' +
+          'Это ошибка на нашей стороне — мы уже знаем и исправляем.'
+      : 'Ozon отклонил запрос бота. Это ошибка на нашей стороне — мы уже знаем и исправляем.';
+  }
+}
+
 /** Ответа не было: таймаут, обрыв, DNS. Повторяется — запрос читающий. */
 export class OzonNetworkError extends OzonApiError {
   constructor(message: string) {
@@ -100,7 +120,7 @@ export function toOzonApiError(
   if (status >= 500) {
     return new OzonServerError(text, status, code, parseRetryAfter(retryAfterHeader));
   }
-  // 400/404 — запрос составлен неверно.
+  if (status === 400 || status === 404) return new OzonRequestError(text, status, code);
   return new OzonApiError(text, status, code);
 }
 

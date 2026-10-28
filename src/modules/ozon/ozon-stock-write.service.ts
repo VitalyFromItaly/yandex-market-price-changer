@@ -48,7 +48,7 @@ export function ozonStockWriteTarget(warehouses: readonly IOzonWarehouse[]): TSt
  * записи Ozon, все барьеры внутри: `STOCK_WRITE_ENABLED`, целые количества,
  * склад перечитан и тот же, что в плане. Запросы записи — без повторов
  * (`OzonSellerClient.updateStocks`). FBO (склад Ozon) сюда не попадает никогда:
- * пишется только склад из `/v1/warehouse/list` — это склады продавца.
+ * пишется только склад из `/v2/warehouse/list` — это склады продавца.
  */
 @Injectable()
 export class OzonStockWriteService {

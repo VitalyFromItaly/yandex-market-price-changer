@@ -14,7 +14,15 @@
   журнала `ErrorReporter`.
 - **Ошибки — `OzonApiError` и подклассы.** `ErrorReporter` ставит `source: 'ozon'` по классу, как
   `yandex` и `polza`. 401/403 — `OzonAuthError`, 429 — `OzonRateLimitError`, 5xx —
-  `OzonServerError`, нет ответа — `OzonNetworkError`. Тело Ozon — `{code: число, message}`.
+  `OzonServerError`, нет ответа — `OzonNetworkError`, 400/404 — `OzonRequestError` (TASK-196). Тело Ozon —
+  `{code: число, message}`.
+- **400/404 — не «Ozon сейчас не отвечает».** Ozon ответил, ошибка наша: снятый метод (400 «obsolete method cannot
+  be used», 404) или неверное тело. Повтора нет, продавцу — «Ozon отключил метод API…» / «Ozon отклонил запрос…», «мы
+  уже знаем» — правда: чтения уходят админам через `ErrorReporter`. Базовый текст `OzonApiError` не тронут.
+- **Методы — по официальной OpenAPI-схеме Ozon, не по памяти.** docs.ozon.ru закрыт антиботом; схему берём с
+  ежедневного зеркала `github.com/vispar-tech/ozon-seller-api-schema` (`schemas/ozon-seller-api-openapi.json`,
+  тег «Новости» — даты отключений). Отключённый метод — новый путь в `OZON_PATHS` с комментарием «Заменил …, тот Ozon
+  отключил <дата> (TASK-…)».
 - Повторы — в «Доводах» ниже («Ozon: подключение ключа»).
 
 ## Доводы и история решений
@@ -73,11 +81,11 @@
 - **Доступность с прод-хоста не проверена** (known-gaps). Если NL до `api-seller.ozon.ru` не
   достаёт, нужен прокси по образцу `POLZA_AI_PROXY_URL`.
 
-### Ozon: отправления и общий заказ (M19, TASK-130)
+### Ozon: отправления и общий заказ (M19, TASK-130; источник — TASK-196)
 
 Отправления FBS и FBO Ozon — заказы общего формата `IMarketplaceOrder` (`marketplaces/marketplace-adapter.ts`), Ozon
-зарегистрировал в реестре `orders`. Клиент — `listFbsPostings`/`listFboPostings` (`/v3/posting/fbs/list`,
-`/v2/posting/fbo/list`), сервис — `OzonOrdersService.listOrders(uid, period)` (только чтение), маппинг —
+зарегистрировал в реестре `orders`. Клиент — `listFbsPostings`/`listFboPostings` (`/v4/posting/fbs/list`,
+`/v3/posting/fbo/list`), сервис — `OzonOrdersService.listOrders(uid, period)` (только чтение), маппинг —
 `ozon/ozon-orders.ts`. Снаружи — через реестр: `registry.require('ozon', 'orders')`. Ключ продавца — общий
 `ozonSellerClient` (`ozon-seller-client.ts`), там же `OzonNotConnectedError`. Правила повторены в README модуля
 marketplaces (`src/modules/marketplaces/README.md`).
@@ -99,9 +107,12 @@ marketplaces (`src/modules/marketplaces/README.md`).
 - **Окна — те же `periodWindows` по 30 дней**, хотя FBS принимает год: окно на год — тысячи страниц с одним сбоем на
   всех. «Всего» — последние 30 московских дней, как неявное окно ЯМ. FBS и FBO, окна — по очереди (одна квота на ключ),
   дубль на границе окон схлопывается по `posting_number`. Время окна — с 00:00 по 23:59:59 МСК, в запрос — UTC.
-- **Страницы — нижние границы из расходящихся источников**: FBS 50 (`has_next`), FBO 100. У FBO нет `has_next` — обход
-  до неполной страницы. Официальная документация Ozon автоматике не отдаётся; схема снята с Go-клиента по их спеке
-  (known-gaps).
+- **Методы — `/v4/posting/fbs/list` и `/v3/posting/fbo/list` с одним контрактом** (TASK-196): тело `{sort_dir: 'ASC',
+filter: {since, to}, limit, cursor}`, ответ плоский `{postings, cursor, has_next}`, цена позиции — объект
+  `{amount, currency}`. Обход — общий `listPostings` по курсору; тот же курсор по кругу или потолок страниц — ошибка, а
+  не обрезанный список (недочитанные заказы занизили бы резерв «Передачи остатков»). Страница — 100, максимум схемы.
+  До TASK-196 были `/v3/posting/fbs/list` (`offset`, `result.postings`) и `/v2/posting/fbo/list` (массив в `result`);
+  Ozon отключил оба 31.08.2026 — FBS отвечал 404, и план «Передачи остатков» блокировал запись везде, включая ЯМ.
 - **Продажи Ozon — Σ цена × штуки рублёвых позиций**; хоть одна без рублёвой цены — `null`, а не ноль.
 
 ### Ozon: финансовые операции (M19, TASK-131; источник — TASK-194)
@@ -247,7 +258,9 @@ marketplaces (`src/modules/marketplaces/README.md`).
 Единственная запись в Ozon — `OzonStockWriteService.writeStocks` (возможность реестра `stockWrite`), вызывает её
 только «Передача остатков» (`src/modules/stock-push/README.md`) под фичей `stock_push_write_ozon`.
 
-- **Склад** — `POST /v1/warehouse/list` (чтение, с повторами): склады FBS и rFBS продавца. Архивный (`disabled`)
+- **Склад** — `POST /v2/warehouse/list` (чтение, с повторами; источник — TASK-196): склады FBS и rFBS продавца,
+  ответ `{warehouses, cursor, has_next}`, страница 200, обход по курсору. До TASK-196 — `/v1/warehouse/list`, Ozon
+  отключил его 7.04.2026 (400 «obsolete method cannot be used»). Архивный (`disabled`)
   не в счёт; пишется, только если склад один и он `created` (`ozonStockWriteTarget`). FBO — склады Ozon — в
   этом списке не бывают и не пишутся никогда.
 - **Запись** — `POST /v2/products/stocks` `{stocks: [{offer_id, stock, warehouse_id}]}` батчами по 100
@@ -255,4 +268,5 @@ marketplaces (`src/modules/marketplaces/README.md`).
   Ответ построчный: позиция без `updated: true` — не записана, её текст — в ошибках батча.
 - **Барьеры внутри `writeStocks`**: `STOCK_WRITE_ENABLED=false` — ни одного запроса; отрицательное или дробное
   количество — отмена целиком; склад перечитан и всё ещё тот же единственный — иначе `placement`.
-- Пути, статусы складов и форма ответа — по памяти, живым ключом не проверены (known-gaps).
+- Форма ответа складов сверена живым ключом 28.10.2026 (`warehouse_id`, `name`, `is_rfbs`, `status`,
+  `warehouse_type: "fbs"`); запись `/v2/products/stocks` живым ключом не выполнялась (known-gaps).

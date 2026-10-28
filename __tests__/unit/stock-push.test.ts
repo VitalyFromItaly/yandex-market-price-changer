@@ -777,7 +777,7 @@ describe('StockPushService — запись в Ozon (TASK-175)', () => {
   it('сбой чтения — исходная ошибка админам (с запросом), продавцу — текст площадки', async () => {
     const failure = new OzonApiError('Request failed with status code 404', 404).withRequest(
       'post',
-      '/v1/warehouse/list',
+      '/v2/warehouse/list',
     );
     const { service, report } = ozonPushService({ targetFails: failure });
     const { plan } = await service.plan('1', OZON_WRITE, NOW);

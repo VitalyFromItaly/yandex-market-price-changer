@@ -15,6 +15,7 @@ import {
   OzonApiError,
   OzonAuthError,
   OzonNetworkError,
+  OzonRequestError,
   OzonRateLimitError,
   OzonServerError,
   toOzonApiError,
@@ -120,6 +121,36 @@ describe('OzonSellerClient', () => {
     expect(stub.calls).toEqual([{ path: '/v1/roles', body: {} }]);
   });
 
+  it('склады — /v2/warehouse/list по курсору, limit 200', async () => {
+    const wh = (id: number) => ({
+      warehouse_id: id,
+      name: `W${id}`,
+      is_rfbs: false,
+      status: 'created',
+    });
+    stub.respond(
+      stub.ok({ warehouses: [wh(1)], cursor: 'c1', has_next: true }),
+      stub.ok({ warehouses: [wh(2)], cursor: '', has_next: false }),
+    );
+    const warehouses = await client().listWarehouses();
+    expect(warehouses.map((w) => w.id)).toEqual(['1', '2']);
+    expect(stub.calls.map((c) => c.path)).toEqual(['/v2/warehouse/list', '/v2/warehouse/list']);
+    expect(stub.calls.map((c) => c.body)).toEqual([
+      { limit: 200, cursor: '' },
+      { limit: 200, cursor: 'c1' },
+    ]);
+  });
+
+  it('400 «obsolete» — без повторов, честный текст', async () => {
+    stub.respond(stub.failure(400, { code: 9, message: 'obsolete method cannot be used' }));
+    const error = await client()
+      .listWarehouses()
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(OzonRequestError);
+    expect((error as OzonRequestError).userMessage).toContain('Ozon отключил метод API');
+    expect(stub.calls).toHaveLength(1);
+  });
+
   it('401 — OzonAuthError сразу, без повторов', async () => {
     stub.respond(
       stub.failure(401, {
@@ -197,9 +228,28 @@ describe('ozon.errors', () => {
     expect(toOzonApiError(403, {}, undefined, 'x')).toBeInstanceOf(OzonAuthError);
     expect(toOzonApiError(500, {}, undefined, 'x')).toBeInstanceOf(OzonServerError);
     const bad = toOzonApiError(400, { code: 3, message: 'bad Client-Id' }, undefined, 'x');
-    expect(bad.constructor).toBe(OzonApiError);
+    expect(bad).toBeInstanceOf(OzonRequestError);
+    expect(bad).toBeInstanceOf(OzonApiError);
     expect(bad.retryable).toBe(false);
     expect(bad.message).toBe('bad Client-Id');
+    expect(bad.userMessage).toContain('Ozon отклонил запрос');
+  });
+
+  it('400/404 — не «Ozon сейчас не отвечает»: отключённый метод назван честно', () => {
+    const generic = new OzonApiError('x', 0).userMessage;
+    const obsolete = toOzonApiError(
+      400,
+      { code: 9, message: 'obsolete method cannot be used' },
+      undefined,
+      'x',
+    );
+    const gone = toOzonApiError(404, {}, undefined, 'Request failed with status code 404');
+    for (const error of [obsolete, gone]) {
+      expect(error).toBeInstanceOf(OzonRequestError);
+      expect(error.retryable).toBe(false);
+      expect(error.userMessage).toContain('Ozon отключил метод API');
+      expect(error.userMessage).not.toBe(generic);
+    }
   });
 });
 

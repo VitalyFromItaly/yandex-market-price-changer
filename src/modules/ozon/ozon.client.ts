@@ -31,10 +31,16 @@ export const OZON_PATHS = {
   productInfoList: '/v3/product/info/list',
   /** ProductAPI_GetProductInfoStocks: остатки по типам склада, пагинация `cursor`. */
   productStocks: '/v4/product/info/stocks',
-  /** PostingAPI_GetFbsPostingListV3: отправления FBS, период ≤ 1 года, `offset` + `has_next`. */
-  fbsPostings: '/v3/posting/fbs/list',
-  /** PostingAPI_GetFboPostingList: отправления FBO, `offset`, `result` — массив без `has_next`. */
-  fboPostings: '/v2/posting/fbo/list',
+  /**
+   * PostingFbsList: отправления FBS, период ≤ 1 года, курсор `cursor` + `has_next`. Заменил
+   * /v3/posting/fbs/list — тот Ozon отключил 31.08.2026, отвечает 404 (TASK-196).
+   */
+  fbsPostings: '/v4/posting/fbs/list',
+  /**
+   * PostingFboList v3: отправления FBO, тот же контракт, что у FBS v4. Заменил
+   * /v2/posting/fbo/list — тот Ozon отключил 31.08.2026 (TASK-196).
+   */
+  fboPostings: '/v3/posting/fbo/list',
   /**
    * GetFinanceAccrualByDay: начисления за ОДИН день, курсор `last_id` (живёт 15 мин). Заменил
    * /v3/finance/transaction/list — тот Ozon отключил 8.09.2026 (TASK-194).
@@ -47,8 +53,12 @@ export const OZON_PATHS = {
    * дню — выплаты по операции API не даёт, день с `payments > 0` и есть выплата (TASK-184).
    */
   financeBalance: '/v1/finance/balance',
-  /** WarehouseAPI_WarehouseList: склады FBS/rFBS продавца (TASK-175). Чтение. */
-  warehouses: '/v1/warehouse/list',
+  /**
+   * WarehouseListV2: склады FBS/rFBS продавца (TASK-175), курсор `cursor` + `has_next`. Чтение.
+   * Заменил /v1/warehouse/list — тот Ozon отключил 7.04.2026, отвечает 400 «obsolete method
+   * cannot be used» (TASK-196). Склады FBO — другим методом, нам не нужны.
+   */
+  warehouses: '/v2/warehouse/list',
   /** ProductAPI_ProductsStocksV2: ЗАПИСЬ остатков FBS на склад продавца (TASK-175) — без повторов. */
   stocksWrite: '/v2/products/stocks',
 } as const;
@@ -60,12 +70,14 @@ export const OZON_PATHS = {
 export const OZON_STOCKS_WRITE_BATCH = 100;
 
 /**
- * Страница отправлений. Источники расходятся: у FBS встречается и 1000, и 50,
- * у FBO — 1000 и 100 (а в v3 Ozon снизил до 100). Берём нижние границы — запросов
- * больше, но ни один не упрётся в 400 «limit» (довод `OZON_INFO_BATCH`).
+ * Страница отправлений — максимум схемы Ozon у /v4/posting/fbs/list и
+ * /v3/posting/fbo/list: `limit` от 1 до 100 (TASK-196).
  */
-export const OZON_FBS_POSTINGS_LIMIT = 50;
+export const OZON_FBS_POSTINGS_LIMIT = 100;
 export const OZON_FBO_POSTINGS_LIMIT = 100;
+
+/** Страница складов — максимум схемы /v2/warehouse/list (`limit` ≤ 200). */
+export const OZON_WAREHOUSES_LIMIT = 200;
 
 /** Размер страницы списков товаров и остатков — максимум, который принимает Ozon. */
 export const OZON_PAGE_LIMIT = 1000;
@@ -165,13 +177,13 @@ export interface IOzonPosting {
   products: IOzonPostingProduct[];
 }
 
-/** Склад продавца из /v1/warehouse/list (TASK-175). */
+/** Склад продавца из /v2/warehouse/list (TASK-175, TASK-196). */
 export interface IOzonWarehouse {
   id: string;
   name: string;
   /** rFBS — доставка силами продавца; склад всё равно его собственный. */
   isRfbs: boolean;
-  /** `created` — рабочий; `new`, `disabled`, `blocked`… — нет. */
+  /** `created` — рабочий; `new`, `disabled`, `blocked`, `disabled_due_to_limit`… — нет. */
   status: string;
 }
 
@@ -283,47 +295,50 @@ export class OzonSellerClient {
 
   /**
    * Отправления FBS за интервал (по началу обработки). Только чтение. Интервал
-   * короче года — режет вызывающий; здесь только страницы `offset` до
-   * `has_next: false`.
+   * короче года — режет вызывающий.
    */
   public async listFbsPostings(since: Date, to: Date): Promise<IOzonPosting[]> {
-    const postings: IOzonPosting[] = [];
-    for (let page = 0; page < OZON_MAX_PAGES; page += 1) {
-      const body = {
-        dir: 'ASC',
-        filter: { since: since.toISOString(), to: to.toISOString() },
-        limit: OZON_FBS_POSTINGS_LIMIT,
-        offset: page * OZON_FBS_POSTINGS_LIMIT,
-      };
-      const result = mapFbsPostings(
-        await this.call(() => this.http.post(OZON_PATHS.fbsPostings, body)),
-      );
-      postings.push(...result.postings);
-      if (!result.hasNext || !result.postings.length) break;
-    }
-    return postings;
+    return this.listPostings(OZON_PATHS.fbsPostings, OZON_FBS_POSTINGS_LIMIT, since, to, 'FBS');
+  }
+
+  /** Отправления FBO за интервал. Только чтение. */
+  public async listFboPostings(since: Date, to: Date): Promise<IOzonPosting[]> {
+    return this.listPostings(OZON_PATHS.fboPostings, OZON_FBO_POSTINGS_LIMIT, since, to, 'FBO');
   }
 
   /**
-   * Отправления FBO за интервал. Только чтение. `has_next` у метода нет —
-   * обход до неполной страницы.
+   * Обход отправлений по курсору (TASK-196): у FBS v4 и FBO v3 один контракт.
+   * Конец — `has_next: false`, пустой курсор или пустая страница. Тот же курсор
+   * по кругу или потолок страниц — ошибка, а не «всё»: недочитанные заказы дали бы
+   * «Передаче остатков» заниженный резерв, а сверке — ложные расхождения.
    */
-  public async listFboPostings(since: Date, to: Date): Promise<IOzonPosting[]> {
+  private async listPostings(
+    path: string,
+    limit: number,
+    since: Date,
+    to: Date,
+    scheme: string,
+  ): Promise<IOzonPosting[]> {
     const postings: IOzonPosting[] = [];
-    for (let page = 0; page < OZON_MAX_PAGES; page += 1) {
+    const seen = new Set<string>();
+    let cursor = '';
+    for (let page = 1; page <= OZON_MAX_PAGES; page += 1) {
       const body = {
-        dir: 'ASC',
+        sort_dir: 'ASC',
         filter: { since: since.toISOString(), to: to.toISOString() },
-        limit: OZON_FBO_POSTINGS_LIMIT,
-        offset: page * OZON_FBO_POSTINGS_LIMIT,
+        limit,
+        cursor,
       };
-      const batch = mapFboPostings(
-        await this.call(() => this.http.post(OZON_PATHS.fboPostings, body)),
-      );
-      postings.push(...batch);
-      if (batch.length < OZON_FBO_POSTINGS_LIMIT) break;
+      const result = mapPostingsPage(await this.call(() => this.http.post(path, body)));
+      postings.push(...result.postings);
+      if (!result.hasNext || !result.cursor || !result.postings.length) return postings;
+      if (seen.has(result.cursor)) {
+        throw new Error(`Ozon вернул тот же курсор отправлений ${scheme}: список неполный`);
+      }
+      seen.add(result.cursor);
+      cursor = result.cursor;
     }
-    return postings;
+    throw new Error(`Отправления Ozon ${scheme} не уложились в ${OZON_MAX_PAGES} страниц`);
   }
 
   /**
@@ -393,9 +408,29 @@ export class OzonSellerClient {
     );
   }
 
-  /** Склады продавца (FBS и rFBS). Только чтение. */
+  /**
+   * Склады продавца (FBS и rFBS). Только чтение. Обход по курсору: недочитанный
+   * склад сломал бы правило «ровно один FBS» записи — потому тот же курсор по
+   * кругу или потолок страниц — ошибка.
+   */
   public async listWarehouses(): Promise<IOzonWarehouse[]> {
-    return mapWarehouses(await this.call(() => this.http.post(OZON_PATHS.warehouses, {})));
+    const warehouses: IOzonWarehouse[] = [];
+    const seen = new Set<string>();
+    let cursor = '';
+    for (let page = 1; page <= OZON_MAX_PAGES; page += 1) {
+      const body = { limit: OZON_WAREHOUSES_LIMIT, cursor };
+      const result = mapWarehouses(
+        await this.call(() => this.http.post(OZON_PATHS.warehouses, body)),
+      );
+      warehouses.push(...result.warehouses);
+      if (!result.hasNext || !result.cursor) return warehouses;
+      if (seen.has(result.cursor)) {
+        throw new Error('Ozon вернул тот же курсор складов: список неполный');
+      }
+      seen.add(result.cursor);
+      cursor = result.cursor;
+    }
+    throw new Error(`Склады Ozon не уложились в ${OZON_MAX_PAGES} страниц`);
   }
 
   /**
@@ -599,11 +634,18 @@ export function mapStocks(raw: unknown): { items: IOzonStock[]; cursor: string }
 
 // ─── Склады и запись остатков (TASK-175) ─────────────────────────────────────
 
-/** Ответ /v1/warehouse/list: `{result: [{warehouse_id, name, is_rfbs, status}]}`. */
-export function mapWarehouses(raw: unknown): IOzonWarehouse[] {
+/**
+ * Ответ /v2/warehouse/list: `{warehouses: [{warehouse_id, name, is_rfbs, status}],
+ * cursor, has_next}` — плоский, без `result` (TASK-196).
+ */
+export function mapWarehouses(raw: unknown): {
+  warehouses: IOzonWarehouse[];
+  hasNext: boolean;
+  cursor: string;
+} {
   const data = (raw ?? {}) as TRaw;
-  const list = Array.isArray(data.result) ? data.result : [];
-  return list
+  const list = Array.isArray(data.warehouses) ? data.warehouses : [];
+  const warehouses = list
     .filter((item): item is TRaw => !!item && typeof item === 'object')
     .map((item) => ({
       id: idString(item.warehouse_id),
@@ -612,6 +654,7 @@ export function mapWarehouses(raw: unknown): IOzonWarehouse[] {
       status: textOf(item.status).toLowerCase(),
     }))
     .filter((warehouse) => warehouse.id.length > 0);
+  return { warehouses, hasNext: data.has_next === true, cursor: textOf(data.cursor) };
 }
 
 /**
@@ -730,20 +773,28 @@ export function mapFinanceBalance(raw: unknown, day: string): IOzonDayBalance {
   };
 }
 
-// ─── Разбор отправлений (TASK-130) ───────────────────────────────────────────
+// ─── Разбор отправлений (TASK-130, TASK-196) ───────────────────────────────────────────
 
-/** Ответ /v3/posting/fbs/list: `{result: {postings, has_next}}`. */
-export function mapFbsPostings(raw: unknown): { postings: IOzonPosting[]; hasNext: boolean } {
-  const level = levelOf(raw);
-  const list = Array.isArray(level.postings) ? level.postings : [];
-  return { postings: mapPostings(list), hasNext: level.has_next === true };
+/**
+ * Страница /v4/posting/fbs/list и /v3/posting/fbo/list: `{postings, cursor, has_next}` —
+ * плоская, без `result` (TASK-196).
+ */
+export function mapPostingsPage(raw: unknown): {
+  postings: IOzonPosting[];
+  hasNext: boolean;
+  cursor: string;
+} {
+  const data = (raw ?? {}) as TRaw;
+  const list = Array.isArray(data.postings) ? data.postings : [];
+  return {
+    postings: mapPostings(list),
+    hasNext: data.has_next === true,
+    cursor: textOf(data.cursor),
+  };
 }
 
-/** Ответ /v2/posting/fbo/list: `{result: [...]}` — массив прямо в `result`. */
-export function mapFboPostings(raw: unknown): IOzonPosting[] {
-  const data = (raw ?? {}) as TRaw;
-  const list = Array.isArray(data.result) ? data.result : levelOf(raw).postings;
-  return mapPostings(Array.isArray(list) ? list : []);
+function moneyOf(value: unknown): TRaw {
+  return value && typeof value === 'object' ? (value as TRaw) : {};
 }
 
 function mapPostings(list: unknown[]): IOzonPosting[] {
@@ -761,8 +812,9 @@ function mapPostings(list: unknown[]): IOzonPosting[] {
           offerId: textOf(product.offer_id),
           name: textOf(product.name) || undefined,
           quantity: numberOf(product.quantity) ?? 0,
-          price: numberOf(product.price),
-          currency: textOf(product.currency_code) || undefined,
+          // С v4 FBS / v3 FBO цена — объект `{amount: "1990.50", currency}`.
+          price: numberOf(moneyOf(product.price).amount),
+          currency: textOf(moneyOf(product.price).currency) || undefined,
         })),
     }))
     .filter((posting) => posting.postingNumber.length > 0);
