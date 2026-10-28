@@ -22,6 +22,8 @@ export async function withWbRetry<T>(
   options: IRetryOptions = WB_RETRY,
   sleep: TSleep = realSleep,
   onRetry?: (error: WbApiError, attempt: number, delayMs: number) => void,
+  /** Что повторять; по умолчанию — `retryable`. «Статистика» 429 повторяет сама, через очередь. */
+  shouldRetry: (error: WbApiError) => boolean = (error) => error.retryable,
 ): Promise<T> {
   let attempt = 0;
 
@@ -30,7 +32,7 @@ export async function withWbRetry<T>(
     try {
       return await operation();
     } catch (error) {
-      if (!(error instanceof WbApiError) || !error.retryable || attempt >= options.attempts) {
+      if (!(error instanceof WbApiError) || !shouldRetry(error) || attempt >= options.attempts) {
         throw error;
       }
       const delay = error.retryAfterMs ?? backoffDelay(attempt, options);

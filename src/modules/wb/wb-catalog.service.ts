@@ -17,6 +17,8 @@ export interface IWbStockLevels {
   stocks: Record<string, { fbw: number; fbs: number }>;
   /** Строк FBS, чей штрихкод не нашёлся в карточках: их артикул неизвестен. */
   unknownBarcodes: number;
+  /** Строк FBW, чей артикул WB (`nmId`) не нашёлся в карточках (TASK-197). */
+  unknownNmIds: number;
 }
 
 /**
@@ -38,14 +40,14 @@ export class WbCatalogService {
   }
 
   /**
-   * FBW — отчёт «Статистики» по складам WB, FBS — склады продавца по штрихкодам.
+   * FBW — «Аналитика» по номерам WB карточек, FBS — склады продавца по штрихкодам.
    * Штрихкоды берутся из карточек: другого списка у WB нет, а склад продавца
    * отвечает только на заданные.
    */
   async stocks(telegramUserId: string, now: Date = new Date()): Promise<IWbStockLevels> {
     const client = await this.clientFor(telegramUserId);
     const cards = await client.listCards();
-    const fbw = await client.loadWbStocks();
+    const fbw = await client.loadWbStocks(cards.map((card) => card.nmID).filter(Boolean));
     const barcodes = [...new Set(cards.flatMap((card) => card.sizes.flatMap((s) => s.barcodes)))];
     const fbs: IWbSellerStock[] = [];
     if (barcodes.length) {
@@ -56,6 +58,9 @@ export class WbCatalogService {
     const levels = wbStockLevels(cards, fbw, fbs, now);
     if (levels.unknownBarcodes) {
       this.logger.warn(`WB: ${levels.unknownBarcodes} строк FBS без карточки — не учтены`);
+    }
+    if (levels.unknownNmIds) {
+      this.logger.warn(`WB: ${levels.unknownNmIds} строк FBW без карточки — не учтены`);
     }
     return levels;
   }
@@ -93,18 +98,23 @@ export function wbStockLevels(
   now: Date,
 ): IWbStockLevels {
   const skuOfBarcode = new Map<string, string>();
+  const skuOfNmId = new Map<string, string>();
   for (const card of cards) {
     const sku = card.vendorCode.trim();
     if (!sku) continue;
+    if (card.nmID) skuOfNmId.set(card.nmID, sku);
     for (const size of card.sizes) for (const code of size.barcodes) skuOfBarcode.set(code, sku);
   }
 
   const stocks: IWbStockLevels['stocks'] = {};
   const entry = (sku: string) => (stocks[sku] ??= { fbw: 0, fbs: 0 });
 
+  // Артикула продавца в строке FBW нет — только номер WB (TASK-197).
+  let unknownNmIds = 0;
   for (const row of fbwRows) {
-    const sku = row.supplierArticle || skuOfBarcode.get(row.barcode);
+    const sku = skuOfNmId.get(row.nmId);
     if (sku) entry(sku).fbw += row.quantity;
+    else unknownNmIds += 1;
   }
   let unknownBarcodes = 0;
   for (const row of sellerRows) {
@@ -112,5 +122,5 @@ export function wbStockLevels(
     if (sku) entry(sku).fbs += row.amount;
     else unknownBarcodes += 1;
   }
-  return { takenAt: now, stocks, unknownBarcodes };
+  return { takenAt: now, stocks, unknownBarcodes, unknownNmIds };
 }

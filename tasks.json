@@ -45,8 +45,8 @@
       "M26": "ИИ v2 — инструменты чата (поиск товара, топы, деньги, налоги, цена), черновики ответов на отзывы, еженедельная ИИ-сводка в Telegram, контроль качества ответов",
       "M27": "Ozon и WB в CRM — вариант А: /ozon/… и /wb/… с теми же экранами, что у ЯМ, по своей площадке"
     },
-    "active_tasks": 6,
-    "archived_tasks": 179,
+    "active_tasks": 5,
+    "archived_tasks": 181,
     "archive_file": "tasks.archive.json"
   },
   "agent_instructions": {
@@ -493,26 +493,6 @@
         "TASK-187",
         "TASK-188"
       ],
-      "status": "pending"
-    },
-    {
-      "id": "TASK-196",
-      "milestone": "M27",
-      "category": "integration",
-      "priority": "high",
-      "description": "Живой предпросмотр плана (scripts/preview-stock-push.ts --user=309809755, 2026-10-28, TASK-195): Ozon с настоящим ключом не читается — POST /v1/warehouse/list → 400 «obsolete method cannot be used», POST /v3/posting/fbs/list → 404. Из-за непрочитанных заказов Ozon план «Передачи остатков» блокирует запись ВЕЗДЕ (orders-unknown), включая магазины ЯМ, пока у продавца открыта фича ozon. Продавцу при этом пишется «Ozon сейчас не отвечает» — ложь: это 4xx устаревшего метода. Перевести клиента Ozon на актуальные методы по документации Ozon Seller API (не по догадке) и дать 4xx честный текст.",
-      "acceptance_criteria": [
-        "Склады Ozon читаются актуальным методом; правило «ровно один FBS» и запись на склад работают на нём",
-        "Отправления FBS читаются без 404 (выяснить причину: путь, тело или права ключа)",
-        "400/404 Ozon не превращаются в «Ozon сейчас не отвечает»",
-        "preview-stock-push для 309809755 показывает Ozon без read-error и без orders-unknown у ЯМ"
-      ],
-      "test_steps": [
-        "Шаг 1: npx vitest run __tests__/unit/stock-write-marketplaces.test.ts и тесты клиента Ozon — зелёные",
-        "Шаг 2: npx ts-node scripts/preview-stock-push.ts --user=309809755 — «Заказы прочитаны: да», цель Ozon по складу",
-        "Шаг 3: tsc, lint, test, build — зелёные"
-      ],
-      "dependencies": [],
       "status": "pending"
     }
   ]

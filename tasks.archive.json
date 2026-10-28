@@ -2,7 +2,7 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 179,
+    "archived_tasks": 181,
     "updated_at": "2026-10-28"
   },
   "tasks": [
@@ -4201,6 +4201,46 @@
         "Шаг 2: npx ts-node scripts/preview-stock-push.ts --user=<id> — план по всем площадкам продавца",
         "Шаг 3: dev (STOCK_WRITE_ENABLED=false): CRM «Прайс» — загрузка → план → галочки площадок → «Записать» → «не записано — запись остатков выключена на сервере», запросов записи нет",
         "Шаг 4: tsc, lint, prettier:check, test, typecheck:crm, test:crm, build — зелёные"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-196",
+      "milestone": "M27",
+      "category": "integration",
+      "priority": "high",
+      "description": "Живой предпросмотр плана (scripts/preview-stock-push.ts --user=309809755, 2026-10-28, TASK-195): Ozon с настоящим ключом не читается — POST /v1/warehouse/list → 400 «obsolete method cannot be used», POST /v3/posting/fbs/list → 404. Из-за непрочитанных заказов Ozon план «Передачи остатков» блокирует запись ВЕЗДЕ (orders-unknown), включая магазины ЯМ, пока у продавца открыта фича ozon. Продавцу при этом пишется «Ozon сейчас не отвечает» — ложь: это 4xx устаревшего метода. Перевести клиента Ozon на актуальные методы по документации Ozon Seller API (не по догадке) и дать 4xx честный текст.",
+      "acceptance_criteria": [
+        "Склады Ozon читаются актуальным методом; правило «ровно один FBS» и запись на склад работают на нём",
+        "Отправления FBS читаются без 404 (выяснить причину: путь, тело или права ключа)",
+        "400/404 Ozon не превращаются в «Ozon сейчас не отвечает»",
+        "preview-stock-push для 309809755 показывает Ozon без read-error и без orders-unknown у ЯМ"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run __tests__/unit/stock-write-marketplaces.test.ts и тесты клиента Ozon — зелёные",
+        "Шаг 2: npx ts-node scripts/preview-stock-push.ts --user=309809755 — «Заказы прочитаны: да», цель Ozon по складу",
+        "Шаг 3: tsc, lint, test, build — зелёные"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-197",
+      "milestone": "M27",
+      "category": "integration",
+      "priority": "high",
+      "description": "Прод 2026-10-28, продавец 406937947: «Передача остатков» по расписанию остановлена на всех площадках. WB: GET statistics-api /api/v1/supplier/stocks отвечает «This method is deprecated» (https://dev.wildberries.ru/release-notes?id=494) — остатки FBW не читаются, цель WB заблокирована; GET /api/v1/supplier/orders ловит 429 (лимит «Статистики» — раз в минуту на ключ, а план читает заказы WB чаще/параллельно). Продавцу при этом пишется «Wildberries сейчас не отвечает» — ложь, как было у Ozon до TASK-196. Перевести остатки FBW на актуальный метод по release notes WB (не по догадке), убрать 429 на заказах (один запрос за план/кэш/последовательность) и дать 4xx WB честный текст.",
+      "acceptance_criteria": [
+        "Остатки FBW читаются актуальным методом WB из release notes id=494",
+        "План «Передачи остатков» не ловит 429 на supplier/orders при одном прогоне расписания",
+        "Устаревший метод/4xx WB не превращаются в «Wildberries сейчас не отвечает»",
+        "Сбой WB по-прежнему блокирует запись везде (orders-unknown), но с честной причиной"
+      ],
+      "test_steps": [
+        "Шаг 1: npx vitest run тесты клиента WB, wb-orders, stock-write-marketplaces, stock-push — зелёные",
+        "Шаг 2: живьём у продавца с WB (406937947 — прод; локально — если есть подключение) preview-stock-push без read-error WB",
+        "Шаг 3: tsc, lint, prettier:check, test, build — зелёные"
       ],
       "dependencies": [],
       "status": "done"

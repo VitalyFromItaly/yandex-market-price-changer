@@ -13,9 +13,10 @@ import { WbNotConnectedError } from '../../src/modules/wb/wb-seller-client';
 import {
   WB_CARDS_LIMIT,
   WB_CATEGORY_HOSTS,
+  WB_FBW_NMIDS_BATCH,
+  WB_FBW_STOCKS_LIMIT,
   WB_PATHS,
   WB_STOCKS_BATCH,
-  WB_STOCKS_SINCE,
   WbClient,
   mapCards,
   mapSellerStocks,
@@ -26,7 +27,7 @@ import {
 const TOKEN = 'header.payload.SECRETsignatureSECRET0123456789abcdef';
 
 const CARDS_URL = `${WB_CATEGORY_HOSTS.content}${WB_PATHS.cardsList}`;
-const FBW_URL = `${WB_CATEGORY_HOSTS.statistics}${WB_PATHS.supplierStocks}`;
+const FBW_URL = `${WB_CATEGORY_HOSTS.analytics}${WB_PATHS.wbWarehousesStocks}`;
 const WAREHOUSES_URL = `${WB_CATEGORY_HOSTS.marketplace}${WB_PATHS.warehouses}`;
 const sellerStocksUrl = (id: string) =>
   `${WB_CATEGORY_HOSTS.marketplace}${WB_PATHS.sellerStocks(id)}`;
@@ -117,12 +118,25 @@ describe('WbClient: карточки и остатки', () => {
     expect(calls).toHaveLength(2);
   });
 
-  it('остатки FBW — полный снимок от WB_STOCKS_SINCE; FBS — батчами по штрихкодам', async () => {
+  it('остатки FBW — POST «Аналитики» по nmIds; FBS — батчами по штрихкодам', async () => {
     const barcodes = Array.from({ length: WB_STOCKS_BATCH + 3 }, (_, i) => `BC${i}`);
     const calls = stubRoutes({
-      [FBW_URL]: () => [
-        { supplierArticle: 'A', nmId: 1, barcode: 'BC0', warehouseName: 'Коледино', quantity: 4 },
-      ],
+      [FBW_URL]: () => ({
+        data: {
+          items: [
+            {
+              nmId: 1,
+              chrtId: 10,
+              warehouseId: -999999,
+              warehouseName: 'Склад WB',
+              regionName: 'Склад WB',
+              quantity: 4,
+              inWayToClient: 2,
+              inWayFromClient: 1,
+            },
+          ],
+        },
+      }),
       [WAREHOUSES_URL]: () => [{ id: 55, name: 'Мой склад' }, { name: 'без id' }],
       [sellerStocksUrl('55')]: (body) => ({
         stocks: body.skus.slice(0, 1).map((sku: string) => ({ sku, amount: 2 })),
@@ -130,10 +144,13 @@ describe('WbClient: карточки и остатки', () => {
     });
     const wb = client();
 
-    expect(await wb.loadWbStocks()).toEqual([
-      { supplierArticle: 'A', nmId: '1', barcode: 'BC0', warehouseName: 'Коледино', quantity: 4 },
+    expect(await wb.loadWbStocks(['1', '', 'мусор'])).toEqual([
+      { nmId: '1', chrtId: '10', warehouseName: 'Склад WB', quantity: 4 },
     ]);
-    expect(calls[0].config).toEqual({ params: { dateFrom: WB_STOCKS_SINCE } });
+    expect(calls[0]).toMatchObject({
+      method: 'post',
+      body: { nmIds: [1], limit: WB_FBW_STOCKS_LIMIT, offset: 0 },
+    });
     expect(await wb.listWarehouses()).toEqual([
       { id: '55', name: 'Мой склад', deliveryType: null },
     ]);
@@ -144,6 +161,28 @@ describe('WbClient: карточки и остатки', () => {
     const batches = calls.filter((c) => c.url === sellerStocksUrl('55'));
     expect(batches.map((c) => c.body.skus.length)).toEqual([WB_STOCKS_BATCH, 3]);
     expect(logged.join('\n')).not.toContain('SECRET');
+  });
+
+  it('остатки FBW: nmIds батчами по 1000, offset до неполной страницы, 204 — пусто', async () => {
+    const ids = Array.from({ length: WB_FBW_NMIDS_BATCH + 1 }, (_, i) => String(i + 1));
+    const row = (nmId: number) => ({ nmId, chrtId: 1, warehouseName: 'Склад WB', quantity: 1 });
+    const calls = stubRoutes({
+      [FBW_URL]: (body) => {
+        if (body.nmIds.length === 1) return '';
+        return body.offset === 0
+          ? { data: { items: Array.from({ length: WB_FBW_STOCKS_LIMIT }, () => row(1)) } }
+          : { data: { items: [row(2)] } };
+      },
+    });
+
+    const rows = await client().loadWbStocks(ids);
+    expect(rows).toHaveLength(WB_FBW_STOCKS_LIMIT + 1);
+    expect(calls.map((c) => [c.body.nmIds.length, c.body.offset])).toEqual([
+      [WB_FBW_NMIDS_BATCH, 0],
+      [WB_FBW_NMIDS_BATCH, WB_FBW_STOCKS_LIMIT],
+      [1, 0],
+    ]);
+    expect(await client().loadWbStocks([])).toEqual([]);
   });
 
   it('мапперы терпят мусор и не роняют обход', () => {
@@ -163,8 +202,12 @@ describe('WbClient: карточки и остатки', () => {
       cursor: {},
       total: 0,
     });
-    expect(mapWbStocks({ not: 'array' })).toEqual([]);
-    expect(mapWbStocks([{ supplierArticle: 'A', quantity: -3 }])[0].quantity).toBe(0);
+    expect(mapWbStocks({ not: 'array' })).toEqual({ rows: [], count: 0 });
+    expect(mapWbStocks('')).toEqual({ rows: [], count: 0 });
+    expect(mapWbStocks({ data: { items: [{ nmId: 1, quantity: -3 }, { quantity: 5 }] } })).toEqual({
+      rows: [{ nmId: '1', chrtId: '', warehouseName: '', quantity: 0 }],
+      count: 2,
+    });
     expect(mapWarehouses(null)).toEqual([]);
     expect(mapSellerStocks({ stocks: [{ amount: 1 }, { sku: 'X', amount: 'n' }] })).toEqual([
       { barcode: 'X', amount: 0 },
@@ -179,13 +222,14 @@ describe('wbStockLevels и WbCatalogService', () => {
     { nmID: '2', vendorCode: 'B', sizes: [{ chrtID: '2', barcodes: ['b1'] }] },
   ];
 
-  it('FBW по артикулу, FBS по штрихкоду через карточки; размеры и склады одного места складываются, места — нет', () => {
+  it('FBW по номеру WB, FBS по штрихкоду через карточки; размеры и склады одного места складываются, места — нет', () => {
     const levels = wbStockLevels(
       cards,
       [
-        { supplierArticle: 'A', nmId: '1', barcode: 'a1', warehouseName: 'Коледино', quantity: 3 },
-        { supplierArticle: 'A', nmId: '1', barcode: 'a2', warehouseName: 'Казань', quantity: 2 },
-        { supplierArticle: '', nmId: '2', barcode: 'b1', warehouseName: 'Казань', quantity: 1 },
+        { nmId: '1', chrtId: '1', warehouseName: 'Склад WB', quantity: 3 },
+        { nmId: '1', chrtId: '11', warehouseName: 'Склад WB', quantity: 2 },
+        { nmId: '2', chrtId: '2', warehouseName: 'Склад WB', quantity: 1 },
+        { nmId: '99', chrtId: '9', warehouseName: 'Склад WB', quantity: 7 },
       ],
       [
         { barcode: 'a1', amount: 5 },
@@ -198,6 +242,7 @@ describe('wbStockLevels и WbCatalogService', () => {
       takenAt: now,
       stocks: { A: { fbw: 5, fbs: 6 }, B: { fbw: 1, fbs: 0 } },
       unknownBarcodes: 1,
+      unknownNmIds: 1,
     });
   });
 
@@ -218,7 +263,7 @@ describe('wbStockLevels и WbCatalogService', () => {
     );
     const wb = {
       listCards: async () => cards,
-      loadWbStocks: async () => [],
+      loadWbStocks: vi.fn(async () => []),
       listWarehouses: async () => [
         { id: '1', name: 'Склад 1' },
         { id: '2', name: 'Склад 2' },
@@ -272,6 +317,7 @@ describe('WbMarketplaceAdapter: каталог и остатки', () => {
       takenAt: now,
       stocks: { A: { fbw: 4, fbs: 2 } },
       unknownBarcodes: 0,
+      unknownNmIds: 0,
     }));
     expect(await adapter({ stocks }).stocks.listStocks(REF, now)).toEqual({
       takenAt: now,
@@ -283,7 +329,8 @@ describe('WbMarketplaceAdapter: каталог и остатки', () => {
     });
     expect(stocks).toHaveBeenCalledWith('111', now);
     expect(
-      wbMarketplaceStocks({ takenAt: now, stocks: {}, unknownBarcodes: 0 }).byLocation,
+      wbMarketplaceStocks({ takenAt: now, stocks: {}, unknownBarcodes: 0, unknownNmIds: 0 })
+        .byLocation,
     ).toEqual({ marketplace: {}, seller: {} });
   });
 

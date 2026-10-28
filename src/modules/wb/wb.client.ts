@@ -4,8 +4,13 @@ import axios, { type AxiosError, type AxiosInstance } from 'axios';
 import { type IRetryOptions, type TSleep, realSleep } from '../yandex/yandex-retry';
 
 import { WB_RETRY, withWbRetry } from './wb-retry';
-import { WbStatisticsPacer } from './wb-statistics-pacer';
-import { type WbApiError, WbIncompleteResponseError, toWbApiError } from './wb.errors';
+import { WB_STATISTICS_INTERVAL_MS, WbStatisticsPacer } from './wb-statistics-pacer';
+import {
+  type WbApiError,
+  WbIncompleteResponseError,
+  WbRateLimitError,
+  toWbApiError,
+} from './wb.errors';
 
 /**
  * HTTP-клиент WB API.
@@ -58,8 +63,13 @@ export const WB_PATHS = {
   sellerInfo: '/api/v1/seller-info',
   /** Карточки товаров продавца, курсор `{updatedAt, nmID}` («Контент»). */
   cardsList: '/content/v2/get/cards/list',
-  /** Остатки на складах WB (FBW) — полный снимок от `dateFrom` («Статистика», 1 запрос/мин). */
-  supplierStocks: '/api/v1/supplier/stocks',
+  /**
+   * Остатки на складах WB (FBW) по артикулам WB `{nmIds, limit, offset}` («Аналитика», POST, только
+   * чтение, 3 запроса/мин). Заменил `GET statistics-api/api/v1/supplier/stocks` («This method is
+   * deprecated», заметка WB id=494, отключён 23.06.2026; на проде — 28.10.2026) (TASK-197).
+   * Схема — снимок OpenAPI WB от 06.10.2026: строка = размер × склад, штрихкода и артикула продавца нет.
+   */
+  wbWarehousesStocks: '/api/analytics/v1/stocks-report/wb-warehouses',
   /** Склады продавца (FBS) — «Маркетплейс». */
   warehouses: '/api/v3/warehouses',
   /**
@@ -196,17 +206,21 @@ export const WB_CARDS_LIMIT = 100;
 export const WB_STOCKS_BATCH = 1000;
 /** Потолок страниц обхода карточек: 100 × 1000 = 100 тыс. карточек. */
 export const WB_MAX_PAGES = 1000;
-/**
- * `dateFrom` для остатков FBW: метод отдаёт строки, изменившиеся с этой даты,
- * поэтому полный снимок — с даты раньше любой карточки (пример из документации WB).
- */
-export const WB_STOCKS_SINCE = '2019-06-20';
+/** Строк в одном ответе остатков FBW — больше WB не отдаёт. */
+export const WB_FBW_STOCKS_LIMIT = 250_000;
+/** Артикулов WB (`nmIds`) в одном запросе остатков FBW. */
+export const WB_FBW_NMIDS_BATCH = 1000;
 /**
  * Лимит «Статистики» — 1 запрос в минуту на продавца: интервал перед каждым вызовом
  * статистики, кроме первого для токена, иначе вторая страница, выкупы после заказов
  * или следующий месяц импорта упали бы в 429. Очередь — `WbStatisticsPacer`.
  */
 export { WB_STATISTICS_INTERVAL_MS } from './wb-statistics-pacer';
+/**
+ * Попыток вызова «Статистики» на 429. Повтор — только через очередь (`paced`): прежний
+ * повтор `withWbRetry` через 1–2 с шёл мимо неё и гарантированно ловил второй 429 (TASK-197).
+ */
+export const WB_STATISTICS_ATTEMPTS = 2;
 /** Строк в одном ответе orders/sales статистики — больше WB не отдаёт. */
 export const WB_STATISTICS_PAGE_ROWS = 80_000;
 /** Потолок страниц статистики: при 80 тыс. строк это миллионы строк — дальше только круг. */
@@ -249,13 +263,15 @@ export interface IWbCard {
   sizes: IWbCardSize[];
 }
 
-/** Строка остатков на складе WB (FBW): одна на артикул × размер × склад. */
+/**
+ * Строка остатков на складе WB (FBW): одна на размер × склад. Артикула продавца и
+ * штрихкода новый метод не отдаёт — артикул находится по карточке через `nmId`.
+ */
 export interface IWbStockRow {
-  supplierArticle: string;
   nmId: string;
-  barcode: string;
+  chrtId: string;
   warehouseName: string;
-  /** Доступно к продаже. */
+  /** Доступно покупателям к добавлению в корзину; «в пути» к и от клиента не входит. */
   quantity: number;
 }
 
@@ -395,11 +411,37 @@ export class WbClient {
     return cards;
   }
 
-  /** Остатки на складах WB (FBW). Только чтение. */
-  public async loadWbStocks(): Promise<IWbStockRow[]> {
-    return mapWbStocks(
-      await this.statistics(WB_PATHS.supplierStocks, { dateFrom: WB_STOCKS_SINCE }),
-    );
+  /**
+   * Остатки на складах WB (FBW) по артикулам WB карточек: батчи `nmIds` по
+   * `WB_FBW_NMIDS_BATCH` (что метод отдаёт на пустой фильтр, не проверяли), внутри —
+   * `offset` до неполной страницы. Лимит метода 3/мин с интервалом 20 с — его держит
+   * `withWbRetry`, очередь «Статистики» здесь не нужна. Только чтение.
+   */
+  public async loadWbStocks(nmIds: readonly string[]): Promise<IWbStockRow[]> {
+    const url = `${WB_CATEGORY_HOSTS.analytics}${WB_PATHS.wbWarehousesStocks}`;
+    const ids = nmIds.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0);
+    const rows: IWbStockRow[] = [];
+    for (let i = 0; i < ids.length; i += WB_FBW_NMIDS_BATCH) {
+      const batch = ids.slice(i, i + WB_FBW_NMIDS_BATCH);
+      for (let page = 0; ; page += 1) {
+        if (page >= WB_STATISTICS_MAX_PAGES) {
+          throw new WbIncompleteResponseError(
+            `${WB_PATHS.wbWarehousesStocks}: после ${WB_STATISTICS_MAX_PAGES} полных страниц строки не кончились`,
+            'список остатков',
+          );
+        }
+        const body = {
+          nmIds: batch,
+          limit: WB_FBW_STOCKS_LIMIT,
+          offset: page * WB_FBW_STOCKS_LIMIT,
+        };
+        const result = mapWbStocks(await this.call(() => this.http.post(url, body)));
+        // Не `push(...rows)`: 250 тыс. аргументов переполняют стек.
+        for (const row of result.rows) rows.push(row);
+        if (result.count < WB_FBW_STOCKS_LIMIT) break;
+      }
+    }
+    return rows;
   }
 
   /** Заказы, изменившиеся с `dateFrom` (`ГГГГ-ММ-ДД` по Москве). Только чтение. */
@@ -520,16 +562,45 @@ export class WbClient {
    * переехал, и общая с ней: заказы и отчёт одного токена не идут разом.
    */
   private async financeReport(body: Record<string, unknown>): Promise<unknown> {
-    await this.paceStatistics();
-    return this.call(() =>
+    return this.paced(() =>
       this.http.post(`${WB_CATEGORY_HOSTS.finance}${WB_PATHS.reportDetail}`, body),
     );
   }
 
   /** Вызов «Статистики» с выдержкой лимита 1/мин на токен. */
   private async statistics(path: string, params: Record<string, unknown>): Promise<unknown> {
-    await this.paceStatistics();
-    return this.call(() => this.http.get(`${WB_CATEGORY_HOSTS.statistics}${path}`, { params }));
+    return this.paced(() => this.http.get(`${WB_CATEGORY_HOSTS.statistics}${path}`, { params }));
+  }
+
+  /**
+   * Вызов под лимитом 1/мин: каждая попытка занимает слот очереди. 5xx и сеть
+   * повторяет `withWbRetry`, а 429 — только здесь: пауза WB (`X-Ratelimit-Retry`) и
+   * следующий слот, не дольше интервала. Дольше (Базовый токен — 1 запрос в 3 часа)
+   * ждать нечего — честный `WbRateLimitError` сразу.
+   */
+  private async paced(request: () => Promise<{ data: unknown }>): Promise<unknown> {
+    for (let attempt = 1; ; attempt += 1) {
+      await this.paceStatistics();
+      try {
+        return await this.call(
+          request,
+          (error) => error.retryable && !(error instanceof WbRateLimitError),
+        );
+      } catch (error) {
+        const wait = error instanceof WbRateLimitError ? (error.retryAfterMs ?? 0) : null;
+        if (
+          wait === null ||
+          wait > WB_STATISTICS_INTERVAL_MS ||
+          attempt >= WB_STATISTICS_ATTEMPTS
+        ) {
+          throw error;
+        }
+        this.logger.warn(
+          `WB 429 на ${(error as WbApiError).request ?? '?'}: повтор ${attempt} в следующий слот очереди`,
+        );
+        if (wait > 0) await this.sleep(wait);
+      }
+    }
   }
 
   private async paceStatistics(): Promise<void> {
@@ -583,11 +654,19 @@ export class WbClient {
     return response.data;
   }
 
-  private async call(request: () => Promise<{ data: unknown }>): Promise<unknown> {
-    const response = await withWbRetry(request, this.retry, this.sleep, (error, attempt, delay) =>
-      this.logger.warn(
-        `WB ${error.status} на ${error.request ?? '?'}: повтор ${attempt} через ${delay} мс`,
-      ),
+  private async call(
+    request: () => Promise<{ data: unknown }>,
+    shouldRetry?: (error: WbApiError) => boolean,
+  ): Promise<unknown> {
+    const response = await withWbRetry(
+      request,
+      this.retry,
+      this.sleep,
+      (error, attempt, delay) =>
+        this.logger.warn(
+          `WB ${error.status} на ${error.request ?? '?'}: повтор ${attempt} через ${delay} мс`,
+        ),
+      shouldRetry,
     );
     return response.data;
   }
@@ -678,17 +757,22 @@ export function mapCards(raw: unknown): {
   };
 }
 
-/** Ответ supplier/stocks — массив строк. */
-export function mapWbStocks(raw: unknown): IWbStockRow[] {
-  return objectsOf(raw)
+/**
+ * Ответ остатков FBW: `{data: {items: [...]}}`; 204 без тела — нет данных. `count` —
+ * сколько объектов пришло до отсева мусора: по нему решается, была ли страница полной.
+ */
+export function mapWbStocks(raw: unknown): { rows: IWbStockRow[]; count: number } {
+  const data = (((raw ?? {}) as TRaw).data ?? {}) as TRaw;
+  const objects = objectsOf(data.items);
+  const rows = objects
     .map((row) => ({
-      supplierArticle: textOf(row.supplierArticle),
       nmId: idString(row.nmId),
-      barcode: textOf(row.barcode),
+      chrtId: idString(row.chrtId),
       warehouseName: textOf(row.warehouseName),
       quantity: countOf(row.quantity),
     }))
-    .filter((row) => row.supplierArticle.length > 0 || row.barcode.length > 0);
+    .filter((row) => row.nmId.length > 0);
+  return { rows, count: objects.length };
 }
 
 /** Ответ /api/v3/warehouses — массив складов. */

@@ -55,12 +55,49 @@ export class WbAuthError extends WbApiError {
   }
 }
 
-/** 429 — лимит запросов метода (у `/ping` — 3 запроса за 30 секунд на хост). */
+/**
+ * 429 — лимит запросов метода (у `/ping` — 3 запроса за 30 секунд на хост, у
+ * «Статистики» — 1 в минуту, а у Базового токена — 1 в 3 часа). WB ответил, просто
+ * не сейчас, — «не отвечает» здесь ложь (TASK-197).
+ */
 export class WbRateLimitError extends WbApiError {
   public get retryable(): boolean {
     return true;
   }
+
+  public get userMessage(): string {
+    return `Wildberries ограничил частоту запросов к этим данным. Попробуйте ${waitText(this.retryAfterMs)}.`;
+  }
 }
+
+/** Пауза из заголовка WB — словами; без заголовка — «через несколько минут». */
+function waitText(ms: number | undefined): string {
+  if (!ms) return 'через несколько минут';
+  const minutes = Math.ceil(ms / 60_000);
+  return minutes < 60 ? `через ${minutes} мин` : `через ${Math.ceil(minutes / 60)} ч`;
+}
+
+/**
+ * 400/404/405/410 или «deprecated» в тексте любого 4xx — WB отверг сам запрос: метод
+ * отключён (`supplier/stocks` отвечал «This method is deprecated», TASK-197) или тело не
+ * то. Повтор бессмысленен, ошибка наша и уходит админам через ErrorReporter — продавцу
+ * честно «мы уже знаем». Образец — `OzonRequestError` (TASK-196).
+ */
+export class WbRequestError extends WbApiError {
+  /** Метод снят: 404/410 или «deprecated»/«obsolete» в тексте. */
+  public get obsolete(): boolean {
+    return this.status === 404 || this.status === 410 || /deprecated|obsolete/i.test(this.message);
+  }
+
+  public get userMessage(): string {
+    return this.obsolete
+      ? 'Wildberries отключил метод API, которым бот читает эти данные. ' +
+          'Это ошибка на нашей стороне — мы уже знаем и исправляем.'
+      : 'Wildberries отклонил запрос бота. Это ошибка на нашей стороне — мы уже знаем и исправляем.';
+  }
+}
+
+const WB_REQUEST_ERROR_STATUSES = new Set([400, 404, 405, 410]);
 
 /** 5xx — сбой на стороне WB. */
 export class WbServerError extends WbApiError {
@@ -124,6 +161,9 @@ export function toWbApiError(
   }
   if (status >= 500) {
     return new WbServerError(text, status, requestId, parseRetryAfter(retryAfterHeader));
+  }
+  if (WB_REQUEST_ERROR_STATUSES.has(status) || (status < 500 && /deprecated/i.test(text))) {
+    return new WbRequestError(text, status, requestId);
   }
   return new WbApiError(text, status, requestId);
 }

@@ -11,9 +11,12 @@ import {
   parseWbToken,
 } from '../../src/modules/wb/wb-connection.domain';
 import { WbConnectionService } from '../../src/modules/wb/wb-connection.service';
+import { WbStatisticsPacer } from '../../src/modules/wb/wb-statistics-pacer';
 import {
   WB_CATEGORY_HOSTS,
   WB_COMMON_HOST,
+  WB_PATHS,
+  WB_STATISTICS_INTERVAL_MS,
   WB_TIMEOUT_MS,
   WbClient,
   mapSellerInfo,
@@ -23,9 +26,11 @@ import {
   WbAuthError,
   WbNetworkError,
   WbRateLimitError,
+  WbRequestError,
   WbServerError,
   toWbApiError,
 } from '../../src/modules/wb/wb.errors';
+import { reportErrorMessage } from '../../src/modules/yandex/reports/report-message';
 
 /** JWT-образный токен с заданной полезной нагрузкой; подпись WB не проверяем. */
 function jwt(payload: Record<string, unknown>): string {
@@ -160,6 +165,57 @@ describe('WbClient', () => {
     expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([2000, 2000]);
   });
 
+  describe('429 «Статистики» — повтор только через очередь (TASK-197)', () => {
+    const ORDERS = `${WB_CATEGORY_HOSTS.statistics}${WB_PATHS.supplierOrders}`;
+    let clock: number;
+    const paced = () => {
+      clock = 0;
+      sleep.mockImplementation(async (ms: number) => {
+        clock += ms;
+      });
+      return new WbClient(TOKEN, { sleep, pacer: new WbStatisticsPacer(() => clock) });
+    };
+    afterEach(() => sleep.mockImplementation(async () => undefined));
+
+    it('без заголовка — второй запрос в следующий слот очереди, а не через 1 с', async () => {
+      let n = 0;
+      stub.handle((u) => (++n === 1 ? stub.failure(u, 429) : []));
+      expect(await paced().listSupplierOrders('2026-10-01')).toEqual([]);
+      expect(n).toBe(2);
+      expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([WB_STATISTICS_INTERVAL_MS]);
+    });
+
+    it('X-Ratelimit-Retry 45 с — один повтор: слот очереди покрывает паузу WB', async () => {
+      let n = 0;
+      stub.handle((u) => (++n === 1 ? stub.failure(u, 429, { 'x-ratelimit-retry': '45' }) : []));
+      await paced().listSupplierOrders('2026-10-01');
+      expect(stub.calls).toEqual([ORDERS, ORDERS]);
+      expect(clock).toBe(WB_STATISTICS_INTERVAL_MS);
+    });
+
+    it('пауза дольше интервала (Базовый токен) и второй 429 — честный текст, не «не отвечает»', async () => {
+      stub.handle((u) => stub.failure(u, 429, { 'x-ratelimit-retry': '10800' }));
+      const long = await paced()
+        .listSupplierOrders('2026-10-01')
+        .catch((e: unknown) => e);
+      expect(long).toBeInstanceOf(WbRateLimitError);
+      expect(stub.calls).toHaveLength(1);
+      expect(reportErrorMessage(long)).toBe(
+        'Wildberries ограничил частоту запросов к этим данным. Попробуйте через 3 ч.',
+      );
+
+      stub.handle((u) => stub.failure(u, 429));
+      const twice = await paced()
+        .listSupplierOrders('2026-10-01')
+        .catch((e: unknown) => e);
+      expect(stub.calls).toHaveLength(3);
+      expect(reportErrorMessage(twice)).toBe(
+        'Wildberries ограничил частоту запросов к этим данным. Попробуйте через несколько минут.',
+      );
+      expect(reportErrorMessage(twice)).not.toContain('не отвечает');
+    });
+  });
+
   it('токен не попадает ни в логи, ни в ошибку, ни в журнал ErrorReporter (source: wb)', async () => {
     stub.handle((u) => stub.failure(u, 401));
     const error = (await client()
@@ -194,6 +250,28 @@ describe('wb.errors', () => {
     expect(toWbApiError(502, {}, undefined, 'x')).toBeInstanceOf(WbServerError);
     expect(toWbApiError(400, { detail: 'плохо' }, undefined, 'x').message).toBe('плохо');
     expect(new WbRateLimitError('x', 429).retryable).toBe(true);
+  });
+
+  it('отключённый метод и отвергнутый запрос — WbRequestError с честным текстом (TASK-197)', () => {
+    const deprecated = toWbApiError(400, { detail: 'This method is deprecated' }, undefined, 'x');
+    expect(deprecated).toBeInstanceOf(WbRequestError);
+    expect((deprecated as WbRequestError).obsolete).toBe(true);
+    expect(deprecated.retryable).toBe(false);
+    expect(deprecated.userMessage).toBe(
+      'Wildberries отключил метод API, которым бот читает эти данные. ' +
+        'Это ошибка на нашей стороне — мы уже знаем и исправляем.',
+    );
+    expect(toWbApiError(404, {}, undefined, 'x')).toMatchObject({ obsolete: true });
+    expect(toWbApiError(410, {}, undefined, 'x')).toMatchObject({ obsolete: true });
+    expect(toWbApiError(422, { title: 'deprecated' }, undefined, 'x')).toBeInstanceOf(
+      WbRequestError,
+    );
+    const rejected = toWbApiError(400, { detail: 'bad nmIds' }, undefined, 'x');
+    expect(rejected.userMessage).toBe(
+      'Wildberries отклонил запрос бота. Это ошибка на нашей стороне — мы уже знаем и исправляем.',
+    );
+    expect(rejected.userMessage).not.toContain('не отвечает');
+    expect(toWbApiError(409, {}, undefined, 'x')).not.toBeInstanceOf(WbRequestError);
   });
 });
 
