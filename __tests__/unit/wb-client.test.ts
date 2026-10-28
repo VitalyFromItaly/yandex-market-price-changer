@@ -273,6 +273,19 @@ describe('wb.errors', () => {
     expect(rejected.userMessage).not.toContain('не отвечает');
     expect(toWbApiError(409, {}, undefined, 'x')).not.toBeInstanceOf(WbRequestError);
   });
+
+  it('403 «additional requirements» — про тип токена, а не «токен недействителен» (TASK-198)', () => {
+    const typed = toWbApiError(
+      403,
+      { detail: 'token does not satisfy additional requirements' },
+      undefined,
+      'x',
+    ) as WbAuthError;
+    expect(typed.wrongTokenType).toBe(true);
+    expect(typed.userMessage).toContain('нужен персональный или сервисный');
+    expect(typed.userMessage).not.toContain('не тестовым');
+    expect((toWbApiError(403, {}, undefined, 'x') as WbAuthError).wrongTokenType).toBe(false);
+  });
 });
 
 describe('parseWbToken', () => {

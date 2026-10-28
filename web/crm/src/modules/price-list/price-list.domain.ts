@@ -191,6 +191,7 @@ export type StockPushBlock =
   | 'placement'
   | 'read-error'
   | 'orders-unknown'
+  | 'own-orders-unknown'
   | 'zeroing'
   | 'no-warehouse'
   | 'several-warehouses'
@@ -232,7 +233,8 @@ export interface StockPushPlan {
   writeCount: number;
   ruleText: string;
   notes: string[];
-  orderErrors: { marketplaceLabel: string; source: string; error: string }[];
+  /** `blocksAll: false` — сбой закрывает только свою площадку (WB), остальные пишутся. */
+  orderErrors: { marketplaceLabel: string; source: string; error: string; blocksAll: boolean }[];
   notConsidered: { marketplaceLabel: string; reason: string }[];
   targets: StockPushTarget[];
   skipped: { internalSku: string; name: string | null; reason: string; reasonText: string }[];

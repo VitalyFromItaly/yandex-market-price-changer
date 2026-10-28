@@ -12,7 +12,11 @@ import {
   parseMarketplaces,
   parsePlanHash,
 } from '../../src/modules/crm/stock-push/crm-stock-push.domain';
-import { STOCK_PUSH_MAX_ZEROED, stockPushPlanOf } from '../../src/modules/finance/stock-push';
+import {
+  STOCK_PUSH_MAX_ZEROED,
+  planHashOf,
+  stockPushPlanOf,
+} from '../../src/modules/finance/stock-push';
 import {
   STOCK_PUSH_SCHEDULE_LOG_KIND,
   STOCK_PUSH_WRITE_FEATURE,
@@ -182,19 +186,50 @@ describe('stockPushPlanOf — формула', () => {
 });
 
 describe('stockPushPlanOf — барьеры', () => {
-  it('сбой чтения заказов любой площадки — запись запрещена везде', () => {
+  it('сбой чтения заказов ЯМ или Ozon — запись запрещена везде', () => {
     const plan = stockPushPlanOf(
       input({
         orders: [
           { marketplace: 'ym', source: 'Магазин', orders: [] },
-          { marketplace: 'wb', source: 'WB', orders: null, error: 'timeout' },
+          { marketplace: 'ozon', source: 'Ozon', orders: null, error: 'timeout' },
         ],
         targets: [ymTarget({ available: { 'A-1': 3 } })],
       }),
     );
     expect(plan.ordersKnown).toBe(false);
     expect(plan.targets[0].blockedBy).toBe('orders-unknown');
-    expect(plan.orderErrors).toEqual([{ marketplace: 'wb', source: 'WB', error: 'timeout' }]);
+    expect(plan.orderErrors).toEqual([
+      { marketplace: 'ozon', source: 'Ozon', error: 'timeout', blocksAll: true },
+    ]);
+  });
+
+  it('сбой заказов WB закрывает только WB, с причиной; ЯМ пишется (stock_push_wb_orders_isolated)', () => {
+    const plan = stockPushPlanOf(
+      input({
+        products: [product({ skus: { ym: 'A-1', wb: 'WB-A' } })],
+        orders: [
+          { marketplace: 'ym', source: 'Магазин', orders: [order()] },
+          { marketplace: 'wb', source: 'Wildberries', orders: null, error: 'лимит WB' },
+        ],
+        targets: [
+          ymTarget({ available: { 'A-1': 3 } }),
+          ymTarget({
+            marketplace: 'wb',
+            key: 'wb:1',
+            name: 'Wildberries',
+            available: { 'WB-A': 3 },
+          }),
+        ],
+      }),
+    );
+    expect(plan.ordersKnown).toBe(true);
+    expect(plan.orderErrors).toEqual([
+      { marketplace: 'wb', source: 'Wildberries', error: 'лимит WB', blocksAll: false },
+    ]);
+    expect(plan.targets[0]).toMatchObject({ blockedBy: null, updates: [{ sku: 'A-1', to: 9 }] });
+    expect(plan.targets[1]).toMatchObject({ blockedBy: 'own-orders-unknown', error: 'лимит WB' });
+    // Отпечаток — только ЯМ: WB не пишется.
+    expect(plan.planHash).toBe(planHashOf([plan.targets[0]]));
   });
 
   it('сбой чтения остатков площадки — запрещена только она', () => {
@@ -915,9 +950,10 @@ describe('StockPushService — WB тем же путём, что ЯМ и Ozon', 
       expect.objectContaining({ source: 'wb', context: 'stock-push:zeroing' }),
     );
 
+    // Сбой заказов WB закрывает только WB (решение stock_push_wb_orders_isolated).
     const orders = ozonPushService({ marketplace: 'wb', ordersFail: true });
     expect((await orders.service.plan('1', WB_WRITE, NOW)).plan.targets[0].blockedBy).toBe(
-      'orders-unknown',
+      'own-orders-unknown',
     );
   });
 

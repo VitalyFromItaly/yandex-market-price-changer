@@ -2,7 +2,7 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 181,
+    "archived_tasks": 182,
     "updated_at": "2026-10-28"
   },
   "tasks": [
@@ -4241,6 +4241,26 @@
         "Шаг 1: npx vitest run тесты клиента WB, wb-orders, stock-write-marketplaces, stock-push — зелёные",
         "Шаг 2: живьём у продавца с WB (406937947 — прод; локально — если есть подключение) preview-stock-push без read-error WB",
         "Шаг 3: tsc, lint, prettier:check, test, build — зелёные"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-198",
+      "milestone": "M27",
+      "category": "functional",
+      "priority": "high",
+      "description": "Прод 2026-10-28, 406937947: у продавца Базовый токен WB — stocks-report/wb-warehouses отвечает 403 «token does not satisfy additional requirements», supplier/orders — 429 (1 запрос в 3 часа), и непрочитанные заказы WB блокируют запись в ЯМ и Ozon. Решение stock_push_wb_orders_isolated: сбой заказов WB блокирует только цель WB с понятной причиной в ЛК, ЯМ и Ozon пишутся; 403 «additional requirements» — честный текст «нужен персональный или сервисный токен».",
+      "acceptance_criteria": [
+        "Заказы WB не прочитались — цель WB заблокирована своей причиной (own-orders-unknown) с текстом ошибки WB, цели ЯМ и Ozon не блокируются",
+        "Сбой заказов ЯМ или Ozon по-прежнему блокирует запись везде",
+        "403 «does not satisfy additional requirements» — текст продавцу про тип токена (персональный/сервисный), а не «токен недействителен»",
+        "CRM показывает новую блокировку как «Запись остановлена» с причиной"
+      ],
+      "test_steps": [
+        "Шаг 1: тесты stock-push (лист и сервис), wb-client, CRM price-list — зелёные",
+        "Шаг 2: tsc, lint, prettier:check, test, typecheck:crm, test:crm, build — зелёные",
+        "Шаг 3 (за владельцем): после деплоя у 406937947 план пишет ЯМ и Ozon, WB — «Запись остановлена» с причиной про токен"
       ],
       "dependencies": [],
       "status": "done"

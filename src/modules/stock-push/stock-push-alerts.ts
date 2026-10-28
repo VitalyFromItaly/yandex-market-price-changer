@@ -12,6 +12,7 @@ export const STOCK_PUSH_ALERT_BLOCKS: Readonly<Record<TStockPushBlock, boolean>>
   placement: false,
   'read-error': true,
   'orders-unknown': true,
+  'own-orders-unknown': true,
   zeroing: true,
   'no-warehouse': true,
   'several-warehouses': true,

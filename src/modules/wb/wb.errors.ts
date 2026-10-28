@@ -47,7 +47,23 @@ export class WbApiError extends Error {
  * токен не работает, на части — не хватает прав.
  */
 export class WbAuthError extends WbApiError {
+  /**
+   * 403 «token does not satisfy additional requirements» — токен действует, но его
+   * тип методу не подходит: остатки FBW (`stocks-report/wb-warehouses`) открыты только
+   * персональному, сервисному и базовому с секретом (прод 28.10.2026, TASK-198).
+   */
+  public get wrongTokenType(): boolean {
+    return /additional requirements/i.test(this.message);
+  }
+
   public get userMessage(): string {
+    if (this.wrongTokenType) {
+      return (
+        'Wildberries не даёт эти данные по вашему типу токена (нужен персональный или ' +
+        'сервисный). Выпустите персональный токен в личном кабинете WB (Настройки → Доступ ' +
+        'к API) с теми же категориями и замените его на «Подключениях».'
+      );
+    }
     return (
       'Wildberries не принял токен. Проверьте его в личном кабинете WB (Настройки → ' +
       'Доступ к API): токен должен быть действующим и не тестовым.'

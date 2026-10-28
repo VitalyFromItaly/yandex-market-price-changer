@@ -13,7 +13,9 @@
  *
  * Всё неизвестное — запрет, а не ноль и не «пиши как есть»:
  * - заказы хоть одной площадки не прочитались — продажи неизвестны, план не
- *   пишет НИКУДА: остаток без чужих продаж завышен ровно на них;
+ *   пишет НИКУДА: остаток без чужих продаж завышен ровно на них. Исключение —
+ *   WB (решение `stock_push_wb_orders_isolated`, `STOCK_PUSH_ORDERS_BLOCK_ALL`):
+ *   его сбой закрывает только его цель;
  * - остатки площадки не прочитались — не пишется на неё: нечем проверить
  *   порог обнуления;
  * - товар не попал в последний прайс (его остаток с прошлого раза, TASK-142),
@@ -62,6 +64,7 @@ export type TStockPushBlock =
   | 'placement'
   | 'read-error'
   | 'orders-unknown'
+  | 'own-orders-unknown'
   | 'zeroing'
   | 'no-warehouse'
   | 'several-warehouses'
@@ -72,11 +75,25 @@ export const STOCK_PUSH_BLOCK_TEXT: Readonly<Record<TStockPushBlock, string>> = 
   'read-error': 'текущие остатки площадки не прочитались — без них запись запрещена',
   'orders-unknown':
     'заказы одной из площадок не прочитались — продажи неизвестны, запись запрещена везде',
+  'own-orders-unknown':
+    'заказы этой площадки не прочитались — остатки сюда не пишутся; на остальные площадки запись идёт без её продаж',
   zeroing: `обнулилось бы больше ${STOCK_PUSH_MAX_ZEROED} позиций — запись остановлена, проверьте прайс`,
   'no-warehouse': 'у продавца нет рабочего FBS-склада на этой площадке — писать некуда',
   'several-warehouses':
     'у продавца несколько складов на этой площадке — остаток из прайса не делится по складам, запись не идёт',
   'no-write-method': 'только просмотр: запись на эту площадку не открыта',
+};
+
+/**
+ * Закрывает ли сбой заказов площадки запись ВЕЗДЕ. WB — нет (решение
+ * `stock_push_wb_orders_isolated`, 2026-10-28): с Базовым токеном его заказы
+ * читаются раз в 3 часа, и WB держал бы ЯМ и Ozon без конца. Цена — на ЯМ и Ozon
+ * уходит остаток без продаж WB со своего склада за это время; владелец её принял.
+ */
+export const STOCK_PUSH_ORDERS_BLOCK_ALL: Readonly<Record<TMarketplace, boolean>> = {
+  ym: true,
+  ozon: true,
+  wb: false,
 };
 
 export interface IStockPushProduct {
@@ -198,8 +215,15 @@ export interface IStockPushSkipped {
 export interface IStockPushPlan {
   /** Последний день загрузки прайса; null — прайса с количеством не было. */
   priceListDay: string | null;
+  /** Нет сбоя заказов, закрывающего запись везде (`STOCK_PUSH_ORDERS_BLOCK_ALL`). */
   ordersKnown: boolean;
-  orderErrors: { marketplace: TMarketplace; source: string; error: string }[];
+  /** `blocksAll: false` — сбой закрывает только цели своей площадки. */
+  orderErrors: {
+    marketplace: TMarketplace;
+    source: string;
+    error: string;
+    blocksAll: boolean;
+  }[];
   targets: IStockPushTargetPlan[];
   skipped: IStockPushSkipped[];
   /**
@@ -218,8 +242,15 @@ export function stockPushPlanOf(input: IStockPushInput): IStockPushPlan {
       marketplace: source.marketplace,
       source: source.source,
       error: source.error ?? 'нет ответа',
+      blocksAll: STOCK_PUSH_ORDERS_BLOCK_ALL[source.marketplace],
     }));
-  const ordersKnown = orderErrors.length === 0;
+  const ordersKnown = !orderErrors.some((item) => item.blocksAll);
+  const ownOrderError = new Map<TMarketplace, string>();
+  for (const item of orderErrors) {
+    if (!item.blocksAll && !ownOrderError.has(item.marketplace)) {
+      ownOrderError.set(item.marketplace, item.error);
+    }
+  }
 
   const eligible: IStockPushProduct[] = [];
   const skipped: IStockPushSkipped[] = [];
@@ -238,7 +269,9 @@ export function stockPushPlanOf(input: IStockPushInput): IStockPushPlan {
   }
 
   const sold = soldByProduct(eligible, input.orders);
-  const targets = input.targets.map((target) => targetPlanOf(target, eligible, sold, ordersKnown));
+  const targets = input.targets.map((target) =>
+    targetPlanOf(target, eligible, sold, ordersKnown, ownOrderError.get(target.marketplace)),
+  );
 
   return {
     priceListDay,
@@ -324,6 +357,8 @@ function targetPlanOf(
   products: readonly IStockPushProduct[],
   sold: ReadonlyMap<string, number>,
   ordersKnown: boolean,
+  /** Свои заказы не прочитались, а запись везде это не закрывает — текст ошибки. */
+  ownOrdersError: string | undefined,
 ): IStockPushTargetPlan {
   const updates: IStockPushRow[] = [];
   let unchanged = 0;
@@ -369,24 +404,27 @@ function targetPlanOf(
     key: target.key,
     name: target.name,
     placement: target.placement,
-    blockedBy: blockOf(target, ordersKnown, zeroed),
+    blockedBy: blockOf(target, ordersKnown, ownOrdersError !== undefined, zeroed),
     updates,
     zeroed,
     unchanged,
     notListed,
     notWritable,
-    ...(target.error ? { error: target.error } : {}),
+    // Причина продавцу: почему на эту площадку не обновляются остатки.
+    ...(target.error || ownOrdersError ? { error: target.error ?? ownOrdersError } : {}),
   };
 }
 
 function blockOf(
   target: IStockPushTargetInput,
   ordersKnown: boolean,
+  ownOrdersUnknown: boolean,
   zeroed: number,
 ): TStockPushBlock | null {
   if (!target.placement || !isStockWritable(target.placement)) return 'placement';
   if (target.available === null) return 'read-error';
   if (!ordersKnown) return 'orders-unknown';
+  if (ownOrdersUnknown) return 'own-orders-unknown';
   if (zeroed > STOCK_PUSH_MAX_ZEROED) return 'zeroing';
   if (target.warehouseBlock) return target.warehouseBlock;
   if (!target.canWrite) return 'no-write-method';

@@ -81,7 +81,8 @@ export interface ICrmStockPush {
   writeCount: number;
   ruleText: string;
   notes: string[];
-  orderErrors: { marketplaceLabel: string; source: string; error: string }[];
+  /** `blocksAll: false` — сбой закрывает только свою площадку (решение `stock_push_wb_orders_isolated`). */
+  orderErrors: { marketplaceLabel: string; source: string; error: string; blocksAll: boolean }[];
   notConsidered: { marketplaceLabel: string; reason: string }[];
   targets: ICrmStockPushTarget[];
   skipped: {
@@ -145,6 +146,7 @@ export function toCrmStockPush(
       marketplaceLabel: MARKETPLACE_LABEL[item.marketplace],
       source: item.source,
       error: item.error,
+      blocksAll: item.blocksAll,
     })),
     notConsidered: result.notConsidered.map((item) => ({
       marketplaceLabel: MARKETPLACE_LABEL[item.marketplace],

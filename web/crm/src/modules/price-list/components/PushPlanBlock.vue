@@ -110,8 +110,15 @@ const priceListDay = computed(() => {
       </Alert>
 
       <Alert v-for="item in plan.orderErrors" :key="item.source">
-        Заказы {{ item.source }} не прочитались ({{ item.error }}) — продажи неизвестны, запись
-        запрещена на все площадки.
+        <template v-if="item.blocksAll">
+          Заказы {{ item.source }} не прочитались ({{ item.error }}) — продажи неизвестны, запись
+          запрещена на все площадки.
+        </template>
+        <template v-else>
+          Заказы {{ item.source }} не прочитались ({{ item.error }}) — на
+          {{ item.marketplaceLabel }} остатки не обновляются. На остальные площадки пишем без продаж
+          {{ item.marketplaceLabel }} со своего склада за это время.
+        </template>
       </Alert>
 
       <p v-if="!plan.writeOpen && hasChanges" class="text-sm text-muted-foreground">
