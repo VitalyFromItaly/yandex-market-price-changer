@@ -7,6 +7,7 @@ import type {
   IMarketplaceConnector,
   IMarketplaceFinance,
   IMarketplaceOrderSource,
+  IMarketplacePriceWriter,
   IMarketplaceStockLevels,
   IMarketplaceStocks,
   IMarketplaceStockWriter,
@@ -26,6 +27,7 @@ import { OzonCatalogService } from './ozon-catalog.service';
 import { OzonConnectionService } from './ozon-connection.service';
 import { OzonFinanceService } from './ozon-finance.service';
 import { OzonOrdersService } from './ozon-orders.service';
+import { OzonPriceWriteService } from './ozon-price-write.service';
 import { OzonNotConnectedError } from './ozon-seller-client';
 import { OzonStockWriteService } from './ozon-stock-write.service';
 
@@ -33,8 +35,8 @@ import { OzonStockWriteService } from './ozon-stock-write.service';
  * Ozon в реестре площадок: подключение (TASK-162), каталог и остатки
  * (TASK-163) поверх `OzonCatalogService`, заказы — отправления FBS и FBO
  * (TASK-130) поверх `OzonOrdersService`, финансовые операции (TASK-131)
- * поверх `OzonFinanceService` — журнал Postgres. Пишет только запись остатков
- * FBS (TASK-175, `OzonStockWriteService`), остальное — чтение.
+ * поверх `OzonFinanceService` — журнал Postgres. Пишет остатки FBS (TASK-175,
+ * `OzonStockWriteService`) и цены (TASK-201, `OzonPriceWriteService`), остальное — чтение.
  *
  * `ref.campaignId` не читается: у Ozon один кабинет на ключ.
  */
@@ -49,6 +51,7 @@ export class OzonMarketplaceAdapter implements IMarketplaceAdapter {
     private readonly ozonOrders: OzonOrdersService,
     private readonly ozonFinance: OzonFinanceService,
     private readonly ozonStockWrite: OzonStockWriteService,
+    private readonly ozonPriceWrite: OzonPriceWriteService,
   ) {}
 
   readonly connection: IMarketplaceConnector = {
@@ -75,6 +78,18 @@ export class OzonMarketplaceAdapter implements IMarketplaceAdapter {
     writeStocks: (ref, warehouseId, updates) =>
       notConnectedAsRegistryError(ref.telegramUserId, () =>
         this.ozonStockWrite.writeStocks(ref.telegramUserId, warehouseId, updates),
+      ),
+  };
+
+  /** Цены «Установки цен» (TASK-201): чтение текущих и запись без повторов. */
+  readonly priceWrite: IMarketplacePriceWriter = {
+    currentPrices: (ref, skus) =>
+      notConnectedAsRegistryError(ref.telegramUserId, () =>
+        this.ozonPriceWrite.currentPrices(ref.telegramUserId, skus),
+      ),
+    writePrices: (ref, updates) =>
+      notConnectedAsRegistryError(ref.telegramUserId, () =>
+        this.ozonPriceWrite.writePrices(ref.telegramUserId, updates),
       ),
   };
 

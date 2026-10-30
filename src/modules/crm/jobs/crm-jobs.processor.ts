@@ -59,6 +59,7 @@ export class CrmJobsProcessor {
       if (doc && !store) throw new CrmJobError(STORE_GONE_TEXT);
 
       const output = await definition.run({
+        jobId,
         telegramUserId,
         store,
         params,

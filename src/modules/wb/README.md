@@ -71,7 +71,8 @@ rows)`: карточка без пары — в очередь, мастер-п�
   Артикула производителя у WB нет, уровень `vendorCode` сопоставления не работает; штрихкоды — `sizes[].skus`
   всех размеров.
 - **Цены нет**: в карточке WB её нет, она в категории «Цены и скидки», которой нет в
-  `WB_REQUIRED_CATEGORIES` (токен её не обязан открывать). `salePrices.wb` не пишется, а не пишется нулём.
+  `WB_REQUIRED_CATEGORIES` (токен её не обязан открывать). `salePrices.wb` не пишется, а не пишется нулём. Цены «Установки
+  цен» читаются отдельно (TASK-201, ниже).
 - **FBW и FBS — разными методами и без суммы** (`marketplace` и `seller` в `IMarketplaceStockLevels`).
   - FBW — «Аналитика» `POST seller-analytics-api/api/analytics/v1/stocks-report/wb-warehouses`
     `{nmIds, limit: 250000, offset}`: `nmIds` — номера WB карточек батчами по 1000, внутри — `offset` до неполной
@@ -218,3 +219,25 @@ fields}`; токен — категория «Финансы» (она и так
 - **Барьеры внутри `writeStocks`**: `STOCK_WRITE_ENABLED=false` — ни одного запроса; отрицательное или дробное
   количество — отмена целиком; склад перечитан и всё ещё тот же единственный FBS — иначе `placement`.
 - Путь PUT, `deliveryType` и то, что `sku` — штрихкод (а не `chrtId`), — по памяти, не сверены (known-gaps).
+
+### Wildberries: цены для «Установки цен» (M28, TASK-201)
+
+Цены WB читает и пишет только `WbPriceWriteService` (возможность реестра `priceWrite`); вызывает её «Установка
+цен» (TASK-202, правила — `src/modules/price-set/README.md`). Хост — `discounts-prices-api` (категория «Цены и скидки»).
+
+- **Право «Цены и скидки» не входит в `WB_REQUIRED_CATEGORIES`** (решение `price_set_wb_prices_scope`): иначе
+  у подключённых продавцов без этой галочки «Проверить связь» упала бы в `empty` и встали бы остатки, заказы и
+  финансы. Проверяет сам писатель: 401/403 хоста цен → чтение бросает `WbPricesAccessError` (наследник `WbAuthError`,
+  текст `missingCategoriesText(['prices'])`), запись — `skipReason: 'no-access'` без единого POST. 403 «additional
+  requirements» (не тот тип токена) остаётся `WbAuthError` со своим текстом.
+- **Чтение** — `GET /api/v2/list/goods/filter?limit=1000&offset=…` до неполной страницы, весь список: фильтра по
+  `vendorCode` у метода нет. Ключ — `vendorCode`; цена — `sizes[].price` (базовая, до скидки продавца), скидка —
+  `discount` товара. Домен считает базовую под текущую скидку (`IPriceSetCurrent.discount`).
+- **Разные цены у размеров** — `price: null`, `mixedSizes`: запись такой товар пропускает с причиной
+  (`WB_PRICE_SKIP_REASON`) — одна цена на `nmID` перетёрла бы цены размеров. Товара нет в ценах — тоже пропуск.
+- **Запись** — `POST /api/v2/upload/task` `{data: [{nmID, price}]}` батчами по 1000 через `callWrite` — **без
+  `withWbRetry` и без `discount`** (решение `price_set_keep_discount`). Список товаров перечитывается прямо перед
+  записью. WB ставит загрузку в очередь: 200 — задача принята, построчные отказы видны только в истории задач
+  (`/api/v2/history/goods/task`), её писатель не читает (known-gaps).
+- **Барьеры внутри `writePrices`**: `PRICE_WRITE_ENABLED=false` — ни одного запроса; цена не целая или ≤ 0 —
+  отмена целиком.

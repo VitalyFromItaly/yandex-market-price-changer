@@ -30,6 +30,7 @@
 | `returns-analytics/`                                                                                      | «Аналитика возвратов»: возвраты, % выкупов, потери по площадке, kind `returns-analytics:summary`     |
 | `notifications/`                                                                                          | «Уведомления»: лента, настройки правил, «Проверить сейчас» (очередь seller-notifications)            |
 | `stock-push/`                                                                                             | «Передача остатков»: план `stock-push:plan` и запись `POST stock-push/apply` (через file-processing) |
+| `price-set/`                                                                                              | «Установка цен»: план `price-set:plan`, файл `POST price-set/upload`, запись `POST price-set/apply`  |
 | `sku-ratings/`                                                                                            | ТОП-20, ABC и XYZ товаров из того же P&L, kind `sku-ratings:summary`                                 |
 | `forecast/`                                                                                               | прогнозы и закупки, kind-ы `forecast:summary` / `forecast:purchases`                                 |
 | `price-calculator/`                                                                                       | цена ↔ прибыль: kind-ы `price-calc:rates` (факт) и `price-calc:tariff` (ЯМ)                         |
@@ -459,6 +460,26 @@
 - Площадка с закрытой фичей записи — «Только просмотр» (`willWrite: false`); Ozon/WB с несколькими складами —
   «Не пишется». Не подключённая или закрытая площадка печатается строкой: её продажи не вычитаются. Итог записи
   WB показывает число не отправленных многоразмерных карточек.
+
+### «Установка цен» (M28, TASK-202)
+
+Раздел аккаунта `ym-price-set` под фичей `price_set` (default off): наценка от закупа по площадке или файл «артикул |
+цена» → план «было → станет» по каждой площадке → «Записать цены». Запись — под фичами площадок
+`price_set_write_ym` / `price_set_write_ozon` / `price_set_write_wb` (default off, в `FEATURES_WITHOUT_SECTION`).
+Правила, барьеры и доводы — `src/modules/price-set/README.md`; здесь только доставка (`crm/price-set/`).
+
+- **План — kind `price-set:plan`** (scope `account`), только чтение, тот же `PriceSetService.plan`, что у скрипта
+  `preview-price-set`. Два входа одного kind-а: наценка — обычный `POST crm/jobs` с `params.markups`
+  (`{ ym: 250, ozon: 300 }`), файл — `POST crm/ym/price-set/upload` (multipart, 10 МБ как у прайса, плюс csv) кладёт
+  файл во вход задачи (`CrmJobResult.input`, не Redis), разбор — в kind-е; идущий план — 409 `PLAN_RUNNING` (вернуть чужой запрос вместо этого — обман). Ошибки входа — текстом задачи
+  (`CrmJobError`), наценка без `purchase_prices` — тоже.
+- **Запись — `POST crm/ym/price-set/apply {planJobId, planHash, marketplaces?, excluded}`** → 202 `{jobId}`.
+  403 `WRITE_CLOSED`, если не открыта ни одна фича записи; 400 `INVALID_PLAN` (чужая, не готовая или не того kind-а
+  задача плана), `INVALID_MARKETPLACES`, `INVALID_EXCLUDED`. `CrmJobResult` (kind `price-set:apply`) + `SYNC_STOCKS`
+  с `source: 'price-set'` в `file-processing` (`attempts: 1`) — та же очередь, что прайс и «Передача остатков».
+  Идущая запись — 409 `PRICE_SET_RUNNING` с `jobId` (довод прайса: подтверждены другие числа).
+- **Фичи едут снимком в payload** (`IPriceSetJob.features`, довод `deepHistory`); тело плана из браузера не
+  принимается — процессор пересчитывает его по `request` задачи плана.
 
 ### «Прогнозы» (M24, TASK-151)
 

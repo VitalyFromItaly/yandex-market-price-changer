@@ -8,6 +8,7 @@ import { FinanceModule } from '../finance/finance.module';
 import { HealthModule } from '../health/health.module';
 import { MarketplacesModule } from '../marketplaces/marketplaces.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { PriceSetModule } from '../price-set/price-set.module';
 import { StockPushModule } from '../stock-push/stock-push.module';
 import { YandexModule } from '../yandex/yandex.module';
 
@@ -87,6 +88,7 @@ import { QUEUE_NAMES } from './index';
     AiAnalystModule,
     MarketplacesModule,
     StockPushModule,
+    PriceSetModule,
     // Цикл настоящий и обоюдный: HealthModule берёт отсюда очередь reports (ради
     // клиента Redis) и BotRegistry, а команда /health смотрит обратно, в
     // HealthMonitorService. forwardRef с обеих сторон — единственный способ.

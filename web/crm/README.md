@@ -80,6 +80,11 @@ npm run test:crm       # vitest --config web/crm/vitest.config.ts
   «Настройки» (данные вкладки грузятся при её открытии). Лента — обычный HTTP, «Проверить сейчас» только ставит
   задачу; форма правил отправляет только изменённое (`rulesDiff`), пороги проверяет сервер. Блок «Telegram» — при
   `telegramAvailable` из ответа (фича `notifications_telegram`).
+- «Установка цен» (`modules/price-set`, TASK-203) — раздел аккаунта `/ym/price-set`: наценка по площадке
+  (`POST /jobs` kind `price-set:plan`, `params.markups`) или файл (`POST /ym/price-set/upload`), дальше общий опрос
+  `useJob` — не `useReportJob`: записи нужен id задачи плана, а кэш браузера держал бы чужой отпечаток. Риск, «что
+  запишется» и блокировки — с сервера; фронт только снимает строки (risky — по умолчанию) и шлёт их ключи в `excluded`
+  `POST /ym/price-set/apply`. `MarketplacePicker` «Прайса» общий: заголовок и подпись строки — от страницы. Правила и барьеры — `src/modules/price-set/README.md`.
 - `src/components/ui` — примитивы кита, `components/layout` — шелл.
 
 ## Правила

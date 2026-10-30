@@ -61,7 +61,17 @@ export const OZON_PATHS = {
   warehouses: '/v2/warehouse/list',
   /** ProductAPI_ProductsStocksV2: ЗАПИСЬ остатков FBS на склад продавца (TASK-175) — без повторов. */
   stocksWrite: '/v2/products/stocks',
+  /** ProductAPI_GetProductInfoPricesV5: цены по `offer_id`, курсор `cursor` (TASK-201). Чтение. */
+  productPrices: '/v5/product/info/prices',
+  /** ProductAPI_ImportProductsPrices: ЗАПИСЬ цен (TASK-201) — без повторов, без `old_price`. */
+  pricesWrite: '/v1/product/import/prices',
 } as const;
+
+/**
+ * Позиций в одном запросе цен — потолок Ozon (1000) и для фильтра `offer_id`
+ * чтения, и для записи.
+ */
+export const OZON_PRICES_BATCH = 1000;
 
 /**
  * Позиций в одном запросе записи остатков — потолок Ozon (100). Больше — 400
@@ -199,6 +209,18 @@ export interface IOzonStockWriteResult {
   updated: boolean;
   /** Текст ошибок Ozon по позиции; пусто — записано. */
   message?: string;
+}
+
+/** Цена продажи карточки из /v5/product/info/prices, ₽; null — нет или мусор. */
+export interface IOzonPrice {
+  offerId: string;
+  price: number | null;
+}
+
+/** Позиция записи цены: артикул продавца и новая цена, ₽. */
+export interface IOzonPriceWrite {
+  offerId: string;
+  price: number;
 }
 
 /** Строка /v3/product/list. */
@@ -453,6 +475,42 @@ export class OzonSellerClient {
     return mapStocksWrite(await this.callWrite(() => this.http.post(OZON_PATHS.stocksWrite, body)));
   }
 
+  /** Цены продажи по артикулам (TASK-201): батчи по `OZON_PRICES_BATCH`, курсор. Только чтение. */
+  public async getPrices(offerIds: readonly string[]): Promise<IOzonPrice[]> {
+    const prices: IOzonPrice[] = [];
+    for (let i = 0; i < offerIds.length; i += OZON_PRICES_BATCH) {
+      const filter = { offer_id: offerIds.slice(i, i + OZON_PRICES_BATCH), visibility: 'ALL' };
+      let cursor = '';
+      for (let page = 0; page < OZON_MAX_PAGES; page += 1) {
+        const body = { filter, cursor, limit: OZON_PRICES_BATCH };
+        const result = mapPrices(
+          await this.call(() => this.http.post(OZON_PATHS.productPrices, body)),
+        );
+        prices.push(...result.items);
+        if (!result.items.length || !result.cursor || result.cursor === cursor) break;
+        cursor = result.cursor;
+      }
+    }
+    return prices;
+  }
+
+  /**
+   * ЗАПИСЬ цен (TASK-201) — один запрос на батч, БЕЗ повторов (`callWrite`).
+   * Батч (≤ `OZON_PRICES_BATCH`) режет вызывающий. `old_price` не шлётся
+   * (решение `price_set_keep_discount`): зачёркнутую продавец ведёт в кабинете.
+   * Ответ построчный, тот же, что у записи остатков (`mapStocksWrite`).
+   */
+  public async updatePrices(items: readonly IOzonPriceWrite[]): Promise<IOzonStockWriteResult[]> {
+    const body = {
+      prices: items.map((item) => ({
+        offer_id: item.offerId,
+        price: String(item.price),
+        currency_code: 'RUB',
+      })),
+    };
+    return mapStocksWrite(await this.callWrite(() => this.http.post(OZON_PATHS.pricesWrite, body)));
+  }
+
   /**
    * Записывающий запрос — БЕЗ withOzonRetry, по образцу `postWrite` ЯМ: Ozon мог
    * применить остаток и не успеть ответить (таймаут, 5xx), а повтор вслепую
@@ -677,6 +735,21 @@ export function mapStocksWrite(raw: unknown): IOzonStockWriteResult[] {
         message: updated ? undefined : errors.join('; ') || 'Ozon не подтвердил запись',
       };
     });
+}
+
+/**
+ * Ответ /v5/product/info/prices: `{items: [{offer_id, price: {price}}], cursor}`.
+ * Цена приходит числом или строкой; ≤ 0 и мусор — null (цены нет, а не ноль).
+ */
+export function mapPrices(raw: unknown): { items: IOzonPrice[]; cursor: string } {
+  const items = itemsOf(raw)
+    .map((item) => {
+      const price = numberOf(((item.price ?? {}) as TRaw).price);
+      return { offerId: textOf(item.offer_id), price: price > 0 ? price : null };
+    })
+    .filter((item) => item.offerId.length > 0);
+  const data = (raw ?? {}) as TRaw;
+  return { items, cursor: textOf(levelOf(raw).cursor ?? data.cursor) };
 }
 
 // ─── Начисления (TASK-194) ───────────────────────────────────────────────────

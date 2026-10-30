@@ -98,11 +98,15 @@ describe('YmMarketplaceAdapter', () => {
 
   function setup(doc: unknown = YM_DOC) {
     const placed = {
-      orders: [{ id: 1, status: 'DELIVERED', itemsTotal: 100, creationDate: '17-10-2026 10:00:00' }],
+      orders: [
+        { id: 1, status: 'DELIVERED', itemsTotal: 100, creationDate: '17-10-2026 10:00:00' },
+      ],
       cancelled: [{ id: 2, status: 'CANCELLED' }],
     };
     const levels = { placement: 'FBS', takenAt: new Date(), stocks: { A: 3 } };
-    const catalog = [{ offerId: 'A', name: 'Часы', barcodes: ['46'], basicPrice: 100, currencyId: 'RUR' }];
+    const catalog = [
+      { offerId: 'A', name: 'Часы', barcodes: ['46'], basicPrice: 100, currencyId: 'RUR' },
+    ];
     const imported = { status: 'imported' };
     const deps = {
       stores: { findByTelegramUser: vi.fn(async () => doc) },
@@ -110,6 +114,10 @@ describe('YmMarketplaceAdapter', () => {
       finance: { importAndRecord: vi.fn(async () => imported) },
       stocks: { levels: vi.fn(async () => levels) },
       clients: { forStore: vi.fn(() => ({ loadCatalogProducts: vi.fn(async () => catalog) })) },
+      prices: {
+        currentPrices: vi.fn(async () => new Map([['A', { price: 100 }]])),
+        writePrices: vi.fn(async () => ({ written: 1, errors: [], skipped: [] })),
+      },
     };
     const adapter = new YmMarketplaceAdapter(
       deps.stores as never,
@@ -117,6 +125,7 @@ describe('YmMarketplaceAdapter', () => {
       deps.finance as never,
       deps.stocks as never,
       deps.clients as never,
+      deps.prices as never,
     );
     return { adapter, deps, placed, levels, catalog, imported };
   }
@@ -136,8 +145,25 @@ describe('YmMarketplaceAdapter', () => {
     expect(stocks).toEqual(ymStockLevels(levels as never));
     expect(availableBySku(stocks)).toEqual(levels.stocks);
     expect(deps.stocks.levels).toHaveBeenCalledWith(YM_DOC, now);
-    expect(await adapter.catalog.listProducts(REF)).toEqual(productRowsFromCatalog(catalog as never));
+    expect(await adapter.catalog.listProducts(REF)).toEqual(
+      productRowsFromCatalog(catalog as never),
+    );
     expect(deps.clients.forStore).toHaveBeenCalledWith(YM_DOC);
+  });
+
+  it('цены — делегация к YmPriceWriteService с магазином продавца', async () => {
+    const { adapter, deps } = setup();
+    expect(await adapter.priceWrite.currentPrices(REF, ['A'])).toEqual(
+      new Map([['A', { price: 100 }]]),
+    );
+    expect(deps.prices.currentPrices).toHaveBeenCalledWith(YM_DOC, ['A']);
+    const updates = [{ sku: 'A', price: 120 }];
+    expect(await adapter.priceWrite.writePrices(REF, updates)).toEqual({
+      written: 1,
+      errors: [],
+      skipped: [],
+    });
+    expect(deps.prices.writePrices).toHaveBeenCalledWith(YM_DOC, updates);
   });
 
   it('импорт финансов — продавец и период, без чтения магазина', async () => {
@@ -242,6 +268,7 @@ describe('MarketplaceRegistry', () => {
       'catalog',
       'stocks',
       'stockWrite',
+      'priceWrite',
     ]);
   });
 });
@@ -532,7 +559,10 @@ describe('ymMarketplaceOrder', () => {
         substatus: 'READY_TO_SHIP',
         creationDate: '17-10-2026 23:40:00',
         itemsTotal: 1000,
-        subsidies: [{ type: 'YANDEX_CASHBACK', amount: 150 }, { type: 'DELIVERY', amount: 99 }],
+        subsidies: [
+          { type: 'YANDEX_CASHBACK', amount: 150 },
+          { type: 'DELIVERY', amount: 99 },
+        ],
         items: [{ offerId: ' F-91W ', offerName: 'Casio', count: 2, price: 500 }],
       } as never,
       'fbs',

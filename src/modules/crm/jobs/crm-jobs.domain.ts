@@ -51,6 +51,8 @@ export interface ICrmJobPayload {
 }
 
 export interface ICrmJobContext {
+  /** Он же `CrmJobResult.jobId` — по нему kind читает вход задачи (файл), если он есть. */
+  jobId: string;
   telegramUserId: string;
   /**
    * Документ ЯМ (у `store`-kind-а — перекрытый магазином из веба). `null`

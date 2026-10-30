@@ -9,6 +9,7 @@ import { WbConnectionService } from './wb-connection.service';
 import { WbFinanceService } from './wb-finance.service';
 import { WbMarketplaceAdapter } from './wb-marketplace.adapter';
 import { WbOrdersService } from './wb-orders.service';
+import { WbPriceWriteService } from './wb-price-write.service';
 import { WbStockWriteService } from './wb-stock-write.service';
 
 /**
@@ -28,6 +29,7 @@ import { WbStockWriteService } from './wb-stock-write.service';
     WbOrdersService,
     WbFinanceService,
     WbStockWriteService,
+    WbPriceWriteService,
     WbMarketplaceAdapter,
   ],
   exports: [

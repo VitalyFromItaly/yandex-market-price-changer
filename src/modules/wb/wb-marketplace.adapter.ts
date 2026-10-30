@@ -6,6 +6,7 @@ import type {
   IMarketplaceConnector,
   IMarketplaceFinance,
   IMarketplaceOrderSource,
+  IMarketplacePriceWriter,
   IMarketplaceStockLevels,
   IMarketplaceStocks,
   IMarketplaceStockWriter,
@@ -25,6 +26,7 @@ import { WbCatalogService } from './wb-catalog.service';
 import { WbConnectionService } from './wb-connection.service';
 import { WbFinanceService } from './wb-finance.service';
 import { WbOrdersService } from './wb-orders.service';
+import { WbPriceWriteService } from './wb-price-write.service';
 import { WbNotConnectedError } from './wb-seller-client';
 import { WbStockWriteService } from './wb-stock-write.service';
 
@@ -32,7 +34,8 @@ import { WbStockWriteService } from './wb-stock-write.service';
  * WB в реестре площадок: подключение (TASK-162), каталог и остатки (TASK-134)
  * поверх `WbCatalogService`, заказы (TASK-135) поверх `WbOrdersService`,
  * отчёт реализации в финжурнал (TASK-136) поверх `WbFinanceService`. Пишет
- * только запись остатков FBS (TASK-175, `WbStockWriteService`), остальное — чтение.
+ * остатки FBS (TASK-175, `WbStockWriteService`) и цены (TASK-201, `WbPriceWriteService`),
+ * остальное — чтение.
  */
 @Injectable()
 export class WbMarketplaceAdapter implements IMarketplaceAdapter {
@@ -45,6 +48,7 @@ export class WbMarketplaceAdapter implements IMarketplaceAdapter {
     private readonly wbOrders: WbOrdersService,
     private readonly wbFinance: WbFinanceService,
     private readonly wbStockWrite: WbStockWriteService,
+    private readonly wbPriceWrite: WbPriceWriteService,
   ) {}
 
   readonly connection: IMarketplaceConnector = {
@@ -78,6 +82,18 @@ export class WbMarketplaceAdapter implements IMarketplaceAdapter {
     writeStocks: (ref, warehouseId, updates) =>
       notConnectedAsRegistryError(ref.telegramUserId, () =>
         this.wbStockWrite.writeStocks(ref.telegramUserId, warehouseId, updates),
+      ),
+  };
+
+  /** Цены «Установки цен» (TASK-201): чтение текущих и запись без повторов. */
+  readonly priceWrite: IMarketplacePriceWriter = {
+    currentPrices: (ref, skus) =>
+      notConnectedAsRegistryError(ref.telegramUserId, () =>
+        this.wbPriceWrite.currentPrices(ref.telegramUserId, skus),
+      ),
+    writePrices: (ref, updates) =>
+      notConnectedAsRegistryError(ref.telegramUserId, () =>
+        this.wbPriceWrite.writePrices(ref.telegramUserId, updates),
       ),
   };
 

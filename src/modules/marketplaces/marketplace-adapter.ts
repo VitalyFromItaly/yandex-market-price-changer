@@ -3,6 +3,7 @@ import type { TMarketplace } from '../../shared/marketplace';
 import type { TOrderStage } from '../../shared/order-stage';
 import type { TFinanceImportResult } from '../finance/finance-import.service';
 import type { IFinancePeriod } from '../finance/finance-period';
+import type { IPriceSetCurrent } from '../price-set/price-set.domain';
 import type { IProductCatalogRow } from '../products/product.domain';
 import type { IReportPeriod } from '../yandex/reports/report-period';
 
@@ -25,7 +26,8 @@ export type TMarketplaceCapability =
   | 'orders'
   | 'catalog'
   | 'stocks'
-  | 'stockWrite';
+  | 'stockWrite'
+  | 'priceWrite';
 
 /**
  * Карточка площадки — НАША сущность (TASK-163), выведенная по ЯМ и Ozon: та
@@ -241,6 +243,42 @@ export interface IMarketplaceStockWriter {
   ): Promise<IMarketplaceStockWriteResult>;
 }
 
+/** Позиция записи цены: артикул площадки и цена, которая уходит в API, ₽ (целое > 0). */
+export interface IPriceWriteUpdate {
+  sku: string;
+  price: number;
+}
+
+/**
+ * Итог записи цен. `skipReason` — запись не ушла вовсе: env выключен или у ключа
+ * площадки нет права на цены (`no-access`, WB без «Цены и скидки»); `skipped` —
+ * позиции, которые площадке не отправлялись; `errors` — отказы площадки по батчам.
+ */
+export interface IMarketplacePriceWriteResult {
+  written: number;
+  errors: { batch: number; message: string }[];
+  skipped: { sku: string; reason: string }[];
+  skipReason?: 'write-disabled' | 'no-access';
+}
+
+/**
+ * Цены площадки («Установка цен», TASK-200): чтение текущих и ЗАПИСЬ.
+ *
+ * `writePrices` — единственная функция записи цен площадки, и все барьеры внутри
+ * неё: `PRICE_WRITE_ENABLED`, целая положительная цена. Повторов на записи нет.
+ */
+export interface IMarketplacePriceWriter {
+  /** Текущие цены по артикулам площадки; артикула нет в карте — нет в каталоге. */
+  currentPrices(
+    ref: IMarketplaceConnectionRef,
+    skus: readonly string[],
+  ): Promise<Map<string, IPriceSetCurrent>>;
+  writePrices(
+    ref: IMarketplaceConnectionRef,
+    updates: readonly IPriceWriteUpdate[],
+  ): Promise<IMarketplacePriceWriteResult>;
+}
+
 /** Возможность → её интерфейс. `Record`, чтобы новая возможность не забылась в реестре. */
 export interface IMarketplaceCapabilities {
   connection: IMarketplaceConnector;
@@ -249,6 +287,7 @@ export interface IMarketplaceCapabilities {
   catalog: IMarketplaceCatalog;
   stocks: IMarketplaceStocks;
   stockWrite: IMarketplaceStockWriter;
+  priceWrite: IMarketplacePriceWriter;
 }
 
 export const MARKETPLACE_CAPABILITIES = Object.keys({
@@ -258,6 +297,7 @@ export const MARKETPLACE_CAPABILITIES = Object.keys({
   catalog: true,
   stocks: true,
   stockWrite: true,
+  priceWrite: true,
 } satisfies Record<TMarketplaceCapability, true>) as TMarketplaceCapability[];
 
 /** Часть адаптера площадки: несколько частей одной площадки реестр складывает. */

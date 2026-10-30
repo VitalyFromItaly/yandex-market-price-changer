@@ -40,6 +40,7 @@ export const SECTION_KIND = {
   forecast: 'marketplace',
   products: 'account',
   'price-calculator': 'ym',
+  'price-set': 'account',
   'ai-analyst': 'account',
   notifications: 'account',
   dashboard: 'ym-store',

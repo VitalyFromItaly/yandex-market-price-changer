@@ -8,6 +8,8 @@ import { ActionLogService } from '../../../../database/services/action-log.servi
 import { CrmJobResultService } from '../../../../database/services/crm-job-result.service';
 import { YandexMarketService } from '../../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../../errors/error-reporter.service';
+import { priceSetRequestOf } from '../../../price-set/price-set.domain';
+import { PriceSetPlanChangedError, PriceSetService } from '../../../price-set/price-set.service';
 import {
   STOCK_PUSH_SCHEDULE_LOG_KIND,
   StockPushPlanChangedError,
@@ -105,11 +107,36 @@ export interface IScheduledStockPushJob {
   manual?: boolean;
 }
 
+/**
+ * Запись плана «Установки цен» (TASK-202). Та же очередь и тот же `@Process`
+ * (довод `IStockPushJob`): запись в кабинет — одна за раз. Ни токена, ни
+ * строк файла: запрос плана перечитывается из результата задачи плана по
+ * `planJobId`, план пересчитывается и пишется, только если совпал `planHash`.
+ */
+export interface IPriceSetJob {
+  source: 'price-set';
+  /** Он же `CrmJobResult.jobId` и jobId в Bull. */
+  jobId: string;
+  telegramUserId: string;
+  /** Задача плана, чей запрос пересчитывается. */
+  planJobId: string;
+  planHash: string;
+  /** Снимок фич продавца на момент нажатия (у админа записи доступа нет). */
+  features: Record<string, boolean>;
+  /** Отмеченные площадки; нет — все с открытой записью. */
+  marketplaces?: TMarketplace[];
+  /** Снятые в превью строки — ключи `площадка:артикул`. */
+  excluded: string[];
+}
+
 export type IStockSyncJob =
   | ITelegramStockSyncJob
   | ICrmStockSyncJob
   | IStockPushJob
-  | IScheduledStockPushJob;
+  | IScheduledStockPushJob
+  | IPriceSetJob;
+
+const PRICE_SET_PLAN_GONE_TEXT = 'План цен устарел — пересчитайте его и подтвердите ещё раз.';
 
 const CRM_NO_STORE_TEXT = 'Магазин не подключён — файл не обработан. Подключите его в боте.';
 const CRM_NO_FILE_TEXT = 'Файл не найден — загрузите его ещё раз.';
@@ -145,6 +172,7 @@ export class StockSyncProcessor {
     private readonly stockPush: StockPushService,
     private readonly pushSchedule: StockPushScheduler,
     private readonly actionLog: ActionLogService,
+    private readonly priceSet: PriceSetService,
   ) {}
 
   /**
@@ -172,7 +200,11 @@ export class StockSyncProcessor {
     if (!isOurs || !job?.data) return;
     // Ждать итога некому: строка журнала ошибок выше — и есть ответ.
     if (job.data.source === 'schedule') return;
-    if (job.data.source === 'crm' || job.data.source === 'push') {
+    if (
+      job.data.source === 'crm' ||
+      job.data.source === 'push' ||
+      job.data.source === 'price-set'
+    ) {
       // Без этого замок задачи в CRM висел бы до TTL, а веб ждал бы вечно.
       void this.crmJobs.finishFailed(job.data.jobId, uploadErrorText(error)).catch(() => undefined);
       return;
@@ -189,6 +221,10 @@ export class StockSyncProcessor {
     }
     if (job.data.source === 'push') {
       await this.runPush(job.data);
+      return;
+    }
+    if (job.data.source === 'price-set') {
+      await this.runPriceSet(job.data);
       return;
     }
     if (job.data.source === 'crm') {
@@ -321,6 +357,43 @@ export class StockSyncProcessor {
         action: 'передача остатков на площадки',
       });
       await this.crmJobs.finishFailed(jobId, uploadErrorText(error)).catch(() => undefined);
+    }
+  }
+
+  private async runPriceSet(data: IPriceSetJob): Promise<void> {
+    const { jobId, telegramUserId } = data;
+    try {
+      await this.crmJobs.markActive(jobId);
+      const plan = await this.crmJobs.findOwn(data.planJobId, telegramUserId);
+      const request = priceSetRequestOf((plan?.data as { request?: unknown } | null)?.request);
+      if (!request) {
+        await this.crmJobs.finishFailed(jobId, PRICE_SET_PLAN_GONE_TEXT);
+        return;
+      }
+      const result = await this.priceSet.apply(
+        telegramUserId,
+        data.features,
+        request,
+        data.planHash,
+        data.marketplaces,
+        data.excluded,
+      );
+      await this.crmJobs.finishDone(jobId, { writes: result.writes }, null);
+    } catch (error) {
+      if (error instanceof PriceSetPlanChangedError) {
+        await this.crmJobs.finishFailed(jobId, error.userMessage).catch(() => undefined);
+        return;
+      }
+      void this.errors.report({
+        error,
+        source: 'crm',
+        context: 'price-set',
+        telegramUserId,
+        action: 'установка цен на площадки',
+      });
+      await this.crmJobs
+        .finishFailed(jobId, 'Не удалось записать цены. Попробуйте позже.')
+        .catch(() => undefined);
     }
   }
 

@@ -227,6 +227,21 @@ export const FEATURE = {
    */
   STOCK_PUSH_SCHEDULE: 'stock_push_schedule',
   /**
+   * «Установка цен» (TASK-202): план цен на площадки — наценка от закупа последнего
+   * прайса (свой % на площадку, нужен открытый `purchase_prices`) или файл «артикул |
+   * цена» — и превью «было → стало». Сама по себе только читает. Кнопки в боте нет —
+   * раздел аккаунта CRM, `featureGate` закрывать нечего.
+   */
+  PRICE_SET: 'price_set',
+  /**
+   * Запись плана «Установки цен» на площадку — по флагу на продавца и площадку,
+   * как у остатков: это запись в чужой кабинет. Плюс `PRICE_WRITE_ENABLED` и
+   * барьеры внутри `priceWrite.writePrices`. Раздела нет — кнопка на экране плана.
+   */
+  PRICE_SET_WRITE_YM: 'price_set_write_ym',
+  PRICE_SET_WRITE_OZON: 'price_set_write_ozon',
+  PRICE_SET_WRITE_WB: 'price_set_write_wb',
+  /**
    * «Прогнозы» (TASK-151, ТЗ п.13): выручка, чистая, налог и поступления до конца
    * месяца, продажи до конца года, необходимые закупки — линейно по финжурналу.
    * Кнопки в боте нет — раздел аккаунта CRM, `featureGate` закрывать нечего.
@@ -382,6 +397,10 @@ const FEATURE_KEY_SET: Record<TFeatureKey, true> = {
   [FEATURE.STOCK_PUSH_WRITE_OZON]: true,
   [FEATURE.STOCK_PUSH_WRITE_WB]: true,
   [FEATURE.STOCK_PUSH_SCHEDULE]: true,
+  [FEATURE.PRICE_SET]: true,
+  [FEATURE.PRICE_SET_WRITE_YM]: true,
+  [FEATURE.PRICE_SET_WRITE_OZON]: true,
+  [FEATURE.PRICE_SET_WRITE_WB]: true,
   [FEATURE.FORECAST]: true,
   [FEATURE.PRICE_CALCULATOR]: true,
   [FEATURE.FINANCE_ANOMALIES]: true,
@@ -768,6 +787,49 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     // Выключена: автоматическая запись в чужой кабинет включается по одному продавцу.
     defaultEnabled: false,
     requires: [FEATURE.STOCK_PUSH],
+  },
+  [FEATURE.PRICE_SET]: {
+    // Inline-only подпись: кнопки в боте нет, раздел живёт в CRM.
+    label: '🏷 Установка цен',
+    description:
+      'Цены на площадки одним планом: наценка от закупа последнего прайса (свой процент на ' +
+      'площадку) или файл «артикул | цена», и превью «было → стало». Сама функция ничего не ' +
+      'пишет: запись на каждую площадку — отдельной функцией.',
+    // Выключена: новая функция, открывается по продавцу (new_functions_behind_feature).
+    defaultEnabled: false,
+  },
+  [FEATURE.PRICE_SET_WRITE_YM]: {
+    // Inline-only подпись: отдельного раздела нет, кнопка на экране плана.
+    label: '✍️ Запись цен в Яндекс.Маркет',
+    description:
+      'Кнопка «Записать цены» на экране «Установка цен»: план пишется в Яндекс.Маркет — только цена ' +
+      'продажи, зачёркнутая и скидка не трогаются (цена — во всех магазинах кабинета). Это запись в кабинет продавца — ' +
+      'открывать только с его согласия.',
+    // Выключена: запись в чужой кабинет включает владелец по одному продавцу.
+    defaultEnabled: false,
+    requires: [FEATURE.PRICE_SET],
+  },
+  [FEATURE.PRICE_SET_WRITE_OZON]: {
+    // Inline-only подпись: отдельного раздела нет, кнопка на экране плана.
+    label: '✍️ Запись цен в Ozon',
+    description:
+      'Кнопка «Записать цены» на экране «Установка цен»: план пишется в Ozon — только цена ' +
+      'продажи, зачёркнутая и скидка не трогаются. Это запись в кабинет продавца — ' +
+      'открывать только с его согласия.',
+    // Выключена: запись в чужой кабинет включает владелец по одному продавцу.
+    defaultEnabled: false,
+    requires: [FEATURE.PRICE_SET, FEATURE.OZON],
+  },
+  [FEATURE.PRICE_SET_WRITE_WB]: {
+    // Inline-only подпись: отдельного раздела нет, кнопка на экране плана.
+    label: '✍️ Запись цен в WB',
+    description:
+      'Кнопка «Записать цены» на экране «Установка цен»: план пишется в WB — только цена ' +
+      'продажи, зачёркнутая и скидка не трогаются, базовая цена подбирается под текущую скидку. Это запись в кабинет продавца — ' +
+      'открывать только с его согласия.',
+    // Выключена: запись в чужой кабинет включает владелец по одному продавцу.
+    defaultEnabled: false,
+    requires: [FEATURE.PRICE_SET, FEATURE.WB],
   },
   [FEATURE.SKU_RATINGS]: {
     // Inline-only подпись: кнопки в боте нет, раздел живёт в CRM.

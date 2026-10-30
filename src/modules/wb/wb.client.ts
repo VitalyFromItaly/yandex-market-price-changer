@@ -93,6 +93,17 @@ export const WB_PATHS = {
    * именах (`toLegacyReportRow`).
    */
   reportDetail: '/api/finance/v1/sales-reports/detailed',
+  /**
+   * Цены и скидки товаров `?limit&offset` («Цены и скидки», GET, TASK-201). Чтение. Цена —
+   * по размерам (`sizes[].price`, базовая, до скидки продавца), скидка — на товар (`discount`).
+   */
+  goodsPrices: '/api/v2/list/goods/filter',
+  /**
+   * ЗАПИСЬ цен `{data: [{nmID, price}]}` («Цены и скидки», POST, TASK-201) — без повторов и
+   * без `discount`: скидку продавец ведёт сам (решение `price_set_keep_discount`). WB ставит
+   * загрузку в очередь и отвечает id задачи; построчные отказы — в истории задач, не здесь.
+   */
+  pricesUpload: '/api/v2/upload/task',
 } as const;
 
 /**
@@ -204,6 +215,8 @@ export const WB_REPORT_FIELDS: readonly string[] = Object.keys(WB_REPORT_LEGACY_
 export const WB_CARDS_LIMIT = 100;
 /** Штрихкодов в одном запросе остатков склада продавца. */
 export const WB_STOCKS_BATCH = 1000;
+/** Товаров на странице цен и в одной загрузке цен — потолок WB. */
+export const WB_PRICES_LIMIT = 1000;
 /** Потолок страниц обхода карточек: 100 × 1000 = 100 тыс. карточек. */
 export const WB_MAX_PAGES = 1000;
 /** Строк в одном ответе остатков FBW — больше WB не отдаёт. */
@@ -300,6 +313,24 @@ export interface IWbStockWrite {
 export interface IWbSellerStock {
   barcode: string;
   amount: number;
+}
+
+/**
+ * Цена товара WB: базовая (до скидки продавца) и скидка продавца, %. `price` — общая
+ * цена всех размеров; у размеров разные цены — `price: null`, `mixedSizes: true`.
+ */
+export interface IWbGoodsPrice {
+  nmId: string;
+  vendorCode: string;
+  price: number | null;
+  discount: number;
+  mixedSizes: boolean;
+}
+
+/** Позиция записи цены WB: артикул WB и новая базовая цена, ₽. */
+export interface IWbPriceWrite {
+  nmId: string;
+  price: number;
 }
 
 /** Строка заказа «Статистики»: одна штука товара, ключ — `srid`. */
@@ -646,6 +677,32 @@ export class WbClient {
   }
 
   /**
+   * Цены всех товаров продавца (TASK-201): `limit/offset` до неполной страницы.
+   * Только чтение. Нет права «Цены и скидки» — `WbAuthError` с хоста prices.
+   */
+  public async listGoodsPrices(): Promise<IWbGoodsPrice[]> {
+    const url = `${WB_CATEGORY_HOSTS.prices}${WB_PATHS.goodsPrices}`;
+    const goods: IWbGoodsPrice[] = [];
+    for (let page = 0; page < WB_MAX_PAGES; page += 1) {
+      const params = { limit: WB_PRICES_LIMIT, offset: page * WB_PRICES_LIMIT };
+      const result = mapGoodsPrices(await this.call(() => this.http.get(url, { params })));
+      goods.push(...result.goods);
+      if (result.count < WB_PRICES_LIMIT) return goods;
+    }
+    throw new Error(`Цены WB не уложились в ${WB_MAX_PAGES} страниц`);
+  }
+
+  /**
+   * ЗАПИСЬ цен (TASK-201) — один POST на батч, БЕЗ повторов (`callWrite`). Батч
+   * (≤ `WB_PRICES_LIMIT`) режет вызывающий. Только `price` — `discount` не шлётся.
+   */
+  public async uploadPrices(items: readonly IWbPriceWrite[]): Promise<void> {
+    const url = `${WB_CATEGORY_HOSTS.prices}${WB_PATHS.pricesUpload}`;
+    const body = { data: items.map((item) => ({ nmID: Number(item.nmId), price: item.price })) };
+    await this.callWrite(() => this.http.post(url, body));
+  }
+
+  /**
    * Записывающий запрос — БЕЗ withWbRetry, по образцу `postWrite` ЯМ: WB мог
    * применить остаток и не успеть ответить, повтор вслепую записал бы поверх.
    */
@@ -794,6 +851,29 @@ export function mapSellerStocks(raw: unknown): IWbSellerStock[] {
   return objectsOf(((raw ?? {}) as TRaw).stocks)
     .map((row) => ({ barcode: textOf(row.sku), amount: countOf(row.amount) }))
     .filter((row) => row.barcode.length > 0);
+}
+
+/**
+ * Ответ list/goods/filter: `{data: {listGoods: [{nmID, vendorCode, sizes: [{price}], discount}]}}`.
+ * `count` — сколько объектов пришло до отсева мусора: по нему решается, была ли страница полной.
+ */
+export function mapGoodsPrices(raw: unknown): { goods: IWbGoodsPrice[]; count: number } {
+  const data = (((raw ?? {}) as TRaw).data ?? {}) as TRaw;
+  const objects = objectsOf(data.listGoods);
+  const goods = objects
+    .map((item) => {
+      const prices = [...new Set(objectsOf(item.sizes).map((size) => countOf(size.price) || null))];
+      const mixedSizes = prices.length > 1;
+      return {
+        nmId: idString(item.nmID),
+        vendorCode: textOf(item.vendorCode),
+        price: mixedSizes ? null : (prices[0] ?? null),
+        discount: countOf(item.discount),
+        mixedSizes,
+      };
+    })
+    .filter((item) => item.nmId.length > 0 && item.vendorCode.length > 0);
+  return { goods, count: objects.length };
 }
 
 // ─── Заказы и продажи (TASK-135) ─────────────────────────────────────────────

@@ -35,7 +35,7 @@ npm run db:sync-indexes      # after adding/changing a Mongo index (mongoose nev
 `scripts/*.ts` (`npx ts-node scripts/<name>.ts --user=<telegramUserId> …`) are read-only diagnostics
 and one-off loaders against live data: `diagnose-{orders,returns,finance,tariffs,deep-history,polza,fby-stock}`,
 `{import,pnl,cashflow,anomalies}-finance`, `load-purchase-prices`, `seed-products`,
-`sync-ozon-catalog`, `preview-hosting-reminder`, `preview-stock-push`, `backtest-forecast`, `backfill-stores`, and
+`sync-ozon-catalog`, `preview-hosting-reminder`, `preview-stock-push`, `preview-price-set`, `backtest-forecast`, `backfill-stores`, and
 `eval-ai-analyst` (paid AI eval, only with `--run`; README ai-analyst). Each documents
 its flags and what it writes in its header. `clean-db` deletes data (dry run unless `--apply`; there
 are no backups). Scripts never boot `AppModule` — `BotRegistry` would
@@ -91,6 +91,10 @@ Short form; the reasons are in the linked README. Do not "simplify" any of these
 - Ozon/WB stock writes go only through `OzonStockWriteService`/`WbStockWriteService.writeStocks` (registry
   `stockWrite`): env, counts and «exactly one seller FBS warehouse» are checked inside; FBO/FBW never;
   write requests bypass `withOzonRetry`/`withWbRetry` (no retries).
+- Price writes go only through the registry's `priceWrite.writePrices` (YM: `YmPriceWriteService`, business-level
+  `offer-prices/updates` via `postWrite`, batches ≤500): needs `PRICE_WRITE_ENABLED=true` (required, no default,
+  separate from stocks), integer price > 0 checked inside, write requests without retries; YM sends the current
+  `discountBase` back while in 5–99%. Rules — `src/modules/price-set/README.md`.
 - `sync()` takes an options object with `telegramUserId`/`dryRun` — never positional booleans.
 - Mutating POSTs go through `postWrite` (no retries — a retry could publish a duplicate public reply).
 
@@ -171,7 +175,7 @@ Short form; the reasons are in the linked README. Do not "simplify" any of these
 `src/config/env.validation.ts` is the authority; `.env.example` documents every key. A missing or
 malformed variable fails startup with a Russian message naming it.
 
-- Required: `STOCK_WRITE_ENABLED`, `MONGODB_URL`, `MONGODB_DATABASE`, `POSTGRES_URL`, `REDIS_HOST`,
+- Required: `STOCK_WRITE_ENABLED`, `PRICE_WRITE_ENABLED`, `MONGODB_URL`, `MONGODB_DATABASE`, `POSTGRES_URL`, `REDIS_HOST`,
   `TELEGRAM_TOKEN`, `TELEGRAM_ADMIN_IDS`; `TELEGRAM_WEBHOOK_URL` only when `TELEGRAM_UPDATE_MODE=webhook`.
 - `TELEGRAM_WEBHOOK_URL` (inbound, Telegram → us) and `TELEGRAM_API_URL` (outbound Bot API mirror,
   scheme+host only — a path prefix is silently dropped) are opposite directions; don't swap them.
@@ -225,6 +229,7 @@ README = the area's rules **and** the reasons (each has a «Доводы и ис
 | Products, cost history, card matching | `src/modules/products/README.md` |
 | Marketplace adapter, connections | `src/modules/marketplaces/README.md` |
 | «Передача остатков»: сквозной FBS-остаток и запись в ЯМ | `src/modules/stock-push/README.md` |
+| «Установка цен»: наценка/файл → план → запись цен ЯМ/Ozon/WB | `src/modules/price-set/README.md` |
 | Seller notifications: rules, dedup, schedule, Telegram digest; shared stock assembly (`src/modules/inventory/`) | `src/modules/notifications/README.md` |
 | Ozon / Wildberries | `src/modules/ozon/README.md`, `src/modules/wb/README.md` |
 | AI (Polza, `AiService`, admin «ИИ» page) / tools / analyst | `src/modules/ai/`, `ai-tools/`, `ai-analyst/` READMEs |

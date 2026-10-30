@@ -11,6 +11,7 @@ import { RotateCw } from 'lucide-vue-next';
 import { storeToRefs } from 'pinia';
 import { computed } from 'vue';
 
+import { optionNote } from '../mappers/mapStockPush.price-list';
 import { usePriceListStore } from '../store/store.price-list';
 
 import MarketplacePicker from './MarketplacePicker.vue';
@@ -22,7 +23,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { RefreshIndicator } from '@/components/ui/refresh-indicator';
 import { Skeleton } from '@/components/ui/skeleton';
 
-defineProps<{
+const props = defineProps<{
   options: PushMarketplaceOption[];
   isSelected: (marketplace: StockPushMarketplace) => boolean;
 }>();
@@ -41,6 +42,9 @@ const {
   writeResult,
 } = storeToRefs(store);
 
+const pickerOptions = computed(() =>
+  props.options.map((option) => ({ ...option, note: optionNote(option) })),
+);
 const busy = computed(() => isApplySubmitting.value || isWriting.value);
 const hasChanges = computed(() => plan.value?.targets.some((t) => t.updates.length > 0) ?? false);
 const priceListDay = computed(() => {
@@ -134,7 +138,9 @@ const priceListDay = computed(() => {
       />
       <template v-else>
         <MarketplacePicker
-          :options="options"
+          title="Куда записать остатки"
+          description="Отметьте площадки — остатки уйдут только туда. Закупочные цены отдельно не отправляются: они общие для всех площадок."
+          :options="pickerOptions"
           :is-selected="isSelected"
           :disabled="busy"
           @toggle="(marketplace, on) => emit('toggle', marketplace, on)"

@@ -138,6 +138,7 @@ describe('разделы по площадке', () => {
     ['ym-forecast', '/ym/forecast'],
     ['ym-products', '/ym/products'],
     ['ym-price-calculator', '/ym/price-calculator'],
+    ['ym-price-set', '/ym/price-set'],
     ['ym-ai-analyst', '/ym/ai-analyst'],
     ['ym-notifications', '/ym/notifications'],
   ];
@@ -194,6 +195,7 @@ describe('разделы по площадке', () => {
       'ozon-returns-analytics',
       'ozon-forecast',
       'ym-products',
+      'ym-price-set',
       'ym-ai-analyst',
       'ym-notifications',
     ]);

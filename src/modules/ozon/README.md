@@ -270,3 +270,19 @@ filter: {since, to}, limit, cursor}`, ответ плоский `{postings, curs
   количество — отмена целиком; склад перечитан и всё ещё тот же единственный — иначе `placement`.
 - Форма ответа складов сверена живым ключом 28.10.2026 (`warehouse_id`, `name`, `is_rfbs`, `status`,
   `warehouse_type: "fbs"`); запись `/v2/products/stocks` живым ключом не выполнялась (known-gaps).
+
+### Ozon: цены для «Установки цен» (M28, TASK-201)
+
+Цены Ozon читает и пишет только `OzonPriceWriteService` (возможность реестра `priceWrite`); вызывает её «Установка
+цен» (TASK-202, правила — `src/modules/price-set/README.md`).
+
+- **Чтение** — `POST /v5/product/info/prices` `{filter: {offer_id, visibility: 'ALL'}, cursor, limit: 1000}`, батчи
+  артикулов по 1000 (`OZON_PRICES_BATCH`), курсор до пустого (с повторами — это чтение). Берётся `price.price` —
+  цена продажи из кабинета; 0 и мусор — `null` (цены нет, а не ноль).
+- **Запись** — `POST /v1/product/import/prices` `{prices: [{offer_id, price: '1990', currency_code: 'RUB'}]}` батчами
+  по 1000 через `callWrite` — **без `withOzonRetry`**. **`old_price` не шлётся** (решение `price_set_keep_discount`):
+  зачёркнутую продавец ведёт сам. Ответ построчный, тот же формат, что у остатков (`mapStocksWrite`): позиция без
+  `updated: true` — в ошибках батча с текстом Ozon, сбой всего запроса — ошибка батча, следующие пишутся.
+- **Барьеры внутри `writePrices`**: `PRICE_WRITE_ENABLED=false` — ни одного запроса; цена не целая или ≤ 0 —
+  отмена целиком (`assertPrices`).
+- Формы ответов — по документации Ozon, живым ключом не сверены (known-gaps).

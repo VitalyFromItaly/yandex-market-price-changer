@@ -125,6 +125,8 @@ export const CRM_SECTIONS: Readonly<Record<string, readonly TFeatureKey[]>> = {
   [MARKETPLACES_DASHBOARD_SECTION]: [FEATURE.MARKETPLACES_DASHBOARD],
   // Калькулятор цен — аккаунта: ставки из бизнесового журнала; тариф ЯМ — по магазину задачи.
   'ym-price-calculator': [FEATURE.PRICE_CALCULATOR],
+  // «Установка цен» — аккаунта: товары и закуп одни на все площадки, цены ЯМ — бизнесовые.
+  'ym-price-set': [FEATURE.PRICE_SET],
   // «ИИ-аналитик» — аккаунта: журнал бизнесовый; ai и finance свёрнуты в фичу (requires).
   // Вкладки «Чат» и «Разбор периода» (TASK-150) — раздел открыт любой из них.
   'ym-ai-analyst': [FEATURE.AI_ANALYST, FEATURE.AI_PERIOD_REVIEW],

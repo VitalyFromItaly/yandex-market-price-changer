@@ -35,6 +35,7 @@ import { CrmOzonModule } from './modules/crm/ozon/crm-ozon.module';
 import { CrmPaymentsModule } from './modules/crm/payments/crm-payments.module';
 import { CrmPriceCalcModule } from './modules/crm/price-calculator/crm-price-calc.module';
 import { CrmPriceListModule } from './modules/crm/price-list/crm-price-list.module';
+import { CrmPriceSetModule } from './modules/crm/price-set/crm-price-set.module';
 import { CrmProductsModule } from './modules/crm/products/crm-products.module';
 import { CrmProfileModule } from './modules/crm/profile/crm-profile.module';
 import { CrmProfitModule } from './modules/crm/profit/crm-profit.module';
@@ -133,6 +134,7 @@ import { YandexModule } from './modules/yandex/yandex.module';
     CrmInventoryModule,
     CrmOrderFeedModule,
     CrmStockPushModule,
+    CrmPriceSetModule,
     CrmSkuRatingsModule,
     CrmForecastModule,
     CrmPriceCalcModule,

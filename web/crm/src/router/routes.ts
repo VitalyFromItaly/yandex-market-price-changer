@@ -23,6 +23,7 @@ import { overviewRoutes } from '@/modules/overview/pages/routes';
 import { paymentsRoutes } from '@/modules/payments/pages/routes';
 import { priceCalculatorRoutes } from '@/modules/price-calculator/pages/routes';
 import { priceListRoutes } from '@/modules/price-list/pages/routes';
+import { priceSetRoutes } from '@/modules/price-set/pages/routes';
 import { productsRoutes } from '@/modules/products/pages/routes';
 import { profileRoutes } from '@/modules/profile/pages/routes';
 import { profitRoutes } from '@/modules/profit/pages/routes';
@@ -89,6 +90,7 @@ const accountRoutes: RouteRecordRaw[] = [
   ...marketplaceCompareRoutes,
   ...productsRoutes,
   ...priceCalculatorRoutes,
+  ...priceSetRoutes,
   ...aiAnalystRoutes,
   ...notificationsRoutes,
   ...storesRoutes,

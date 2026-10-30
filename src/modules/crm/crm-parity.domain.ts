@@ -63,6 +63,15 @@ export const FEATURES_WITHOUT_SECTION: Readonly<Partial<Record<TFeatureKey, stri
     'Фоновая запись плана «Передачи остатков» (план — на «Прайсе») каждые 30 минут (TASK-176): ' +
     'экрана нет ни в одном ' +
     'канале, итог прохода — в журнале и на карточке «Очередей» админки.',
+  [FEATURE.PRICE_SET_WRITE_YM]:
+    'Запись в Маркет кнопкой «Записать цены» в плане «Установки цен» (ym-price-set, TASK-202); ' +
+    'POST crm/ym/price-set/apply требует price_set и любую из price_set_write_*.',
+  [FEATURE.PRICE_SET_WRITE_OZON]:
+    'Запись в Ozon кнопкой «Записать цены» в плане «Установки цен» (TASK-202); без фичи ' +
+    'площадка в плане «только просмотр», а apply её не пишет.',
+  [FEATURE.PRICE_SET_WRITE_WB]:
+    'Запись в WB кнопкой «Записать цены» в плане «Установки цен» (TASK-202); без фичи ' +
+    'площадка в плане «только просмотр», а apply её не пишет.',
   [FEATURE.PROFIT_ACTUAL]:
     'Модификатор «Прибыли» (ym-profit): строка фактической чистой и период «Прошлый месяц», ' +
     'флаг едет снимком features задачи profit:profit.',

@@ -33,6 +33,7 @@ import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 import { JOB_TYPES, QUEUE_NAMES } from '../../src/modules/telegram';
 import { BotRegistry } from '../../src/modules/telegram/bots/bot-registry.service';
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
+import { PriceSetService } from '../../src/modules/price-set/price-set.service';
 import { StockPushService } from '../../src/modules/stock-push/stock-push.service';
 import { StockPushScheduler } from '../../src/modules/telegram/queue/services/stock-push.scheduler';
 import { StockSyncProcessor } from '../../src/modules/telegram/queue/processors/stock-sync.processor';
@@ -199,6 +200,7 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
         // Ветка записи плана «Передачи остатков» здесь не участвует.
         { provide: StockPushService, useValue: {} },
         { provide: StockPushScheduler, useValue: {} },
+        { provide: PriceSetService, useValue: {} },
       ],
     })
     class PriceListUnderTest {}

@@ -4,6 +4,7 @@ import type {
   IMarketplaceConnectionRef,
   IMarketplaceFinance,
   IMarketplaceOrderSource,
+  IMarketplacePriceWriter,
   IMarketplaceStocks,
 } from './marketplace-adapter';
 import type { YandexMarketDocument } from '../../database/schemas/yandex-market.schema';
@@ -13,6 +14,7 @@ import { Injectable } from '@nestjs/common';
 import { YandexMarketService } from '../../database/services/yandex-market.service';
 import { FinanceImportService } from '../finance/finance-import.service';
 import { productRowsFromCatalog } from '../products/product.domain';
+import { YmPriceWriteService } from '../yandex/prices/ym-price-write.service';
 import { OrderReportsService } from '../yandex/reports/order-reports.service';
 import { placementOfCampaign } from '../yandex/stocks/placement';
 import { StockLevelsService } from '../yandex/stocks/stock-levels.service';
@@ -48,6 +50,7 @@ export class YmMarketplaceAdapter implements IMarketplaceAdapter {
     private readonly financeImport: FinanceImportService,
     private readonly stockLevels: StockLevelsService,
     private readonly clients: YandexClientFactory,
+    private readonly prices: YmPriceWriteService,
   ) {}
 
   readonly finance: IMarketplaceFinance = {
@@ -77,6 +80,13 @@ export class YmMarketplaceAdapter implements IMarketplaceAdapter {
   readonly stocks: IMarketplaceStocks = {
     listStocks: async (ref, now = new Date()) =>
       ymStockLevels(await this.stockLevels.levels(await this.loadStore(ref), now)),
+  };
+
+  /** Цена ЯМ — бизнесовая: магазин из ref даёт только креды кабинета. */
+  readonly priceWrite: IMarketplacePriceWriter = {
+    currentPrices: async (ref, skus) => this.prices.currentPrices(await this.loadStore(ref), skus),
+    writePrices: async (ref, updates) =>
+      this.prices.writePrices(await this.loadStore(ref), updates),
   };
 
   private async loadStore(ref: IMarketplaceConnectionRef): Promise<YandexMarketDocument> {

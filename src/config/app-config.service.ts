@@ -47,6 +47,15 @@ export class AppConfigService {
     return this.config.get<string>('STOCK_WRITE_ENABLED') === 'true';
   }
 
+  /**
+   * Разрешена ли запись цен на площадки («Установка цен»). Отдельный рычаг от
+   * остатков; как и `stockWriteEnabled`, не выводится из NODE_ENV и обязателен
+   * без умолчания (см. env.validation.ts).
+   */
+  get priceWriteEnabled(): boolean {
+    return this.config.get<string>('PRICE_WRITE_ENABLED') === 'true';
+  }
+
   get mongoUrl(): string {
     return this.config.get<string>('MONGODB_URL');
   }

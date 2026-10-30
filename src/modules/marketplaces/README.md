@@ -59,7 +59,11 @@ Ozon и Wildberries должны ложиться в те же журнал, т�
   `require('ozon', 'finance')` отвечал `MarketplaceNotConnectedError` (`no-adapter`). Сейчас все пять
   возможностей зарегистрированы у всех трёх площадок: у ЯМ (подключение — отдельной частью), у Ozon —
   подключение, каталог, остатки (TASK-163), заказы (TASK-130) и финансы (TASK-131), у WB — подключение,
-  каталог, остатки (TASK-134), заказы (TASK-135) и финансы (TASK-136).
+  каталог, остатки (TASK-134), заказы (TASK-135) и финансы (TASK-136). Запись остатков (`stockWrite`)
+  — у Ozon и WB (ЯМ пишет через `StockSyncService`). Цены (`priceWrite`, TASK-200: `currentPrices` +
+  `writePrices`) — пока у ЯМ (`YmPriceWriteService`), Ozon и WB — TASK-201. Все барьеры записи цен
+  (`PRICE_WRITE_ENABLED`, целая цена > 0) — внутри `writePrices` площадки, общие правила —
+  `price-write.ts`, как `stock-write.ts` у остатков.
   - Дверь к площадкам — `MarketplaceRegistry`: `capability(mp, cap)` — реализация или null,
     `require(mp, cap)` — то же с отказом `MarketplaceNotConnectedError` (`no-adapter`),
     `withCapability(cap)` — список площадок.

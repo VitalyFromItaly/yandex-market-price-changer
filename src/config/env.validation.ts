@@ -107,6 +107,24 @@ export const envValidationSchema = Joi.object({
       'any.only': 'STOCK_WRITE_ENABLED принимает только true или false',
     }),
 
+  /**
+   * Разрешена ли ЗАПИСЬ ЦЕН на площадки («Установка цен», TASK-200). Отдельно
+   * от STOCK_WRITE_ENABLED: цена — другая мутация с другой ценой ошибки
+   * (товар за копейки уходит покупателям за минуты), и включать её вместе с
+   * остатками значило бы решать два вопроса одним рычагом. Обязательна и без
+   * умолчания по той же причине, что STOCK_WRITE_ENABLED.
+   */
+  PRICE_WRITE_ENABLED: Joi.string()
+    .valid('true', 'false')
+    .required()
+    .messages({
+      'any.required':
+        'PRICE_WRITE_ENABLED обязателен: true — «Установка цен» пишет цены на площадки, ' +
+        'false — только превью, на площадки не уходит ничего. ' +
+        'Для локальной разработки ставьте false: токен в .env боевой.',
+      'any.only': 'PRICE_WRITE_ENABLED принимает только true или false',
+    }),
+
   // --- MongoDB ---
   // Строка подключения БЕЗ имени базы — имя идёт отдельно в MONGODB_DATABASE.
   MONGODB_URL: Joi.string().required().messages({

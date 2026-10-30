@@ -24,6 +24,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 const ENV: Record<string, string> = {
   NODE_ENV: 'test',
   STOCK_WRITE_ENABLED: 'false',
+  PRICE_WRITE_ENABLED: 'false',
   MONGODB_URL: 'mongodb://127.0.0.1:1/',
   MONGODB_DATABASE: 'di-test',
   POSTGRES_URL: 'postgres://di:di@127.0.0.1:1/di',

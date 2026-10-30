@@ -1,17 +1,24 @@
 <script setup lang="ts">
 /**
- * «Куда записать остатки»: строка на площадку. Галочку можно поставить только
- * там, куда сервер разрешил запись (`willWrite`) и есть что записать.
+ * «Куда записать»: строка на площадку. Галочку можно поставить только там, куда
+ * сервер разрешил запись (`willWrite`) и есть что записать. Заголовок и подпись
+ * строки — от страницы: им пользуются «Прайс» (остатки) и «Установка цен».
  */
-import type { PushMarketplaceOption, StockPushMarketplace } from '../price-list.domain';
-
-import { optionNote } from '../mappers/mapStockPush.price-list';
+import type { StockPushMarketplace } from '../price-list.domain';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 
 defineProps<{
-  options: PushMarketplaceOption[];
+  title: string;
+  description: string;
+  /** `note` — сколько запишем или почему галочку не поставить. */
+  options: readonly {
+    marketplace: StockPushMarketplace;
+    label: string;
+    writable: boolean;
+    note: string;
+  }[];
   isSelected: (marketplace: StockPushMarketplace) => boolean;
   disabled: boolean;
 }>();
@@ -21,11 +28,8 @@ const emit = defineEmits<{ toggle: [marketplace: StockPushMarketplace, on: boole
 <template>
   <Card>
     <CardHeader>
-      <CardTitle>Куда записать остатки</CardTitle>
-      <CardDescription>
-        Отметьте площадки — остатки уйдут только туда. Закупочные цены отдельно не отправляются: они
-        общие для всех площадок.
-      </CardDescription>
+      <CardTitle>{{ title }}</CardTitle>
+      <CardDescription>{{ description }}</CardDescription>
     </CardHeader>
     <CardContent class="flex flex-col gap-2">
       <div
@@ -39,7 +43,7 @@ const emit = defineEmits<{ toggle: [marketplace: StockPushMarketplace, on: boole
           :disabled="disabled || !option.writable"
           @update:model-value="emit('toggle', option.marketplace, $event)"
         />
-        <span class="text-sm text-muted-foreground tabular-nums">{{ optionNote(option) }}</span>
+        <span class="text-sm text-muted-foreground tabular-nums">{{ option.note }}</span>
       </div>
     </CardContent>
   </Card>

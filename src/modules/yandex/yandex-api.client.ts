@@ -33,6 +33,8 @@ import {
   offerCardsPath,
   OFFER_IDS_BATCH,
   offerMappingsPath,
+  OFFER_PRICES_UPDATE_BATCH,
+  offerPricesUpdatesPath,
   offerRecommendationsPath,
   ordersPath,
   ordersStatsPath,
@@ -229,6 +231,22 @@ export interface IStockUpdate {
   sku: string;
   /** Остаток. 0 — валидное значение: означает «нет в наличии». */
   count: number;
+}
+
+/** Цена товара в каталоге бизнеса (`basicPrice`), ₽. */
+export interface IOfferPrice {
+  offerId: string;
+  /** Цена продажи; null — не задана. */
+  price: number | null;
+  /** Зачёркнутая цена, если продавец дал скидку. */
+  discountBase?: number;
+}
+
+/** Позиция записи цены бизнеса. Без `discountBase` зачёркнутая цена снимается. */
+export interface IOfferPriceUpdate {
+  offerId: string;
+  price: number;
+  discountBase?: number;
 }
 
 /**
@@ -1056,6 +1074,32 @@ export class YandexApiClient {
   }
 
   /**
+   * Текущие цены товаров бизнеса по артикулам — тот же offer-mappings с
+   * фильтром `offerIds`, что у `getOfferMappings` (батч 100, без пагинации).
+   * Это ЧТЕНИЕ, поэтому общий post() с повторами. Артикула нет в ответе —
+   * нет и в карте: «товара нет в каталоге» и «цена не задана» разные вещи.
+   */
+  public async getOfferPrices(offerIds: readonly string[]): Promise<Map<string, IOfferPrice>> {
+    const unique = [...new Set(offerIds)];
+    const out = new Map<string, IOfferPrice>();
+
+    for (let i = 0; i < unique.length; i += OFFER_IDS_BATCH) {
+      const chunk = unique.slice(i, i + OFFER_IDS_BATCH);
+
+      const data = await this.post<{
+        result?: { offerMappings?: Array<TRawOfferMapping> };
+      }>(offerMappingsPath(this.credentials.businessId), {}, { offerIds: chunk });
+
+      for (const m of data.result?.offerMappings ?? []) {
+        const price = toOfferPrice(m);
+        if (price) out.set(price.offerId, price);
+      }
+    }
+
+    return out;
+  }
+
+  /**
    * Калькулятор стоимости услуг Маркета.
    *
    * campaignId уходит в ТЕЛЕ и числом (int64 по спеке; прецедент —
@@ -1158,6 +1202,36 @@ export class YandexApiClient {
       onBatch?.(i + chunk.length);
     }
     this.logger.log(`Карантин: подтверждено цен — ${offerIds.length}`);
+  }
+
+  /**
+   * Записать цены бизнеса (действуют во всех магазинах кабинета).
+   *
+   * ЗАПИСЬ: postWrite, без повторов — Маркет мог применить цену и не успеть
+   * ответить. Батчи по лимиту спеки (500) последовательно; упавший батч
+   * бросает, уже записанные остаются записанными — сколько их, вызывающий
+   * знает из `onBatch`. `discountBase` уходит, только если его передали:
+   * решать, сохранять ли зачёркнутую цену, — дело вызывающего.
+   */
+  public async updateOfferPrices(
+    updates: readonly IOfferPriceUpdate[],
+    onBatch?: (writtenSoFar: number) => void,
+  ): Promise<void> {
+    for (let i = 0; i < updates.length; i += OFFER_PRICES_UPDATE_BATCH) {
+      const chunk = updates.slice(i, i + OFFER_PRICES_UPDATE_BATCH);
+      await this.postWrite(offerPricesUpdatesPath(this.credentials.businessId), {
+        offers: chunk.map((update) => ({
+          offerId: update.offerId,
+          price: {
+            value: update.price,
+            currencyId: 'RUR',
+            ...(update.discountBase === undefined ? {} : { discountBase: update.discountBase }),
+          },
+        })),
+      });
+      onBatch?.(i + chunk.length);
+    }
+    this.logger.log(`Цены: записано товаров — ${updates.length}`);
   }
 
   /**
@@ -1537,7 +1611,7 @@ type TRawOfferMapping = {
     vendor?: string;
     vendorCode?: string;
     barcodes?: unknown;
-    basicPrice?: { value?: number; currencyId?: string };
+    basicPrice?: { value?: number; currencyId?: string; discountBase?: number };
     marketCategoryId?: number;
     weightDimensions?: { length?: number; width?: number; height?: number; weight?: number };
   };
@@ -1564,6 +1638,19 @@ function trimmed(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const text = value.trim();
   return text || undefined;
+}
+
+/** Цена товара из маппинга, либо null без артикула. Не-положительное — «не задана». */
+function toOfferPrice(raw: TRawOfferMapping): IOfferPrice | null {
+  const offerId = raw.offer?.offerId;
+  if (!offerId) return null;
+  const price = Number(raw.offer?.basicPrice?.value);
+  const discountBase = Number(raw.offer?.basicPrice?.discountBase);
+  return {
+    offerId,
+    price: Number.isFinite(price) && price > 0 ? price : null,
+    ...(Number.isFinite(discountBase) && discountBase > 0 ? { discountBase } : {}),
+  };
 }
 
 /**

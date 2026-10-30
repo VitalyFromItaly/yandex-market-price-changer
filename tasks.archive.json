@@ -2,8 +2,8 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 182,
-    "updated_at": "2026-10-28"
+    "archived_tasks": 188,
+    "updated_at": "2026-10-30"
   },
   "tasks": [
     {
@@ -4263,6 +4263,126 @@
         "Шаг 3 (за владельцем): после деплоя у 406937947 план пишет ЯМ и Ozon, WB — «Запись остановлена» с причиной про токен"
       ],
       "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-199",
+      "milestone": "M28",
+      "category": "unit",
+      "priority": "high",
+      "description": "Чистый домен «Установки цен» (src/modules/price-set/price-set.domain.ts) и парсер файла «артикул | цена» (price-set-file.ts) с выносом readWorkbook/decodeCsv/headerIndex из finance/ym-netting-file.ts в общий хелпер.",
+      "acceptance_criteria": [
+        "markupPrice: цена = закуп × %/100, Math.round до рубля, нет закупа → null (строка «без закупа»), не 0",
+        "priceSetPlanOf строит targets по площадке со строками {sku, mpSku, from, to, deltaPct, risky}; risky при |Δ| > 50%; planHashOf детерминирован",
+        "WB: базовая цена = round(to / (1 − discount/100)), скидка не меняется",
+        "Парсер: xlsx/xls/csv (UTF-8 BOM / windows-1251), столбцы по заголовку (артикул|sku|offer / цена|price), иначе первые два; дубли и нечисловые цены — в «пропущено» с причиной",
+        "ym-netting-file.ts работает на общем хелпере, его тесты зелёные"
+      ],
+      "test_steps": [
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-200",
+      "milestone": "M28",
+      "category": "integration",
+      "priority": "high",
+      "description": "Чтение текущих цен и запись цен в ЯМ: capability priceWrite, env PRICE_WRITE_ENABLED, POST businesses/{businessId}/offer-prices/updates через postWrite.",
+      "acceptance_criteria": [
+        "PRICE_WRITE_ENABLED обязателен, valid('true','false'), без дефолта; getter, .env.example, docker-compose.yml",
+        "priceWrite добавлен в MARKETPLACE_CAPABILITIES (Record)",
+        "Текущие цены ЯМ читаются из offer-mappings бизнеса (с ретраями); запись — postWrite без ретраев, батчами по лимиту",
+        "Выключенный флаг → dry run с skipReason 'write-disabled'; цена ≤ 0 или нецелая не уходит"
+      ],
+      "test_steps": [
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-199"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-201",
+      "milestone": "M28",
+      "category": "integration",
+      "priority": "high",
+      "description": "Запись цен в Ozon (/v1/product/import/prices) и WB (discounts-prices-api /api/v2/upload/task) + чтение текущих цен (Ozon /v5/product/info/prices, WB /api/v2/list/goods/filter).",
+      "acceptance_criteria": [
+        "Ozon: callWrite без ретраев, old_price не передаётся, построчные ошибки ответа → список ошибок",
+        "WB: только price (скидку не шлём), без ретраев; право токена «Цены и скидки» проверяется, без права — понятная причина, не падение",
+        "Оба писателя сами проверяют PRICE_WRITE_ENABLED и диапазон цены; регистрируются как priceWrite в адаптерах"
+      ],
+      "test_steps": [
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-200"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-202",
+      "milestone": "M28",
+      "category": "functional",
+      "priority": "high",
+      "description": "PriceSetService (plan/apply) и доставка в CRM: фичи price_set + price_set_write_{ym,ozon,wb} (defaultEnabled:false), job kind price-set:plan, upload и apply эндпоинты, процессор, журнал действий.",
+      "acceptance_criteria": [
+        "plan только читает; apply перечитывает цены, пересчитывает план, при несовпадении хэша — PriceSetPlanChangedError",
+        "Площадки пишутся независимо: падение одной не отменяет остальные; итог в ActionLog (kind 'price-set'), ошибки в ErrorReporter",
+        "Режим наценки доступен только при открытом purchase_prices; закрытый write-ключ площадки → просмотр без записи",
+        "CRM_SECTIONS['ym-price-set'], crm-parity, тесты фич/parity зелёные; payload очереди без токена, attempts: 1, повторный apply → 409 PRICE_SET_RUNNING",
+        "Скрипт scripts/preview-price-set.ts строит план без записи"
+      ],
+      "test_steps": [
+        "Шаг 1 (за владельцем, в конце): локально PRICE_WRITE_ENABLED=false — превью и dry run; затем одна позиция с true на каждой площадке, сверка в кабинете",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-201"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-203",
+      "milestone": "M28",
+      "category": "ui",
+      "priority": "high",
+      "description": "Страница CRM «Установка цен» (/ym/price-set): выбор способа (наценка от закупа по площадке / файл), выбор площадок, превью «было → стало», запись с подтверждением.",
+      "acceptance_criteria": [
+        "Способ «Наценка»: по строке на площадку — чекбокс и поле «% от закупа» с примером «1000 ₽ → 2500 ₽», дата последнего прайса",
+        "Способ «Файл»: FileInput .xlsx/.xls/.csv, подсказка формата, выбор площадок",
+        "Превью по карточке на площадку: Артикул | Было | Станет | Δ%; строки с |Δ| > 50% подсвечены и сняты по умолчанию; «пропущено» с причинами",
+        "«Записать цены (N)» → ConfirmDialog → итоги по площадкам; skeleton, ошибка с повтором, пустое состояние",
+        "MarketplacePicker принимает заголовок"
+      ],
+      "test_steps": [
+        "Шаг 1 (за владельцем, в конце): локально PRICE_WRITE_ENABLED=false — превью и dry run; затем одна позиция с true на каждой площадке, сверка в кабинете",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-202"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "TASK-204",
+      "milestone": "M28",
+      "category": "infrastructure",
+      "priority": "medium",
+      "description": "Документация «Установки цен»: README src/modules/price-set/ с «Доводами», ссылки в README yandex/ozon/wb/crm и web/crm, строка в CLAUDE.md (инварианты и карта).",
+      "acceptance_criteria": [
+        "CLAUDE.md: запись цен только через priceWrite, нужен PRICE_WRITE_ENABLED, без ретраев; README в таблице документации",
+        "README yandex: убрано «follow-up вне скоупа — применить рекомендованную цену», мутирующих операций — пять"
+      ],
+      "test_steps": [
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [
+        "TASK-203"
+      ],
       "status": "done"
     }
   ]

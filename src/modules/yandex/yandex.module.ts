@@ -12,6 +12,7 @@ import { FeedbackService } from './feedback/feedback.service';
 import { MarketCategoriesService } from './market-reports/market-categories.service';
 import { MarketReportsService } from './market-reports/market-reports.service';
 import { PaymentsReportService } from './payments/payments-report.service';
+import { YmPriceWriteService } from './prices/ym-price-write.service';
 import { ProductSeedService } from './products/product-seed.service';
 import { QuarantineService } from './quarantine/quarantine.service';
 import { RecommendationsService } from './recommendations/recommendations.service';
@@ -68,6 +69,7 @@ import { YandexClientFactory } from './yandex-client.factory';
     RecommendationsService,
     CardsService,
     TariffQuoteService,
+    YmPriceWriteService,
   ],
   exports: [
     YandexClientFactory,
@@ -91,6 +93,7 @@ import { YandexClientFactory } from './yandex-client.factory';
     RecommendationsService,
     CardsService,
     TariffQuoteService,
+    YmPriceWriteService,
   ],
 })
 export class YandexModule {}

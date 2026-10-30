@@ -54,6 +54,11 @@ export const API_VERSIONS = {
    * первом включении фичи.
    */
   priceQuarantine: 'v2',
+  /**
+   * Установка цен для всех магазинов кабинета (offer-prices/updates, TASK-200).
+   * v2 — как у остальных business-методов; сверить на боевом при первой записи.
+   */
+  offerPrices: 'v2',
   /** Отзывы о товарах: список, ответ, «прочитано». */
   goodsFeedback: 'v2',
   /** Рекомендации Маркета по ценам (offers/recommendations). */
@@ -162,6 +167,15 @@ export function priceQuarantinePath(businessId: string): string {
 /** Подтверждение цен из карантина (POST — ЗАПИСЬ, идёт через postWrite). */
 export function priceQuarantineConfirmPath(businessId: string): string {
   return `/${API_VERSIONS.priceQuarantine}/businesses/${encodeURIComponent(businessId)}/price-quarantine/confirm`;
+}
+
+/**
+ * Запись цен бизнеса — цена действует во ВСЕХ магазинах кабинета. Не
+ * campaign-level `offer-prices/updates`: у продавца с несколькими магазинами
+ * та писала бы цену одному, а план «Установки цен» строится по бизнесу.
+ */
+export function offerPricesUpdatesPath(businessId: string): string {
+  return `/${API_VERSIONS.offerPrices}/businesses/${encodeURIComponent(businessId)}/offer-prices/updates`;
 }
 
 /** Отзывы о товарах кабинета (POST — чтение со страницами). */
@@ -311,6 +325,12 @@ export const TARIFFS_MAX_OFFERS = 200;
  * товаров в одном запросе», превышение — 400 на весь батч.
  */
 export const QUARANTINE_CONFIRM_BATCH = 200;
+
+/**
+ * Максимум товаров в одной записи цен. Спека: «не более 500 товаров в одном
+ * запросе», квота — 10 000 товаров в минуту (20 полных батчей подряд).
+ */
+export const OFFER_PRICES_UPDATE_BATCH = 500;
 
 /** Лимит страницы карантина по спеке — до 500 товаров в запросе. */
 export const QUARANTINE_PAGE_LIMIT = 500;

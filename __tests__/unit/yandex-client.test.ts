@@ -409,6 +409,100 @@ describe('YandexApiClient: логистика каталога (getOfferMappings
   });
 });
 
+describe('YandexApiClient: цены бизнеса (getOfferPrices / updateOfferPrices)', () => {
+  let axiosStub: ReturnType<typeof stubAxios>;
+
+  beforeEach(() => {
+    axiosStub = stubAxios();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const client = () =>
+    new YandexApiClient(
+      { token: 'ACMA:secret', campaignId: '12345', businessId: '67890' },
+      BASE_URL,
+      { sleep: async () => undefined },
+    );
+
+  it('чтение: offer-mappings с фильтром батчами по 100, цена и зачёркнутая из basicPrice', async () => {
+    axiosStub.setResponse({
+      result: {
+        offerMappings: [
+          {
+            offer: {
+              offerId: 'A-1',
+              basicPrice: { value: 1990, currencyId: 'RUR', discountBase: 2490 },
+            },
+          },
+          { offer: { offerId: 'B-2', basicPrice: { value: 0 } } },
+          { offer: { offerId: 'C-3' } },
+        ],
+      },
+    });
+    const ids = Array.from({ length: 150 }, (_, i) => `SKU-${i}`);
+    const prices = await client().getOfferPrices(ids);
+
+    expect(axiosStub.calls).toHaveLength(2);
+    expect(axiosStub.calls[0].path).toBe('/v2/businesses/67890/offer-mappings');
+    expect(axiosStub.calls[0].params).toEqual({});
+    expect((axiosStub.calls[1].body as { offerIds: string[] }).offerIds).toHaveLength(50);
+    expect(prices.get('A-1')).toEqual({ offerId: 'A-1', price: 1990, discountBase: 2490 });
+    // Ноль и отсутствие — «цена не задана», а не 0 ₽.
+    expect(prices.get('B-2')).toEqual({ offerId: 'B-2', price: null });
+    expect(prices.get('C-3')).toEqual({ offerId: 'C-3', price: null });
+  });
+
+  it('чтение повторяется на 5xx — это не запись', async () => {
+    axiosStub.setFailure(500);
+    await expect(client().getOfferPrices(['A-1'])).rejects.toBeInstanceOf(YandexServerError);
+    expect(axiosStub.calls.length).toBeGreaterThan(1);
+  });
+
+  it('запись: business-level путь, батчи по 500, тело без discountBase, если его не передали', async () => {
+    axiosStub.setResponse({ status: 'OK' });
+    const updates = Array.from({ length: 1001 }, (_, i) => ({
+      offerId: `SKU-${i}`,
+      price: 100 + i,
+    }));
+    const progress: number[] = [];
+    await client().updateOfferPrices(updates, (n) => progress.push(n));
+
+    expect(axiosStub.calls.map((call) => call.path)).toEqual([
+      '/v2/businesses/67890/offer-prices/updates',
+      '/v2/businesses/67890/offer-prices/updates',
+      '/v2/businesses/67890/offer-prices/updates',
+    ]);
+    const sizes = axiosStub.calls.map((call) => (call.body as { offers: unknown[] }).offers.length);
+    expect(sizes).toEqual([500, 500, 1]);
+    expect(progress).toEqual([500, 1000, 1001]);
+    expect((axiosStub.calls[0].body as { offers: unknown[] }).offers[0]).toEqual({
+      offerId: 'SKU-0',
+      price: { value: 100, currencyId: 'RUR' },
+    });
+  });
+
+  it('запись: discountBase уходит, только когда передан', async () => {
+    axiosStub.setResponse({ status: 'OK' });
+    await client().updateOfferPrices([{ offerId: 'A-1', price: 1990, discountBase: 2490 }]);
+    expect(axiosStub.calls[0].body).toEqual({
+      offers: [{ offerId: 'A-1', price: { value: 1990, currencyId: 'RUR', discountBase: 2490 } }],
+    });
+  });
+
+  it('запись НЕ повторяется на 5xx — Маркет мог применить цену и не ответить', async () => {
+    axiosStub.setFailure(500);
+    await expect(
+      client().updateOfferPrices([
+        { offerId: 'A-1', price: 1990 },
+        ...Array.from({ length: 600 }, (_, i) => ({ offerId: `S-${i}`, price: 1 })),
+      ]),
+    ).rejects.toBeInstanceOf(YandexServerError);
+    expect(axiosStub.calls).toHaveLength(1);
+  });
+});
+
 describe('YandexApiClient: каталог для базы товаров (loadCatalogProducts)', () => {
   let axiosStub: ReturnType<typeof stubAxios>;
 

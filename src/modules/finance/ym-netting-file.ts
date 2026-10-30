@@ -12,9 +12,13 @@
  * Чистый модуль: Nest и базы не знает.
  */
 
-import * as XLSX from 'xlsx';
+import type * as XLSX from 'xlsx';
+
+import { normalizeHeader, readSpreadsheet, sheetRows } from '../../shared/spreadsheet';
 
 import { toKopecks } from './kopecks';
+
+export { normalizeHeader };
 
 type TRow = Record<string, unknown>;
 
@@ -186,24 +190,6 @@ export interface INettingFileResult {
   fields: TNettingField[];
 }
 
-/**
- * Заголовок → форма для сравнения: регистр, ё→е, «₽»/«руб.», кавычки и знаки
- * препинания, пробелы (и неразрывные) — Excel и кабинет пишут одно и то же
- * по-разному, а различия эти ничего не значат.
- */
-export function normalizeHeader(value: unknown): string {
-  return (
-    String(value ?? '')
-      .toLowerCase()
-      .replace(/ё/g, 'е')
-      .replace(/[«»"'`.,:;()[\]₽]/g, ' ')
-      // Не `\bруб\b`: в JS \b — граница ASCII-слова, перед кириллицей не срабатывает.
-      .replace(/(^|\s)руб(?=\s|$)/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-  );
-}
-
 /** Синоним → поле. Один заголовок обязан вести ровно в одно поле — пиннится тестом. */
 export function headerIndex(): Map<string, TNettingField> {
   const index = new Map<string, TNettingField>();
@@ -237,12 +223,7 @@ export function parseYmNettingFile(buffer: Buffer, fileName: string): INettingFi
   } | null = null;
   let sawServices = false;
   for (const sheet of workbook.SheetNames) {
-    const data = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheet], {
-      header: 1,
-      raw: true,
-      defval: '',
-      blankrows: true,
-    });
+    const data = sheetRows(workbook, sheet);
     for (let r = 0; r < Math.min(data.length, HEADER_SCAN_ROWS); r++) {
       const columns = new Map<number, TNettingField>();
       const taken = new Set<TNettingField>();
@@ -324,26 +305,12 @@ export function parseYmNettingFile(buffer: Buffer, fileName: string): INettingFi
 
 function readWorkbook(buffer: Buffer, fileName: string): XLSX.WorkBook {
   try {
-    if (/\.csv$/i.test(fileName)) {
-      // raw: значения CSV остаются текстом — иначе SheetJS сам угадывает даты, и
-      // «05.10» легко становится маем. Кабинет может отдать CSV в windows-1251.
-      return XLSX.read(decodeCsv(buffer), { type: 'string', raw: true });
-    }
-    return XLSX.read(buffer, { type: 'buffer' });
+    return readSpreadsheet(buffer, fileName);
   } catch (error) {
     throw new NettingFileError(
       'unreadable',
       `Не удалось прочитать файл: ${(error as Error).message}`,
     );
-  }
-}
-
-/** UTF-8 (с BOM или без), иначе windows-1251. */
-function decodeCsv(buffer: Buffer): string {
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(buffer).replace(/^\uFEFF/, '');
-  } catch {
-    return new TextDecoder('windows-1251').decode(buffer);
   }
 }
 

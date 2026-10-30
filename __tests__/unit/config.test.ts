@@ -7,6 +7,7 @@ import { AppConfigService } from '../../src/config/app-config.service';
 /** Полный валидный набор — база для сценариев «убрали одну переменную». */
 const VALID_ENV = {
   STOCK_WRITE_ENABLED: 'false',
+  PRICE_WRITE_ENABLED: 'false',
   MONGODB_URL: 'mongodb://root:secret@localhost:27018/',
   MONGODB_DATABASE: 'yandex-market-price-changer',
   POSTGRES_URL: 'postgres://finance:secret@localhost:5433/finance',
@@ -24,6 +25,7 @@ describe('envValidationSchema', () => {
 
   it.each([
     'STOCK_WRITE_ENABLED',
+    'PRICE_WRITE_ENABLED',
     'MONGODB_URL',
     'MONGODB_DATABASE',
     'POSTGRES_URL',
@@ -74,6 +76,21 @@ describe('envValidationSchema', () => {
     // Только точные true/false: 'True' или '1' — это опечатка, а не намерение,
     // и трактовать её как «включено» нельзя.
     const { error } = envValidationSchema.validate({ ...VALID_ENV, STOCK_WRITE_ENABLED: value });
+    expect(error).toBeDefined();
+  });
+
+  it('PRICE_WRITE_ENABLED не имеет умолчания — среда обязана заявить решение', () => {
+    const env = { ...VALID_ENV };
+    delete (env as Record<string, string>).PRICE_WRITE_ENABLED;
+    const { error, value } = envValidationSchema.validate(env);
+
+    expect(error).toBeDefined();
+    expect(value.PRICE_WRITE_ENABLED).toBeUndefined();
+    expect(error!.message).toContain('false');
+  });
+
+  it.each(['1', '0', 'yes', 'True', ''])('PRICE_WRITE_ENABLED отвергает %o', (value) => {
+    const { error } = envValidationSchema.validate({ ...VALID_ENV, PRICE_WRITE_ENABLED: value });
     expect(error).toBeDefined();
   });
 
@@ -559,6 +576,24 @@ describe('AppConfigService (smoke: модуль собирается через 
     expect((await build({ ...VALID_ENV, STOCK_WRITE_ENABLED: 'false' })).stockWriteEnabled).toBe(
       false,
     );
+  });
+
+  it('priceWriteEnabled читает строку и не зависит от STOCK_WRITE_ENABLED', async () => {
+    const pricesOnly = await build({
+      ...VALID_ENV,
+      STOCK_WRITE_ENABLED: 'false',
+      PRICE_WRITE_ENABLED: 'true',
+    });
+    expect(pricesOnly.priceWriteEnabled).toBe(true);
+    expect(pricesOnly.stockWriteEnabled).toBe(false);
+
+    const stocksOnly = await build({
+      ...VALID_ENV,
+      STOCK_WRITE_ENABLED: 'true',
+      PRICE_WRITE_ENABLED: 'false',
+    });
+    expect(stocksOnly.priceWriteEnabled).toBe(false);
+    expect(stocksOnly.stockWriteEnabled).toBe(true);
   });
 
   it('stockWriteEnabled НЕ выводится из NODE_ENV', async () => {

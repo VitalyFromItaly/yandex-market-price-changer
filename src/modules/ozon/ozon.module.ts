@@ -10,6 +10,7 @@ import { OzonConnectionService } from './ozon-connection.service';
 import { OzonFinanceService } from './ozon-finance.service';
 import { OzonMarketplaceAdapter } from './ozon-marketplace.adapter';
 import { OzonOrdersService } from './ozon-orders.service';
+import { OzonPriceWriteService } from './ozon-price-write.service';
 import { OzonStockWriteService } from './ozon-stock-write.service';
 
 /**
@@ -32,6 +33,7 @@ import { OzonStockWriteService } from './ozon-stock-write.service';
     OzonOrdersService,
     OzonFinanceService,
     OzonStockWriteService,
+    OzonPriceWriteService,
     OzonMarketplaceAdapter,
   ],
   exports: [OzonClientFactory, OzonConnectionService, OzonCatalogService, OzonMarketplaceAdapter],

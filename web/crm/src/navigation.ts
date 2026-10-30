@@ -2,6 +2,7 @@ import type { MarketplaceKey, Section, TopSection } from './navigation.sections'
 import type { Component } from 'vue';
 
 import {
+  BadgePercent,
   Bell,
   Boxes,
   Calculator,
@@ -170,6 +171,11 @@ const NAV_META: Record<Section, SectionMeta> = {
     label: 'Калькулятор цен',
     icon: Tags,
     description: 'Прибыль при цене и цена для нужной прибыли — по ставкам товара',
+  },
+  'price-set': {
+    label: 'Установка цен',
+    icon: BadgePercent,
+    description: 'Цены на площадки — наценкой от закупа или файлом, с превью «было → стало»',
   },
   'ai-analyst': {
     label: 'ИИ-аналитик',

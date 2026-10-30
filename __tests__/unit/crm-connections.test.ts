@@ -35,6 +35,7 @@ import { OzonClientFactory } from '../../src/modules/ozon/ozon-client.factory';
 import { OzonCatalogService } from '../../src/modules/ozon/ozon-catalog.service';
 import { OzonConnectionService } from '../../src/modules/ozon/ozon-connection.service';
 import { OzonFinanceService } from '../../src/modules/ozon/ozon-finance.service';
+import { OzonPriceWriteService } from '../../src/modules/ozon/ozon-price-write.service';
 import { OzonStockWriteService } from '../../src/modules/ozon/ozon-stock-write.service';
 import { OzonOrdersService } from '../../src/modules/ozon/ozon-orders.service';
 import { OzonMarketplaceAdapter } from '../../src/modules/ozon/ozon-marketplace.adapter';
@@ -44,6 +45,7 @@ import { YandexClientFactory } from '../../src/modules/yandex/yandex-client.fact
 import { StoresService } from '../../src/modules/yandex/stores/stores.service';
 import { WbCatalogService } from '../../src/modules/wb/wb-catalog.service';
 import { WbFinanceService } from '../../src/modules/wb/wb-finance.service';
+import { WbPriceWriteService } from '../../src/modules/wb/wb-price-write.service';
 import { WbStockWriteService } from '../../src/modules/wb/wb-stock-write.service';
 import { WbConnectionService } from '../../src/modules/wb/wb-connection.service';
 import { WbMarketplaceAdapter } from '../../src/modules/wb/wb-marketplace.adapter';
@@ -196,6 +198,7 @@ describe('CRM /api/crm/connections', { timeout: 60_000 }, () => {
         // Финансы Ozon (TASK-131) проверке подключения не нужны: тянут Postgres.
         { provide: OzonFinanceService, useValue: {} },
         { provide: OzonStockWriteService, useValue: {} },
+        { provide: OzonPriceWriteService, useValue: {} },
         StoresService,
         MarketplaceConnectionsService,
         { provide: OzonClientFactory, useValue: { forCredentials } },
@@ -205,6 +208,7 @@ describe('CRM /api/crm/connections', { timeout: 60_000 }, () => {
         WbOrdersService,
         { provide: WbFinanceService, useValue: {} },
         { provide: WbStockWriteService, useValue: {} },
+        { provide: WbPriceWriteService, useValue: {} },
         { provide: WbClientFactory, useValue: { forToken } },
         // Настоящий реестр с настоящими адаптерами подключения (TASK-162): проверка
         // идёт тем же путём, что в проде. Данные ЯМ этому тесту не нужны.
