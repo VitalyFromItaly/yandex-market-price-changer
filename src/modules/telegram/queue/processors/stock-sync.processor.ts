@@ -1,4 +1,5 @@
 import type { TMarketplace } from '../../../../shared/marketplace';
+import type { TCatalogLinkMarketplace } from '../../../stock-push/catalog-link.service';
 
 import { OnQueueFailed, Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
@@ -10,6 +11,7 @@ import { YandexMarketService } from '../../../../database/services/yandex-market
 import { ErrorReporter } from '../../../errors/error-reporter.service';
 import { priceSetRequestOf } from '../../../price-set/price-set.domain';
 import { PriceSetPlanChangedError, PriceSetService } from '../../../price-set/price-set.service';
+import { CatalogLinkService } from '../../../stock-push/catalog-link.service';
 import { formatPushPassReport } from '../../../stock-push/stock-push-report';
 import {
   STOCK_PUSH_PASS_LABEL,
@@ -35,6 +37,11 @@ interface IStockSyncJobBase {
   telegramUserId: string;
   fileName: string;
   dryRun: boolean;
+  /**
+   * Каталоги Ozon/WB, которые сопоставить с товарами после разбора файла
+   * (`catalogLinkMarketplaces` при постановке). Нет — джобы до поля, не сопоставляем.
+   */
+  catalogLink?: TCatalogLinkMarketplace[];
   savePurchasePrices: boolean;
   stockWriteAllowed: boolean;
 }
@@ -182,6 +189,7 @@ export class StockSyncProcessor {
     private readonly pushSchedule: StockPushScheduler,
     private readonly actionLog: ActionLogService,
     private readonly priceSet: PriceSetService,
+    private readonly catalogLinks: CatalogLinkService,
   ) {}
 
   /**
@@ -511,6 +519,11 @@ export class StockSyncProcessor {
       // Только когда просили: опции бота остаются прежними.
       ...(stocksByPlan ? { stocksByPlan } : {}),
     });
+    // Как ЯМ находит карточки по своему каталогу в `sync`, так Ozon/WB — здесь,
+    // сразу после разбора: иначе передаче остатков писать на них нечего.
+    if (data.catalogLink?.length) {
+      result.catalogLinks = await this.catalogLinks.link(telegramUserId, data.catalogLink);
+    }
 
     this.logger.log(
       `Остатки (${dryRun ? 'проверка' : 'запись'}) для ${telegramUserId}: ` +

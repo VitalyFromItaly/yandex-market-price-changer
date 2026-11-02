@@ -133,6 +133,15 @@ marketplaceSkus.ym)`. **Partial-индекс артикула ЯМ — на `$ex
   сборка с кандидатами на обоих).
 - Удаление продавца из панели идёт через `ProductMatchService.deleteForUser` — товары и очередь одной
   точкой (заодно `AccessController` не перевалил за `max-params`).
+- **Ozon/WB сопоставляются при каждой загрузке прайса** (решение `catalog_link_on_price_list`, 2026-11-02):
+  `CatalogLinkService` (`src/modules/stock-push/`) после разбора файла в `StockSyncProcessor` (CRM и бот)
+  читает каталог открытых продавцу площадок (`catalogLinkMarketplaces`, админ — обе) и зовёт тот же
+  `syncCatalog`. Строка итога — «Ozon: нашлось совпадений N из M карточек» (`catalogLinkText`, бот и CRM).
+  Повод — прод 406937947: сопоставление жило только в CLI, его не запускал никто, привязок было 0, и
+  «Передача остатков» на Ozon/WB не писала ничего; сухой прогон дал 471/471 и 2 271/2 273. У ЯМ этого шага
+  нет: строка прайса находит карточку ЯМ сама (`resolveSku` в `sync`). Сбой площадки загрузку не роняет —
+  строка с причиной и алерт `catalog-link:<площадка>`. Строка «закуп привязан к N товаров Ozon/WB»
+  (`purchaseCoverage`) убрана: её заменили строки площадок.
 - Прогон: `npx ts-node scripts/seed-products.ts --user=<telegramUserId>` печатает разбивку по уровням и долю
   карточек с товаром; для Ozon — `scripts/sync-ozon-catalog.ts --user=<id> [--write]` (TASK-129), для WB — то же с
   `--marketplace=wb` (TASK-134).

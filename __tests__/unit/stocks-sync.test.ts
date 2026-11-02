@@ -140,10 +140,7 @@ describe('StockSyncService', () => {
 
   it('остатки по плану: в Яндекс ничего, модель не спрашивается; закуп и свой склад — сохранены', async () => {
     const client = fakeClient(['FAA02006M']);
-    const products = {
-      ...fakeProducts(),
-      purchaseCoverage: vi.fn(async () => ({ products: 1, ozon: 1, wb: 0 })),
-    };
+    const products = fakeProducts();
     const result = await serviceWith(client, fakePurchasePrices(), true, products as never).sync(
       CREDENTIALS,
       file,
@@ -157,7 +154,6 @@ describe('StockSyncService', () => {
       stocksByPlan: true,
       dryRun: false,
       writeSkipReason: undefined,
-      purchaseCoverage: { products: 1, ozon: 1, wb: 0 },
     });
     expect(result.purchasePricesSaved).toBeGreaterThan(0);
     // Итог — не «проверка» и не «записано 0».

@@ -89,8 +89,11 @@ export interface StockSyncData {
   updated: number | null;
   /** Остатки файл не писал — их пишет план ниже. Нет у задач до плана на «Прайсе». */
   stocksByPlan?: boolean;
-  /** Товары с закупом из файла и привязанные из них к Ozon/WB; `null` — не считали. */
-  purchaseCoverage?: PurchaseCoverage | null;
+  /**
+   * Сколько карточек Ozon/WB нашли товар прайса — строкой на площадку, как
+   * «Нашлось совпадений» у ЯМ. Нет у задач до сопоставления при загрузке.
+   */
+  catalogLinks?: string[];
   purchasePricesSaved: number;
   purchasePricesSkipped: boolean;
   matchedBy: Record<string, number>;
@@ -116,7 +119,8 @@ export interface StockSyncResult {
   pricesSkippedNote: string | null;
   /** Остатки запишет план на этой же странице. */
   stocksByPlan: boolean;
-  purchaseCoverage: PurchaseCoverage | null;
+  /** Строки площадок Ozon/WB под числами ЯМ. */
+  catalogLinks: string[];
   skipped: SkippedRow[];
   errors: Array<{ batch: number; count: number; message: string }>;
 }
@@ -173,13 +177,6 @@ export interface UploadErrors {
   runningJobId: string | null;
 }
 
-/** Закуп один на товар: Ozon и WB видят его через привязку карточки к товару. */
-export interface PurchaseCoverage {
-  products: number;
-  ozon: number;
-  wb: number;
-}
-
 /* ── План «Передачи остатков» (TASK-143): свой склад − продано после прайса ── */
 
 export const STOCK_PUSH_KIND = 'stock-push:plan';
@@ -222,6 +219,8 @@ export interface StockPushTarget {
   notListed: number;
   /** Площадка не примет (WB — несколько размеров или нет штрихкода). */
   notWritable: number;
+  /** Товаров прайса нашлось на площадке; 0 — ни один не сопоставлен с карточкой. */
+  linked: number;
   willWrite: boolean;
 }
 

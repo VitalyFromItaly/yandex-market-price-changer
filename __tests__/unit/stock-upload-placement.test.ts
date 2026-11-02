@@ -125,6 +125,8 @@ describe('StockUploadHandler: модель размещения', () => {
         dryRun: false,
         savePurchasePrices: true,
         stockWriteAllowed: true,
+        // Ozon/WB не открыты — сопоставлять при загрузке нечего.
+        catalogLink: [],
       },
       // Дефолт очереди — attempts: 2; авто-повтор записи остатков жжёт
       // часовую квоту Partner API.

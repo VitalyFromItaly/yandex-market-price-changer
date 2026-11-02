@@ -34,6 +34,7 @@ import {
 } from '../../../database/services/purchase-price.service';
 import { YandexMarketService } from '../../../database/services/yandex-market.service';
 import { costsOn } from '../../products/cost-history.domain';
+import { catalogLinkMarketplaces } from '../../stock-push/catalog-link.service';
 import { JOB_TYPES, QUEUE_NAMES } from '../../telegram';
 import { FEATURE, isFeatureEnabled } from '../../telegram/bots/shared/features.domain';
 import { ratesOf } from '../../yandex/reports/profit';
@@ -178,6 +179,7 @@ export class CrmPriceListController {
       savePurchasePrices: decision.savePurchasePrices,
       stockWriteAllowed: decision.stockWriteAllowed,
       campaignId: resolved.entry.campaignId,
+      catalogLink: catalogLinkMarketplaces(user.features),
       ...(stocksByPlan ? { stocksByPlan: true } : {}),
     };
     try {

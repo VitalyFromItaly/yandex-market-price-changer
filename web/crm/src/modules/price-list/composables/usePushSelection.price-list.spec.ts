@@ -22,6 +22,7 @@ function target(over: Partial<StockPushTarget>): StockPushTarget {
     unchanged: 0,
     notListed: 0,
     notWritable: 0,
+    linked: 1,
     willWrite: true,
     ...over,
   };

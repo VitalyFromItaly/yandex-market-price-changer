@@ -809,9 +809,9 @@ HTTP: `POST /api/crm/jobs {kind, params, store}` → `{jobId, created}`, `GET /j
   площадок (`usePushSelection`: по умолчанию все `willWrite`, новый план — снова все) и кнопка «Записать
   остатки (N)» в шапке → `POST /ym/stock-push/apply {planHash, marketplaces}`. Новый прайс пересчитывает
   план сам. Без `stock_push` страница — как раньше: сырая запись файла в ЯМ под `stock_update`.
-- **Закуп — не по площадкам.** Он один на товар и действует везде через привязку карточек; итог загрузки
-  несёт `purchaseCoverage` (`ProductService.purchaseCoverage`: товары файла и сколько из них привязано к
-  Ozon/WB), фронт пишет строку только про открытые продавцу площадки.
+- **Закуп — не по площадкам.** Он один на товар и действует везде через привязку карточек. Привязку
+  Ozon/WB ставит сама загрузка (`catalogLinks` в итоге: «Ozon: нашлось совпадений N из M карточек»,
+  решение `catalog_link_on_price_list`, README products) — отдельной строки про закуп нет.
 
 - **Путь записи — ботовый, целиком.** `POST /api/crm/ym/price-list/upload` (multipart, поле `file` +
   `dryRun`) → `StockUploadPolicyService` → `SYNC_STOCKS` в **ту же** очередь `file-processing` →

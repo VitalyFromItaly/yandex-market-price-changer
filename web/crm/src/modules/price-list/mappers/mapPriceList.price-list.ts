@@ -62,7 +62,7 @@ export function mapStockSync(data: StockSyncData): StockSyncResult {
       ? 'Закупочные цены не сохранялись — сохранение выключено администратором.'
       : null,
     stocksByPlan: data.stocksByPlan === true,
-    purchaseCoverage: data.purchaseCoverage ?? null,
+    catalogLinks: data.catalogLinks ?? [],
     skipped: data.skipped,
     errors: data.errors.map((error) => ({
       batch: error.batch,

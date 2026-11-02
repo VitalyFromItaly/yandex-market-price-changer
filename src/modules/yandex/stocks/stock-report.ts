@@ -1,4 +1,4 @@
-import type { ISkippedRow, IStockSyncResult } from './stock-sync.service';
+import type { ICatalogLink, ISkippedRow, IStockSyncResult } from './stock-sync.service';
 import type { TUploadChannel } from './stock-upload.texts';
 
 import { b, code, esc } from '../../telegram/formatting/telegram-format';
@@ -41,6 +41,7 @@ export function formatStockReport(result: IStockSyncResult): string {
   lines.push(`📄 Строк в прайсе: ${b(result.totalRows)}`);
   lines.push(`📚 Артикулов в каталоге: ${b(result.catalogSize)}`);
   lines.push(`🎯 Нашлось совпадений: ${b(result.matched)}`);
+  for (const link of result.catalogLinks ?? []) lines.push(`🎯 ${esc(catalogLinkText(link))}`);
 
   // Обнуление называем числом и словами. Это единственная строка отчёта про
   // товар, который СНИМАЕТСЯ с продажи, и молчать о ней нельзя: в файле склада
@@ -279,8 +280,8 @@ export interface ICrmStockView {
   updated: number | null;
   /** Остатки пишет план на той же странице, а не файл. */
   stocksByPlan: boolean;
-  /** Товары с закупом из файла и привязанные из них к Ozon/WB; `null` — не считали. */
-  purchaseCoverage: { products: number; ozon: number; wb: number } | null;
+  /** Карточки Ozon/WB, нашедшие товар при этой загрузке, — строкой на площадку. */
+  catalogLinks: string[];
   purchasePricesSaved: number;
   purchasePricesSkipped: boolean;
   matchedBy: Record<string, number>;
@@ -303,11 +304,27 @@ export function toCrmStockView(result: IStockSyncResult): ICrmStockView {
     updated:
       !result.dryRun && !result.writeSkipReason && !result.stocksByPlan ? result.updated : null,
     stocksByPlan: result.stocksByPlan ?? false,
-    purchaseCoverage: result.purchaseCoverage ?? null,
+    catalogLinks: (result.catalogLinks ?? []).map(catalogLinkText),
     purchasePricesSaved: result.purchasePricesSaved,
     purchasePricesSkipped: result.purchasePricesSkipped ?? false,
     matchedBy: result.matchedBy,
     skipped: result.skipped,
     errors: result.errors,
   };
+}
+
+const CATALOG_LINK_LABEL: Record<ICatalogLink['marketplace'], string> = {
+  ozon: 'Ozon',
+  wb: 'Wildberries',
+};
+
+/**
+ * Строка площадки в итоге загрузки — в той же форме, что «Нашлось совпадений»
+ * ЯМ: сколько карточек площадки нашли товар прайса, то есть куда «Передача
+ * остатков» сможет писать. Одна для бота и CRM.
+ */
+export function catalogLinkText(link: ICatalogLink): string {
+  const label = CATALOG_LINK_LABEL[link.marketplace];
+  if (link.error) return `${label}: карточки не прочитались — ${link.error}`;
+  return `${label}: нашлось совпадений ${link.matched} из ${link.cards} карточек`;
 }

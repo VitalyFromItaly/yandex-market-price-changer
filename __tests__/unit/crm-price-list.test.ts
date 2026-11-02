@@ -34,6 +34,7 @@ import { JOB_TYPES, QUEUE_NAMES } from '../../src/modules/telegram';
 import { BotRegistry } from '../../src/modules/telegram/bots/bot-registry.service';
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
 import { PriceSetService } from '../../src/modules/price-set/price-set.service';
+import { CatalogLinkService } from '../../src/modules/stock-push/catalog-link.service';
 import { StockPushService } from '../../src/modules/stock-push/stock-push.service';
 import { StockPushScheduler } from '../../src/modules/telegram/queue/services/stock-push.scheduler';
 import { StockSyncProcessor } from '../../src/modules/telegram/queue/processors/stock-sync.processor';
@@ -126,7 +127,7 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
               [FEATURE.STOCK_UPDATE]: false,
             }),
             seller('666', 'two'),
-            seller('777', 'plan', { [FEATURE.STOCK_PUSH]: true }),
+            seller('777', 'plan', { [FEATURE.STOCK_PUSH]: true, [FEATURE.OZON]: true }),
           ]),
         },
         {
@@ -199,6 +200,10 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
         { provide: BotRegistry, useValue: { findByTelegramId: () => undefined } },
         // Ветка записи плана «Передачи остатков» здесь не участвует.
         { provide: StockPushService, useValue: {} },
+        {
+          provide: CatalogLinkService,
+          useValue: { link: async () => [{ marketplace: 'ozon', cards: 3, matched: 2 }] },
+        },
         { provide: StockPushScheduler, useValue: {} },
         { provide: PriceSetService, useValue: {} },
       ],
@@ -307,6 +312,7 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
       savePurchasePrices: true,
       stockWriteAllowed: true,
       campaignId: '12345678',
+      catalogLink: [],
     });
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain(FILE_MARKER);
@@ -384,7 +390,6 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
       catalogSize: 10,
       purchasePricesSaved: 3,
       stocksByPlan: true,
-      purchaseCoverage: { products: 3, ozon: 2, wb: 0 },
     });
     const token = await tokenOf('plan');
     // «Только проверка» в этом режиме не действует: запись — кнопкой плана.
@@ -400,7 +405,8 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
     expect(accepted.warning).toBeNull();
     expect(accepted.progress).toContain('план по площадкам');
     expect(placementFor).not.toHaveBeenCalled();
-    expect(lastPayload()).toMatchObject({ stocksByPlan: true, dryRun: false });
+    // Карточки Ozon сопоставляются при загрузке, как ЯМ — по своему каталогу.
+    expect(lastPayload()).toMatchObject({ stocksByPlan: true, dryRun: false, catalogLink: ['ozon'] });
 
     await processor.run({ data: lastPayload() } as never);
     expect(sync.mock.calls[0][2]).toMatchObject({ telegramUserId: '777', stocksByPlan: true });
@@ -411,7 +417,7 @@ describe('Прайс в CRM по HTTP', { timeout: 60_000 }, () => {
     expect(job.data).toMatchObject({
       stocksByPlan: true,
       updated: null,
-      purchaseCoverage: { products: 3, ozon: 2, wb: 0 },
+      catalogLinks: ['Ozon: нашлось совпадений 2 из 3 карточек'],
     });
     expect((job.data as { headline: string }).headline).toContain('по плану');
   });

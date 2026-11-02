@@ -40,10 +40,5 @@ export function usePriceListTabs() {
   /** Остатки пишет план по площадкам, а не файл (сервер решает так же — по той же фиче). */
   const stockPushOpen = computed(() => auth.me?.features[STOCK_PUSH_FEATURE] === true);
 
-  /** Ozon/WB, открытые продавцу, — про них итог говорит, к скольким товарам лёг закуп. */
-  const openMarketplaces = computed(() =>
-    (['ozon', 'wb'] as const).filter((key) => auth.me?.features[key] === true),
-  );
-
-  return { open, active, activeKey, stockUpdateOpen, stockPushOpen, openMarketplaces };
+  return { open, active, activeKey, stockUpdateOpen, stockPushOpen };
 }

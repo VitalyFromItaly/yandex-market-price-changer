@@ -40,6 +40,10 @@ export function formatPushPassReport(
       lines.push(`⛔ ${label}: не записано — ${esc(blocked)}`);
       continue;
     }
+    if (target.linked === 0) {
+      lines.push(`⚠️ ${label}: ни один товар прайса не нашёлся на площадке`);
+      continue;
+    }
     const write = writes.get(target.key);
     if (!write) {
       lines.push(`✅ ${label}: менять нечего`);

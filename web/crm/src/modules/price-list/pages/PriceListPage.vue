@@ -16,7 +16,6 @@ import UploadResult from '../components/UploadResult.vue';
 import { usePriceListTabs } from '../composables/usePriceListTabs.price-list';
 import { usePushSelection } from '../composables/usePushSelection.price-list';
 import { useUploadForm } from '../composables/useUploadForm.price-list';
-import { coverageText } from '../mappers/mapStockPush.price-list';
 import { PRICE_LIST_TAB } from '../price-list.domain';
 import { usePriceListStore } from '../store/store.price-list';
 
@@ -47,8 +46,7 @@ const {
   pricesLoading,
   pricesError,
 } = storeToRefs(store);
-const { open, active, activeKey, stockUpdateOpen, stockPushOpen, openMarketplaces } =
-  usePriceListTabs();
+const { open, active, activeKey, stockUpdateOpen, stockPushOpen } = usePriceListTabs();
 // Файл пишет остатки сам, только когда их не пишет план по площадкам.
 const fileWritesStocks = computed(() => stockUpdateOpen.value && !stockPushOpen.value);
 const form = useUploadForm(fileWritesStocks, useStoreKey());
@@ -79,9 +77,6 @@ const pushConfirmOpen = ref(false);
 const pushBusy = computed(() => isApplySubmitting.value || isWriting.value);
 const canPush = computed(
   () => showPlan.value && plan.value?.writeOpen === true && selection.count.value > 0,
-);
-const coverageNote = computed(() =>
-  coverageText(uploadResult.value?.purchaseCoverage ?? null, openMarketplaces.value),
 );
 
 async function confirmPush(): Promise<void> {
@@ -159,7 +154,7 @@ function queueText(ahead: number): string | null {
 
     <Alert v-else-if="uploadFailure">{{ uploadFailure }}</Alert>
 
-    <UploadResult v-else-if="uploadResult" :result="uploadResult" :coverage-note="coverageNote" />
+    <UploadResult v-else-if="uploadResult" :result="uploadResult" />
 
     <PushPlanBlock
       v-if="showPlan"

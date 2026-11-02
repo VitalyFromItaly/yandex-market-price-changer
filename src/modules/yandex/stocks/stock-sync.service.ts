@@ -84,11 +84,22 @@ export interface IStockSyncResult {
    */
   stocksByPlan?: boolean;
   /**
-   * Товары с закупом из файла и сколько из них привязано к карточкам Ozon/WB:
-   * закуп один на товар, площадка видит его через привязку. Нет — закуп не
-   * сохранялся или подсчёт не удался (итог загрузки от этого не страдает).
+   * Сопоставление карточек Ozon/WB с товарами при этой загрузке (решение
+   * `catalog_link_on_price_list`) — ставит процессор после `sync`, как ЯМ
+   * находит карточки по своему каталогу. Нет — площадки не подключены.
    */
-  purchaseCoverage?: { products: number; ozon: number; wb: number };
+  catalogLinks?: ICatalogLink[];
+}
+
+/** Итог сопоставления каталога одной площадки — строка отчёта о загрузке. */
+export interface ICatalogLink {
+  marketplace: 'ozon' | 'wb';
+  /** Карточек на площадке. */
+  cards: number;
+  /** Из них нашли товар (уже привязанные + новые пары). */
+  matched: number;
+  /** Каталог не прочитался — текст для продавца; числа тогда нули. */
+  error?: string;
 }
 
 /**
@@ -331,10 +342,6 @@ export class StockSyncService {
      */
     if (savePrices) {
       result.purchasePricesSaved = await this.savePurchasePrices(options.telegramUserId, purchases);
-      if (result.purchasePricesSaved) {
-        const coverage = await this.purchaseCoverage(options.telegramUserId, purchases);
-        if (coverage) result.purchaseCoverage = coverage;
-      }
     } else {
       result.purchasePricesSkipped = true;
     }
@@ -487,22 +494,6 @@ export class StockSyncService {
     await this.saveProducts(telegramUserId, rows);
     await this.saveCostHistory(telegramUserId, rows, previous);
     return saved;
-  }
-
-  /** Подсчёт для итога — сбой не роняет загрузку: закуп уже сохранён. */
-  private async purchaseCoverage(
-    telegramUserId: string,
-    purchases: readonly IPurchasePriceRow[],
-  ): Promise<IStockSyncResult['purchaseCoverage'] | undefined> {
-    try {
-      return await this.products.purchaseCoverage(
-        telegramUserId,
-        purchases.map((row) => row.sku),
-      );
-    } catch (error) {
-      this.logger.warn(`Не удалось посчитать привязки закупа: ${String(error)}`);
-      return undefined;
-    }
   }
 
   /**

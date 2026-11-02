@@ -10,6 +10,7 @@ import { AppConfigService } from '../../../../../config/app-config.service';
 import { UserAccessService } from '../../../../../database/services/user-access.service';
 import { YandexMarketService } from '../../../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
+import { catalogLinkMarketplaces } from '../../../../stock-push/catalog-link.service';
 import { uploadErrorText } from '../../../../yandex/stocks/stock-report';
 import {
   bothHalvesOff,
@@ -175,6 +176,7 @@ export class StockUploadHandler {
       dryRun,
       savePurchasePrices: decision.savePurchasePrices,
       stockWriteAllowed: decision.stockWriteAllowed,
+      catalogLink: catalogLinkMarketplaces(features, isAdmin),
     };
 
     // attempts: 1 перебивает дефолт очереди (2): авто-повтор упавшей записи

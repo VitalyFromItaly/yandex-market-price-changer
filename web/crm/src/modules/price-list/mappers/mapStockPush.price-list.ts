@@ -1,5 +1,4 @@
 import type {
-  PurchaseCoverage,
   PushMarketplaceOption,
   StockPushApplyResult,
   StockPushMarketplace,
@@ -29,6 +28,7 @@ export function targetStatus(target: StockPushTarget): TargetStatus {
   )
     return { label: 'Не пишется', variant: 'default' };
   if (target.blockedBy) return { label: 'Запись остановлена', variant: 'danger' };
+  if (target.linked === 0) return { label: 'Товары не найдены', variant: 'default' };
   if (target.updates.length === 0) return { label: 'Совпадает', variant: 'ok' };
   // Запись этой площадки закрыта фичей (у ЯМ блока для этого нет — решает фича).
   if (!target.willWrite) return { label: 'Только просмотр', variant: 'default' };
@@ -89,6 +89,9 @@ export function marketplaceOptions(plan: StockPushPlan): PushMarketplaceOption[]
 export function optionNote(option: PushMarketplaceOption): string {
   if (option.writable) return `запишем ${option.count} поз.`;
   if (option.targets.some((target) => target.blockedBy !== null)) return 'не пишется — см. ниже';
+  if (option.targets.every((target) => target.linked === 0)) {
+    return 'ни один товар прайса не нашёлся на площадке';
+  }
   if (option.targets.every((target) => target.updates.length === 0)) return 'совпадает с планом';
   return 'только просмотр — запись открывает администратор';
 }
@@ -107,28 +110,6 @@ export function confirmText(options: readonly PushMarketplaceOption[]): string {
     `Будет записано ${count} позиций: ${where.join(', ')}. ` +
     'Это изменит остатки в вашем кабинете. Перед записью план пересчитается: если числа ' +
     'изменились, ничего не запишется.'
-  );
-}
-
-const COVERAGE_LABEL: Record<'ozon' | 'wb', string> = { ozon: 'Ozon', wb: 'Wildberries' };
-
-/**
- * Закуп по площадкам: он один на товар, и Ozon/WB видят его через привязку
- * карточки. Только открытые продавцу площадки; `null` — сказать нечего.
- */
-export function coverageText(
-  coverage: PurchaseCoverage | null,
-  open: readonly ('ozon' | 'wb')[],
-): string | null {
-  if (coverage === null || coverage.products === 0 || open.length === 0) return null;
-  const parts = open.map(
-    (marketplace) =>
-      `${COVERAGE_LABEL[marketplace]} — ${coverage[marketplace]} из ${coverage.products}`,
-  );
-  const unlinked = open.some((marketplace) => coverage[marketplace] < coverage.products);
-  return (
-    `Закуп из файла действует для всех площадок по привязке карточек: ${parts.join(', ')} ` +
-    `товаров привязано.${unlinked ? ' Непривязанные — в «Товары», вкладка привязки.' : ''}`
   );
 }
 

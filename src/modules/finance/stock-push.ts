@@ -217,6 +217,12 @@ export interface IStockPushTargetPlan {
   notListed: number;
   /** Товаров, которые площадка не примет (`unwritable` цели), — не пишутся. */
   notWritable: number;
+  /**
+   * Товаров прайса с артикулом этой площадки — сколько вообще нашлось на ней.
+   * 0 у Ozon/WB — карточки не сопоставлены: «совпадает» было бы неправдой.
+   * В отпечаток не входит.
+   */
+  linked: number;
   error?: string;
 }
 
@@ -381,10 +387,12 @@ function targetPlanOf(
   let notWritable = 0;
   // Позиции площадки, которым остаётся > 0: нет ни одной — прайс битый.
   let positive = 0;
+  let linked = 0;
 
   for (const product of products) {
     const sku = product.skus[target.marketplace];
     if (!sku) continue;
+    linked += 1;
     if (target.unwritable?.[sku]) {
       notWritable += 1;
       continue;
@@ -432,6 +440,7 @@ function targetPlanOf(
     unchanged,
     notListed,
     notWritable,
+    linked,
     // Причина продавцу: почему на эту площадку не обновляются остатки.
     ...(target.error || ownOrdersError ? { error: target.error ?? ownOrdersError } : {}),
   };

@@ -70,6 +70,8 @@ export interface ICrmStockPushTarget {
   notListed: number;
   /** Товаров, которые площадка не примет (WB — несколько размеров). */
   notWritable: number;
+  /** Товаров прайса нашлось на площадке; 0 — карточки не сопоставлены. */
+  linked: number;
   /** Будет ли цель записана кнопкой: запись площадки открыта, нет блокировки, есть изменения. */
   willWrite: boolean;
 }
@@ -133,6 +135,7 @@ export function toCrmStockPush(
       unchanged: target.unchanged,
       notListed: target.notListed,
       notWritable: target.notWritable,
+      linked: target.linked,
       willWrite,
     };
   });

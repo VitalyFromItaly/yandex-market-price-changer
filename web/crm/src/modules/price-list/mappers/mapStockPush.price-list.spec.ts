@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import {
   applyLines,
   confirmText,
-  coverageText,
   deltaText,
   mapApplyError,
   marketplaceOptions,
@@ -30,6 +29,7 @@ function target(over: Partial<StockPushTarget> = {}): StockPushTarget {
     unchanged: 3,
     notListed: 0,
     notWritable: 0,
+    linked: 1,
     willWrite: false,
     ...over,
   };
@@ -46,6 +46,14 @@ describe('маппер «Передачи остатков»', () => {
     expect(targetStatus(target({ blockedBy: 'several-warehouses' })).label).toBe('Не пишется');
     expect(targetStatus(target({ blockedBy: 'zeroing' })).variant).toBe('danger');
     expect(targetStatus(target({ blockedBy: 'no-write-method' })).label).toBe('Только просмотр');
+  });
+
+  it('площадка без единого найденного товара — не «совпадает»', () => {
+    const ozon = target({ marketplace: 'ozon', marketplaceLabel: 'Ozon', unchanged: 0, linked: 0 });
+    expect(targetStatus(ozon).label).toBe('Товары не найдены');
+    const [option] = marketplaceOptions({ targets: [ozon] } as StockPushPlan);
+    if (!option) throw new Error('площадка не попала в выбор');
+    expect(optionNote(option)).toBe('ни один товар прайса не нашёлся на площадке');
   });
 
   it('разница со знаком', () => {
@@ -139,17 +147,5 @@ describe('маппер «Передачи остатков»', () => {
     expect(confirmText([ym])).toMatch(
       /^Будет записано 3 позиций: Яндекс Маркет «Магазин», Яндекс Маркет «Второй»/,
     );
-  });
-
-  it('закуп по площадкам — только открытые, без закупа и без площадок молчим', () => {
-    const coverage = { products: 10, ozon: 7, wb: 10 };
-    expect(coverageText(coverage, ['ozon', 'wb'])).toMatch(
-      /Ozon — 7 из 10, Wildberries — 10 из 10/,
-    );
-    expect(coverageText(coverage, ['ozon'])).toMatch(/Непривязанные/);
-    expect(coverageText(coverage, ['wb'])).not.toMatch(/Непривязанные/);
-    expect(coverageText(coverage, [])).toBeNull();
-    expect(coverageText(null, ['ozon'])).toBeNull();
-    expect(coverageText({ products: 0, ozon: 0, wb: 0 }, ['ozon'])).toBeNull();
   });
 });
