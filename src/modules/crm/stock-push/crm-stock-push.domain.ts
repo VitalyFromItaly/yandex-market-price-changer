@@ -4,10 +4,10 @@ import type { IStockPushPlanResult } from '../../stock-push/stock-push.service';
 
 import { MARKETPLACES, MARKETPLACE_LABEL } from '../../../shared/marketplace';
 import {
-  STOCK_PUSH_BLOCK_TEXT,
   STOCK_PUSH_MAX_ZEROED,
   STOCK_PUSH_ORDERS_WINDOW_DAYS,
   STOCK_PUSH_SKIP_TEXT,
+  stockPushBlockTextOf,
 } from '../../finance/stock-push';
 
 /**
@@ -37,7 +37,8 @@ export const STOCK_PUSH_RULE_TEXT =
 
 export const STOCK_PUSH_NOTES: readonly string[] = [
   `Прайс старше ${STOCK_PUSH_ORDERS_WINDOW_DAYS} дней не годится: заказы площадок читаются за последние 30 дней.`,
-  `Больше ${STOCK_PUSH_MAX_ZEROED} обнулений на площадку — запись на неё останавливается.`,
+  `Больше ${STOCK_PUSH_MAX_ZEROED} обнулений от продаж на площадку — запись на неё останавливается. ` +
+    'Ноль из прайса (товара нет) пишется всегда, если прайс не обнулил всё разом.',
   'Склады площадок (FBY, FBO, FBW) не пишутся никогда: там остаток ведёт площадка.',
   'Артикулы, которых нет в остатках площадки, не пишутся — запись только меняет существующие.',
 ];
@@ -63,6 +64,8 @@ export interface ICrmStockPushTarget {
   error: string | null;
   updates: ICrmStockPushRow[];
   zeroed: number;
+  /** Из `zeroed` — от вычета продаж; только они идут в порог обнулений. */
+  zeroedBySales: number;
   unchanged: number;
   notListed: number;
   /** Товаров, которые площадка не примет (WB — несколько размеров). */
@@ -114,7 +117,7 @@ export function toCrmStockPush(
       name: target.name,
       placement: target.placement,
       blockedBy: target.blockedBy,
-      blockedText: target.blockedBy ? STOCK_PUSH_BLOCK_TEXT[target.blockedBy] : null,
+      blockedText: stockPushBlockTextOf(target),
       error: target.error ?? null,
       updates: target.updates.map((row) => ({
         internalSku: row.internalSku,
@@ -126,6 +129,7 @@ export function toCrmStockPush(
         sold: row.sold,
       })),
       zeroed: target.zeroed,
+      zeroedBySales: target.zeroedBySales,
       unchanged: target.unchanged,
       notListed: target.notListed,
       notWritable: target.notWritable,

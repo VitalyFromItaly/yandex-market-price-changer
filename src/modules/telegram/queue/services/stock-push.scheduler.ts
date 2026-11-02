@@ -14,6 +14,7 @@ import {
   PUSH_CRON,
   parsePushJobId,
   pickPushUsers,
+  pushAfterPriceListJobId,
   pushJobId,
   pushNowJobId,
 } from './stock-push-schedule';
@@ -64,6 +65,12 @@ export class StockPushScheduler implements OnApplicationBootstrap {
   /** Фичи одного продавца на момент прохода; null — проход не положен. */
   async featuresFor(telegramUserId: string): Promise<TFeatureMap | null> {
     return pickPushUsers(await this.access.findByLogin(telegramUserId)).get(telegramUserId) ?? null;
+  }
+
+  /** Фичи для прохода после прайса из бота; null — не положен (расписание не требуется). */
+  async featuresAfterPriceList(telegramUserId: string): Promise<TFeatureMap | null> {
+    const accounts = await this.access.findByLogin(telegramUserId);
+    return pickPushUsers(accounts, { requireSchedule: false }).get(telegramUserId) ?? null;
   }
 
   /**
@@ -125,6 +132,29 @@ export class StockPushScheduler implements OnApplicationBootstrap {
     const payload: IScheduledStockPushJob = { source: 'schedule', telegramUserId, manual: true };
     await this.queue.add(JOB_TYPES.SYNC_STOCKS, payload, {
       jobId: pushNowJobId(telegramUserId),
+      removeOnComplete: true,
+      removeOnFail: true,
+      attempts: 1,
+    });
+  }
+
+  /**
+   * Проход сразу после прайса из бота (решение `stock_push_after_bot_price_list`):
+   * бот уже записал ЯМ числами файла, а Ozon/WB без него ждали бы расписания.
+   * Доступ процессор перепроверит (`featuresAfterPriceList`). Чат — чтобы
+   * прислать итог; токена в payload нет. Тот же id, пока ждёт, — два прайса
+   * подряд дают один проход, и он читает последний.
+   */
+  async sendAfterPriceList(telegramUserId: string, botId: number, chatId: string): Promise<void> {
+    const payload: IScheduledStockPushJob = {
+      source: 'schedule',
+      telegramUserId,
+      trigger: 'price-list',
+      botId,
+      chatId,
+    };
+    await this.queue.add(JOB_TYPES.SYNC_STOCKS, payload, {
+      jobId: pushAfterPriceListJobId(telegramUserId),
       removeOnComplete: true,
       removeOnFail: true,
       attempts: 1,

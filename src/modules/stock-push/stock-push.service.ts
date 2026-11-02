@@ -28,9 +28,8 @@ import { YandexMarketService } from '../../database/services/yandex-market.servi
 import { MARKETPLACES, MARKETPLACE_LABEL } from '../../shared/marketplace';
 import { ErrorReporter } from '../errors/error-reporter.service';
 import {
-  STOCK_PUSH_BLOCK_TEXT,
-  STOCK_PUSH_MAX_ZEROED,
   STOCK_PUSH_ORDERS_WINDOW_DAYS,
+  stockPushBlockTextOf,
   stockPushPlanOf,
 } from '../finance/stock-push';
 import { MarketplaceNotConnectedError } from '../marketplaces/marketplace-adapter';
@@ -52,6 +51,18 @@ export const STOCK_PUSH_LOG_KIND = 'stock-push';
 
 /** Итог прохода по расписанию (TASK-176) — одна строка на проход. */
 export const STOCK_PUSH_SCHEDULE_LOG_KIND = 'stock-push-schedule';
+
+/**
+ * Кто поставил проход: расписание (и «Запустить сейчас» панели) или прайс из
+ * бота (решение `stock_push_after_bot_price_list`) — бот пишет ЯМ сырыми
+ * числами файла, а Ozon/WB без прохода ждали бы расписания.
+ */
+export type TStockPushPassTrigger = 'schedule' | 'price-list';
+
+export const STOCK_PUSH_PASS_LABEL: Readonly<Record<TStockPushPassTrigger, string>> = {
+  schedule: 'передача остатков по расписанию',
+  'price-list': 'передача остатков после прайса из бота',
+};
 
 /** Продавец подтверждал другие числа: за время между просмотром и записью что-то изменилось. */
 export class StockPushPlanChangedError extends Error {
@@ -240,6 +251,8 @@ export class StockPushService {
     telegramUserId: string,
     features: Readonly<Record<string, boolean>>,
     now: Date = new Date(),
+    /** Кто поставил проход — только для строки журнала; план и барьеры те же. */
+    trigger: TStockPushPassTrigger = 'schedule',
   ): Promise<IStockPushApplyResult> {
     if (!stockPushWriteOpen(features)) {
       throw new Error('stock-push: запись закрыта — ни одна фича stock_push_write_* не открыта');
@@ -257,7 +270,7 @@ export class StockPushService {
     }
 
     const writes = await this.write(telegramUserId, features, plan);
-    this.journalPass(telegramUserId, writable, writes);
+    this.journalPass(telegramUserId, writable, writes, trigger);
     return { plan, writes };
   }
 
@@ -525,9 +538,8 @@ export class StockPushService {
   private alertZeroing(telegramUserId: string, target: IStockPushTargetPlan): void {
     void this.errors.report({
       error: new Error(
-        `Передача остатков остановлена: ${MARKETPLACE_LABEL[target.marketplace]} «${target.name}» ` +
-          `обнулил бы ${target.zeroed} ` +
-          `позиций (порог ${STOCK_PUSH_MAX_ZEROED})`,
+        `Передача остатков остановлена: ${MARKETPLACE_LABEL[target.marketplace]} «${target.name}» — ` +
+          stockPushBlockTextOf(target),
       ),
       source: ERROR_SOURCE[target.marketplace],
       context: 'stock-push:zeroing',
@@ -536,10 +548,7 @@ export class StockPushService {
   }
 
   private alertScheduleBlock(telegramUserId: string, target: IStockPushTargetPlan): void {
-    const reason =
-      target.blockedBy === 'zeroing'
-        ? `обнулил бы ${target.zeroed} позиций (порог ${STOCK_PUSH_MAX_ZEROED})`
-        : STOCK_PUSH_BLOCK_TEXT[target.blockedBy];
+    const reason = stockPushBlockTextOf(target);
     void this.errors.report({
       error: new Error(
         `Передача остатков по расписанию остановлена: ${MARKETPLACE_LABEL[target.marketplace]} ` +
@@ -557,6 +566,7 @@ export class StockPushService {
     telegramUserId: string,
     writable: readonly IStockPushTargetPlan[],
     writes: readonly IStockPushWriteOutcome[],
+    trigger: TStockPushPassTrigger,
   ): void {
     const requested = writes.reduce((sum, w) => sum + w.requested, 0);
     const written = writes.reduce((sum, w) => sum + w.written, 0);
@@ -566,7 +576,7 @@ export class StockPushService {
     if (!writable.some((target) => target.updates.length)) parts.push('менять нечего');
     for (const target of blocked) {
       parts.push(
-        `${MARKETPLACE_LABEL[target.marketplace]} «${target.name}»: ${STOCK_PUSH_BLOCK_TEXT[target.blockedBy]}`,
+        `${MARKETPLACE_LABEL[target.marketplace]} «${target.name}»: ${stockPushBlockTextOf(target)}`,
       );
     }
     for (const w of failed) {
@@ -587,7 +597,7 @@ export class StockPushService {
       botId: 'schedule',
       direction: 'out',
       kind: STOCK_PUSH_SCHEDULE_LOG_KIND,
-      action: `передача остатков по расписанию: ${parts.join('; ')}`,
+      action: `${STOCK_PUSH_PASS_LABEL[trigger]}: ${parts.join('; ')}`,
       status: blocked.length || failed.length ? 'error' : 'ok',
       context: 'stock-push:schedule',
       details: {

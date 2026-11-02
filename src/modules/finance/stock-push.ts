@@ -30,10 +30,18 @@ import { createHash } from 'crypto';
 import { isStockWritable } from '../yandex/stocks/placement';
 
 /**
- * Больше стольких обнулений («было > 0, станет 0») за проход по площадке — ни
- * одной записи на неё и алерт (решение `stock_push_zeroing_threshold_5`).
- * Массовое обнуление — типовой след сломанного расчёта (прайс не того бренда,
- * заказы задвоились), а снятые с продажи товары продавец видит последним.
+ * Больше стольких обнулений ОТ ПРОДАЖ («в прайсе > 0, после вычета продаж 0,
+ * на площадке > 0») за проход по площадке — ни одной записи на неё и алерт
+ * (решение `stock_push_zeroing_threshold_5`). Массовое обнуление продажами —
+ * типовой след сломанного расчёта (заказы задвоились), а снятые с продажи
+ * товары продавец видит последним.
+ *
+ * Ноль, пришедший прямо из прайса, в порог не идёт (решение
+ * `stock_push_zeroing_sales_only`, 2026-11-02): это факт продавца — товара нет,
+ * — и бот пишет его в ЯМ без порога. Повод — прод 406937947: 53 модели пришли
+ * в файле с пустым количеством, и порог держал все площадки. От битого файла
+ * (колонка количества пустая или съехала) страхует другое правило: прайс дал
+ * ноль ВСЕМ позициям площадки — блок тот же.
  */
 export const STOCK_PUSH_MAX_ZEROED = 5;
 
@@ -77,7 +85,9 @@ export const STOCK_PUSH_BLOCK_TEXT: Readonly<Record<TStockPushBlock, string>> = 
     'заказы одной из площадок не прочитались — продажи неизвестны, запись запрещена везде',
   'own-orders-unknown':
     'заказы этой площадки не прочитались — остатки сюда не пишутся; на остальные площадки запись идёт без её продаж',
-  zeroing: `обнулилось бы больше ${STOCK_PUSH_MAX_ZEROED} позиций — запись остановлена, проверьте прайс`,
+  zeroing:
+    `продажи обнулили бы больше ${STOCK_PUSH_MAX_ZEROED} позиций или прайс дал ноль всем позициям — ` +
+    'запись остановлена, проверьте прайс и заказы',
   'no-warehouse': 'у продавца нет рабочего FBS-склада на этой площадке — писать некуда',
   'several-warehouses':
     'у продавца несколько складов на этой площадке — остаток из прайса не делится по складам, запись не идёт',
@@ -192,6 +202,11 @@ export interface IStockPushTargetPlan {
   updates: IStockPushRow[];
   /** Сколько из них обнуляют позицию с ненулевым остатком. */
   zeroed: number;
+  /**
+   * Из `zeroed` — обнулённые вычетом продаж (в прайсе было > 0). Только они
+   * идут в порог `STOCK_PUSH_MAX_ZEROED`; ноль из прайса — факт продавца.
+   */
+  zeroedBySales: number;
   /** Товаров площадки, где писать нечего: остаток уже такой. */
   unchanged: number;
   /**
@@ -364,6 +379,8 @@ function targetPlanOf(
   let unchanged = 0;
   let notListed = 0;
   let notWritable = 0;
+  // Позиции площадки, которым остаётся > 0: нет ни одной — прайс битый.
+  let positive = 0;
 
   for (const product of products) {
     const sku = product.skus[target.marketplace];
@@ -381,6 +398,7 @@ function targetPlanOf(
       notListed += 1;
       continue;
     }
+    if (to > 0) positive += 1;
     if (from === to) {
       unchanged += 1;
       continue;
@@ -398,15 +416,19 @@ function targetPlanOf(
   }
   updates.sort((a, b) => a.internalSku.localeCompare(b.internalSku));
 
-  const zeroed = updates.filter((row) => row.to === 0 && row.from > 0).length;
+  const zeroedRows = updates.filter((row) => row.to === 0 && row.from > 0);
+  const zeroed = zeroedRows.length;
+  const zeroedBySales = zeroedRows.filter((row) => row.priceListStock > 0).length;
+  const zeroing = zeroingOf(zeroed, zeroedBySales, positive);
   return {
     marketplace: target.marketplace,
     key: target.key,
     name: target.name,
     placement: target.placement,
-    blockedBy: blockOf(target, ordersKnown, ownOrdersError !== undefined, zeroed),
+    blockedBy: blockOf(target, ordersKnown, ownOrdersError !== undefined, zeroing),
     updates,
     zeroed,
+    zeroedBySales,
     unchanged,
     notListed,
     notWritable,
@@ -415,17 +437,47 @@ function targetPlanOf(
   };
 }
 
+/**
+ * Причина блока словами — одна для CRM, алертов и отчёта бота. У `zeroing` —
+ * какое из двух правил сработало: по ней продавец понимает, что проверять —
+ * заказы или файл.
+ */
+export function stockPushBlockTextOf(
+  target: Pick<IStockPushTargetPlan, 'blockedBy' | 'zeroed' | 'zeroedBySales'>,
+): string | null {
+  if (target.blockedBy === null) return null;
+  if (target.blockedBy !== 'zeroing') return STOCK_PUSH_BLOCK_TEXT[target.blockedBy];
+  return target.zeroedBySales > STOCK_PUSH_MAX_ZEROED
+    ? `продажи обнулили бы ${target.zeroedBySales} позиций (порог ${STOCK_PUSH_MAX_ZEROED}) — ` +
+        'запись остановлена, проверьте заказы'
+    : `прайс дал ноль всем ${target.zeroed} позициям площадки — похоже на битый файл, ` +
+        'запись остановлена, проверьте колонку количества';
+}
+
+/** Какое правило обнуления сработало; null — порог не превышен. */
+type TStockPushZeroing = 'sales' | 'all-zero';
+
+function zeroingOf(
+  zeroed: number,
+  zeroedBySales: number,
+  positive: number,
+): TStockPushZeroing | null {
+  if (zeroedBySales > STOCK_PUSH_MAX_ZEROED) return 'sales';
+  if (zeroed > STOCK_PUSH_MAX_ZEROED && positive === 0) return 'all-zero';
+  return null;
+}
+
 function blockOf(
   target: IStockPushTargetInput,
   ordersKnown: boolean,
   ownOrdersUnknown: boolean,
-  zeroed: number,
+  zeroing: TStockPushZeroing | null,
 ): TStockPushBlock | null {
   if (!target.placement || !isStockWritable(target.placement)) return 'placement';
   if (target.available === null) return 'read-error';
   if (!ordersKnown) return 'orders-unknown';
   if (ownOrdersUnknown) return 'own-orders-unknown';
-  if (zeroed > STOCK_PUSH_MAX_ZEROED) return 'zeroing';
+  if (zeroing) return 'zeroing';
   if (target.warehouseBlock) return target.warehouseBlock;
   if (!target.canWrite) return 'no-write-method';
   return null;

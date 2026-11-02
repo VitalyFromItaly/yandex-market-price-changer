@@ -10,7 +10,9 @@ import { YandexMarketService } from '../../../../database/services/yandex-market
 import { ErrorReporter } from '../../../errors/error-reporter.service';
 import { priceSetRequestOf } from '../../../price-set/price-set.domain';
 import { PriceSetPlanChangedError, PriceSetService } from '../../../price-set/price-set.service';
+import { formatPushPassReport } from '../../../stock-push/stock-push-report';
 import {
+  STOCK_PUSH_PASS_LABEL,
   STOCK_PUSH_SCHEDULE_LOG_KIND,
   StockPushPlanChangedError,
   StockPushService,
@@ -105,6 +107,13 @@ export interface IScheduledStockPushJob {
   telegramUserId: string;
   /** Поставлен кнопкой «Запустить сейчас» панели. */
   manual?: boolean;
+  /**
+   * Поставлен прайсом из бота (решение `stock_push_after_bot_price_list`):
+   * `stock_push_schedule` не требуется, итог уходит в чат `chatId` бота `botId`.
+   */
+  trigger?: 'price-list';
+  botId?: number;
+  chatId?: string;
 }
 
 /**
@@ -235,7 +244,7 @@ export class StockSyncProcessor {
   }
 
   private async runTelegram(data: ITelegramStockSyncJob): Promise<void> {
-    const { botId, chatId, telegramUserId, fileId } = data;
+    const { botId, chatId, telegramUserId, fileId, dryRun } = data;
 
     const bot = this.registry.findByTelegramId(botId);
     if (!bot) {
@@ -270,6 +279,7 @@ export class StockSyncProcessor {
 
       const result = await this.sync(credentials, buffer, data);
       await bot.telegraf.telegram.sendMessage(chatId, formatStockReport(result), htmlOptions());
+      if (!dryRun) await this.pushAfterPriceList(telegramUserId, botId, chatId);
     } catch (error) {
       // Ошибку гасим, НЕ пробрасываем: attempts=1, авто-повтор записи остатков
       // жёг бы часовую квоту Partner API (довод очереди reports). Но молчать
@@ -405,38 +415,83 @@ export class StockSyncProcessor {
    */
   private async runScheduled(data: IScheduledStockPushJob): Promise<void> {
     const { telegramUserId } = data;
+    const trigger = data.trigger === 'price-list' ? 'price-list' : 'schedule';
+    const label = STOCK_PUSH_PASS_LABEL[trigger];
     try {
-      const features = await this.pushSchedule.featuresFor(telegramUserId);
+      const features =
+        trigger === 'price-list'
+          ? await this.pushSchedule.featuresAfterPriceList(telegramUserId)
+          : await this.pushSchedule.featuresFor(telegramUserId);
       if (!features) {
         void this.actionLog.record({
           telegramUserId,
           botId: 'schedule',
           direction: 'out',
           kind: STOCK_PUSH_SCHEDULE_LOG_KIND,
-          action: 'передача остатков по расписанию: пропущено — расписание или запись закрыты',
+          action: `${label}: пропущено — передача или запись закрыты`,
           status: 'ok',
           context: 'stock-push:schedule',
         });
         return;
       }
-      await this.stockPush.runScheduled(telegramUserId, features);
+      const result = await this.stockPush.runScheduled(
+        telegramUserId,
+        features,
+        new Date(),
+        trigger,
+      );
+      if (trigger === 'price-list') {
+        await this.notifyChat(data, formatPushPassReport(result, features));
+      }
     } catch (error) {
       void this.errors.report({
         error,
         source: 'queue',
         context: 'stock-push:schedule',
         telegramUserId,
-        action: 'передача остатков по расписанию',
+        action: label,
       });
       void this.actionLog.record({
         telegramUserId,
         botId: 'schedule',
         direction: 'out',
         kind: STOCK_PUSH_SCHEDULE_LOG_KIND,
-        action: 'передача остатков по расписанию: сбой прохода, ничего не записано',
+        action: `${label}: сбой прохода, ничего не записано`,
         status: 'error',
         error: uploadErrorText(error),
         context: 'stock-push:schedule',
+      });
+      if (trigger === 'price-list') {
+        await this.notifyChat(
+          data,
+          `⚠️ Остатки на площадки не переданы: ${uploadErrorText(error)} ` +
+            'Следующая попытка — по расписанию или с новым прайсом.',
+        );
+      }
+    }
+  }
+
+  /**
+   * Прайс из бота записал ЯМ — следом проход «Передачи остатков» на все площадки
+   * с открытой записью (решение `stock_push_after_bot_price_list`). Кому он не
+   * положен, решает процессор в момент прохода; здесь только постановка. Отказ
+   * Redis отчёт о файле не отменяет — он уже у продавца.
+   */
+  private async pushAfterPriceList(
+    telegramUserId: string,
+    botId: number,
+    chatId: string,
+  ): Promise<void> {
+    try {
+      if (!(await this.pushSchedule.featuresAfterPriceList(telegramUserId))) return;
+      await this.pushSchedule.sendAfterPriceList(telegramUserId, botId, chatId);
+    } catch (error) {
+      void this.errors.report({
+        error,
+        source: 'queue',
+        context: 'stock-push:schedule',
+        telegramUserId,
+        action: 'постановка передачи остатков после прайса из бота',
       });
     }
   }
@@ -465,7 +520,10 @@ export class StockSyncProcessor {
   }
 
   /** Ответ продавцу, который не имеет права уронить процессор. */
-  private async notify(data: ITelegramStockSyncJob, text: string): Promise<void> {
+  private async notify(
+    data: Pick<ITelegramStockSyncJob, 'botId' | 'chatId'>,
+    text: string,
+  ): Promise<void> {
     try {
       const bot = this.registry.findByTelegramId(data.botId);
       if (!bot) return;
@@ -474,5 +532,11 @@ export class StockSyncProcessor {
       // Не смогли ответить (типовое — 403, бот заблокирован): ошибка обработки
       // уже в журнале, вторая запись о неудачном ответе придёт из callApi.
     }
+  }
+
+  /** Итог прохода в чат бота — только если проход поставлен прайсом из бота. */
+  private async notifyChat(data: IScheduledStockPushJob, text: string): Promise<void> {
+    if (data.botId === undefined || !data.chatId) return;
+    await this.notify({ botId: data.botId, chatId: data.chatId }, text);
   }
 }

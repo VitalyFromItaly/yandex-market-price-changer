@@ -15,8 +15,10 @@ import {
 import {
   STOCK_PUSH_MAX_ZEROED,
   planHashOf,
+  stockPushBlockTextOf,
   stockPushPlanOf,
 } from '../../src/modules/finance/stock-push';
+import { formatPushPassReport } from '../../src/modules/stock-push/stock-push-report';
 import {
   STOCK_PUSH_SCHEDULE_LOG_KIND,
   STOCK_PUSH_WRITE_FEATURE,
@@ -264,6 +266,45 @@ describe('stockPushPlanOf — барьеры', () => {
       blockedBy: 'zeroing',
       zeroed: 6,
     });
+  });
+
+  it('ноль из прайса — факт продавца: 53 обнуления файлом пишутся, если остальное > 0', () => {
+    // Прод 406937947 (2026-11-02): пустое «Количество» = нет в наличии.
+    const gone = Array.from({ length: 53 }, (_, i) =>
+      product({ id: `g${i}`, internalSku: `G${i}`, stock: 0, skus: { ym: `G${i}` } }),
+    );
+    const products = [...gone, product()];
+    const available = { ...Object.fromEntries(gone.map((p) => [p.skus.ym, 3])), 'A-1': 10 };
+    const plan = stockPushPlanOf(input({ products, targets: [ymTarget({ available })] }));
+    expect(plan.targets[0]).toMatchObject({ blockedBy: null, zeroed: 53, zeroedBySales: 0 });
+    expect(plan.targets[0].updates).toHaveLength(53);
+  });
+
+  it(`обнуления от продаж: ${STOCK_PUSH_MAX_ZEROED + 1} — стоп, даже если прочее > 0`, () => {
+    const sold = Array.from({ length: STOCK_PUSH_MAX_ZEROED + 1 }, (_, i) =>
+      product({ id: `s${i}`, internalSku: `S${i}`, stock: 1, skus: { ym: `S${i}` } }),
+    );
+    const orders = sold.map((p) => order({ items: [{ sku: p.skus.ym, count: 1 }] }));
+    const available = { ...Object.fromEntries(sold.map((p) => [p.skus.ym, 1])), 'A-1': 10 };
+    const plan = stockPushPlanOf(
+      input({
+        products: [...sold, product()],
+        orders: [{ marketplace: 'ym', source: 'Магазин', orders }],
+        targets: [ymTarget({ available })],
+      }),
+    );
+    expect(plan.targets[0]).toMatchObject({ blockedBy: 'zeroing', zeroedBySales: 6 });
+    expect(stockPushBlockTextOf(plan.targets[0])).toContain('продажи обнулили бы 6');
+  });
+
+  it('прайс дал ноль всем позициям площадки — битый файл, стоп', () => {
+    const products = Array.from({ length: STOCK_PUSH_MAX_ZEROED + 1 }, (_, i) =>
+      product({ id: `p${i}`, internalSku: `S${i}`, stock: 0, skus: { ym: `S${i}` } }),
+    );
+    const available = Object.fromEntries(products.map((p) => [p.skus.ym, 4]));
+    const plan = stockPushPlanOf(input({ products, targets: [ymTarget({ available })] }));
+    expect(plan.targets[0]).toMatchObject({ blockedBy: 'zeroing', zeroedBySales: 0 });
+    expect(stockPushBlockTextOf(plan.targets[0])).toContain('прайс дал ноль всем 6');
   });
 
   it('площадка без метода записи — только просмотр', () => {
@@ -635,6 +676,30 @@ describe('StockPushService', () => {
     await service.apply('1', WRITE, plan.planHash, NOW);
     expect(writeStocks).not.toHaveBeenCalled();
     expect(report).toHaveBeenCalledWith(expect.objectContaining({ context: 'stock-push:zeroing' }));
+  });
+
+  it('проход после прайса из бота — своя метка в журнале, план и запись те же', async () => {
+    const { service, writeStocks, record } = pushService();
+    await service.runScheduled('1', WRITE, NOW, 'price-list');
+    expect(writeStocks).toHaveBeenCalled();
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: STOCK_PUSH_SCHEDULE_LOG_KIND,
+        action: expect.stringContaining('после прайса из бота'),
+      }),
+    );
+  });
+
+  it('итог прохода в бот: записано по площадке, блок словами, без id кампании', async () => {
+    const ok = pushService();
+    const written = await ok.service.runScheduled('1', WRITE, NOW, 'price-list');
+    const text = formatPushPassReport(written, WRITE);
+    expect(text).toContain('записано <b>1</b> из <b>1</b>');
+    expect(text).not.toContain('c1');
+
+    const zero = pushService({ zeroing: true });
+    const blocked = await zero.service.runScheduled('1', WRITE, NOW, 'price-list');
+    expect(formatPushPassReport(blocked, WRITE)).toContain('не записано — прайс дал ноль всем');
   });
 
   it('закрытая фича записи — отказ и в сервисе, не только в гварде', async () => {
@@ -1096,7 +1161,9 @@ describe('StockPushService.runScheduled — проход по расписани
         ([arg]) => (arg as { context: string }).context === 'stock-push:schedule:ym',
       );
     expect(alerts()).toHaveLength(1);
-    expect(String((alerts()[0][0] as { error: Error }).error.message)).toMatch(/обнулил бы 6/);
+    expect(String((alerts()[0][0] as { error: Error }).error.message)).toMatch(
+      /прайс дал ноль всем 6/,
+    );
     // Обнуления по кнопке (alertZeroing) расписание не шлёт — у него свой алерт.
     expect(report).not.toHaveBeenCalledWith(
       expect.objectContaining({ context: 'stock-push:zeroing' }),
@@ -1156,7 +1223,42 @@ describe('StockSyncProcessor — проход по расписанию', () => 
     const { processor, runScheduled, featuresFor } = processorWith(WRITE);
     await processor.run(job);
     expect(featuresFor).toHaveBeenCalledWith('1');
-    expect(runScheduled).toHaveBeenCalledWith('1', WRITE);
+    expect(runScheduled).toHaveBeenCalledWith('1', WRITE, expect.any(Date), 'schedule');
+  });
+
+  it('проход после прайса из бота: фичи без требования расписания, итог — в чат', async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    const featuresAfterPriceList = vi.fn(async () => WRITE);
+    const featuresFor = vi.fn(async () => null);
+    const runScheduled = vi.fn(async () => ({ plan: { targets: [] }, writes: [] }));
+    const processor = new StockSyncProcessor(
+      { findByTelegramId: vi.fn(() => ({ telegraf: { telegram: { sendMessage } } })) } as never,
+      {} as never,
+      {} as never,
+      { report: vi.fn() } as never,
+      {} as never,
+      { runScheduled } as never,
+      { featuresFor, featuresAfterPriceList } as never,
+      { record: vi.fn() } as never,
+    );
+    await processor.run({
+      id: 'stockpushfile-1',
+      name: 'sync-stocks',
+      data: {
+        source: 'schedule',
+        telegramUserId: '1',
+        trigger: 'price-list',
+        botId: 999,
+        chatId: '555',
+      },
+    } as never);
+    expect(featuresFor).not.toHaveBeenCalled();
+    expect(runScheduled).toHaveBeenCalledWith('1', WRITE, expect.any(Date), 'price-list');
+    expect(sendMessage).toHaveBeenCalledWith(
+      '555',
+      expect.stringContaining('Передача остатков на площадки'),
+      expect.anything(),
+    );
   });
 
   it('расписание закрыли после заведения — не пишет, строка «пропущено»', async () => {

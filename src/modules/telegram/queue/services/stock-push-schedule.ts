@@ -25,6 +25,17 @@ export const PUSH_JOB_PREFIX = 'stockpush-';
 /** Разовый проход по кнопке панели: свой префикс, сверка расписания его не узнаёт. */
 export const PUSH_NOW_JOB_PREFIX = 'stockpushnow-';
 
+/**
+ * Проход сразу после прайса из бота (решение `stock_push_after_bot_price_list`):
+ * свой префикс — сверка расписания его не узнаёт, а «Запустить сейчас» панели
+ * не склеивается с ним.
+ */
+export const PUSH_AFTER_PRICE_LIST_JOB_PREFIX = 'stockpushfile-';
+
+export function pushAfterPriceListJobId(telegramUserId: string): string {
+  return `${PUSH_AFTER_PRICE_LIST_JOB_PREFIX}${telegramUserId}`;
+}
+
 export function pushJobId(telegramUserId: string): string {
   return `${PUSH_JOB_PREFIX}${telegramUserId}`;
 }
@@ -33,7 +44,7 @@ export function pushNowJobId(telegramUserId: string): string {
   return `${PUSH_NOW_JOB_PREFIX}${telegramUserId}`;
 }
 
-/** Обратное к pushJobId; чужой id (и разовый `stockpushnow-`) — null. */
+/** Обратное к pushJobId; чужой id (и разовые `stockpushnow-`/`stockpushfile-`) — null. */
 export function parsePushJobId(id: string | null | undefined): string | null {
   if (!id?.startsWith(PUSH_JOB_PREFIX)) return null;
   const telegramUserId = id.slice(PUSH_JOB_PREFIX.length);
@@ -53,14 +64,21 @@ export interface IPushCandidate {
  * строки доступа у них нет, а автоматическая запись в кабинет — только по
  * решению владельца о конкретном продавце. Строк у продавца несколько (боты) —
  * берётся первая подходящая.
+ *
+ * `requireSchedule: false` — проход после прайса из бота: продавец сам прислал
+ * файл, поэтому хватает `stock_push` и открытой записи площадки.
  */
-export function pickPushUsers(accounts: readonly IPushCandidate[]): Map<string, TFeatureMap> {
+export function pickPushUsers(
+  accounts: readonly IPushCandidate[],
+  { requireSchedule = true }: { requireSchedule?: boolean } = {},
+): Map<string, TFeatureMap> {
+  const gate = requireSchedule ? FEATURE.STOCK_PUSH_SCHEDULE : FEATURE.STOCK_PUSH;
   const result = new Map<string, TFeatureMap>();
   for (const account of accounts) {
     const id = account.telegramUserId;
     if (account.status !== 'approved' || result.has(id)) continue;
     const features = account.features ?? {};
-    if (isFeatureEnabled(features, FEATURE.STOCK_PUSH_SCHEDULE) && stockPushWriteOpen(features)) {
+    if (isFeatureEnabled(features, gate) && stockPushWriteOpen(features)) {
       result.set(id, features);
     }
   }

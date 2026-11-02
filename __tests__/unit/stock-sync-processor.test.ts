@@ -19,6 +19,8 @@ describe('StockSyncProcessor', () => {
   let sendMessage: ReturnType<typeof vi.fn>;
   let getFileLink: ReturnType<typeof vi.fn>;
   let report: ReturnType<typeof vi.fn>;
+  let featuresAfterPriceList: ReturnType<typeof vi.fn>;
+  let sendAfterPriceList: ReturnType<typeof vi.fn>;
   let processor: StockSyncProcessor;
 
   const jobData: IStockSyncJob = {
@@ -61,6 +63,8 @@ describe('StockSyncProcessor', () => {
       telegraf: { telegram: { sendMessage, getFileLink } },
     }));
     report = vi.fn(async () => undefined);
+    featuresAfterPriceList = vi.fn(async () => null);
+    sendAfterPriceList = vi.fn(async () => undefined);
 
     vi.stubGlobal(
       'fetch',
@@ -72,6 +76,9 @@ describe('StockSyncProcessor', () => {
       { findByTelegramUser } as never,
       { sync } as never,
       { report } as never,
+      {} as never,
+      {} as never,
+      { featuresAfterPriceList, sendAfterPriceList } as never,
     );
   });
 
@@ -104,6 +111,36 @@ describe('StockSyncProcessor', () => {
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ dryRun: true, savePurchasePrices: false }),
+    );
+  });
+
+  it('передача остатков открыта — после отчёта ставится проход на площадки', async () => {
+    featuresAfterPriceList.mockResolvedValue({ stock_push: true, stock_push_write_ym: true });
+
+    await processor.run(jobWith());
+
+    expect(sendAfterPriceList).toHaveBeenCalledWith('222', 999, '222');
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it('проход не ставится: передача закрыта или файл — только проверка', async () => {
+    await processor.run(jobWith());
+    expect(sendAfterPriceList).not.toHaveBeenCalled();
+
+    featuresAfterPriceList.mockResolvedValue({ stock_push: true, stock_push_write_ym: true });
+    await processor.run(jobWith({ dryRun: true }));
+    expect(sendAfterPriceList).not.toHaveBeenCalled();
+  });
+
+  it('Redis не принял проход — отчёт о файле уже ушёл, ошибка в журнал', async () => {
+    featuresAfterPriceList.mockResolvedValue({ stock_push: true, stock_push_write_ym: true });
+    sendAfterPriceList.mockRejectedValue(new Error('redis down'));
+
+    await expect(processor.run(jobWith())).resolves.toBeUndefined();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledWith(
+      expect.objectContaining({ context: 'stock-push:schedule' }),
     );
   });
 

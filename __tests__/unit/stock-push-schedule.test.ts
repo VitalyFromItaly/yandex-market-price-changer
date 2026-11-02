@@ -7,6 +7,7 @@ import {
   PUSH_CRON,
   parsePushJobId,
   pickPushUsers,
+  pushAfterPriceListJobId,
   pushJobId,
   pushNowJobId,
 } from '../../src/modules/telegram/queue/services/stock-push-schedule';
@@ -34,6 +35,8 @@ describe('правила расписания', () => {
     expect(pushNowJobId('42')).not.toContain(':');
     expect(parsePushJobId('stockpush-42')).toBe('42');
     expect(parsePushJobId('stockpushnow-42')).toBeNull();
+    expect(pushAfterPriceListJobId('42')).toBe('stockpushfile-42');
+    expect(parsePushJobId('stockpushfile-42')).toBeNull();
     expect(parsePushJobId('weeklydigest-42')).toBeNull();
     expect(parsePushJobId(null)).toBeNull();
   });
@@ -65,6 +68,26 @@ describe('правила расписания', () => {
     ]);
     expect([...picked.keys()]).toEqual(['1']);
     expect(picked.get('1')).toEqual(OPEN);
+  });
+
+  it('после прайса из бота расписание не нужно — хватает stock_push и записи площадки', () => {
+    const noSchedule = {
+      [FEATURE.STOCK_PUSH]: true,
+      [FEATURE.OZON]: true,
+      [FEATURE.STOCK_PUSH_WRITE_OZON]: true,
+    };
+    const picked = pickPushUsers(
+      [
+        { telegramUserId: '1', status: 'approved', features: noSchedule },
+        // Без записи хоть одной площадки — проходу нечего писать.
+        { telegramUserId: '2', status: 'approved', features: { [FEATURE.STOCK_PUSH]: true } },
+        // Без плана запись не открыта (`requires: stock_push`).
+        { telegramUserId: '3', status: 'approved', features: { [FEATURE.STOCK_PUSH_WRITE_YM]: true } },
+        { telegramUserId: '4', status: 'blocked', features: noSchedule },
+      ],
+      { requireSchedule: false },
+    );
+    expect([...picked.keys()]).toEqual(['1']);
   });
 
   it('по умолчанию фича закрыта — без решения владельца никому не заводится', () => {
@@ -154,6 +177,32 @@ describe('StockPushScheduler — сверка расписания', () => {
     const { s } = scheduler();
     expect(await s.featuresFor('1')).toEqual(OPEN);
     expect(await s.featuresFor('2')).toBeNull();
+  });
+
+  it('featuresAfterPriceList — без требования расписания', async () => {
+    const queue = fakeRepeatableQueue([], JOB_TYPES.SYNC_STOCKS);
+    const features = {
+      [FEATURE.STOCK_PUSH]: true,
+      [FEATURE.WB]: true,
+      [FEATURE.STOCK_PUSH_WRITE_WB]: true,
+    };
+    const access = {
+      findByLogin: vi.fn(async () => [{ telegramUserId: '7', status: 'approved', features }]),
+    };
+    const s = new StockPushScheduler(queue as never, access as never, { report: vi.fn() } as never);
+    expect(await s.featuresAfterPriceList('7')).toEqual(features);
+    expect(await s.featuresFor('7')).toBeNull();
+  });
+
+  it('проход после прайса из бота — свой id, чат для итога, без токена, одна попытка', async () => {
+    const queue = { add: vi.fn(async () => undefined) };
+    const s = new StockPushScheduler(queue as never, {} as never, { report: vi.fn() } as never);
+    await s.sendAfterPriceList('1', 999, '555');
+    expect(queue.add).toHaveBeenCalledWith(
+      JOB_TYPES.SYNC_STOCKS,
+      { source: 'schedule', telegramUserId: '1', trigger: 'price-list', botId: 999, chatId: '555' },
+      expect.objectContaining({ jobId: 'stockpushfile-1', attempts: 1 }),
+    );
   });
 
   it('разовый проход — свой id, одна попытка', async () => {
