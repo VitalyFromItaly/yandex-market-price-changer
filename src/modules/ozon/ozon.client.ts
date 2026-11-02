@@ -65,7 +65,34 @@ export const OZON_PATHS = {
   productPrices: '/v5/product/info/prices',
   /** ProductAPI_ImportProductsPrices: ЗАПИСЬ цен (TASK-201) — без повторов, без `old_price`. */
   pricesWrite: '/v1/product/import/prices',
+  /**
+   * Push-уведомления (`ozon_push_subscribe_via_api`): подключённые адреса со статусом
+   * доступности и типы с адресом, на который каждый идёт. Чтение.
+   */
+  notificationList: '/v1/notification/list',
+  pushTypes: '/v1/notification/push-type/list',
+  /** ЗАПИСЬ подписки: подключить адрес / изменить его — без повторов. */
+  notificationSet: '/v1/notification/set',
+  notificationUpdate: '/v1/notification/update',
 } as const;
+
+/** Подключённый адрес push-уведомлений продавца из /v1/notification/list. */
+export interface IOzonNotificationUrl {
+  id: string;
+  url: string;
+  enabled: boolean;
+  /** GREEN — доступен, YELLOW — нестабилен, RED — недоступен; '' — Ozon не сказал. */
+  availability: string;
+  /** Почему Ozon приостановил отправку; '' — не приостанавливал. */
+  disableReason: string;
+  types: string[];
+}
+
+/** Тип уведомления и адрес, на который он сейчас идёт (у типа адрес один). */
+export interface IOzonPushType {
+  type: string;
+  endpointUrl: string | null;
+}
 
 /**
  * Позиций в одном запросе цен — потолок Ozon (1000) и для фильтра `offer_id`
@@ -144,6 +171,11 @@ export interface IOzonProduct {
   price?: number;
   currency?: string;
   archived: boolean;
+  /**
+   * `statuses.is_created`: false — карточка у Ozon не создана, запись остатка по ней
+   * отвергается `PRODUCT_IS_NOT_CREATED`. Поле не пришло — `undefined`, не false.
+   */
+  created?: boolean;
 }
 
 /** Остаток одного типа склада. */
@@ -511,6 +543,34 @@ export class OzonSellerClient {
     return mapStocksWrite(await this.callWrite(() => this.http.post(OZON_PATHS.pricesWrite, body)));
   }
 
+  /** Подключённые адреса push-уведомлений продавца (до 100 — у продавца их единицы). Чтение. */
+  public async listNotificationUrls(): Promise<IOzonNotificationUrl[]> {
+    const body = { limit: 100, offset: 0, sort_dir: 'ASC' };
+    return mapNotificationUrls(
+      await this.call(() => this.http.post(OZON_PATHS.notificationList, body)),
+    );
+  }
+
+  /** Типы push-уведомлений и адрес каждого. Чтение. */
+  public async listPushTypes(): Promise<IOzonPushType[]> {
+    return mapPushTypes(await this.call(() => this.http.post(OZON_PATHS.pushTypes, {})));
+  }
+
+  /** ЗАПИСЬ: подключить адрес на типы — без повторов (повтор вслепую дал бы второй адрес). */
+  public async setNotificationUrl(url: string, types: readonly string[]): Promise<void> {
+    await this.callWrite(() => this.http.post(OZON_PATHS.notificationSet, { url, types }));
+  }
+
+  /** ЗАПИСЬ: перенаправить подключённый адрес `id` на новый адрес и типы — без повторов. */
+  public async updateNotificationUrl(
+    id: string,
+    url: string,
+    types: readonly string[],
+  ): Promise<void> {
+    const body = { id: Number(id), url, types };
+    await this.callWrite(() => this.http.post(OZON_PATHS.notificationUpdate, body));
+  }
+
   /**
    * Записывающий запрос — БЕЗ withOzonRetry, по образцу `postWrite` ЯМ: Ozon мог
    * применить остаток и не успеть ответить (таймаут, 5xx), а повтор вслепую
@@ -628,6 +688,7 @@ export function mapProductInfo(raw: unknown): IOzonProduct[] {
         : [];
       const single = textOf(item.barcode);
       if (single && !barcodes.includes(single)) barcodes.push(single);
+      const statuses = item.statuses as TRaw | undefined;
       return {
         productId: idString(item.id ?? item.product_id),
         offerId: textOf(item.offer_id),
@@ -638,6 +699,7 @@ export function mapProductInfo(raw: unknown): IOzonProduct[] {
         price: numberOf(item.price),
         currency: textOf(item.currency_code) || undefined,
         archived: item.is_archived === true || item.archived === true,
+        created: typeof statuses?.is_created === 'boolean' ? statuses.is_created : undefined,
       };
     })
     .filter((product) => product.productId.length > 0);
@@ -896,4 +958,45 @@ function mapPostings(list: unknown[]): IOzonPosting[] {
         })),
     }))
     .filter((posting) => posting.postingNumber.length > 0);
+}
+
+/**
+ * Ответ /v1/notification/list: `{urls: [{id, url, enable, availability_status,
+ * disable_reason?, types: [{type}]}]}`. Строка без url — пропускается.
+ */
+export function mapNotificationUrls(raw: unknown): IOzonNotificationUrl[] {
+  const data = (raw ?? {}) as TRaw;
+  const list = Array.isArray(data.urls) ? (data.urls as TRaw[]) : [];
+  const result: IOzonNotificationUrl[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const url = textOf(item.url);
+    if (!url) continue;
+    const types = (Array.isArray(item.types) ? (item.types as TRaw[]) : [])
+      .map((type) => textOf(type?.type))
+      .filter((type) => type.length > 0);
+    result.push({
+      // id у Ozon приходит числом; храним строкой, как остальные id клиента.
+      id: typeof item.id === 'number' ? String(item.id) : textOf(item.id),
+      url,
+      enabled: item.enable === true,
+      availability: textOf(item.availability_status),
+      disableReason: textOf(item.disable_reason) || textOf(item.reason_details),
+      types,
+    });
+  }
+  return result;
+}
+
+/** Ответ /v1/notification/push-type/list: `{types: [{type, seller_endpoint?: {id, url}}]}`. */
+export function mapPushTypes(raw: unknown): IOzonPushType[] {
+  const data = (raw ?? {}) as TRaw;
+  const list = Array.isArray(data.types) ? (data.types as TRaw[]) : [];
+  return list
+    .filter((item): item is TRaw => !!item && typeof item === 'object' && !!textOf(item.type))
+    .map((item) => {
+      const endpoint = (item.seller_endpoint ?? null) as TRaw | null;
+      const url = endpoint ? textOf(endpoint.url) : '';
+      return { type: textOf(item.type), endpointUrl: url || null };
+    });
 }

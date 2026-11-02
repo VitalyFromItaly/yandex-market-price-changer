@@ -125,6 +125,23 @@ export const envValidationSchema = Joi.object({
       'any.only': 'PRICE_WRITE_ENABLED принимает только true или false',
     }),
 
+  /**
+   * Проверять ли IP отправителя уведомлений ЯМ/Ozon о заказах (`stock_push_events`).
+   * IP — из X-Forwarded-For одного прокси (`trust proxy 1`, nginx CapRover): если перед
+   * nginx встанет ещё прокси (Cloudflare и т.п.), каждое уведомление станет «чужим», и
+   * его отвергнет проверка — поэтому рычаг есть. Обязателен без умолчания: среда
+   * заявляет решение сама (довод STOCK_WRITE_ENABLED).
+   */
+  MARKETPLACE_WEBHOOK_IP_CHECK: Joi.string()
+    .valid('true', 'false')
+    .required()
+    .messages({
+      'any.required':
+        'MARKETPLACE_WEBHOOK_IP_CHECK обязателен: true — уведомления площадок о заказах принимаются ' +
+        'только с их IP, false — без проверки (если перед nginx есть ещё прокси). В проде — true.',
+      'any.only': 'MARKETPLACE_WEBHOOK_IP_CHECK принимает только true или false',
+    }),
+
   // --- MongoDB ---
   // Строка подключения БЕЗ имени базы — имя идёт отдельно в MONGODB_DATABASE.
   MONGODB_URL: Joi.string().required().messages({
@@ -232,6 +249,23 @@ export const envValidationSchema = Joi.object({
         'TELEGRAM_ADMIN_IDS обязателен: Telegram id администраторов через запятую, например 123456789,987654321',
       'string.pattern.base':
         'TELEGRAM_ADMIN_IDS: только числовые id через запятую (не @username и не ссылка). Свой id можно узнать у @userinfobot',
+    }),
+
+  // Наш публичный адрес — схема и хост, как его видят площадки. Из него CRM собирает
+  // адрес уведомлений продавца (`/api/webhooks/{ym|ozon}/<секрет>`), который продавец
+  // вставляет в кабинет ЯМ/Ozon. Не путать с TELEGRAM_WEBHOOK_URL: тот — для Telegram и
+  // при polling не задан. Пусто — синхронизация по событию недоступна (CRM так и пишет).
+  // ЯМ принимает только HTTPS с настоящим сертификатом.
+  PUBLIC_BASE_URL: Joi.string()
+    .uri({ scheme: ['https'] })
+    .custom(rejectUrlWithPath, 'без пути')
+    .empty('')
+    .optional()
+    .messages({
+      'string.uri':
+        'PUBLIC_BASE_URL должен быть https://домен — площадки не шлют уведомления на http',
+      'string.uriCustomScheme':
+        'PUBLIC_BASE_URL должен быть https://домен — площадки не шлют уведомления на http',
     }),
 
   // --- Админ-панель ---

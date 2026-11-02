@@ -57,6 +57,7 @@ describe('паритет фич бота и разделов CRM', () => {
         'stock_push_write_ym',
         'stock_push_write_ozon',
         'stock_push_write_wb',
+        'stock_push_events',
         'stock_push_schedule',
         'price_set_write_ym',
         'price_set_write_ozon',

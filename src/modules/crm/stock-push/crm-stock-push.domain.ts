@@ -1,5 +1,6 @@
 import type { TMarketplace } from '../../../shared/marketplace';
 import type { IStockPushPlan, TStockPushBlock, TStockPushSkip } from '../../finance/stock-push';
+import type { TOzonPushState } from '../../ozon/ozon-push.domain';
 import type { TPushInterval } from '../../stock-push/stock-push-interval';
 import type { IStockPushPlanResult } from '../../stock-push/stock-push.service';
 import type { IPushScheduleStatus } from '../../telegram/queue/services/stock-push.scheduler';
@@ -11,6 +12,7 @@ import {
   STOCK_PUSH_SKIP_TEXT,
   stockPushBlockTextOf,
 } from '../../finance/stock-push';
+import { STOCK_PUSH_EVENT_WINDOW_MS, webhookUrlOf } from '../../stock-push/marketplace-events';
 import { PUSH_INTERVAL_LABEL, isPushInterval } from '../../stock-push/stock-push-interval';
 
 /**
@@ -217,6 +219,25 @@ export interface ICrmPushScheduleView {
   about: readonly string[];
   nextRunAt: string | null;
   lastRun: { at: string; ok: boolean; summary: string } | null;
+  /** Синхронизация по заказу — только при открытой `stock_push_events`. */
+  events?: ICrmPushEventsView;
+}
+
+/** Адрес уведомлений площадки и куда его вставить. */
+export interface ICrmPushEventTarget {
+  marketplace: 'ym' | 'ozon';
+  title: string;
+  /** null — PUBLIC_BASE_URL не задан. */
+  url: string | null;
+  steps: readonly string[];
+  lastEventAt: string | null;
+}
+
+export interface ICrmPushEventsView {
+  about: string;
+  /** Пусто — адресов нет: сервер не знает свой публичный адрес. */
+  unavailable: string | null;
+  targets: ICrmPushEventTarget[];
 }
 
 /** Порядок вариантов — от частого к редкому, «выключена» последней. */
@@ -243,4 +264,122 @@ export function toCrmPushSchedule(status: IPushScheduleStatus): ICrmPushSchedule
         }
       : null,
   };
+}
+
+const EVENT_WINDOW_MIN = STOCK_PUSH_EVENT_WINDOW_MS / 60_000;
+
+export const STOCK_PUSH_EVENTS_ABOUT =
+  'Маркет и Ozon умеют сами сообщать о новом заказе. Вставьте адрес ниже в кабинет площадки — ' +
+  `и остатки на всех площадках обновятся в течение ${EVENT_WINDOW_MIN} минут после заказа, не дожидаясь ` +
+  'синхронизации по расписанию. У Wildberries таких уведомлений нет: его заказы учитываются по расписанию. ' +
+  'Адрес личный — не публикуйте его.';
+
+export const STOCK_PUSH_EVENTS_UNAVAILABLE =
+  'Адрес для уведомлений пока не настроен на сервере — напишите администратору.';
+
+const EVENT_TARGETS: readonly {
+  marketplace: 'ym' | 'ozon';
+  title: string;
+  steps: readonly string[];
+}[] = [
+  {
+    marketplace: 'ym',
+    title: 'Яндекс Маркет',
+    steps: [
+      'Кабинет продавца → значок аккаунта → «Настройки» → «API и модули» → вкладка «API-уведомления».',
+      '«Подключить уведомления»: уровень — кабинет (все магазины) или магазин.',
+      'Типы: «Заказ создан» и «Заказ отменён».',
+      'URL — адрес ниже, «Подключить». Маркет проверит адрес сразу; уведомления пойдут в течение 2 минут.',
+    ],
+  },
+  {
+    marketplace: 'ozon',
+    title: 'Ozon',
+    // Запасной путь: обычно хватает кнопки «Подключить» (подписка через Seller API).
+    steps: [
+      'Кабинет продавца → «Настройки» → «Уведомления» → вкладка «Push уведомления».',
+      '«Подключить», адрес — ниже, «Проверить»: Ozon пришлёт проверочный запрос.',
+      '«Сохранить», затем в «Типах уведомлений» — «Новое отправление» и «Отмена отправления».',
+    ],
+  },
+];
+
+/** Блок «Синхронизация по заказу»: адрес на площадку, шаги, последнее событие. */
+export function toCrmPushEvents(
+  baseUrl: string | null,
+  secret: string,
+  lastEventAt: Partial<Record<'ym' | 'ozon', Date>>,
+): ICrmPushEventsView {
+  return {
+    about: STOCK_PUSH_EVENTS_ABOUT,
+    unavailable: baseUrl ? null : STOCK_PUSH_EVENTS_UNAVAILABLE,
+    targets: EVENT_TARGETS.map((target) => ({
+      ...target,
+      url: webhookUrlOf(baseUrl, target.marketplace, secret),
+      lastEventAt: lastEventAt[target.marketplace]
+        ? new Date(lastEventAt[target.marketplace]).toISOString()
+        : null,
+    })),
+  };
+}
+
+export const OZON_PUSH_UNAVAILABLE = 'OZON_PUSH_UNAVAILABLE';
+
+/** Подписка Ozon для экрана: словами, без id и адресов чужих интеграций целиком. */
+export interface ICrmOzonPushView {
+  state: 'connected' | 'occupied' | 'none' | 'error';
+  ok: boolean;
+  text: string;
+}
+
+const AVAILABILITY_TEXT: Readonly<Record<string, string>> = {
+  GREEN: 'Ozon видит адрес доступным',
+  YELLOW: 'Ozon считает адрес нестабильным',
+  RED: 'Ozon считает адрес недоступным',
+};
+
+export function toCrmOzonPush(status: TOzonPushState): ICrmOzonPushView {
+  if (status.state === 'occupied') {
+    return {
+      state: 'occupied',
+      ok: false,
+      text:
+        `Уведомления о заказах Ozon уже идут на другую интеграцию (${status.host}). ` +
+        'Чтобы не сломать её, мы их не перехватываем — подключите адрес вручную, если она больше не нужна.',
+    };
+  }
+  if (status.state === 'none') {
+    return { state: 'none', ok: false, text: 'Уведомления Ozon о заказах не подключены.' };
+  }
+  const availability = AVAILABILITY_TEXT[status.availability] ?? 'Ozon ещё не проверил адрес';
+  if (!status.enabled) {
+    const reason = status.disableReason ? `: ${status.disableReason}` : '';
+    return {
+      state: 'connected',
+      ok: false,
+      text: `Подключено, но Ozon приостановил отправку${reason}.`,
+    };
+  }
+  return {
+    state: 'connected',
+    ok: status.availability !== 'RED',
+    text: `Подключено · ${availability}.`,
+  };
+}
+
+/** Сбой Ozon при чтении или записи подписки — словами продавцу. */
+export function ozonPushErrorView(error: unknown): ICrmOzonPushView {
+  if (error instanceof Error && error.name === 'OzonNotConnectedError') {
+    return {
+      state: 'error',
+      ok: false,
+      text: 'Ozon не подключён — сначала добавьте ключ на «Подключениях».',
+    };
+  }
+  const userMessage = (error as { userMessage?: unknown })?.userMessage;
+  const text =
+    typeof userMessage === 'string' && userMessage
+      ? userMessage
+      : 'Ozon не ответил — попробуйте позже.';
+  return { state: 'error', ok: false, text };
 }

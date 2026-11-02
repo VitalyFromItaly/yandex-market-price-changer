@@ -25,6 +25,17 @@ export const PUSH_NOW_JOB_PREFIX = 'stockpushnow-';
  */
 export const PUSH_AFTER_PRICE_LIST_JOB_PREFIX = 'stockpushfile-';
 
+/**
+ * Проход по уведомлению площадки о заказе (`stock_push_on_marketplace_event`): id —
+ * продавец и окно склейки, поэтому события одного окна дают одну задачу, а
+ * сверка расписания такую задачу не узнаёт (`parsePushJobId` → null).
+ */
+export const PUSH_EVENT_JOB_PREFIX = 'stockpushevent-';
+
+export function pushEventJobId(telegramUserId: string, window: number): string {
+  return `${PUSH_EVENT_JOB_PREFIX}${telegramUserId}-${window}`;
+}
+
 export function pushAfterPriceListJobId(telegramUserId: string): string {
   return `${PUSH_AFTER_PRICE_LIST_JOB_PREFIX}${telegramUserId}`;
 }

@@ -7,8 +7,10 @@ import type { IWbCard, IWbWarehouse } from '../../src/modules/wb/wb.client';
 
 import { stockWriteTargetOf } from '../../src/modules/marketplaces/stock-write';
 import {
+  OZON_SKIP_REASON,
   OzonStockWriteService,
   ozonStockWriteTarget,
+  ozonUnwritable,
 } from '../../src/modules/ozon/ozon-stock-write.service';
 import {
   OZON_PATHS,
@@ -283,11 +285,16 @@ describe('WB: артикул → штрихкод', () => {
 });
 
 /** Сервис записи с клиентом-заглушкой: видно, ушёл ли хоть один запрос. */
-function ozonWriter(opts: { enabled: boolean; warehouses?: IOzonWarehouse[] }) {
+function ozonWriter(opts: {
+  enabled: boolean;
+  warehouses?: IOzonWarehouse[];
+  products?: () => Promise<Array<{ offerId: string; created?: boolean }>>;
+}) {
   const client = {
     listWarehouses: vi.fn(
       async () => opts.warehouses ?? [{ id: '77', name: 'Дом', isRfbs: false, status: 'created' }],
     ),
+    listProducts: vi.fn(opts.products ?? (async () => [])),
     updateStocks: vi.fn(async (_id: string, items: Array<{ offerId: string }>) =>
       items.map((item) => ({
         offerId: item.offerId,
@@ -373,6 +380,49 @@ describe('OzonStockWriteService.writeStocks — барьеры внутри', ()
     expect(client.updateStocks).toHaveBeenCalledTimes(2);
     expect(result.written).toBe(100);
     expect(result.errors).toEqual([{ batch: 1, message: 'BAD: x' }]);
+  });
+
+  it('склад записи для плана — без несозданных карточек (PRODUCT_IS_NOT_CREATED); без записи', async () => {
+    const { service, client } = ozonWriter({
+      enabled: true,
+      products: async () => [
+        { offerId: 'A130WE-7A', created: false },
+        { offerId: 'OK', created: true },
+        { offerId: 'NO-FIELD' },
+      ],
+    });
+    expect(await service.writeTarget('1')).toEqual({
+      kind: 'ok',
+      warehouse: { id: '77', name: 'Дом' },
+      unwritable: [{ sku: 'A130WE-7A', reason: OZON_SKIP_REASON.notCreated }],
+    });
+    expect(client.updateStocks).not.toHaveBeenCalled();
+  });
+
+  it('каталог не прочитался — склад записи как раньше, без отсева', async () => {
+    const { service } = ozonWriter({
+      enabled: true,
+      products: async () => {
+        throw new Error('503');
+      },
+    });
+    expect(await service.writeTarget('1')).toEqual({
+      kind: 'ok',
+      warehouse: { id: '77', name: 'Дом' },
+    });
+  });
+});
+
+describe('ozonUnwritable', () => {
+  it('отсеивает только явный is_created: false с артикулом', () => {
+    expect(
+      ozonUnwritable([
+        { offerId: 'A', created: false },
+        { offerId: '', created: false },
+        { offerId: 'B', created: true },
+        { offerId: 'C' },
+      ] as never),
+    ).toEqual([{ sku: 'A', reason: OZON_SKIP_REASON.notCreated }]);
   });
 });
 

@@ -10,15 +10,18 @@ import { ActionLogService } from '../../../../database/services/action-log.servi
 import { StockPushSettingsService } from '../../../../database/services/stock-push-settings.service';
 import { UserAccessService } from '../../../../database/services/user-access.service';
 import { ErrorReporter } from '../../../errors/error-reporter.service';
+import { eventWindowOf } from '../../../stock-push/marketplace-events';
 import { pushCronOf } from '../../../stock-push/stock-push-interval';
 import { STOCK_PUSH_SCHEDULE_LOG_KIND } from '../../../stock-push/stock-push.service';
 import { MOSCOW_TIME_ZONE } from '../../../yandex/reports/moscow-day';
+import { FEATURE, isFeatureEnabled } from '../../bots/shared/features.domain';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
 
 import {
   parsePushJobId,
   pickPushUsers,
   pushAfterPriceListJobId,
+  pushEventJobId,
   pushJobId,
   pushNowJobId,
 } from './stock-push-schedule';
@@ -86,6 +89,36 @@ export class StockPushScheduler implements OnApplicationBootstrap {
   async featuresAfterPriceList(telegramUserId: string): Promise<TFeatureMap | null> {
     const accounts = await this.access.findByLogin(telegramUserId);
     return pickPushUsers(accounts, { requireSchedule: false }).get(telegramUserId) ?? null;
+  }
+
+  /**
+   * Фичи для прохода по уведомлению площадки; null — не положен. Нужны те же
+   * права, что расписанию, и `stock_push_events` сверху.
+   */
+  async featuresAfterEvent(telegramUserId: string): Promise<TFeatureMap | null> {
+    const features = await this.featuresFor(telegramUserId);
+    return features && isFeatureEnabled(features, FEATURE.STOCK_PUSH_EVENTS) ? features : null;
+  }
+
+  /**
+   * Проход по уведомлению о заказе (`stock_push_on_marketplace_event`) — в конце окна
+   * склейки: пачка заказов даёт один проход. Повтор id в окне Bull не ставит.
+   * Доступ процессор перепроверит (`featuresAfterEvent`).
+   */
+  async sendAfterEvent(telegramUserId: string, now: number = Date.now()): Promise<void> {
+    const { window, delayMs } = eventWindowOf(now);
+    const payload: IScheduledStockPushJob = {
+      source: 'schedule',
+      telegramUserId,
+      trigger: 'event',
+    };
+    await this.queue.add(JOB_TYPES.SYNC_STOCKS, payload, {
+      jobId: pushEventJobId(telegramUserId, window),
+      delay: delayMs,
+      removeOnComplete: true,
+      removeOnFail: true,
+      attempts: 1,
+    });
   }
 
   /**

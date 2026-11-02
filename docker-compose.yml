@@ -18,6 +18,7 @@ services:
       - STOCK_WRITE_ENABLED=${STOCK_WRITE_ENABLED:?нужно задать STOCK_WRITE_ENABLED в .env (true в проде, false локально)}
       # Запись цен («Установка цен») — тот же принцип, отдельный рычаг.
       - PRICE_WRITE_ENABLED=${PRICE_WRITE_ENABLED:?нужно задать PRICE_WRITE_ENABLED в .env (false локально)}
+      - MARKETPLACE_WEBHOOK_IP_CHECK=${MARKETPLACE_WEBHOOK_IP_CHECK:?нужно задать MARKETPLACE_WEBHOOK_IP_CHECK в .env (true в проде)}
       - MONGODB_URL=mongodb://root:secret@mongodb:27017/
       - MONGODB_DATABASE=${MONGODB_DATABASE:-yandex-market-price-changer}
       # Postgres — только финансовый журнал (решение finance_postgres).
@@ -34,6 +35,8 @@ services:
       # Без `:?`: при polling переменная не нужна, и обязательность проверяет
       # Joi — уже с учётом режима, чего compose сделать не может.
       - TELEGRAM_WEBHOOK_URL=${TELEGRAM_WEBHOOK_URL:-}
+      # Адрес для уведомлений площадок о заказах (stock_push_events). Пусто — выключено.
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
       # Зеркало Bot API. Без значения — ходим на api.telegram.org напрямую.
       - TELEGRAM_API_URL=${TELEGRAM_API_URL:-https://api.telegram.org}
       - TELEGRAM_ADMIN_IDS=${TELEGRAM_ADMIN_IDS:?нужно задать TELEGRAM_ADMIN_IDS в .env}

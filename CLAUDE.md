@@ -175,12 +175,15 @@ Short form; the reasons are in the linked README. Do not "simplify" any of these
 `src/config/env.validation.ts` is the authority; `.env.example` documents every key. A missing or
 malformed variable fails startup with a Russian message naming it.
 
-- Required: `STOCK_WRITE_ENABLED`, `PRICE_WRITE_ENABLED`, `MONGODB_URL`, `MONGODB_DATABASE`, `POSTGRES_URL`, `REDIS_HOST`,
+- Required: `STOCK_WRITE_ENABLED`, `PRICE_WRITE_ENABLED`, `MARKETPLACE_WEBHOOK_IP_CHECK`, `MONGODB_URL`, `MONGODB_DATABASE`, `POSTGRES_URL`, `REDIS_HOST`,
   `TELEGRAM_TOKEN`, `TELEGRAM_ADMIN_IDS`; `TELEGRAM_WEBHOOK_URL` only when `TELEGRAM_UPDATE_MODE=webhook`.
 - `TELEGRAM_WEBHOOK_URL` (inbound, Telegram → us) and `TELEGRAM_API_URL` (outbound Bot API mirror,
   scheme+host only — a path prefix is silently dropped) are opposite directions; don't swap them.
 - `TELEGRAM_UPDATE_MODE` (`webhook` default | `polling`): polling exists because the Russian prod host
   cannot receive webhooks — diagnose with `getWebhookInfo`, not app logs.
+- `PUBLIC_BASE_URL` (optional, https scheme+host): our address for YM/Ozon order notifications
+  (`/api/webhooks/{ym|ozon}/<secret>`, `stock_push_events`). Not `TELEGRAM_WEBHOOK_URL`; those endpoints answer 200 to
+  anything well-formed — a non-200 makes YM hold every later notification (`src/modules/stock-push/README.md`).
 - `ADMIN_PASSWORD` overrides the stored hash when set. Polza: `POLZA_AI_TOKEN` (empty = AI off),
   `POLZA_AI_MODEL` (required with a token), `POLZA_AI_MODELS` (optional `purpose=model,…` override per purpose,
   closed purpose list in `src/modules/ai/ai-purpose.ts`), `POLZA_AI_PROXY_URL`, `AI_USER_DAILY_LIMIT_RUB`.

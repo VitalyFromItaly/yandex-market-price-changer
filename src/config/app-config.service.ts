@@ -56,6 +56,11 @@ export class AppConfigService {
     return this.config.get<string>('PRICE_WRITE_ENABLED') === 'true';
   }
 
+  /** Проверять ли IP отправителя уведомлений площадок (см. env.validation.ts). */
+  get marketplaceWebhookIpCheck(): boolean {
+    return this.config.get<string>('MARKETPLACE_WEBHOOK_IP_CHECK') === 'true';
+  }
+
   get mongoUrl(): string {
     return this.config.get<string>('MONGODB_URL');
   }
@@ -115,6 +120,15 @@ export class AppConfigService {
    */
   get telegramApiUrl(): string {
     return this.config.get<string>('TELEGRAM_API_URL').replace(/\/+$/, '');
+  }
+
+  /**
+   * Наш публичный HTTPS-адрес для уведомлений площадок; null — не задан, синхронизация
+   * по событию недоступна. Хвостовой слеш срезан (довод `telegramApiUrl`).
+   */
+  get publicBaseUrl(): string | null {
+    const value = this.config.get<string>('PUBLIC_BASE_URL');
+    return value ? value.replace(/\/+$/, '') : null;
   }
 
   /**

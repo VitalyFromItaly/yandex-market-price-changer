@@ -1,4 +1,4 @@
-import type { IOzonWarehouse } from './ozon.client';
+import type { IOzonProduct, IOzonWarehouse } from './ozon.client';
 import type {
   IMarketplaceStockWriteResult,
   IStockWriteUpdate,
@@ -43,6 +43,25 @@ export function ozonStockWriteTarget(warehouses: readonly IOzonWarehouse[]): TSt
   );
 }
 
+/** Почему Ozon не примет остаток позиции — продавцу на экране «Передача остатков». */
+export const OZON_SKIP_REASON = {
+  notCreated: 'карточка на Ozon не создана — остаток не принимается',
+} as const;
+
+/**
+ * Артикулы, которые Ozon заведомо отвергнет, — для плана. Карточка не создана
+ * (`is_created: false`) — Ozon отвечает `PRODUCT_IS_NOT_CREATED`; без отсева она
+ * каждый проход снова в плане и снова поднимает алерт (прод 406937947, «ABW TOP»,
+ * 10 позиций). Поле не пришло — позиция пишется: неизвестное здесь не повод молчать.
+ */
+export function ozonUnwritable(
+  products: readonly IOzonProduct[],
+): { sku: string; reason: string }[] {
+  return products
+    .filter((product) => product.created === false && product.offerId)
+    .map((product) => ({ sku: product.offerId, reason: OZON_SKIP_REASON.notCreated }));
+}
+
 /**
  * Запись остатков FBS в Ozon (TASK-175). `writeStocks` — единственная функция
  * записи Ozon, все барьеры внутри: `STOCK_WRITE_ENABLED`, целые количества,
@@ -60,9 +79,18 @@ export class OzonStockWriteService {
     private readonly connections: MarketplaceConnectionService,
   ) {}
 
+  /** Склад записи и, если он есть, артикулы, которые Ozon не примет. */
   async writeTarget(telegramUserId: string): Promise<TStockWriteTarget> {
     const client = await ozonSellerClient(this.clients, this.connections, telegramUserId);
-    return ozonStockWriteTarget(await client.listWarehouses());
+    const target = ozonStockWriteTarget(await client.listWarehouses());
+    if (target.kind !== 'ok') return target;
+    // Каталог не прочитался — пишем как раньше: отказ Ozon по позиции и так виден в алерте.
+    const products = await client.listProducts().catch((error: unknown) => {
+      this.logger.warn(`Ozon: каталог для отсева не прочитался — ${writeErrorText(error)}`);
+      return [];
+    });
+    const unwritable = ozonUnwritable(products);
+    return unwritable.length ? { ...target, unwritable } : target;
   }
 
   async writeStocks(

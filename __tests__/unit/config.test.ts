@@ -8,6 +8,7 @@ import { AppConfigService } from '../../src/config/app-config.service';
 const VALID_ENV = {
   STOCK_WRITE_ENABLED: 'false',
   PRICE_WRITE_ENABLED: 'false',
+  MARKETPLACE_WEBHOOK_IP_CHECK: 'true',
   MONGODB_URL: 'mongodb://root:secret@localhost:27018/',
   MONGODB_DATABASE: 'yandex-market-price-changer',
   POSTGRES_URL: 'postgres://finance:secret@localhost:5433/finance',
@@ -26,6 +27,7 @@ describe('envValidationSchema', () => {
   it.each([
     'STOCK_WRITE_ENABLED',
     'PRICE_WRITE_ENABLED',
+    'MARKETPLACE_WEBHOOK_IP_CHECK',
     'MONGODB_URL',
     'MONGODB_DATABASE',
     'POSTGRES_URL',
@@ -87,6 +89,14 @@ describe('envValidationSchema', () => {
     expect(error).toBeDefined();
     expect(value.PRICE_WRITE_ENABLED).toBeUndefined();
     expect(error!.message).toContain('false');
+  });
+
+  it.each(['1', 'yes', ''])('MARKETPLACE_WEBHOOK_IP_CHECK отвергает %o', (value) => {
+    const { error } = envValidationSchema.validate({
+      ...VALID_ENV,
+      MARKETPLACE_WEBHOOK_IP_CHECK: value,
+    });
+    expect(error?.message).toContain('MARKETPLACE_WEBHOOK_IP_CHECK');
   });
 
   it.each(['1', '0', 'yes', 'True', ''])('PRICE_WRITE_ENABLED отвергает %o', (value) => {

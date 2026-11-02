@@ -58,11 +58,12 @@ export const STOCK_PUSH_SCHEDULE_LOG_KIND = 'stock-push-schedule';
  * бота (решение `stock_push_after_bot_price_list`) — бот пишет ЯМ сырыми
  * числами файла, а Ozon/WB без прохода ждали бы расписания.
  */
-export type TStockPushPassTrigger = 'schedule' | 'price-list';
+export type TStockPushPassTrigger = 'schedule' | 'price-list' | 'event';
 
 export const STOCK_PUSH_PASS_LABEL: Readonly<Record<TStockPushPassTrigger, string>> = {
   schedule: 'передача остатков по расписанию',
   'price-list': 'передача остатков после прайса из бота',
+  event: 'передача остатков после заказа на площадке',
 };
 
 /** Продавец подтверждал другие числа: за время между просмотром и записью что-то изменилось. */

@@ -268,8 +268,12 @@ filter: {since, to}, limit, cursor}`, ответ плоский `{postings, curs
   Ответ построчный: позиция без `updated: true` — не записана, её текст — в ошибках батча.
 - **Барьеры внутри `writeStocks`**: `STOCK_WRITE_ENABLED=false` — ни одного запроса; отрицательное или дробное
   количество — отмена целиком; склад перечитан и всё ещё тот же единственный — иначе `placement`.
+- **Несозданные карточки** (`statuses.is_created: false` в `/v3/product/info/list`, поле `IOzonProduct.created`)
+  `writeTarget` отдаёт в `unwritable` (`ozonUnwritable`) — в запись они не уходят: Ozon отвергает их
+  `PRODUCT_IS_NOT_CREATED`. Каталог не прочитался — отсева нет, запись как раньше. Доводы — README stock-push.
 - Форма ответа складов сверена живым ключом 28.10.2026 (`warehouse_id`, `name`, `is_rfbs`, `status`,
-  `warehouse_type: "fbs"`); запись `/v2/products/stocks` живым ключом не выполнялась (known-gaps).
+  `warehouse_type: "fbs"`). Запись `/v2/products/stocks` идёт на проде с 2.11.2026 (406937947: 360 из 370);
+  отказ позиции приходит как `{code, message}`, мы показываем «код: текст».
 
 ### Ozon: цены для «Установки цен» (M28, TASK-201)
 
@@ -286,3 +290,9 @@ filter: {since, to}, limit, cursor}`, ответ плоский `{postings, curs
 - **Барьеры внутри `writePrices`**: `PRICE_WRITE_ENABLED=false` — ни одного запроса; цена не целая или ≤ 0 —
   отмена целиком (`assertPrices`).
 - Формы ответов — по документации Ozon, живым ключом не сверены (known-gaps).
+
+- **Push-уведомления — `/v1/notification/*`** (решение `ozon_push_subscribe_via_api`, 2026-11-02,
+  `ozon-push.service.ts`). Чтение `list` / `push-type/list` — через `withOzonRetry`; запись `set` /
+  `update` — без повторов, как остатки (повтор вслепую дал бы второй адрес). Подписку ставит только кнопка продавца в
+  CRM и смена его адреса. У типа уведомления один адрес (`seller_endpoint`) — чужой не перехватываем. Приём самих
+  уведомлений — `src/modules/marketplace-events/` (README stock-push).

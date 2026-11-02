@@ -1,5 +1,7 @@
 import type { TMarketplace } from '../../../../shared/marketplace';
 import type { TCatalogLinkMarketplace } from '../../../stock-push/catalog-link.service';
+import type { TStockPushPassTrigger } from '../../../stock-push/stock-push.service';
+import type { TFeatureMap } from '../../bots/shared/features.domain';
 
 import { OnQueueFailed, Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
@@ -118,7 +120,7 @@ export interface IScheduledStockPushJob {
    * Поставлен прайсом из бота (решение `stock_push_after_bot_price_list`):
    * `stock_push_schedule` не требуется, итог уходит в чат `chatId` бота `botId`.
    */
-  trigger?: 'price-list';
+  trigger?: 'price-list' | 'event';
   botId?: number;
   chatId?: string;
 }
@@ -421,15 +423,27 @@ export class StockSyncProcessor {
    * `StockPushService.runScheduled`. Ошибку не пробрасываем: attempts=1, а
    * следующий проход через 30 минут пересчитает план заново.
    */
+  /** Права прохода по тому, кто его поставил: у прайса и уведомления площадки — свои. */
+  private async passFeatures(
+    trigger: TStockPushPassTrigger,
+    telegramUserId: string,
+  ): Promise<TFeatureMap | null> {
+    switch (trigger) {
+      case 'price-list':
+        return await this.pushSchedule.featuresAfterPriceList(telegramUserId);
+      case 'event':
+        return await this.pushSchedule.featuresAfterEvent(telegramUserId);
+      default:
+        return await this.pushSchedule.featuresFor(telegramUserId);
+    }
+  }
+
   private async runScheduled(data: IScheduledStockPushJob): Promise<void> {
     const { telegramUserId } = data;
-    const trigger = data.trigger === 'price-list' ? 'price-list' : 'schedule';
+    const trigger: TStockPushPassTrigger = data.trigger ?? 'schedule';
     const label = STOCK_PUSH_PASS_LABEL[trigger];
     try {
-      const features =
-        trigger === 'price-list'
-          ? await this.pushSchedule.featuresAfterPriceList(telegramUserId)
-          : await this.pushSchedule.featuresFor(telegramUserId);
+      const features = await this.passFeatures(trigger, telegramUserId);
       if (!features) {
         void this.actionLog.record({
           telegramUserId,

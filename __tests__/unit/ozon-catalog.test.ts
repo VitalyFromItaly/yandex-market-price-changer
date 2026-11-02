@@ -211,6 +211,16 @@ describe('разбор ответов каталога', () => {
         archived: false,
       },
     ]);
+    expect(
+      mapProductInfo({
+        items: [
+          { id: 1, statuses: { is_created: false } },
+          { id: 2, statuses: { is_created: true } },
+          { id: 3, statuses: { is_created: 'false' } },
+          { id: 4 },
+        ],
+      }).map((product) => product.created),
+    ).toEqual([false, true, undefined, undefined]);
     expect(mapStocks({ result: { items: [], cursor: 'z' } })).toEqual({ items: [], cursor: 'z' });
     expect(mapStocks(null)).toEqual({ items: [], cursor: '' });
   });

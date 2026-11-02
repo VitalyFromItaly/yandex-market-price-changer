@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 
 import { DatabaseModule } from '../../../database/database.module';
+import { OzonModule } from '../../ozon/ozon.module';
 import { StockPushModule } from '../../stock-push/stock-push.module';
 import { TelegramModule } from '../../telegram/telegram.module';
 import { CrmModule } from '../crm.module';
@@ -20,6 +21,7 @@ import { CrmStockPushKinds } from './crm-stock-push.kinds';
     CrmJobsModule,
     CrmModule,
     DatabaseModule,
+    OzonModule,
     StockPushModule,
     forwardRef(() => TelegramModule),
   ],

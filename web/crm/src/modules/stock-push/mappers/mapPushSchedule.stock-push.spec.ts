@@ -37,4 +37,36 @@ describe('mapPushSchedule', () => {
     expect(view.nextRunLabel).toBeNull();
     expect(view.lastRun).toBeNull();
   });
+
+  it('уведомления: незнакомая площадка отбрасывается, время по Москве', () => {
+    const view = mapPushSchedule(
+      raw({
+        events: {
+          about: 'Зачем',
+          unavailable: null,
+          targets: [
+            {
+              marketplace: 'ozon',
+              title: 'Ozon',
+              url: 'https://x',
+              steps: ['1'],
+              lastEventAt: '2026-11-02T10:00:00Z',
+            },
+            { marketplace: 'wb', title: 'WB', url: 'https://y', steps: [], lastEventAt: null },
+          ],
+        },
+      }),
+      now,
+    );
+    expect(view.events?.targets).toEqual([
+      {
+        marketplace: 'ozon',
+        title: 'Ozon',
+        url: 'https://x',
+        steps: ['1'],
+        lastEventLabel: '13:00',
+      },
+    ]);
+    expect(mapPushSchedule(raw(), now).events).toBeNull();
+  });
 });

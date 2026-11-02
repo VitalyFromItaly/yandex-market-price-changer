@@ -57,6 +57,7 @@ import { ErrorsModule } from './modules/errors/errors.module';
 import { FinanceAdminModule } from './modules/finance/finance-admin.module';
 import { HealthModule } from './modules/health/health.module';
 import { LogsModule } from './modules/logs/logs.module';
+import { MarketplaceEventsModule } from './modules/marketplace-events/marketplace-events.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
 import { ProductAdminModule } from './modules/products/product-admin.module';
 import { QueuesModule } from './modules/queues/queues.module';
@@ -134,6 +135,7 @@ import { YandexModule } from './modules/yandex/yandex.module';
     CrmInventoryModule,
     CrmOrderFeedModule,
     CrmStockPushModule,
+    MarketplaceEventsModule,
     CrmPriceSetModule,
     CrmSkuRatingsModule,
     CrmForecastModule,

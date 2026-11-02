@@ -64,6 +64,10 @@ export const FEATURES_WITHOUT_SECTION: Readonly<Partial<Record<TFeatureKey, stri
     'stock_push_interval_by_seller): блок «Синхронизация остатков» на «Прайсе» (ym-price-list) и в ' +
     '«Настройках» (ym-settings) при двух и больше площадках; GET/PUT crm/ym/stock-push/schedule ' +
     'требует stock_push_schedule. Итог прохода — ещё и на карточке «Очередей» админки.',
+  [FEATURE.STOCK_PUSH_EVENTS]:
+    'Модификатор блока «Синхронизация остатков» в «Настройках» (ym-settings): адреса уведомлений ' +
+    'ЯМ/Ozon и время последнего события (stock_push_on_marketplace_event). Сами уведомления — ' +
+    'POST /api/webhooks/{ym|ozon}/<секрет> без CRM-сессии; проход ставит StockPushScheduler.',
   [FEATURE.PRICE_SET_WRITE_YM]:
     'Запись в Маркет кнопкой «Записать цены» в плане «Установки цен» (ym-price-set, TASK-202); ' +
     'POST crm/ym/price-set/apply требует price_set и любую из price_set_write_*.',

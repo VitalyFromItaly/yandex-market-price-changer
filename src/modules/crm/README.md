@@ -455,6 +455,10 @@
   и итог последнего прохода из журнала (`StockPushScheduler.statusFor`). PUT `{interval}` — 400 `INVALID_INTERVAL`
   вне списка; запись и сверка — `StockPushScheduler.setInterval`. Карточка — на «Прайсе» (без выбора) и в
   «Настройках» (с выбором), видна при двух и больше подключённых площадках.
+- **Синхронизация по заказу** (`stock_push_events`, тот же контроллер): в ответе карточки — блок `events` (адреса,
+  шаги, последнее уведомление). `POST …/schedule/webhook-secret` — сменить адрес; `GET|POST …/schedule/ozon-subscription`
+  — статус и «Подключить» подписку Ozon через Seller API (живой вызов Ozon, отдельно от карточки; нужна ещё `ozon`,
+  без `PUBLIC_BASE_URL` — 409 `OZON_PUSH_UNAVAILABLE`). Логика — `OzonPushService`.
 
 - **План — kind `stock-push:plan`** (scope `account`), только чтение, тот же `StockPushService.plan`, что у
   скрипта `preview-stock-push`.

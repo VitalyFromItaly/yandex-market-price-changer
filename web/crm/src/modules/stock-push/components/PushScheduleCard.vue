@@ -12,6 +12,8 @@ import { onMounted } from 'vue';
 
 import { useStockPushStore } from '../store/store.stock-push';
 
+import PushEventsBlock from './PushEventsBlock.vue';
+
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -83,6 +85,8 @@ const settingsPath = sectionPath('ym', 'settings');
           />
           <p v-if="saveError" class="text-sm text-danger" role="alert">{{ saveError }}</p>
         </div>
+
+        <PushEventsBlock v-if="props.editable && schedule.events" :events="schedule.events" />
 
         <RouterLink v-else :to="settingsPath" class="text-sm text-link underline">
           Изменить частоту
