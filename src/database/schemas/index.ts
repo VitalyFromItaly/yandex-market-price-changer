@@ -17,6 +17,7 @@ export * from './cost-history.schema';
 export * from './product-card-issue.schema';
 export * from './marketplace-connection.schema';
 export * from './seller-notification-settings.schema';
+export * from './stock-push-settings.schema';
 export * from './seller-notification.schema';
 
 export interface IYandexMarketSchema {

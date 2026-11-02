@@ -449,6 +449,13 @@
 `FEATURES_WITHOUT_SECTION`): это запись в кабинет продавца, её открывает владелец по площадке.
 Правила и барьеры — `src/modules/stock-push/README.md`.
 
+- **Частота синхронизации — `GET/PUT /api/crm/ym/stock-push/schedule`** (`stock_push_interval_by_seller`):
+  `@RequireFeature(stock_push_schedule)`, уровень продавца (не магазина — проход пишет все площадки). Ответ —
+  частота, варианты, текст «зачем» (`STOCK_PUSH_SCHEDULE_ABOUT`, один на оба экрана), следующий запуск из задачи
+  и итог последнего прохода из журнала (`StockPushScheduler.statusFor`). PUT `{interval}` — 400 `INVALID_INTERVAL`
+  вне списка; запись и сверка — `StockPushScheduler.setInterval`. Карточка — на «Прайсе» (без выбора) и в
+  «Настройках» (с выбором), видна при двух и больше подключённых площадках.
+
 - **План — kind `stock-push:plan`** (scope `account`), только чтение, тот же `StockPushService.plan`, что у
   скрипта `preview-stock-push`.
 - **Запись — `POST /api/crm/ym/stock-push/apply {planHash}`** с `@RequireFeature(stock_push)` на классе и 403

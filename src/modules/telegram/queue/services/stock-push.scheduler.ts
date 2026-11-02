@@ -1,3 +1,4 @@
+import type { TPushInterval } from '../../../stock-push/stock-push-interval';
 import type { TFeatureMap } from '../../bots/shared/features.domain';
 import type { IScheduledStockPushJob } from '../processors/stock-sync.processor';
 
@@ -5,13 +6,16 @@ import { InjectQueue } from '@nestjs/bull';
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Queue } from 'bull';
 
+import { ActionLogService } from '../../../../database/services/action-log.service';
+import { StockPushSettingsService } from '../../../../database/services/stock-push-settings.service';
 import { UserAccessService } from '../../../../database/services/user-access.service';
 import { ErrorReporter } from '../../../errors/error-reporter.service';
+import { pushCronOf } from '../../../stock-push/stock-push-interval';
+import { STOCK_PUSH_SCHEDULE_LOG_KIND } from '../../../stock-push/stock-push.service';
 import { MOSCOW_TIME_ZONE } from '../../../yandex/reports/moscow-day';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
 
 import {
-  PUSH_CRON,
   parsePushJobId,
   pickPushUsers,
   pushAfterPriceListJobId,
@@ -27,9 +31,18 @@ export interface IPushScheduledJob {
   next: number;
 }
 
+/** Расписание продавца для CRM: частота, следующий запуск и итог последнего прохода. */
+export interface IPushScheduleStatus {
+  interval: TPushInterval;
+  /** null — задачи нет (выключено, закрыто или сверка ещё не прошла). */
+  nextRunAt: string | null;
+  lastRun: { at: string; status: string; action: string } | null;
+}
+
 /**
  * «Передача остатков» по расписанию (TASK-176) — по ОДНОЙ повторяемой задаче на
- * продавца в очереди `file-processing`, каждые 30 минут. Очередь общая с прайсом
+ * продавца в очереди `file-processing`, с частотой продавца (`StockPushSettings`,
+ * умолчание — каждые 30 минут; «выключена» — задачи нет). Очередь общая с прайсом
  * и кнопкой ради «одна запись остатков за раз», и обработчик у неё один
  * (`StockSyncProcessor`, `source: 'schedule'`), поэтому сверка узкая — только id
  * `stockpush-<цифры>`.
@@ -45,6 +58,8 @@ export class StockPushScheduler implements OnApplicationBootstrap {
     @InjectQueue(QUEUE_NAMES.FILE_PROCESSING) private readonly queue: Queue,
     private readonly access: UserAccessService,
     private readonly errors: ErrorReporter,
+    private readonly settings: StockPushSettingsService,
+    private readonly actionLog: ActionLogService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -74,17 +89,24 @@ export class StockPushScheduler implements OnApplicationBootstrap {
   }
 
   /**
-   * Свести задачи `stockpush-*` к `wanted()`: совпали id и cron — оставить,
-   * иначе снять; недостающие — завести. Прайс, кнопка и мёртвый конвейер той же
-   * очереди не трогаются.
+   * Свести задачи `stockpush-*` к `wanted()` с частотой продавца: совпали id и
+   * cron — оставить, иначе снять (сменили частоту — задача пересоздаётся);
+   * недостающие — завести, «выключена» — не заводить. Прайс, кнопка и мёртвый
+   * конвейер той же очереди не трогаются.
    */
   async reconcile(): Promise<{ added: number; removed: number }> {
-    const wanted = new Set([...(await this.wanted()).keys()].map(pushJobId));
+    const users = [...(await this.wanted()).keys()];
+    const intervals = await this.settings.intervalsFor(users);
+    const wanted = new Map<string, string>();
+    for (const id of users) {
+      const cron = pushCronOf(intervals.get(id));
+      if (cron) wanted.set(pushJobId(id), cron);
+    }
     let removed = 0;
 
     for (const job of await this.queue.getRepeatableJobs()) {
       if (!parsePushJobId(job.id)) continue;
-      if (job.id && wanted.has(job.id) && job.cron === PUSH_CRON) {
+      if (job.id && wanted.get(job.id) === job.cron) {
         wanted.delete(job.id);
         continue;
       }
@@ -92,23 +114,55 @@ export class StockPushScheduler implements OnApplicationBootstrap {
       removed += 1;
     }
 
-    for (const jobId of wanted) {
+    for (const [jobId, cron] of wanted) {
       const payload: IScheduledStockPushJob = {
         source: 'schedule',
         telegramUserId: parsePushJobId(jobId) ?? '',
       };
       await this.queue.add(JOB_TYPES.SYNC_STOCKS, payload, {
         jobId,
-        repeat: { cron: PUSH_CRON, tz: MOSCOW_TIME_ZONE },
+        repeat: { cron, tz: MOSCOW_TIME_ZONE },
         removeOnComplete: 20,
         removeOnFail: 50,
         // Одна попытка (умолчание очереди — 2): повтор записи остатков жёг бы
-        // квоты, а следующий проход через 30 минут всё равно пересчитает план.
+        // квоты, а следующий проход всё равно пересчитает план.
         attempts: 1,
       });
     }
 
     return { added: wanted.size, removed };
+  }
+
+  /**
+   * Частота продавца из CRM: записать и сразу сверить — новая частота действует
+   * с ближайшего слота, без рестарта.
+   */
+  async setInterval(telegramUserId: string, interval: TPushInterval): Promise<IPushScheduleStatus> {
+    await this.settings.setInterval(telegramUserId, interval);
+    await this.refresh();
+    return await this.statusFor(telegramUserId);
+  }
+
+  /** Для экрана CRM: следующий запуск — из задачи продавца, итог — последняя строка журнала прохода. */
+  async statusFor(telegramUserId: string): Promise<IPushScheduleStatus> {
+    const [interval, jobs, runs] = await Promise.all([
+      this.settings.intervalOf(telegramUserId),
+      this.jobs(),
+      this.actionLog.list({ telegramUserId, kind: STOCK_PUSH_SCHEDULE_LOG_KIND, limit: 1 }),
+    ]);
+    const job = jobs.find((row) => row.telegramUserId === telegramUserId);
+    const [last] = runs;
+    return {
+      interval,
+      nextRunAt: job?.next ? new Date(job.next).toISOString() : null,
+      lastRun: last
+        ? {
+            at: (last.createdAt ?? new Date()).toISOString(),
+            status: last.status,
+            action: last.action,
+          }
+        : null,
+    };
   }
 
   /**

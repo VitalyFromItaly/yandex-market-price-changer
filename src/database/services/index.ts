@@ -15,6 +15,7 @@ export { CostHistoryService } from './cost-history.service';
 export { ProductCardIssueService } from './product-card-issue.service';
 export { MarketplaceConnectionService } from './marketplace-connection.service';
 export { SellerNotificationSettingsService } from './seller-notification-settings.service';
+export { StockPushSettingsService } from './stock-push-settings.service';
 export { SellerNotificationService } from './seller-notification.service';
 export type { IAccessIdentity, IAdminIdentity, TDraftField } from './user-access.service';
 export type { IPurchasePriceRow } from './purchase-price.service';

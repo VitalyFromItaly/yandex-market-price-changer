@@ -26,6 +26,7 @@ import {
   SellerNotificationSettingsSchema,
 } from './schemas/seller-notification-settings.schema';
 import { SellerNotification, SellerNotificationSchema } from './schemas/seller-notification.schema';
+import { StockPushSettings, StockPushSettingsSchema } from './schemas/stock-push-settings.schema';
 import { TelegramApiBucket, TelegramApiBucketSchema } from './schemas/telegram-api-bucket.schema';
 import { UserAccess, UserAccessSchema } from './schemas/user-access.schema';
 import { User, UserSchema } from './schemas/user.schema';
@@ -45,6 +46,7 @@ import { PurchasePriceService } from './services/purchase-price.service';
 import { ReportScheduleService } from './services/report-schedule.service';
 import { SellerNotificationSettingsService } from './services/seller-notification-settings.service';
 import { SellerNotificationService } from './services/seller-notification.service';
+import { StockPushSettingsService } from './services/stock-push-settings.service';
 import { TelegramApiBucketService } from './services/telegram-api-bucket.service';
 import { UserAccessService } from './services/user-access.service';
 import { YandexMarketService } from './services/yandex-market.service';
@@ -97,6 +99,7 @@ import { YandexMarketService } from './services/yandex-market.service';
       { name: ProductCardIssue.name, schema: ProductCardIssueSchema },
       { name: MarketplaceConnection.name, schema: MarketplaceConnectionSchema },
       { name: SellerNotificationSettings.name, schema: SellerNotificationSettingsSchema },
+      { name: StockPushSettings.name, schema: StockPushSettingsSchema },
       { name: SellerNotification.name, schema: SellerNotificationSchema },
     ]),
   ],
@@ -119,6 +122,7 @@ import { YandexMarketService } from './services/yandex-market.service';
     ProductCardIssueService,
     MarketplaceConnectionService,
     SellerNotificationSettingsService,
+    StockPushSettingsService,
     SellerNotificationService,
   ],
   exports: [
@@ -141,6 +145,7 @@ import { YandexMarketService } from './services/yandex-market.service';
     ProductCardIssueService,
     MarketplaceConnectionService,
     SellerNotificationSettingsService,
+    StockPushSettingsService,
     SellerNotificationService,
   ],
 })

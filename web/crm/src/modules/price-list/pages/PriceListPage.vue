@@ -26,6 +26,8 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import PushScheduleCard from '@/modules/stock-push/components/PushScheduleCard.vue';
+import { usePushScheduleVisible } from '@/modules/stock-push/composables/usePushScheduleVisible.stock-push';
 import { useDebouncedSearch } from '@/shared/composables';
 import { useStoreKey } from '@/shared/composables';
 
@@ -57,6 +59,7 @@ const { text: searchText } = useDebouncedSearch(pricesQuery.value.q, (q) => {
 
 const onUploadTab = computed(() => active.value?.key === PRICE_LIST_TAB.UPLOAD);
 const showPlan = computed(() => stockPushOpen.value && onUploadTab.value);
+const scheduleVisible = usePushScheduleVisible();
 
 // Данные вкладки — при её открытии, не заранее; план — минуты чтения площадок.
 watch(
@@ -127,6 +130,8 @@ function queueText(ahead: number): string | null {
   />
 
   <div v-else-if="onUploadTab" class="flex flex-col gap-4">
+    <PushScheduleCard v-if="showPlan && scheduleVisible" />
+
     <UploadForm
       v-model:dry-run="form.dryRun.value"
       :file="form.file.value"

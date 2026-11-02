@@ -463,6 +463,34 @@ export function stockPushBlockTextOf(
         'запись остановлена, проверьте колонку количества';
 }
 
+/** Сколько отказов батчей показывать в алерте и журнале и до какой длины обрезать текст. */
+export const STOCK_PUSH_ERRORS_SHOWN = 3;
+export const STOCK_PUSH_ERRORS_TEXT_MAX = 300;
+
+/**
+ * Причины отказа записи словами — одна для алерта и журнала. Раньше там было только
+ * «N батч(ей) отвергнуто», и почему площадка не приняла остатки, не знал никто
+ * (прод 406937947, Ozon «ABW TOP»). Батч Ozon несёт причины по позициям — текст
+ * обрезается, полный — в результате записи.
+ */
+export function stockPushWriteErrorsTextOf(
+  errors: readonly { batch: number; message: string }[],
+): string {
+  const text = errors
+    .slice(0, STOCK_PUSH_ERRORS_SHOWN)
+    .map((error) => `батч ${error.batch}: ${error.message}`)
+    .join(' | ');
+  const more =
+    errors.length > STOCK_PUSH_ERRORS_SHOWN
+      ? ` | и ещё ${errors.length - STOCK_PUSH_ERRORS_SHOWN}`
+      : '';
+  const cut =
+    text.length > STOCK_PUSH_ERRORS_TEXT_MAX
+      ? `${text.slice(0, STOCK_PUSH_ERRORS_TEXT_MAX - 1)}…`
+      : text;
+  return cut + more;
+}
+
 /** Какое правило обнуления сработало; null — порог не превышен. */
 type TStockPushZeroing = 'sales' | 'all-zero';
 

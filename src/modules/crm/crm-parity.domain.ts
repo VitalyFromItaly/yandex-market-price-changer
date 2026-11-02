@@ -60,9 +60,10 @@ export const FEATURES_WITHOUT_SECTION: Readonly<Partial<Record<TFeatureKey, stri
     'Запись в WB кнопкой «Записать остатки» в плане на «Прайсе» (TASK-175); без фичи цель ' +
     'WB в плане «только просмотр», а apply её не пишет.',
   [FEATURE.STOCK_PUSH_SCHEDULE]:
-    'Фоновая запись плана «Передачи остатков» (план — на «Прайсе») каждые 30 минут (TASK-176): ' +
-    'экрана нет ни в одном ' +
-    'канале, итог прохода — в журнале и на карточке «Очередей» админки.',
+    'Фоновая запись плана «Передачи остатков» (план — на «Прайсе») с частотой продавца (TASK-176, ' +
+    'stock_push_interval_by_seller): блок «Синхронизация остатков» на «Прайсе» (ym-price-list) и в ' +
+    '«Настройках» (ym-settings) при двух и больше площадках; GET/PUT crm/ym/stock-push/schedule ' +
+    'требует stock_push_schedule. Итог прохода — ещё и на карточке «Очередей» админки.',
   [FEATURE.PRICE_SET_WRITE_YM]:
     'Запись в Маркет кнопкой «Записать цены» в плане «Установки цен» (ym-price-set, TASK-202); ' +
     'POST crm/ym/price-set/apply требует price_set и любую из price_set_write_*.',

@@ -15,8 +15,10 @@ import {
 import {
   STOCK_PUSH_MAX_ZEROED,
   planHashOf,
+  STOCK_PUSH_ERRORS_TEXT_MAX,
   stockPushBlockTextOf,
   stockPushPlanOf,
+  stockPushWriteErrorsTextOf,
 } from '../../src/modules/finance/stock-push';
 import { formatPushPassReport } from '../../src/modules/stock-push/stock-push-report';
 import {
@@ -184,6 +186,21 @@ describe('stockPushPlanOf — формула', () => {
       }),
     );
     expect(plan.targets[0]).toMatchObject({ updates: [], unchanged: 1, notListed: 1 });
+  });
+});
+
+describe('stockPushWriteErrorsTextOf — причина отказа в алерте и журнале', () => {
+  it('первые три батча и счёт остальных', () => {
+    const errors = [1, 2, 3, 4, 5].map((batch) => ({ batch, message: `m${batch}` }));
+    expect(stockPushWriteErrorsTextOf(errors)).toBe(
+      'батч 1: m1 | батч 2: m2 | батч 3: m3 | и ещё 2',
+    );
+  });
+
+  it('длинный текст Ozon по позициям обрезается', () => {
+    const text = stockPushWriteErrorsTextOf([{ batch: 1, message: 'x'.repeat(1000) }]);
+    expect(text).toHaveLength(STOCK_PUSH_ERRORS_TEXT_MAX);
+    expect(text.endsWith('…')).toBe(true);
   });
 });
 

@@ -1,10 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
 
+import {
+  parseInterval,
+  toCrmPushSchedule,
+} from '../../src/modules/crm/stock-push/crm-stock-push.domain';
 import { blockAlerts } from '../../src/modules/stock-push/stock-push-alerts';
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
 import { JOB_TYPES } from '../../src/modules/telegram/index';
 import {
-  PUSH_CRON,
+  PUSH_CRON_BY_INTERVAL,
+  isPushInterval,
+  pushCronOf,
+} from '../../src/modules/stock-push/stock-push-interval';
+import {
   parsePushJobId,
   pickPushUsers,
   pushAfterPriceListJobId,
@@ -21,6 +29,24 @@ import { bullRepeatKey, fakeRepeatableQueue } from '../helpers/fake-repeatable-q
  * состояния». Сам проход — в stock-push.test.ts.
  */
 
+const PUSH_CRON = PUSH_CRON_BY_INTERVAL['30m'];
+
+/** Настройки частоты: без документа — умолчание (30 минут). */
+function settingsOf(intervals: Record<string, string> = {}) {
+  return {
+    intervalsFor: vi.fn(async (ids: string[]) => {
+      const map = new Map<string, string>();
+      for (const id of ids) if (intervals[id]) map.set(id, intervals[id]);
+      return map;
+    }),
+    intervalOf: vi.fn(async (id: string) => intervals[id] ?? '30m'),
+    setInterval: vi.fn(async (id: string, interval: string) => {
+      intervals[id] = interval;
+      return interval;
+    }),
+  };
+}
+
 const OPEN = {
   [FEATURE.STOCK_PUSH]: true,
   [FEATURE.STOCK_PUSH_SCHEDULE]: true,
@@ -29,7 +55,7 @@ const OPEN = {
 
 describe('правила расписания', () => {
   it('каждые 30 минут; id без двоеточий и разбирается обратно, разовый — нет', () => {
-    expect(PUSH_CRON).toBe('*/30 * * * *');
+    expect(pushCronOf(undefined)).toBe('*/30 * * * *');
     expect(pushJobId('42')).toBe('stockpush-42');
     expect(pushJobId('42')).not.toContain(':');
     expect(pushNowJobId('42')).not.toContain(':');
@@ -82,7 +108,11 @@ describe('правила расписания', () => {
         // Без записи хоть одной площадки — проходу нечего писать.
         { telegramUserId: '2', status: 'approved', features: { [FEATURE.STOCK_PUSH]: true } },
         // Без плана запись не открыта (`requires: stock_push`).
-        { telegramUserId: '3', status: 'approved', features: { [FEATURE.STOCK_PUSH_WRITE_YM]: true } },
+        {
+          telegramUserId: '3',
+          status: 'approved',
+          features: { [FEATURE.STOCK_PUSH_WRITE_YM]: true },
+        },
         { telegramUserId: '4', status: 'blocked', features: noSchedule },
       ],
       { requireSchedule: false },
@@ -129,8 +159,49 @@ describe('blockAlerts — алерт при смене состояния', () =
   });
 });
 
+describe('частота от продавца (stock_push_interval_by_seller)', () => {
+  it('cron на каждую частоту, «выключена» — без задачи, мусор — умолчание', () => {
+    expect(pushCronOf('1h')).toBe('0 * * * *');
+    expect(pushCronOf('3h')).toBe('0 */3 * * *');
+    expect(pushCronOf('6h')).toBe('0 */6 * * *');
+    expect(pushCronOf('off')).toBeNull();
+    expect(pushCronOf('15m')).toBe('*/30 * * * *');
+    expect(isPushInterval('15m')).toBe(false);
+    expect(isPushInterval('off')).toBe(true);
+  });
+});
+
+describe('CRM: синхронизация остатков — доставка', () => {
+  it('частота проверяется по закрытому списку', () => {
+    expect(parseInterval('3h')).toBe('3h');
+    expect(parseInterval('15m')).toBeNull();
+    expect(parseInterval(undefined)).toBeNull();
+  });
+
+  it('вид: варианты по порядку, итог без вида прохода, «выключена» — без следующего', () => {
+    const view = toCrmPushSchedule({
+      interval: 'off',
+      nextRunAt: '2026-11-02T12:00:00.000Z',
+      lastRun: {
+        at: '2026-11-02T11:30:00.000Z',
+        status: 'error',
+        action: 'передача остатков по расписанию: записано 3 из 4; Ozon «Дом»: отвергнуто батчей 1',
+      },
+    });
+    expect(view.options.map((o) => o.value)).toEqual(['30m', '1h', '3h', '6h', 'off']);
+    expect(view.intervalLabel).toBe('выключена');
+    expect(view.nextRunAt).toBeNull();
+    expect(view.lastRun).toEqual({
+      at: '2026-11-02T11:30:00.000Z',
+      ok: false,
+      summary: 'записано 3 из 4; Ozon «Дом»: отвергнуто батчей 1',
+    });
+    expect(view.about.length).toBeGreaterThan(0);
+  });
+});
+
 describe('StockPushScheduler — сверка расписания', () => {
-  function scheduler(initial: string[] = []) {
+  function scheduler(initial: string[] = [], intervals: Record<string, string> = {}) {
     const queue = fakeRepeatableQueue(initial, JOB_TYPES.SYNC_STOCKS);
     const accounts = [
       { telegramUserId: '1', status: 'approved', features: OPEN },
@@ -140,8 +211,24 @@ describe('StockPushScheduler — сверка расписания', () => {
       list: vi.fn(async () => accounts),
       findByLogin: vi.fn(async (id: string) => accounts.filter((a) => a.telegramUserId === id)),
     };
-    const s = new StockPushScheduler(queue as never, access as never, { report: vi.fn() } as never);
-    return { s, queue };
+    const settings = settingsOf(intervals);
+    const actionLog = {
+      list: vi.fn(async () => [
+        {
+          createdAt: new Date('2026-11-02T11:30:00Z'),
+          status: 'ok',
+          action: 'передача остатков по расписанию: записано 3 из 3',
+        },
+      ]),
+    };
+    const s = new StockPushScheduler(
+      queue as never,
+      access as never,
+      { report: vi.fn() } as never,
+      settings as never,
+      actionLog as never,
+    );
+    return { s, queue, settings, actionLog };
   }
 
   it('повторная сверка (рестарт) не плодит дубль; лишняя снимается, чужие в очереди — нет', async () => {
@@ -170,6 +257,41 @@ describe('StockPushScheduler — сверка расписания', () => {
       jobId: 'stockpush-1',
       repeat: { cron: PUSH_CRON, tz: MOSCOW_TIME_ZONE },
       attempts: 1,
+    });
+  });
+
+  it('сменили частоту — задача пересоздаётся с новым cron; «выключена» — снимается', async () => {
+    const { s } = scheduler();
+    await s.reconcile();
+
+    await s.setInterval('1', '3h');
+    expect(await s.jobs()).toEqual([
+      expect.objectContaining({ telegramUserId: '1', cron: '0 */3 * * *' }),
+    ]);
+
+    const status = await s.setInterval('1', 'off');
+    expect(await s.jobs()).toEqual([]);
+    expect(status).toEqual({
+      interval: 'off',
+      nextRunAt: null,
+      lastRun: {
+        at: '2026-11-02T11:30:00.000Z',
+        status: 'ok',
+        action: 'передача остатков по расписанию: записано 3 из 3',
+      },
+    });
+  });
+
+  it('statusFor — следующий запуск из задачи, итог — строка журнала продавца', async () => {
+    const { s, actionLog } = scheduler();
+    await s.reconcile();
+    const status = await s.statusFor('1');
+    expect(status.interval).toBe('30m');
+    expect(status.nextRunAt).not.toBeNull();
+    expect(actionLog.list).toHaveBeenCalledWith({
+      telegramUserId: '1',
+      kind: 'stock-push-schedule',
+      limit: 1,
     });
   });
 

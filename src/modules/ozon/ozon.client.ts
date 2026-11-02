@@ -726,7 +726,12 @@ export function mapStocksWrite(raw: unknown): IOzonStockWriteResult[] {
     .filter((item): item is TRaw => !!item && typeof item === 'object')
     .map((item) => {
       const errors = (Array.isArray(item.errors) ? (item.errors as TRaw[]) : [])
-        .map((error) => textOf(error?.message) || textOf(error?.code))
+        .map((error) => {
+          // Код не теряем: по нему ищется причина в документации Ozon, текст бывает общим.
+          const code = textOf(error?.code);
+          const message = textOf(error?.message);
+          return code && message && code !== message ? `${code}: ${message}` : message || code;
+        })
         .filter((text) => text.length > 0);
       const updated = item.updated === true;
       return {

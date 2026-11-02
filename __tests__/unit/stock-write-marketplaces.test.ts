@@ -184,7 +184,7 @@ describe('OzonSellerClient.updateStocks — запись без повторов
     ]);
     expect(rows).toEqual([
       { offerId: 'A', updated: true, message: undefined },
-      { offerId: 'B', updated: false, message: 'нет товара' },
+      { offerId: 'B', updated: false, message: 'NOT_FOUND: нет товара' },
     ]);
   });
 
@@ -201,6 +201,20 @@ describe('OzonSellerClient.updateStocks — запись без повторов
     );
     expect(calls).toHaveLength(1);
     expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('код ошибки не теряется рядом с текстом', () => {
+    expect(
+      mapStocksWrite({
+        result: [
+          { offer_id: 'A', updated: false, errors: [{ code: 'TOO_MANY_REQUESTS' }] },
+          { offer_id: 'B', updated: false, errors: [{ message: 'нет склада' }] },
+        ],
+      }),
+    ).toEqual([
+      { offerId: 'A', updated: false, message: 'TOO_MANY_REQUESTS' },
+      { offerId: 'B', updated: false, message: 'нет склада' },
+    ]);
   });
 
   it('без updated: true — не записано', () => {

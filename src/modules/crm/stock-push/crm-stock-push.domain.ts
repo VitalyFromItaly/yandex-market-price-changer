@@ -1,6 +1,8 @@
 import type { TMarketplace } from '../../../shared/marketplace';
 import type { IStockPushPlan, TStockPushBlock, TStockPushSkip } from '../../finance/stock-push';
+import type { TPushInterval } from '../../stock-push/stock-push-interval';
 import type { IStockPushPlanResult } from '../../stock-push/stock-push.service';
+import type { IPushScheduleStatus } from '../../telegram/queue/services/stock-push.scheduler';
 
 import { MARKETPLACES, MARKETPLACE_LABEL } from '../../../shared/marketplace';
 import {
@@ -9,6 +11,7 @@ import {
   STOCK_PUSH_SKIP_TEXT,
   stockPushBlockTextOf,
 } from '../../finance/stock-push';
+import { PUSH_INTERVAL_LABEL, isPushInterval } from '../../stock-push/stock-push-interval';
 
 /**
  * «Передача остатков» CRM (TASK-143) — доставка. План считает лист
@@ -184,4 +187,60 @@ export function parseMarketplaces(value: unknown): TMarketplace[] | null | undef
 /** Отпечаток плана — sha256 hex: остальное до процессора не доходит. */
 export function parsePlanHash(value: unknown): string | null {
   return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value) ? value : null;
+}
+
+export const INVALID_INTERVAL = 'INVALID_INTERVAL';
+export const INVALID_INTERVAL_TEXT = 'Неизвестная частота синхронизации.';
+
+/**
+ * Зачем синхронизация — продавцу словами, один текст на «Прайс» и «Настройки»
+ * (`stock_push_interval_by_seller`). Блок виден при двух и больше площадках:
+ * с одной площадкой чужих продаж нет и вычитать нечего.
+ */
+export const STOCK_PUSH_SCHEDULE_ABOUT: readonly string[] = [
+  'Товар лежит на вашем складе один, а продаётся сразу на нескольких площадках. Каждая площадка ' +
+    'уменьшает остаток только при своём заказе и не знает о чужих: если товар раскупили на ' +
+    'Wildberries, на Маркете и Ozon он ещё «в наличии». Придут заказы, которые нечем выполнить, ' +
+    'а за отмены площадки штрафуют и снижают рейтинг.',
+  'Поэтому мы регулярно пересчитываем остаток: количество из последнего прайса минус продажи со ' +
+    'своего склада на всех площадках с дня загрузки прайса — и записываем это число на каждую ' +
+    'площадку. Чем чаще синхронизация, тем меньше времени товар, которого уже нет, висит в продаже.',
+  'Склады площадок (FBY, FBO, FBW) не трогаем. Если площадку не удалось прочитать, запись на неё ' +
+    'в этот раз пропускается — следующая синхронизация попробует снова.',
+];
+
+export interface ICrmPushScheduleView {
+  interval: TPushInterval;
+  intervalLabel: string;
+  /** Варианты в порядке показа. */
+  options: { value: TPushInterval; label: string }[];
+  about: readonly string[];
+  nextRunAt: string | null;
+  lastRun: { at: string; ok: boolean; summary: string } | null;
+}
+
+/** Порядок вариантов — от частого к редкому, «выключена» последней. */
+const PUSH_INTERVAL_ORDER: readonly TPushInterval[] = ['30m', '1h', '3h', '6h', 'off'];
+
+export function parseInterval(value: unknown): TPushInterval | null {
+  return isPushInterval(value) ? value : null;
+}
+
+export function toCrmPushSchedule(status: IPushScheduleStatus): ICrmPushScheduleView {
+  return {
+    interval: status.interval,
+    intervalLabel: PUSH_INTERVAL_LABEL[status.interval],
+    options: PUSH_INTERVAL_ORDER.map((value) => ({ value, label: PUSH_INTERVAL_LABEL[value] })),
+    about: STOCK_PUSH_SCHEDULE_ABOUT,
+    nextRunAt: status.interval === 'off' ? null : status.nextRunAt,
+    lastRun: status.lastRun
+      ? {
+          at: status.lastRun.at,
+          ok: status.lastRun.status === 'ok',
+          // Строка журнала начинается с вида прохода («передача остатков по расписанию: …») —
+          // продавцу нужен итог после двоеточия.
+          summary: status.lastRun.action.replace(/^[^:]*:\s*/, ''),
+        }
+      : null,
+  };
 }

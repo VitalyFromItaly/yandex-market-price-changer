@@ -5,6 +5,7 @@ import { UserSchema } from '../src/database/schemas/user.schema';
 import { UserAccessSchema } from '../src/database/schemas/user-access.schema';
 import { ReportScheduleSchema } from '../src/database/schemas/report-schedule.schema';
 import { SellerNotificationSettingsSchema } from '../src/database/schemas/seller-notification-settings.schema';
+import { StockPushSettingsSchema } from '../src/database/schemas/stock-push-settings.schema';
 import { SellerNotificationSchema } from '../src/database/schemas/seller-notification.schema';
 import { PurchasePriceSchema } from '../src/database/schemas/purchase-price.schema';
 import { YandexMarketSchema } from '../src/database/schemas/yandex-market.schema';
@@ -58,6 +59,7 @@ const MODELS = [
   { name: 'ProductCardIssue', schema: ProductCardIssueSchema },
   { name: 'MarketplaceConnection', schema: MarketplaceConnectionSchema },
   { name: 'SellerNotificationSettings', schema: SellerNotificationSettingsSchema },
+  { name: 'StockPushSettings', schema: StockPushSettingsSchema },
   { name: 'SellerNotification', schema: SellerNotificationSchema },
 ];
 

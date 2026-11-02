@@ -30,6 +30,7 @@ import { ErrorReporter } from '../errors/error-reporter.service';
 import {
   STOCK_PUSH_ORDERS_WINDOW_DAYS,
   stockPushBlockTextOf,
+  stockPushWriteErrorsTextOf,
   stockPushPlanOf,
 } from '../finance/stock-push';
 import { MarketplaceNotConnectedError } from '../marketplaces/marketplace-adapter';
@@ -331,7 +332,8 @@ export class StockPushService {
         void this.errors.report({
           error: new Error(
             `Передача остатков: ${outcome.errors.length} батч(ей) отвергнуто, ` +
-              `${MARKETPLACE_LABEL[target.marketplace]} «${target.name}»`,
+              `${MARKETPLACE_LABEL[target.marketplace]} «${target.name}» — ` +
+              stockPushWriteErrorsTextOf(outcome.errors),
           ),
           source: ERROR_SOURCE[target.marketplace],
           context: 'stock-push:write',
@@ -583,7 +585,11 @@ export class StockPushService {
       const label = `${MARKETPLACE_LABEL[w.marketplace]} «${w.name}»`;
       if (w.skipReason)
         parts.push(`${label}: ${WRITE_SKIP_TEXT[w.skipReason]}, позиций ${w.requested}`);
-      if (w.errors.length) parts.push(`${label}: отвергнуто батчей ${w.errors.length}`);
+      if (w.errors.length) {
+        parts.push(
+          `${label}: отвергнуто батчей ${w.errors.length} (${stockPushWriteErrorsTextOf(w.errors)})`,
+        );
+      }
     }
     for (const w of writes) {
       if (w.skipped.length) {
@@ -625,6 +631,9 @@ export class StockPushService {
         (outcome.skipped.length ? `, не отправлено ${outcome.skipped.length}` : ''),
       status: outcome.errors.length || outcome.skipReason ? 'error' : 'ok',
       ...(outcome.skipReason ? { error: `запись пропущена: ${outcome.skipReason}` } : {}),
+      ...(!outcome.skipReason && outcome.errors.length
+        ? { error: stockPushWriteErrorsTextOf(outcome.errors) }
+        : {}),
       context: `stock-push:${target.key}`,
       details: {
         marketplace: target.marketplace,

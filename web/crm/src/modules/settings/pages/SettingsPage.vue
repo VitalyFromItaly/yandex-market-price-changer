@@ -16,9 +16,12 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import PushScheduleCard from '@/modules/stock-push/components/PushScheduleCard.vue';
+import { usePushScheduleVisible } from '@/modules/stock-push/composables/usePushScheduleVisible.stock-push';
 
 const store = useSettingsStore();
 const { settings, error } = storeToRefs(store);
+const scheduleVisible = usePushScheduleVisible();
 
 onMounted(() => {
   void store.load();
@@ -44,5 +47,9 @@ onMounted(() => {
   <div v-else class="flex max-w-3xl flex-col gap-6">
     <ProfitSettingsForm :settings="settings" />
     <PromotionCard v-if="settings.promotion" :promotion="settings.promotion" />
+  </div>
+
+  <div v-if="scheduleVisible" class="mt-6 max-w-3xl">
+    <PushScheduleCard editable />
   </div>
 </template>

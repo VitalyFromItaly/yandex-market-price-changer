@@ -1,3 +1,5 @@
+import type { WbCardsCache } from './wb-cards-cache';
+
 import { Logger } from '@nestjs/common';
 import axios, { type AxiosError, type AxiosInstance } from 'axios';
 
@@ -252,6 +254,11 @@ export interface IWbClientOptions {
    * своя у клиента (выдержка только между вызовами этого экземпляра).
    */
   pacer?: WbStatisticsPacer;
+  /**
+   * Каталог карточек по токену (`wb_cards_cache_per_token`). Фабрика отдаёт общий на
+   * процесс; без него каждый `listCards()` — полный обход.
+   */
+  cardsCache?: WbCardsCache<IWbCard[]>;
 }
 
 export interface IWbSellerInfo {
@@ -382,6 +389,7 @@ export class WbClient {
   private readonly retry: IRetryOptions;
   private readonly sleep: TSleep;
   private readonly pacer: WbStatisticsPacer;
+  private readonly cardsCache?: WbCardsCache<IWbCard[]>;
 
   constructor(
     private readonly token: string,
@@ -390,6 +398,7 @@ export class WbClient {
     this.retry = options.retry ?? WB_RETRY;
     this.sleep = options.sleep ?? realSleep;
     this.pacer = options.pacer ?? new WbStatisticsPacer();
+    this.cardsCache = options.cardsCache;
 
     this.http = axios.create({
       timeout: options.timeoutMs ?? WB_TIMEOUT_MS,
@@ -417,9 +426,16 @@ export class WbClient {
 
   /**
    * Все карточки продавца — курсор `{updatedAt, nmID}` до неполной страницы.
-   * Повтор курсора останавливает обход: на нём он ходил бы по кругу.
+   * Повтор курсора останавливает обход: на нём он ходил бы по кругу. С кэшем фабрики
+   * обход один на токен в пределах `WB_CARDS_TTL_MS`; копия — чтобы вызывающий не
+   * менял закэшированный массив.
    */
   public async listCards(): Promise<IWbCard[]> {
+    if (!this.cardsCache) return await this.loadCards();
+    return [...(await this.cardsCache.get(this.token, () => this.loadCards()))];
+  }
+
+  private async loadCards(): Promise<IWbCard[]> {
     const cards: IWbCard[] = [];
     let cursor: { updatedAt?: string; nmID?: number } = {};
     for (let page = 0; page < WB_MAX_PAGES; page += 1) {
