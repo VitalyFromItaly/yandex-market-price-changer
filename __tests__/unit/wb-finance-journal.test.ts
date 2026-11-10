@@ -188,7 +188,7 @@ describe('wbRowParts — тест на каждый тип строки', () => 
 
   it('все известные типы покрыты тестами выше', () => {
     // Список пиннится: новый тип без строки в it.each заставит дописать тест.
-    expect(WB_KNOWN_OPERS).toHaveLength(26);
+    expect(WB_KNOWN_OPERS).toHaveLength(29);
   });
 
   it('незнакомый тип — вся сумма одной частью unknown', () => {

@@ -41,6 +41,10 @@ const BY_OPER: ReadonlyMap<string, TFinanceArticle> = new Map<string, TFinanceAr
   ['Коррекция логистики', 'delivery_to_buyer'],
   ['Возмещение издержек по перевозке', 'delivery_to_buyer'],
   ['Возмещение издержек по перевозке/по складским операциям с товаром', 'delivery_to_buyer'],
+  // Живой импорт 11-2026: типы, которых не было в перечне по памяти.
+  ['Доставка', 'delivery_to_buyer'],
+  ['Возмещение издержек по перемещению и операционной обработке товара', 'delivery_to_buyer'],
+  ['Услуга по обработке Товара', 'processing'],
   ['Хранение', 'storage'],
   ['Штраф', 'penalties'],
   ['Штрафы', 'penalties'],
