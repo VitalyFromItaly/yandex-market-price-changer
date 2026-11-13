@@ -20,7 +20,7 @@ const BADGE: Record<SyncTone, 'ok' | 'danger' | 'warn' | 'outline'> = {
 </script>
 
 <template>
-  <Card class="flex flex-col gap-3">
+  <Card class="flex flex-col gap-3 p-4">
     <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
       <h3 class="text-base font-semibold">{{ row.label }}</h3>
       <span class="text-sm text-muted-foreground">{{ row.asOfLabel }}</span>

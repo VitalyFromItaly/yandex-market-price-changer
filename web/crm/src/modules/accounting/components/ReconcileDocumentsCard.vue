@@ -22,7 +22,7 @@ defineProps<{ rows: ReconcileDocumentRow[]; title: string; empty: string }>();
 <template>
   <section class="flex flex-col gap-2">
     <h3 class="text-sm font-semibold">{{ title }}</h3>
-    <Card v-if="!rows.length" class="text-sm text-muted-foreground">{{ empty }}</Card>
+    <Card v-if="!rows.length" class="p-4 text-sm text-muted-foreground">{{ empty }}</Card>
     <Card v-else class="p-0">
       <Table>
         <TableHeader>

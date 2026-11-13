@@ -31,7 +31,7 @@ defineProps<{
       <h3 class="text-sm font-semibold">Без заказа — уровень магазина</h3>
       <span class="text-sm text-muted-foreground">{{ summary }}</span>
     </div>
-    <Card v-if="!rows.length" class="text-sm text-muted-foreground">
+    <Card v-if="!rows.length" class="p-4 text-sm text-muted-foreground">
       Операций без номера заказа за месяц нет.
     </Card>
     <Card v-else class="p-0">

@@ -11,6 +11,23 @@ export const ACCOUNTING_ROUTE_NAME = 'ym-accounting';
 /** Раздел открыт зонтиком; подфичи без него ничего не открывают (`requires`). */
 export const ACCOUNTING_FEATURE = 'fin_accounting';
 
+/** Вкладка раздела: ключ — в URL (`/ym/accounting/:tab?`). */
+export type AccountingTabKey =
+  | 'dashboard'
+  | 'orders'
+  | 'returns'
+  | 'reconcile'
+  | 'costs'
+  | 'operations'
+  | 'sync';
+
+export interface AccountingTabMeta {
+  key: AccountingTabKey;
+  label: string;
+  /** Подфича вкладки поверх зонтика; нет — вкладку открывает сам зонтик. */
+  feature?: string;
+}
+
 /** Исход попытки загрузки (TASK-212) — как `TFinanceSyncOutcome` сервера. */
 export type SyncOutcome = 'empty' | 'unchanged' | 'imported' | 'failed' | 'not-connected';
 

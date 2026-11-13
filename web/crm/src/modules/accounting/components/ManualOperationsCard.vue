@@ -42,7 +42,9 @@ const emit = defineEmits<{
       </Button>
     </div>
 
-    <Card v-if="!rows.length" class="text-sm text-muted-foreground"> Ручных операций нет. </Card>
+    <Card v-if="!rows.length" class="p-4 text-sm text-muted-foreground">
+      Ручных операций нет.
+    </Card>
     <Card v-else class="p-0">
       <Table>
         <TableHeader>
