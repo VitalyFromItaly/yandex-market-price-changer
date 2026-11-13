@@ -22,6 +22,8 @@ import {
 } from './recommendations/recommendations.domain';
 import { toYandexApiError } from './yandex-api.errors';
 import {
+  businessStocksPath,
+  businessStocksUpdatePath,
   businessWarehousesPath,
   campaignsPath,
   FEEDBACK_PAGE_LIMIT,
@@ -445,6 +447,15 @@ export class YandexApiClient {
   private readonly sleep: TSleep;
   private readonly maxPages: number;
 
+  /**
+   * Ответ `GET v2/businesses/{id}/warehouses`, один на экземпляр. Его читают и
+   * выбор версии остатков, и `listStoreWarehouses`: на CRM-экране они идут
+   * параллельно, и без мемо это был бы второй одинаковый запрос. Экземпляр живёт
+   * один вызов (`YandexClientFactory.forTenant` строит новый), так что устареть
+   * мемо не успевает. Неудачный промис сбрасывается — повтор спросит заново.
+   */
+  private businessWarehouses?: Promise<TRawBusinessWarehouses>;
+
   constructor(
     private readonly credentials: IYandexTenantCredentials,
     baseUrl: string,
@@ -799,6 +810,28 @@ export class YandexApiClient {
     // иначе позиции внутри одной загрузки получат разное время без причины.
     const updatedAt = new Date().toISOString();
 
+    const api = await this.stockApi();
+    if (api.mode === 'v3') {
+      // v3: склад у каждой позиции, тип не передаётся — `count` и есть доступное
+      // количество (как и `FIT` в v2). Без повторов: см. postWrite.
+      const data = await this.postWrite<{ status?: string }>(
+        businessStocksUpdatePath(this.credentials.businessId),
+        {
+          skuItems: items.map((item) => ({
+            sku: item.sku,
+            partnerWarehouseId: warehouseId,
+            count: item.count,
+            updatedAt,
+          })),
+        },
+      );
+      if (data?.status && data.status !== 'OK') {
+        throw new Error(`Яндекс.Маркет не принял остатки: статус ${data.status}`);
+      }
+      this.logger.log(`Остатки обновлены (v3): ${items.length} позиций (склад ${warehouseId})`);
+      return;
+    }
+
     await this.put(stocksPath(this.credentials.campaignId), {
       skus: items.map((item) => ({
         sku: item.sku,
@@ -834,6 +867,9 @@ export class YandexApiClient {
    * той же причине.
    */
   public async getWarehouseId(): Promise<number> {
+    const api = await this.stockApi();
+    if (api.mode === 'v3') return this.v3WarehouseId(api.campaignWarehouseIds);
+
     const [data, own] = await Promise.all([
       this.post<{
         result?: { warehouses?: Array<{ warehouseId?: number }> };
@@ -876,8 +912,12 @@ export class YandexApiClient {
    * Склады в ответе — все, где лежит товар кампании, включая ЧУЖИЕ (склад
    * возвратов Маркета на FBS, см. `getWarehouseId`): отсеивает их вызывающий.
    * На FBY ответ пустой — там источник отчёт остатков (`FbyStockService`).
+   * Кабинет без групп складов идёт на v3 (`stockApi`, `loadStocksV3`).
    */
   public async loadStocks(): Promise<IWarehouseOfferStock[]> {
+    const api = await this.stockApi();
+    if (api.mode === 'v3') return this.loadStocksV3(api.campaignWarehouseIds);
+
     const offers: IWarehouseOfferStock[] = [];
     let pageToken: string | undefined;
     let page = 0;
@@ -957,12 +997,7 @@ export class YandexApiClient {
    * групповые именем группы.
    */
   public async listStoreWarehouses(): Promise<IWarehouseInfo[]> {
-    const data = await this.get<{
-      result?: {
-        warehouses?: Array<TRawStoreWarehouse>;
-        warehouseGroups?: Array<{ name?: string; warehouses?: Array<TRawStoreWarehouse> }>;
-      };
-    }>(businessWarehousesPath(this.credentials.businessId), {});
+    const data = await this.loadBusinessWarehouses();
 
     const standalone = (data.result?.warehouses ?? []).map((w) => toStoreWarehouse(w));
 
@@ -971,6 +1006,105 @@ export class YandexApiClient {
     );
 
     return [...standalone, ...grouped].filter((w): w is IWarehouseInfo => w !== null);
+  }
+
+  /**
+   * Какой API остатков у этого кабинета.
+   *
+   * Changelog 29.07.2026: v2 `offers/stocks` (уровень кампании) — для FBY и
+   * кабинетов С ГРУППАМИ складов; кабинетам без групп — v3 на уровне бизнеса,
+   * один склад на запрос. Признак — `warehouseGroups` в списке складов бизнеса:
+   * есть хоть одна группа (у любой кампании) — v2, как раньше.
+   *
+   * Склады кампании — standalone-склады с `campaignId` этой кампании. Если Яндекс
+   * такого не прислал, остаёмся на v2: он у таких кабинетов работает (проба
+   * 12.11.2026), а угадывать склад для v3 нельзя.
+   */
+  private async stockApi(): Promise<
+    { mode: 'v2' } | { mode: 'v3'; campaignWarehouseIds: number[] }
+  > {
+    const data = await this.loadBusinessWarehouses();
+    if ((data.result?.warehouseGroups ?? []).length) return { mode: 'v2' };
+
+    const campaignWarehouseIds = (data.result?.warehouses ?? [])
+      .filter(
+        (w) =>
+          typeof w?.id === 'number' &&
+          w.campaignId !== undefined &&
+          String(w.campaignId) === String(this.credentials.campaignId),
+      )
+      .map((w) => w.id);
+
+    return campaignWarehouseIds.length ? { mode: 'v3', campaignWarehouseIds } : { mode: 'v2' };
+  }
+
+  /** Сырой список складов бизнеса — один запрос на экземпляр (см. `businessWarehouses`). */
+  private async loadBusinessWarehouses(): Promise<TRawBusinessWarehouses> {
+    this.businessWarehouses ??= this.get<TRawBusinessWarehouses>(
+      businessWarehousesPath(this.credentials.businessId),
+      {},
+    ).catch((error: unknown) => {
+      this.businessWarehouses = undefined;
+      throw error;
+    });
+    return await this.businessWarehouses;
+  }
+
+  /**
+   * Склад записи на v3 — ровно один склад кампании. Два и больше — ошибка, а не
+   * «возьмём первый»: писать наугад хуже, чем не писать (довод `getWarehouseId`).
+   */
+  private v3WarehouseId(campaignWarehouseIds: readonly number[]): number {
+    if (campaignWarehouseIds.length !== 1) {
+      throw new Error(
+        `Не удалось определить склад магазина: у кампании ${campaignWarehouseIds.length} ` +
+          `складов (${campaignWarehouseIds.join(', ')}), нужен ровно один`,
+      );
+    }
+    return campaignWarehouseIds[0];
+  }
+
+  /**
+   * Чтение остатков на v3: по каждому складу кампании постранично
+   * `POST v3/businesses/{id}/offers/stocks` (`partnerWarehouseId` в теле,
+   * `pageToken` в query — не `page_token`, как в v2). Чтение — через `post()`
+   * с повторами. Типы у v3 — `FIT`/`FREEZE` без `AVAILABLE`, и v3 `FIT` уже
+   * без резерва (= v2 `AVAILABLE`, проба 12.11.2026), поэтому `availableOf`
+   * (`AVAILABLE ?? FIT`) считает верно без правок.
+   */
+  private async loadStocksV3(warehouseIds: readonly number[]): Promise<IWarehouseOfferStock[]> {
+    const offers: IWarehouseOfferStock[] = [];
+
+    for (const partnerWarehouseId of warehouseIds) {
+      let pageToken: string | undefined;
+      let page = 0;
+
+      do {
+        const data = await this.post<{
+          result?: {
+            offers?: Array<{ offerId?: string; stocks?: Array<{ type?: string; count?: number }> }>;
+            paging?: { nextPageToken?: string };
+          };
+        }>(
+          businessStocksPath(this.credentials.businessId),
+          { limit: PAGE_LIMITS.stocks.default, pageToken },
+          { partnerWarehouseId },
+        );
+
+        for (const offer of data.result?.offers ?? []) {
+          if (!offer?.offerId) continue;
+          offers.push({
+            warehouseId: partnerWarehouseId,
+            offerId: offer.offerId,
+            stocks: offer.stocks ?? [],
+          });
+        }
+
+        pageToken = data.result?.paging?.nextPageToken;
+      } while (pageToken && ++page < this.maxPages);
+    }
+
+    return offers;
   }
 
   /**
@@ -1739,7 +1873,22 @@ function toCatalogOffer(raw: TRawOfferMapping): ICatalogOffer | null {
 }
 
 /** Сырой склад магазина из ответа Partner API. */
-type TRawStoreWarehouse = { id?: number; name?: string; express?: boolean; address?: unknown };
+type TRawStoreWarehouse = {
+  id?: number;
+  name?: string;
+  express?: boolean;
+  address?: unknown;
+  /** Кампания, к которой привязан склад (у кабинета без групп — у каждого склада). */
+  campaignId?: number | string;
+};
+
+/** Ответ `GET v2/businesses/{id}/warehouses`. */
+type TRawBusinessWarehouses = {
+  result?: {
+    warehouses?: Array<TRawStoreWarehouse>;
+    warehouseGroups?: Array<{ name?: string; warehouses?: Array<TRawStoreWarehouse> }>;
+  };
+};
 
 /** Один склад магазина в терминах обзора, либо null, если у него нет id. */
 function toStoreWarehouse(raw: TRawStoreWarehouse, groupName?: string): IWarehouseInfo | null {

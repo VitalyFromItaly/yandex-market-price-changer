@@ -53,6 +53,25 @@ describe('остатки по артикулам (только чтение)', (
     ).toEqual({ A: 1 });
   });
 
+  it('v3: FIT уже без резерва — доступно = FIT, FREEZE не прибавляется', () => {
+    // Проба 12.11.2026: v3 FIT = v2 AVAILABLE, v2 FIT = v3 FIT + FREEZE.
+    expect(
+      storeStockLevels(
+        [
+          {
+            warehouseId: 1646846,
+            offerId: 'SUR371P1',
+            stocks: [
+              { type: 'FIT', count: 30 },
+              { type: 'FREEZE', count: 2 },
+            ],
+          },
+        ],
+        new Set([1646846]),
+      ),
+    ).toEqual({ SUR371P1: 30 });
+  });
+
   it('порог «на исходе» — 3 штуки (решение crm_low_stock_threshold)', () => {
     expect(LOW_STOCK_THRESHOLD).toBe(3);
   });

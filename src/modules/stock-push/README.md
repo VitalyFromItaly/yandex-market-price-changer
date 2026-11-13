@@ -90,7 +90,8 @@
    фича записи площадки открыта в снимке features.
 3. ЯМ: `StockSyncService.writeStocks` сам выясняет `STOCK_WRITE_ENABLED` и модель по живому
    `listStores()`; последний рубеж — `writeInBatches`, общий с прайсом (повод не писать и
-   отрицательные числа — до `getWarehouseId()`).
+   отрицательные числа — до `getWarehouseId()`). Версию API (v2 кампании / v3 кабинета без групп складов)
+   выбирает клиент — `src/modules/yandex/README.md`, «Остатки v2 и v3».
 4. Ozon/WB: возможность реестра `stockWrite.writeStocks` → `OzonStockWriteService` /
    `WbStockWriteService.writeStocks` — единственная функция записи площадки. Внутри по порядку:
    `STOCK_WRITE_ENABLED` (выключен — ни одного запроса), целые неотрицательные количества, склад

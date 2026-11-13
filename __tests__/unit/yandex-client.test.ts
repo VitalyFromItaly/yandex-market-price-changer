@@ -31,8 +31,9 @@ function stubAxios() {
     baseURL: string;
     path: string;
     params: Record<string, unknown>;
-    /** Тело запроса — только у POST; GET его не несёт. */
+    /** Тело запроса — только у POST/PUT; GET его не несёт. */
     body?: unknown;
+    method?: 'get' | 'post' | 'put';
   }> = [];
   let respond: () => Promise<unknown> = async () => ({ data: {} });
   let onError: (error: unknown) => unknown = (e) => {
@@ -69,6 +70,7 @@ function stubAxios() {
           baseURL: config.baseURL,
           path,
           params: opts?.params ?? {},
+          method: 'get',
         }),
       post: async (path: string, body: unknown, opts: { params: Record<string, unknown> }) =>
         record({
@@ -77,6 +79,16 @@ function stubAxios() {
           path,
           params: opts?.params ?? {},
           body,
+          method: 'post',
+        }),
+      put: async (path: string, body: unknown) =>
+        record({
+          headers: config.headers,
+          baseURL: config.baseURL,
+          path,
+          params: {},
+          body,
+          method: 'put',
         }),
     };
     return instance as never;
@@ -748,14 +760,34 @@ describe('Ошибки Partner API', () => {
   });
 });
 
+/** Список складов бизнеса: с группой — кабинет на v2, без групп — на v3. */
+const WAREHOUSES_WITH_GROUPS = {
+  result: {
+    warehouses: [{ id: 7, campaignId: 12345 }],
+    warehouseGroups: [{ name: 'G', warehouses: [{ id: 9, campaignId: 999 }] }],
+  },
+};
+const WAREHOUSES_NO_GROUPS = {
+  result: { warehouses: [{ id: 1646846, campaignId: 12345 }, { id: 555, campaignId: 777 }] },
+};
+
+function stockClient() {
+  return new YandexApiClient(
+    { token: 'ACMA:secret', campaignId: '12345', businessId: '67890' },
+    BASE_URL,
+    { sleep: async () => undefined },
+  );
+}
+
 describe('YandexApiClient.loadStocks — чтение остатков', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('POST offers/stocks постранично: page_token в query, склады и типы как есть', async () => {
+  it('кабинет с группами складов — v2 offers/stocks постранично, page_token в query', async () => {
     const stub = stubAxios();
     stub.setResponses(
+      WAREHOUSES_WITH_GROUPS,
       {
         result: {
           warehouses: [
@@ -769,25 +801,137 @@ describe('YandexApiClient.loadStocks — чтение остатков', () => {
       },
       { result: { warehouses: [{ warehouseId: 8, offers: [{ offerId: 'B' }, { stocks: [] }] }] } },
     );
-    const client = new YandexApiClient(
-      { token: 'ACMA:secret', campaignId: '12345', businessId: '67890' },
-      BASE_URL,
-      { sleep: async () => undefined },
-    );
 
-    const offers = await client.loadStocks();
+    const offers = await stockClient().loadStocks();
 
     expect(offers).toEqual([
       { warehouseId: 7, offerId: 'A', stocks: [{ type: 'AVAILABLE', count: 2 }] },
       { warehouseId: 8, offerId: 'B', stocks: [] },
     ]);
     expect(stub.calls.map((call) => call.path)).toEqual([
+      '/v2/businesses/67890/warehouses',
       '/v2/campaigns/12345/offers/stocks',
       '/v2/campaigns/12345/offers/stocks',
     ]);
-    expect(stub.calls[0].params).toEqual({ limit: PAGE_LIMITS.stocks.default });
-    expect(stub.calls[1].params.page_token).toBe('p2');
-    expect(stub.calls[0].body).toEqual({});
+    expect(stub.calls[1].params).toEqual({ limit: PAGE_LIMITS.stocks.default });
+    expect(stub.calls[2].params.page_token).toBe('p2');
+    expect(stub.calls[1].body).toEqual({});
+  });
+
+  it('кабинет без групп — v3 по складу кампании: partnerWarehouseId в теле, pageToken в query', async () => {
+    const stub = stubAxios();
+    stub.setResponses(
+      WAREHOUSES_NO_GROUPS,
+      {
+        result: {
+          partnerWarehouseId: 1646846,
+          offers: [
+            {
+              offerId: 'SUR371P1',
+              stocks: [
+                { type: 'FIT', count: 30 },
+                { type: 'FREEZE', count: 2 },
+              ],
+            },
+          ],
+          paging: { nextPageToken: 'n2' },
+        },
+      },
+      { result: { offers: [{ offerId: 'B', stocks: [] }, { stocks: [] }] } },
+    );
+
+    const offers = await stockClient().loadStocks();
+
+    expect(offers).toEqual([
+      {
+        warehouseId: 1646846,
+        offerId: 'SUR371P1',
+        stocks: [
+          { type: 'FIT', count: 30 },
+          { type: 'FREEZE', count: 2 },
+        ],
+      },
+      { warehouseId: 1646846, offerId: 'B', stocks: [] },
+    ]);
+    // Склад чужой кампании (555) не опрашивается.
+    expect(stub.calls.map((call) => call.path)).toEqual([
+      '/v2/businesses/67890/warehouses',
+      '/v3/businesses/67890/offers/stocks',
+      '/v3/businesses/67890/offers/stocks',
+    ]);
+    expect(stub.calls[1].body).toEqual({ partnerWarehouseId: 1646846 });
+    expect(stub.calls[1].params).toEqual({ limit: 100 });
+    expect(stub.calls[2].params).toEqual({ limit: 100, pageToken: 'n2' });
+  });
+
+  it('без групп, но склад кампании не найден — остаёмся на v2, склад не угадываем', async () => {
+    const stub = stubAxios();
+    stub.setResponses({ result: { warehouses: [{ id: 555, campaignId: 777 }] } }, { result: {} });
+
+    await stockClient().loadStocks();
+
+    expect(stub.calls[1].path).toBe('/v2/campaigns/12345/offers/stocks');
+  });
+
+  it('список складов бизнеса запрашивается один раз на экземпляр', async () => {
+    const stub = stubAxios();
+    stub.setResponses(WAREHOUSES_NO_GROUPS, { result: { offers: [] } });
+    const client = stockClient();
+
+    await Promise.all([client.loadStocks(), client.listStoreWarehouses()]);
+
+    expect(stub.calls.filter((c) => c.path.endsWith('/warehouses'))).toHaveLength(1);
+  });
+
+  it('лимит страницы остатков — 100 (changelog 04.08.2026)', () => {
+    expect(PAGE_LIMITS.stocks).toEqual({ default: 100, max: 100 });
+  });
+});
+
+describe('YandexApiClient.updateStocks — тело записи', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('v3: skuItems с partnerWarehouseId через POST без повторов', async () => {
+    const stub = stubAxios();
+    stub.setResponse(WAREHOUSES_NO_GROUPS);
+    const client = stockClient();
+    await client.listStoreWarehouses(); // мемо прогрето, дальше — только запись
+
+    stub.setFailure(500, { status: 'ERROR' });
+    await expect(client.updateStocks([{ sku: 'A', count: 3 }], 1646846)).rejects.toBeInstanceOf(
+      YandexServerError,
+    );
+    const writes = stub.calls.filter((c) => c.path.includes('offers/stocks'));
+    expect(writes).toHaveLength(1);
+    expect(writes[0].path).toBe('/v3/businesses/67890/offers/stocks/update');
+    expect(writes[0].method).toBe('post');
+    expect(writes[0].body).toEqual({
+      skuItems: [
+        { sku: 'A', partnerWarehouseId: 1646846, count: 3, updatedAt: expect.any(String) },
+      ],
+    });
+  });
+
+  it('v2: прежний PUT skus с типом FIT', async () => {
+    const stub = stubAxios();
+    stub.setResponse(WAREHOUSES_WITH_GROUPS);
+
+    await stockClient().updateStocks([{ sku: 'A', count: 3 }], 7);
+
+    const write = stub.calls.find((c) => c.path.includes('offers/stocks'));
+    expect(write?.method).toBe('put');
+    expect(write?.path).toBe('/v2/campaigns/12345/offers/stocks');
+    expect(write?.body).toEqual({
+      skus: [
+        {
+          sku: 'A',
+          warehouseId: 7,
+          items: [{ count: 3, type: 'FIT', updatedAt: expect.any(String) }],
+        },
+      ],
+    });
   });
 });
 

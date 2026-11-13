@@ -25,8 +25,19 @@ export const API_VERSIONS = {
   ordersStats: 'v2',
   /** Каталог товаров продавца. Проверено на боевом аккаунте: v2 отвечает 200. */
   offerMappings: 'v2',
-  /** Остатки. Проверено: v2 -> 200, v1 -> 404 Resource not found. */
+  /**
+   * Остатки на уровне кампании. Проверено: v2 -> 200, v1 -> 404 Resource not found.
+   * С 29.07.2026 Яндекс оставляет v2 для FBY и кабинетов С ГРУППАМИ складов;
+   * кабинеты без групп идут на `businessStocks` (выбор — `YandexApiClient.stockApi`).
+   */
   stocks: 'v2',
+  /**
+   * Остатки на уровне кабинета: getStocksOnPartnerWarehouses /
+   * updateStocksOnPartnerWarehouses (changelog 29.07.2026, «метод подходит, только
+   * если в кабинете нет групп складов»). Проверено чтением на боевом 12.11.2026:
+   * v3 отдаёт тот же состав офферов, что v2.
+   */
+  businessStocks: 'v3',
   /**
    * Склады: список складов Маркета (FBY) и складов магазина (FBS/DBS/Express).
    * Версия — v2, как и у остальных актуальных методов (campaigns/stocks/
@@ -122,6 +133,16 @@ export function businessWarehousesPath(businessId: string): string {
  */
 export function stocksPath(campaignId: string): string {
   return `/${API_VERSIONS.stocks}/campaigns/${encodeURIComponent(campaignId)}/offers/stocks`;
+}
+
+/** Чтение остатков кабинета без групп складов (v3), POST: один склад на запрос. */
+export function businessStocksPath(businessId: string): string {
+  return `/${API_VERSIONS.businessStocks}/businesses/${encodeURIComponent(businessId)}/offers/stocks`;
+}
+
+/** Запись остатков кабинета без групп складов (v3), POST, без повторов (`postWrite`). */
+export function businessStocksUpdatePath(businessId: string): string {
+  return `${businessStocksPath(businessId)}/update`;
 }
 
 /**
@@ -286,10 +307,11 @@ export const PAGE_LIMITS = {
   /** Архив stats/orders: до 200 заказов в ответе по спеке. */
   ordersStats: { default: 200, max: 200 },
   /**
-   * Чтение остатков (`getStocks`). Спека максимум не называет — 200, как у
-   * каталога; на боевом ещё не сверено (docs/known-gaps.md).
+   * Чтение остатков, v2 `getStocks` и v3 `getStocksOnPartnerWarehouses`. Changelog
+   * 04.08.2026: максимум 100 (было 200), больше — Яндекс молча режет до 100.
+   * Сверено 12.11.2026.
    */
-  stocks: { default: 200, max: 200 },
+  stocks: { default: 100, max: 100 },
 } as const;
 
 /**

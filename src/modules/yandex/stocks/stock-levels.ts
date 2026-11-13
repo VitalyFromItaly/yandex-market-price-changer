@@ -26,6 +26,8 @@ export function fbyStockLevels(rows: readonly IFbyStockRow[]): Record<string, nu
 /**
  * Число одного склада: `AVAILABLE`, а без него — `FIT` (годный, его и пишет
  * продавец). Ни того ни другого — 0: склад товар упомянул, а годного нет.
+ * v3 (`getStocksOnPartnerWarehouses`) `AVAILABLE` не присылает, а его `FIT`
+ * уже без резерва (= v2 `AVAILABLE`, проба 12.11.2026) — правило верно и там.
  */
 function availableOf(stocks: IWarehouseOfferStock['stocks']): number {
   const byType = (type: string): number | undefined => {

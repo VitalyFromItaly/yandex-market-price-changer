@@ -24,6 +24,8 @@ function stubAxios(options: {
   /** Склады, приходящие внутри групп: в общий список они не дублируются. */
   ownGroupWarehouses?: number[];
   ownFails?: boolean;
+  /** Кампания у standalone-складов (как отдаёт Яндекс кабинету без групп). */
+  ownCampaignId?: string;
 }) {
   const calls: Array<{ method: 'get' | 'post'; path: string; params: Record<string, unknown> }> =
     [];
@@ -41,6 +43,7 @@ function stubAxios(options: {
                 warehouses: (options.ownWarehouses ?? [OWN_WAREHOUSE]).map((id) => ({
                   id,
                   name: `Склад ${id}`,
+                  campaignId: options.ownCampaignId,
                 })),
                 warehouseGroups: (options.ownGroupWarehouses ?? []).map((id) => ({
                   name: 'SBrand',
@@ -143,5 +146,56 @@ describe('getWarehouseId: склад записи — только собств�
     });
 
     expect(await client.getWarehouseId()).toBe(1519714);
+  });
+});
+
+/**
+ * Кабинет без групп складов (v3, changelog 29.07.2026): склад записи — склад со
+ * своим `campaignId` из списка складов бизнеса, без запроса остатков кампании.
+ */
+describe('getWarehouseId на v3: ровно один склад кампании', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('один склад кампании — он и есть склад записи, v2 offers/stocks не спрашиваем', async () => {
+    const { client, calls } = clientWith({
+      stocksWarehouses: [],
+      ownWarehouses: [1646846],
+      ownCampaignId: CREDENTIALS.campaignId,
+    });
+
+    expect(await client.getWarehouseId()).toBe(1646846);
+    expect(calls.some((c) => c.method === 'post')).toBe(false);
+  });
+
+  it('два склада у кампании — ошибка, а не «возьмём первый»', async () => {
+    const { client } = clientWith({
+      stocksWarehouses: [],
+      ownWarehouses: [1, 2],
+      ownCampaignId: CREDENTIALS.campaignId,
+    });
+
+    await expect(client.getWarehouseId()).rejects.toThrow(/нужен ровно один/);
+  });
+
+  it('склады только чужих кампаний — прежний путь v2 со сверкой', async () => {
+    const { client } = clientWith({
+      stocksWarehouses: [{ warehouseId: MARKET_WAREHOUSE }],
+      ownWarehouses: [OWN_WAREHOUSE],
+      ownCampaignId: '999',
+    });
+
+    await expect(client.getWarehouseId()).rejects.toThrow(/чужие склады/);
+  });
+
+  it('есть группа складов — v2, даже если у кампании свой standalone-склад', async () => {
+    const { client, calls } = clientWith({
+      stocksWarehouses: [{ warehouseId: OWN_WAREHOUSE }],
+      ownWarehouses: [OWN_WAREHOUSE],
+      ownGroupWarehouses: [1519714],
+      ownCampaignId: CREDENTIALS.campaignId,
+    });
+
+    expect(await client.getWarehouseId()).toBe(OWN_WAREHOUSE);
+    expect(calls.some((c) => c.method === 'post' && c.path.startsWith('/v2/campaigns'))).toBe(true);
   });
 });
