@@ -41,7 +41,7 @@ export class MemoryWatchService implements OnApplicationBootstrap, OnApplication
 
   private tick(): void {
     const memory = snapshotMemory();
-    sampleActiveJobs(memory.rss);
+    sampleActiveJobs(memory);
     const next = nextMemoryAlertState(this.armed, memory.rss);
     this.armed = next.armed;
     if (!next.alert) return;

@@ -6,7 +6,7 @@ import type { TFinanceMarketplace } from '../../database/postgres/finance.schema
 import type { IProfitTotals } from '../yandex/reports/profit';
 import type { IReportPeriod } from '../yandex/reports/report-period';
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 
 import { FinanceOperationRepository } from '../../database/postgres/repositories/finance-operation.repository';
 import { FinancePeriodRepository } from '../../database/postgres/repositories/finance-period.repository';
@@ -14,6 +14,7 @@ import { CostHistoryService } from '../../database/services/cost-history.service
 import { PurchasePriceService } from '../../database/services/purchase-price.service';
 import { YandexMarketService } from '../../database/services/yandex-market.service';
 import { ErrorReporter } from '../errors/error-reporter.service';
+import { traceMemory } from '../health/memory-watch.domain';
 import { datedCosts } from '../products/cost-history.domain';
 import { DEFAULT_RATES, ratesOf } from '../yandex/reports/profit';
 import { profitMainBlock } from '../yandex/reports/profit-message';
@@ -113,6 +114,8 @@ const DAY_MS = 86_400_000;
  */
 @Injectable()
 export class FinanceService {
+  private readonly logger = new Logger(FinanceService.name);
+
   constructor(
     private readonly operations: FinanceOperationRepository,
     private readonly periods: FinancePeriodRepository,
@@ -139,14 +142,22 @@ export class FinanceService {
       this.expenses.allocatedFor(telegramUserId, period),
       this.stores.findByTelegramUser(telegramUserId),
     ]);
-    const { lines, costOf, months } = await this.journal(
-      telegramUserId,
-      period,
-      marketplace,
-      store,
+    // Замеры памяти по шагам — поиск OOM на проде (memory-watch.domain.ts).
+    const label = `${telegramUserId} ${marketplace} ${period.from}…${period.to}`;
+    const { lines, costOf, months } = await traceMemory(
+      `pnl:journal ${label}`,
+      () => this.journal(telegramUserId, period, marketplace, store),
+      this.logger,
     );
 
-    const pnl = pnlOf({ lines, period, costOf, expenses: allocation, tax: taxSnapshot.settings });
+    const pnl = await traceMemory(
+      `pnl:compute ${label} (строк ${lines.length})`,
+      () =>
+        Promise.resolve(
+          pnlOf({ lines, period, costOf, expenses: allocation, tax: taxSnapshot.settings }),
+        ),
+      this.logger,
+    );
     const status = combinedPeriodStatus(months.map((month) => month.status));
     // «Обзору» плоская оценка не нужна: это Маркет и десятки секунд (TASK-125).
     // У Ozon её нет вовсе: «Прибыль» по ставкам считает только заказы ЯМ.

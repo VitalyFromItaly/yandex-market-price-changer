@@ -38,7 +38,7 @@ describe('memory-watch', () => {
       'crm:accounting:dashboard 1',
       async () => {
         seenInside = activeMemoryJobs().map((job) => job.label);
-        sampleActiveJobs(10_000 * MB);
+        sampleActiveJobs({ rss: 10_000 * MB, heapTotal: 9_000 * MB });
         return 42;
       },
       { log: (line) => lines.push(line) },
@@ -49,6 +49,7 @@ describe('memory-watch', () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('Память crm:accounting:dashboard 1');
     expect(lines[0]).toContain('пик 10000 МБ');
+    expect(lines[0]).toContain('heapTotal пик 9000 МБ');
   });
 
   it('ошибка задачи пробрасывается, а задача всё равно снимается с реестра и логируется', async () => {
@@ -65,6 +66,7 @@ describe('memory-watch', () => {
   it('текст алерта называет идущие задачи с их приростом', () => {
     const memory = {
       rss: 2000 * MB,
+      heapTotal: 1800 * MB,
       heapUsed: 1500 * MB,
       external: 300 * MB,
       arrayBuffers: 250 * MB,
@@ -78,6 +80,7 @@ describe('memory-watch', () => {
           startedAt: now - 120_000,
           startRss: 200 * MB,
           peakRss: 2000 * MB,
+          peakHeapTotal: 1800 * MB,
         },
       ],
       now,

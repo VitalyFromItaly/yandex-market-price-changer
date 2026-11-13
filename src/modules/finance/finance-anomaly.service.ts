@@ -7,6 +7,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { FinanceAnomalyRepository } from '../../database/postgres/repositories/finance-anomaly.repository';
 import { FinanceDiscrepancyRepository } from '../../database/postgres/repositories/finance-discrepancy.repository';
 import { FinanceOperationRepository } from '../../database/postgres/repositories/finance-operation.repository';
+import { traceMemory } from '../health/memory-watch.domain';
 
 import { anomalyHistoryStart, countAnomaliesByKind, detectAnomalies } from './finance-anomalies';
 import { assertFinancePeriod, financePeriodKey, YM_NETTING_REPORT_TYPE } from './finance-period';
@@ -50,34 +51,43 @@ export class FinanceAnomalyService {
 
     // История комиссии и строки месяца — одним запросом; P&L месяца — тот же
     // `build`, что у «Финансов» (без плоской оценки — она ходит в Маркет).
+    // Замеры памяти по шагам — поиск OOM на проде (memory-watch.domain.ts).
+    const trace = <T>(step: string, run: () => Promise<T>) =>
+      traceMemory(`anomalies:${step} ${telegramUserId} ${periodKey}`, run, this.logger);
     const [operations, report, findings] = await Promise.all([
-      this.operations.liveForPnl(
-        telegramUserId,
-        moscowStart(anomalyHistoryStart(period)),
-        new Date(moscowStart(period.to).getTime() + DAY_MS),
+      trace('history', () =>
+        this.operations.liveForPnl(
+          telegramUserId,
+          moscowStart(anomalyHistoryStart(period)),
+          new Date(moscowStart(period.to).getTime() + DAY_MS),
+        ),
       ),
-      this.finance.build(telegramUserId, period, now, { flat: false }),
-      this.discrepancies.allOfPeriod(scope),
+      trace('pnl', () => this.finance.build(telegramUserId, period, now, { flat: false })),
+      trace('discrepancies', () => this.discrepancies.allOfPeriod(scope)),
     ]);
 
-    const anomalies = detectAnomalies({
-      period,
-      periodKey,
-      operations,
-      pnl: report.pnl,
-      discrepancies: findings.map(
-        (row): IReconcileFinding => ({
-          kind: row.kind,
-          orderId: row.orderId ?? undefined,
-          bankOrderId: row.bankOrderId ?? undefined,
-          operationIds: row.operationIds,
-          operationCount: row.operationCount,
-          expectedKopecks: row.expectedKopecks ?? undefined,
-          actualKopecks: row.actualKopecks ?? undefined,
-          detail: row.detail,
+    const anomalies = await trace('rules', () =>
+      Promise.resolve(
+        detectAnomalies({
+          period,
+          periodKey,
+          operations,
+          pnl: report.pnl,
+          discrepancies: findings.map(
+            (row): IReconcileFinding => ({
+              kind: row.kind,
+              orderId: row.orderId ?? undefined,
+              bankOrderId: row.bankOrderId ?? undefined,
+              operationIds: row.operationIds,
+              operationCount: row.operationCount,
+              expectedKopecks: row.expectedKopecks ?? undefined,
+              actualKopecks: row.actualKopecks ?? undefined,
+              detail: row.detail,
+            }),
+          ),
         }),
       ),
-    });
+    );
     return { periodKey, anomalies };
   }
 

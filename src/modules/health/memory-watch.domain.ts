@@ -24,6 +24,8 @@ export const MEMORY_REARM_RSS_BYTES = 1024 * MB;
 
 export interface IMemorySnapshot {
   rss: number;
+  /** Занятая V8 куча; при бурном мусоре RSS растёт за счёт неё, а heapUsed после GC мал. */
+  heapTotal: number;
   heapUsed: number;
   external: number;
   arrayBuffers: number;
@@ -34,6 +36,7 @@ export interface IActiveMemoryJob {
   startedAt: number;
   startRss: number;
   peakRss: number;
+  peakHeapTotal: number;
 }
 
 interface ILogger {
@@ -47,6 +50,7 @@ export function snapshotMemory(): IMemorySnapshot {
   const usage = process.memoryUsage();
   return {
     rss: usage.rss,
+    heapTotal: usage.heapTotal,
     heapUsed: usage.heapUsed,
     external: usage.external,
     arrayBuffers: usage.arrayBuffers,
@@ -58,8 +62,11 @@ export function toMb(bytes: number): number {
 }
 
 /** Поднять пик у всех идущих задач. Зовёт сэмплер; синхронно и не бросает. */
-export function sampleActiveJobs(rss: number): void {
-  for (const job of active.values()) if (rss > job.peakRss) job.peakRss = rss;
+export function sampleActiveJobs(memory: Pick<IMemorySnapshot, 'rss' | 'heapTotal'>): void {
+  for (const job of active.values()) {
+    if (memory.rss > job.peakRss) job.peakRss = memory.rss;
+    if (memory.heapTotal > job.peakHeapTotal) job.peakHeapTotal = memory.heapTotal;
+  }
 }
 
 /** Идущие задачи, самые старые первыми. */
@@ -85,6 +92,7 @@ export async function traceMemory<T>(
     startedAt: now(),
     startRss: start.rss,
     peakRss: start.rss,
+    peakHeapTotal: start.heapTotal,
   };
   active.set(id, job);
   try {
@@ -92,8 +100,8 @@ export async function traceMemory<T>(
   } finally {
     active.delete(id);
     const end = snapshotMemory();
-    sampleActiveJobs(end.rss);
     if (end.rss > job.peakRss) job.peakRss = end.rss;
+    if (end.heapTotal > job.peakHeapTotal) job.peakHeapTotal = end.heapTotal;
     logger.log(memoryTraceLine(job, end, now(), active.size));
   }
 }
@@ -107,7 +115,7 @@ export function memoryTraceLine(
   const seconds = Math.round((now - job.startedAt) / 100) / 10;
   return (
     `Память ${job.label}: rss ${toMb(job.startRss)}→${toMb(end.rss)} МБ, пик ${toMb(job.peakRss)} МБ, ` +
-    `heap ${toMb(end.heapUsed)} МБ, buffers ${toMb(end.arrayBuffers)} МБ, ${seconds} с, ` +
+    `heapTotal пик ${toMb(job.peakHeapTotal)} МБ, heap ${toMb(end.heapUsed)} МБ, buffers ${toMb(end.arrayBuffers)} МБ, ${seconds} с, ` +
     `рядом задач ${othersActive}`
   );
 }
@@ -132,7 +140,7 @@ export function memoryAlertText(
 ): string {
   const head =
     `Память процесса ${toMb(memory.rss)} МБ (порог ${toMb(MEMORY_ALERT_RSS_BYTES)}): ` +
-    `heap ${toMb(memory.heapUsed)}, external ${toMb(memory.external)}, buffers ${toMb(memory.arrayBuffers)} МБ.`;
+    `heapTotal ${toMb(memory.heapTotal)}, heap ${toMb(memory.heapUsed)}, external ${toMb(memory.external)}, buffers ${toMb(memory.arrayBuffers)} МБ.`;
   if (!jobs.length) return `${head} Отслеживаемых задач нет.`;
   const list = jobs
     .map((job) => {
