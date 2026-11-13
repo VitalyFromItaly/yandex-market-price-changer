@@ -1,5 +1,10 @@
 name: Node.js CI
 
+# Деплой прода — здесь, job deploy после зелёной build (TASK-242, решение
+# ci_gated_deploy). Собственный вебхук CapRover в GitHub → Settings → Webhooks
+# должен оставаться снятым: иначе CapRover выкатывает каждый пуш в master сам,
+# параллельно с CI и не глядя на его результат.
+
 # Не только push: без pull_request проверка не успевает сработать до слияния,
 # то есть приходит уже к тому, что исправлять поздно.
 on:
@@ -67,3 +72,50 @@ jobs:
 
       - name: Сборка
         run: npm run build
+
+  # Только push в master и только после зелёной build: красный typecheck, тест,
+  # миграция или сборка → deploy skipped, прод не меняется. Миграции drizzle
+  # приложение применяет само при старте, отката нет — поэтому сломанное не
+  # должно доезжать до CapRover вообще.
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    # Два деплоя не дёргают CapRover одновременно; отмены нет — начатый
+    # деплой доводим.
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+
+    steps:
+      - name: Деплой в CapRover
+        env:
+          CAPROVER_WEBHOOK_URL: ${{ secrets.CAPROVER_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          # Без секрета job красная, а не молча зелёная: «зелёный деплой»,
+          # который ничего не выкатил, хуже упавшего.
+          if [ -z "${CAPROVER_WEBHOOK_URL:-}" ]; then
+            echo "::error::Нет секрета CAPROVER_WEBHOOK_URL — деплой не выполнен. Добавьте его в GitHub → Settings → Secrets and variables → Actions: URL из CapRover → приложение → Deployment → «Method 3: Deploy from Github» (webhook triggerbuild)."
+            exit 1
+          fi
+
+          # Вебхук CapRover собирает HEAD ветки, а не проверенный здесь коммит.
+          # Если за время CI в master пришёл новый коммит, этот прогон выкатил
+          # бы непроверенный код — отдаём деплой прогону нового коммита.
+          HEAD_SHA="$(git ls-remote "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" refs/heads/master | cut -f1)"
+          if [ "$HEAD_SHA" != "$GITHUB_SHA" ]; then
+            echo "::notice::master ушёл вперёд ($GITHUB_SHA → $HEAD_SHA): деплой выполнит прогон нового коммита после своего зелёного CI."
+            exit 0
+          fi
+
+          # CapRover отвечает HTTP 200 и кладёт свой код в поле status
+          # (100 — сборка поставлена), поэтому смотрим тело, а не только HTTP.
+          RESPONSE="$(curl -fsS --max-time 60 -X POST "$CAPROVER_WEBHOOK_URL")"
+          echo "Ответ CapRover: $RESPONSE"
+          if ! echo "$RESPONSE" | jq -e '.status == 100' > /dev/null; then
+            echo "::error::CapRover не принял деплой (ожидали status 100). Ответ: $RESPONSE"
+            exit 1
+          fi
+          echo "Сборка поставлена в CapRover для $GITHUB_SHA."

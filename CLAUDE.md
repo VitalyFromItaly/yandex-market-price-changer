@@ -42,7 +42,10 @@ are no backups). Scripts never boot `AppModule` — `BotRegistry` would
 re-point the live webhook.
 
 CI (`.github/workflows/nodejs.yml`): `typecheck → lint → prettier:check → test → build`, plus
-`typecheck:crm`/`test:crm`, deliberately without `--if-present`.
+`typecheck:crm`/`test:crm`, deliberately without `--if-present`. Prod deploy is the job `deploy` there:
+`needs: build`, only on push to `master`, POSTs `secrets.CAPROVER_WEBHOOK_URL` (no secret → red job, master moved
+on during CI → skipped, the newer run deploys). CapRover's own GitHub webhook must stay removed — with it, every
+push to master goes to prod bypassing CI.
 
 ## Runtime skeleton
 

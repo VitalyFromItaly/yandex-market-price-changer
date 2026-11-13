@@ -52,8 +52,8 @@
       "M33": "Финучёт: панель, аналитика, приёмка №1–7, документация и живая сверка закрытого периода",
       "M34": "Доставка кода: деплой на прод только после зелёного CI"
     },
-    "active_tasks": 8,
-    "archived_tasks": 223,
+    "active_tasks": 7,
+    "archived_tasks": 224,
     "archive_file": "tasks.archive.json"
   },
   "agent_instructions": {
@@ -604,28 +604,6 @@
       ],
       "status": "obsolete",
       "skip_reason": "2026-11-10: дубль TASK-216 (CRM: переключатель режима А/Б входит в неё) — заведена по ошибке при закрытии TASK-215"
-    },
-    {
-      "id": "TASK-242",
-      "milestone": "M34",
-      "category": "infrastructure",
-      "priority": "high",
-      "description": "Деплой только после зелёного CI. Сейчас CapRover выкатывает прод по своему GitHub-вебхуку на каждый пуш в master, параллельно с CI и независимо от его результата: красный typecheck/тест/сборка не мешают деплою (решение ci_gated_deploy). Нужно: вызов деплоя CapRover перенести в GitHub Actions отдельной job deploy с needs: build, только на push в master; вебхук CapRover на репозитории снять. ПОЧЕМУ: сломанный код и сломанная миграция (приложение мигрирует Postgres само при старте, отката у drizzle нет) не должны попадать на прод.",
-      "acceptance_criteria": [
-        "В .github/workflows/nodejs.yml есть job deploy: needs: build, if: push в refs/heads/master; дергает деплой CapRover (URL вебхука приложения из секрета CAPROVER_WEBHOOK_URL), без секрета падает с понятным сообщением, а не молча зелёная",
-        "pull_request и пуши в другие ветки деплой не запускают",
-        "Красный любой шаг build → deploy skipped, прод не меняется",
-        "Вебхук CapRover в настройках репозитория GitHub снят (шаг владельца), иначе деплой по-прежнему идёт в обход CI",
-        "Порядок и доводы описаны в README (CLAUDE.md — строка про CI и деплой)"
-      ],
-      "test_steps": [
-        "Шаг 1: actionlint/yaml-проверка workflow локально; npm-проверки проекта зелёные",
-        "Шаг 2 (владелец): добавить секрет CAPROVER_WEBHOOK_URL, снять вебхук CapRover в GitHub → Settings → Webhooks",
-        "Шаг 3: пуш с заведомо красным тестом в ветку → deploy не запускается; пуш в master с зелёным CI → в CapRover новая сборка",
-        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
-      ],
-      "dependencies": [],
-      "status": "pending"
     }
   ]
 }
