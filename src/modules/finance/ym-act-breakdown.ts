@@ -89,6 +89,26 @@ const rowsOf = (sheet: unknown): TRow[] => {
     : [];
 };
 
+/** Поля строки листа услуг, которые читают `ymActBreakdownOf` и `ymActServicesTotalOf`. */
+const SERVICE_ROW_FIELDS = ['actDate', 'servicePrice', 'totalAmount'] as const;
+
+/**
+ * Лист отчёта услуг → его выжимка для `unzipReportJson(…, project)`: `{rows}` только
+ * с полями расшифровки и итога акта. Отчёт услуг за месяц — самый большой файл
+ * импорта (строка на каждую услугу каждого заказа), а нужны от строки три поля.
+ * Поле переносится, только если оно в строке есть: `ymActServicesTotalOf` выбирает
+ * колонку по `'totalAmount' in row`.
+ */
+export function compactYmServicesSheet(_sheet: string, data: unknown): unknown {
+  return {
+    rows: rowsOf(data).map((row) => {
+      const out: TRow = {};
+      for (const field of SERVICE_ROW_FIELDS) if (field in row) out[field] = row[field];
+      return out;
+    }),
+  };
+}
+
 /**
  * Сводная строка (сумма в копейках, со знаком журнала) + листы отчёта услуг →
  * части. null — в отчёте нет ни одной строки этого акта: расшифровать нечем,

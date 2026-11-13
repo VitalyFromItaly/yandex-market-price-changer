@@ -26,4 +26,25 @@ describe('unzipReportJson — отчёт Маркета в format=JSON', () => {
     const zip = zipSync({ 'Лист.json': strToU8('{oops') });
     expect(() => unzipReportJson(zip)).toThrow(/Лист/);
   });
+
+  it('project ужимает каждый лист сразу после разбора', () => {
+    const zip = zipSync({
+      'a.json': strToU8(JSON.stringify({ rows: [1, 2, 3] })),
+      'b.json': strToU8(JSON.stringify({ rows: [4] })),
+    });
+    const seen: string[] = [];
+
+    const sheets = unzipReportJson(zip, (sheet, data) => {
+      seen.push(sheet);
+      return (data as { rows: number[] }).rows.length;
+    });
+
+    expect(seen.sort()).toEqual(['a', 'b']);
+    expect(sheets).toEqual(
+      new Map([
+        ['a', 3],
+        ['b', 1],
+      ]),
+    );
+  });
 });

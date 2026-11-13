@@ -33,7 +33,7 @@ npm run db:sync-indexes      # after adding/changing a Mongo index (mongoose nev
 ```
 
 `scripts/*.ts` (`npx ts-node scripts/<name>.ts --user=<telegramUserId> …`) are read-only diagnostics
-and one-off loaders against live data: `diagnose-{orders,returns,finance,tariffs,deep-history,polza,fby-stock}`,
+and one-off loaders against live data: `diagnose-{orders,returns,finance,finance-memory,tariffs,deep-history,polza,fby-stock}`,
 `{import,pnl,cashflow,anomalies}-finance`, `load-purchase-prices`, `seed-products`,
 `sync-ozon-catalog`, `backfill-accounting-registry`, `backfill-accounting-cost-history`, `diagnose-accounting`, `sync-accounting-orders`, `preview-hosting-reminder`, `preview-stock-push`, `preview-price-set`, `backtest-forecast`, `backfill-stores`, and
 `eval-ai-analyst` (paid AI eval, only with `--run`; README ai-analyst). Each documents

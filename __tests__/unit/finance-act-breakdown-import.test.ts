@@ -316,6 +316,28 @@ describe('FinanceImportService — расшифровка сводной стр�
       expect(servicesCalls()).toHaveLength(1);
     });
 
+    it('два акта одного месяца — один отчёт услуг на месяц, итог у каждого (память, квота)', async () => {
+      files.netting = nettingZip([
+        netting(),
+        placementOp(),
+        placementOp({ orderId: 2, actDate: '15.09.2026', transactionDate: '15.09.2026 00:00' }),
+      ]);
+      files.services = servicesZip({
+        placement: [svc(252), { servicePrice: 100, actDate: '2026-09-15' }],
+      });
+
+      await run();
+
+      expect(servicesCalls()).toHaveLength(1);
+      const totals = await repo().byDays('111', ['2026-09-15', '2026-09-30']);
+      expect(new Map([...totals].map(([day, v]) => [day, v.totalKopecks]))).toEqual(
+        new Map([
+          ['2026-09-15', 10000],
+          ['2026-09-30', 25200],
+        ]),
+      );
+    });
+
     it('итог есть и сверка его не опровергла — повторный импорт отчёт не заказывает', async () => {
       // Строки акта этого отчёта с итогом не сходятся (-51 852 против 52 104):
       // часть акта лежит в соседнем отчёте, и это не повод тратить квоту.

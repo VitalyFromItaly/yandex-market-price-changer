@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { FINANCE_ARTICLE_META, isFinanceArticle } from '../../src/modules/finance/finance-articles';
 import { breakdownOf, expandBreakdown } from '../../src/modules/finance/operation-breakdown';
 import {
+  compactYmServicesSheet,
   YM_ACT_ORDER_SHEETS,
   YM_ACT_SUMMARY_SHEETS,
   ymActBreakdownOf,
@@ -208,5 +209,41 @@ describe('ymActServicesTotalOf — итог акта для сверки (TASK-1
     ]);
     expect(ymActServicesTotalOf('2026-09-30', sheets)?.totalKopecks).toBe(10000);
     expect(ymActServicesTotalOf('2026-10-31', sheets)).toBeNull();
+  });
+});
+
+describe('compactYmServicesSheet — выжимка листа услуг при распаковке', () => {
+  it('оставляет только поля расшифровки и итога; totalAmount — только где он был', () => {
+    const sheet = {
+      rows: [
+        { actDate: '2026-09-30', servicePrice: 10, totalAmount: 8, orderId: 1, offerName: 'x' },
+        { actDate: '2026-09-30', servicePrice: 5, shopSku: 'A' },
+        null,
+      ],
+    };
+
+    expect(compactYmServicesSheet('placement', sheet)).toEqual({
+      rows: [
+        { actDate: '2026-09-30', servicePrice: 10, totalAmount: 8 },
+        { actDate: '2026-09-30', servicePrice: 5 },
+      ],
+    });
+  });
+
+  it('итог и расшифровка по выжимке — те же, что по сырому листу', () => {
+    const raw = new Map<string, unknown>([
+      ['placement', { rows: [{ actDate: '2026-09-30', servicePrice: 10, totalAmount: 8, x: 1 }] }],
+      ['pushes', { rows: [{ actDate: '2026-09-30', servicePrice: 3, y: 2 }] }],
+    ]);
+    const compact = new Map(
+      [...raw].map(([name, data]) => [name, compactYmServicesSheet(name, data)]),
+    );
+
+    expect(ymActServicesTotalOf('2026-09-30', compact)).toEqual(
+      ymActServicesTotalOf('2026-09-30', raw),
+    );
+    expect(ymActBreakdownOf(-1100, '2026-09-30', compact)).toEqual(
+      ymActBreakdownOf(-1100, '2026-09-30', raw),
+    );
   });
 });

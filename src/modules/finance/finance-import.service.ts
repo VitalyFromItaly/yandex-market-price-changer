@@ -46,7 +46,12 @@ import {
 import { periodStatusOf } from './finance-period-status';
 import { FinanceReconcileService } from './finance-reconcile.service';
 import { kopecksToRub, toKopecks } from './kopecks';
-import { ymActBreakdownOf, ymActDayOf, ymActServicesTotalOf } from './ym-act-breakdown';
+import {
+  compactYmServicesSheet,
+  ymActBreakdownOf,
+  ymActDayOf,
+  ymActServicesTotalOf,
+} from './ym-act-breakdown';
 import { isYmActSummaryRow } from './ym-articles';
 import {
   journalKeys,
@@ -758,19 +763,30 @@ export class FinanceImportService {
     const needTotal = await this.actsToTotal(input);
 
     const days = [...new Set([...byAct.keys(), ...needTotal])].sort();
+    // Отчёт услуг заказывается за МЕСЯЦ акта: дни одного месяца (дни отсортированы —
+    // идут подряд) берут один отчёт, а не по генерации и разбору на каждый. Держим
+    // только отчёт текущего месяца — прошлый отпускается до загрузки следующего.
+    let loaded: { month: string; sheets: ReadonlyMap<string, unknown> | null } | null = null;
     for (const day of days) {
-      let sheets: ReadonlyMap<string, unknown> | null;
-      try {
-        sheets = await this.servicesSheets(input.client, input.businessId, day, input.today);
-      } catch (error) {
-        void this.errors.report({
-          error,
-          telegramUserId: input.telegramUserId,
-          source: 'queue',
-          context: YM_ACT_BREAKDOWN_CONTEXT,
-        });
-        continue;
+      const month = day.slice(0, 7);
+      if (loaded?.month !== month) {
+        loaded = null;
+        try {
+          loaded = {
+            month,
+            sheets: await this.servicesSheets(input.client, input.businessId, day, input.today),
+          };
+        } catch (error) {
+          void this.errors.report({
+            error,
+            telegramUserId: input.telegramUserId,
+            source: 'queue',
+            context: YM_ACT_BREAKDOWN_CONTEXT,
+          });
+          continue;
+        }
       }
+      const { sheets } = loaded;
       if (needTotal.has(day)) {
         const total = sheets ? ymActServicesTotalOf(day, sheets) : null;
         if (total) result.totals.push(total);
@@ -902,7 +918,8 @@ export class FinanceImportService {
       notReadyError: 'Отчёт united-marketplace-services не готов за 10 минут',
     });
     if (!fileUrl) return null;
-    return unzipReportJson(await client.downloadReportFile(fileUrl));
+    // Выжимка листов сразу при разборе: месячный отчёт услуг — самый большой файл импорта.
+    return unzipReportJson(await client.downloadReportFile(fileUrl), compactYmServicesSheet);
   }
 
   /** Один алерт на загрузку, сколько бы актов ни не сошлось. */
