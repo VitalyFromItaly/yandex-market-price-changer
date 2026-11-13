@@ -42,8 +42,8 @@ export const STOCK_PUSH_RULE_TEXT =
 
 export const STOCK_PUSH_NOTES: readonly string[] = [
   `Прайс старше ${STOCK_PUSH_ORDERS_WINDOW_DAYS} дней не годится: заказы площадок читаются за последние 30 дней.`,
-  `Больше ${STOCK_PUSH_MAX_ZEROED} обнулений от продаж на площадку — запись на неё останавливается. ` +
-    'Ноль из прайса (товара нет) пишется всегда, если прайс не обнулил всё разом.',
+  `Прайс дал ноль всем позициям площадки (больше ${STOCK_PUSH_MAX_ZEROED}) — похоже на битый файл, ` +
+    'запись на неё останавливается. Проданное до нуля и ноль из прайса пишутся всегда.',
   'Склады площадок (FBY, FBO, FBW) не пишутся никогда: там остаток ведёт площадка.',
   'Артикулы, которых нет в остатках площадки, не пишутся — запись только меняет существующие.',
 ];
@@ -69,8 +69,6 @@ export interface ICrmStockPushTarget {
   error: string | null;
   updates: ICrmStockPushRow[];
   zeroed: number;
-  /** Из `zeroed` — от вычета продаж; только они идут в порог обнулений. */
-  zeroedBySales: number;
   unchanged: number;
   notListed: number;
   /** Товаров, которые площадка не примет (WB — несколько размеров). */
@@ -136,7 +134,6 @@ export function toCrmStockPush(
         sold: row.sold,
       })),
       zeroed: target.zeroed,
-      zeroedBySales: target.zeroedBySales,
       unchanged: target.unchanged,
       notListed: target.notListed,
       notWritable: target.notWritable,

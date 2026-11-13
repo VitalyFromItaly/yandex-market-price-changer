@@ -293,12 +293,13 @@ describe('stockPushPlanOf — барьеры', () => {
     const products = [...gone, product()];
     const available = { ...Object.fromEntries(gone.map((p) => [p.skus.ym, 3])), 'A-1': 10 };
     const plan = stockPushPlanOf(input({ products, targets: [ymTarget({ available })] }));
-    expect(plan.targets[0]).toMatchObject({ blockedBy: null, zeroed: 53, zeroedBySales: 0 });
+    expect(plan.targets[0]).toMatchObject({ blockedBy: null, zeroed: 53 });
     expect(plan.targets[0].updates).toHaveLength(53);
   });
 
-  it(`обнуления от продаж: ${STOCK_PUSH_MAX_ZEROED + 1} — стоп, даже если прочее > 0`, () => {
-    const sold = Array.from({ length: STOCK_PUSH_MAX_ZEROED + 1 }, (_, i) =>
+  it('проданное до нуля пишется без порога: 20 обнулений продажами — не стоп', () => {
+    // Прод 406937947 (2026-11-13): штучные часы, 6 продаж за проход держали весь ЯМ.
+    const sold = Array.from({ length: 20 }, (_, i) =>
       product({ id: `s${i}`, internalSku: `S${i}`, stock: 1, skus: { ym: `S${i}` } }),
     );
     const orders = sold.map((p) => order({ items: [{ sku: p.skus.ym, count: 1 }] }));
@@ -310,8 +311,9 @@ describe('stockPushPlanOf — барьеры', () => {
         targets: [ymTarget({ available })],
       }),
     );
-    expect(plan.targets[0]).toMatchObject({ blockedBy: 'zeroing', zeroedBySales: 6 });
-    expect(stockPushBlockTextOf(plan.targets[0])).toContain('продажи обнулили бы 6');
+    expect(plan.targets[0]).toMatchObject({ blockedBy: null, zeroed: 20 });
+    expect(plan.targets[0].updates.filter((row) => row.to === 0)).toHaveLength(20);
+    expect(stockPushBlockTextOf(plan.targets[0])).toBeNull();
   });
 
   it('прайс дал ноль всем позициям площадки — битый файл, стоп', () => {
@@ -320,7 +322,7 @@ describe('stockPushPlanOf — барьеры', () => {
     );
     const available = Object.fromEntries(products.map((p) => [p.skus.ym, 4]));
     const plan = stockPushPlanOf(input({ products, targets: [ymTarget({ available })] }));
-    expect(plan.targets[0]).toMatchObject({ blockedBy: 'zeroing', zeroedBySales: 0 });
+    expect(plan.targets[0]).toMatchObject({ blockedBy: 'zeroing', zeroed: 6 });
     expect(stockPushBlockTextOf(plan.targets[0])).toContain('прайс дал ноль всем 6');
   });
 
