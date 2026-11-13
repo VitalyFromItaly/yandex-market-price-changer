@@ -17,6 +17,14 @@ import { ErrorReporter } from '../../modules/errors/error-reporter.service';
 
 import { FINANCE_DB, MIGRATIONS_FOLDER, MIGRATIONS_TABLE } from './finance-db';
 import { financeSchema } from './finance.schema';
+import { AccountingAllocationSettingsRepository } from './repositories/accounting-allocation-settings.repository';
+import { AccountingCostHistoryRepository } from './repositories/accounting-cost-history.repository';
+import { AccountingCostSettingsRepository } from './repositories/accounting-cost-settings.repository';
+import { AccountingLotRepository } from './repositories/accounting-lot.repository';
+import { AccountingManualOperationRepository } from './repositories/accounting-manual-operation.repository';
+import { AccountingOrderLineRepository } from './repositories/accounting-order-line.repository';
+import { AccountingOrderResultRepository } from './repositories/accounting-order-result.repository';
+import { AccountingTaxSettingsRepository } from './repositories/accounting-tax-settings.repository';
 import { FinanceActServicesRepository } from './repositories/finance-act-services.repository';
 import { FinanceAnomalyRepository } from './repositories/finance-anomaly.repository';
 import { FinanceCorrectionRepository } from './repositories/finance-correction.repository';
@@ -24,8 +32,10 @@ import { FinanceDiscrepancyRepository } from './repositories/finance-discrepancy
 import { FinanceDocumentRepository } from './repositories/finance-document.repository';
 import { FinanceExpenseRepository } from './repositories/finance-expense.repository';
 import { FinanceOperationRepository } from './repositories/finance-operation.repository';
+import { FinanceOzonBalanceRepository } from './repositories/finance-ozon-balance.repository';
 import { FinancePeriodRepository } from './repositories/finance-period.repository';
 import { FinancePurchaseRepository } from './repositories/finance-purchase.repository';
+import { FinanceSyncRunRepository } from './repositories/finance-sync-run.repository';
 import { FinanceTaxSettingsRepository } from './repositories/finance-tax-settings.repository';
 import { FinanceTaxYearRepository } from './repositories/finance-tax-year.repository';
 
@@ -105,12 +115,22 @@ class PostgresLifecycle implements OnApplicationBootstrap, OnApplicationShutdown
     FinanceDocumentRepository,
     FinanceCorrectionRepository,
     FinancePeriodRepository,
+    FinanceSyncRunRepository,
+    AccountingManualOperationRepository,
+    AccountingCostHistoryRepository,
+    AccountingOrderLineRepository,
+    AccountingOrderResultRepository,
     FinanceDiscrepancyRepository,
     FinanceActServicesRepository,
+    FinanceOzonBalanceRepository,
     FinanceAnomalyRepository,
     FinanceExpenseRepository,
     FinanceTaxSettingsRepository,
+    AccountingAllocationSettingsRepository,
+    AccountingCostSettingsRepository,
+    AccountingTaxSettingsRepository,
     FinancePurchaseRepository,
+    AccountingLotRepository,
     FinanceTaxYearRepository,
   ],
   exports: [
@@ -120,12 +140,22 @@ class PostgresLifecycle implements OnApplicationBootstrap, OnApplicationShutdown
     FinanceDocumentRepository,
     FinanceCorrectionRepository,
     FinancePeriodRepository,
+    FinanceSyncRunRepository,
+    AccountingManualOperationRepository,
+    AccountingCostHistoryRepository,
+    AccountingOrderLineRepository,
+    AccountingOrderResultRepository,
     FinanceDiscrepancyRepository,
     FinanceActServicesRepository,
+    FinanceOzonBalanceRepository,
     FinanceAnomalyRepository,
     FinanceExpenseRepository,
     FinanceTaxSettingsRepository,
+    AccountingAllocationSettingsRepository,
+    AccountingCostSettingsRepository,
+    AccountingTaxSettingsRepository,
     FinancePurchaseRepository,
+    AccountingLotRepository,
     FinanceTaxYearRepository,
   ],
 })

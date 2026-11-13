@@ -87,6 +87,33 @@ export class FinanceActServicesRepository {
     return result;
   }
 
+  /**
+   * День акта → итог и Σ по листам отчёта услуг — документ сверки v2 «Финучёта»
+   * (TASK-226). Только чтение; акта без итога в карте нет.
+   */
+  async sheetsByDays(
+    telegramUserId: string,
+    actDays: readonly string[],
+    executor: TFinanceExecutor = this.db,
+  ): Promise<Map<string, { totalKopecks: number; sheets: Record<string, number> }>> {
+    const result = new Map<string, { totalKopecks: number; sheets: Record<string, number> }>();
+    if (!actDays.length) return result;
+    const rows = await executor
+      .select({ actDay: t.actDay, totalKopecks: t.totalKopecks, sheets: t.sheets })
+      .from(t)
+      .where(
+        and(
+          eq(t.marketplace, 'ym'),
+          eq(t.telegramUserId, telegramUserId),
+          inArray(t.actDay, [...actDays]),
+        ),
+      );
+    for (const row of rows) {
+      result.set(row.actDay, { totalKopecks: row.totalKopecks, sheets: row.sheets });
+    }
+    return result;
+  }
+
   /** Записать исход сверки акта с журналом — по нему импорт решает, перезаказать ли отчёт. */
   async markMatched(
     telegramUserId: string,

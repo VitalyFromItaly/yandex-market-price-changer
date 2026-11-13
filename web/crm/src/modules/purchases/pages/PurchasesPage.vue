@@ -118,6 +118,7 @@ onMounted(() => {
       v-model:form="dialog.form.value"
       :title="dialog.title.value"
       :limits="view.limits"
+      :lots-enabled="view.lotsEnabled"
       :errors="dialog.errors.value"
       :busy="dialog.busy.value"
       @save="dialog.save()"

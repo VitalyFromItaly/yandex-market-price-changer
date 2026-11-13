@@ -240,6 +240,81 @@ describe('Позиции возврата', () => {
     expect(page.items[0].items[0]).not.toHaveProperty('shopSku');
   });
 
+  it('instances: тип остатка и статус экземпляра (TASK-238), cis/imei не берём', async () => {
+    stubAxios([
+      {
+        result: {
+          returns: [
+            {
+              id: 1,
+              items: [
+                {
+                  shopSku: 'ABC-123',
+                  count: 2,
+                  instances: [
+                    { stockType: 'FIT', status: 'PICKED', cis: 'x' },
+                    { stockType: 'DEFECT', status: 'RECEIVED_ON_FULFILLMENT', imei: 'y' },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+
+    const [record] = (await client().getReturns()).items;
+
+    expect(record.items[0].instances).toEqual([
+      { stockType: 'FIT', status: 'PICKED' },
+      { stockType: 'DEFECT', status: 'RECEIVED_ON_FULFILLMENT' },
+    ]);
+  });
+
+  it('decisions: только причина покупателя (TASK-241), суммы и фото не берём', async () => {
+    stubAxios([
+      {
+        result: {
+          returns: [
+            {
+              id: 1,
+              items: [
+                {
+                  shopSku: 'ABC-123',
+                  decisions: [
+                    {
+                      returnItemId: 7,
+                      reasonType: 'BAD_QUALITY',
+                      subreasonType: 'BROKEN',
+                      amount: { value: 100, currencyId: 'RUR' },
+                      images: ['h'],
+                    },
+                  ],
+                },
+                { shopSku: 'NO-DEC' },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+
+    const [record] = (await client().getReturns()).items;
+
+    expect(record.items[0].decisions).toEqual([
+      { reasonType: 'BAD_QUALITY', subreasonType: 'BROKEN' },
+    ]);
+    expect(record.items[1].decisions).toBeUndefined();
+  });
+
+  it('fromDate/toDate/orderIds уходят в запрос', async () => {
+    const calls = stubAxios([{ result: { returns: [] } }]);
+
+    await client().getReturns({ fromDate: '2026-11-01', toDate: '2026-11-08', orderIds: [5] });
+
+    expect(calls[0]).toMatchObject({ fromDate: '2026-11-01', toDate: '2026-11-08', orderIds: [5] });
+  });
+
   it('возврат без items не падает — поле остаётся пустым', async () => {
     stubAxios([{ result: { returns: [{ returnId: 2 }] } }]);
 

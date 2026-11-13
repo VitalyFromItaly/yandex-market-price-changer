@@ -11,8 +11,10 @@ import type { TFeatureMap } from '../telegram/bots/shared/features.domain';
 
 import { Injectable } from '@nestjs/common';
 
+import { AppConfigService } from '../../config/app-config.service';
 import { FINANCE_MARKETPLACES } from '../../database/postgres/finance.schema';
 import { FinanceAnomalyRepository } from '../../database/postgres/repositories/finance-anomaly.repository';
+import { FinanceSyncRunRepository } from '../../database/postgres/repositories/finance-sync-run.repository';
 import { ProductService } from '../../database/services/product.service';
 import { SellerNotificationSettingsService } from '../../database/services/seller-notification-settings.service';
 import { SellerNotificationService } from '../../database/services/seller-notification.service';
@@ -39,6 +41,8 @@ import {
   STOCK_RULES,
   anomalyEvents,
   diffNotifications,
+  financeSyncEvents,
+  isRuleAvailable,
   productLossEvents,
   returnsEvents,
   salesEvents,
@@ -70,6 +74,9 @@ function window(today: string, days: number, endOffset: number): IFinancePeriod 
  */
 @Injectable()
 export class NotificationsService {
+  // Каждая группа правил читает свой отчёт, и зависимости — ровно их список;
+  // обёртка-агрегат спрятала бы, какое правило что читает (довод ai-tools.service).
+  // eslint-disable-next-line max-params
   constructor(
     private readonly settings: SellerNotificationSettingsService,
     private readonly notifications: SellerNotificationService,
@@ -81,6 +88,8 @@ export class NotificationsService {
     private readonly anomalies: FinanceAnomalyRepository,
     private readonly inventory: InventoryService,
     private readonly errors: ErrorReporter,
+    private readonly syncRuns: FinanceSyncRunRepository,
+    private readonly config: AppConfigService,
   ) {}
 
   async check(
@@ -156,6 +165,13 @@ export class NotificationsService {
       }
     }
 
+    try {
+      events.push(...(await this.syncEvents(telegramUserId, features, settings)));
+    } catch (error) {
+      skippedRules.add(NOTIFICATION_RULE.FINANCE_SYNC_FAILED);
+      fail(error, 'журнал синхронизации финансов');
+    }
+
     const isSkipped = (row: IActiveNotification) => {
       if (skippedRules.has(row.rule)) return true;
       const marketplace = subjectMarketplace(row);
@@ -174,6 +190,46 @@ export class NotificationsService {
       resolved: diff.toResolve.length,
       skipped: [...skippedRules, ...[...skippedMarketplaces].map((mp) => `marketplace:${mp}`)],
     };
+  }
+
+  /**
+   * Только правило «Сбой загрузки финансов» (TASK-212) — зовёт процессор
+   * finance-import сразу после сбоя, а не ждёт дневной проверки. Остальные
+   * правила считаются не посчитанными: их активные не трогаются. Правило
+   * живёт и в `check()` — иначе дневная проверка сняла бы уведомление, которое
+   * подняли здесь, как «условие пропало».
+   */
+  async checkFinanceSync(
+    telegramUserId: string,
+    features: TFeatureMap,
+    now: Date = new Date(),
+  ): Promise<INotificationsCheckResult> {
+    const settings = (await this.settings.get(telegramUserId)).rules;
+    const events = await this.syncEvents(telegramUserId, features, settings);
+    const active = await this.notifications.listActive(telegramUserId);
+    const diff = diffNotifications(
+      active,
+      events,
+      (row) => row.rule !== NOTIFICATION_RULE.FINANCE_SYNC_FAILED,
+    );
+    const created = await this.notifications.apply(
+      telegramUserId,
+      diff.toResolve,
+      diff.toCreate,
+      now,
+    );
+    return { created, resolved: diff.toResolve.length, skipped: [] };
+  }
+
+  /** События правила сбоя загрузки: только при открытом «Финучёте», по журналу синхронизации. */
+  private async syncEvents(
+    telegramUserId: string,
+    features: TFeatureMap,
+    settings: TNotificationRuleSettings,
+  ): Promise<INotificationEvent[]> {
+    if (!isRuleAvailable(NOTIFICATION_RULE.FINANCE_SYNC_FAILED, features)) return [];
+    const states = await this.syncRuns.states(telegramUserId);
+    return financeSyncEvents(states, this.config.finAccountingRetryAttempts, settings);
   }
 
   /**

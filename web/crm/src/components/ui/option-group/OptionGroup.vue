@@ -21,6 +21,7 @@ const emit = defineEmits<{ 'update:modelValue': [T] }>();
     <Button
       v-for="option in options"
       :key="option.value"
+      type="button"
       size="sm"
       :variant="option.value === modelValue ? 'soft' : 'chip'"
       :aria-pressed="option.value === modelValue"

@@ -6,11 +6,13 @@ import type { IOzonDayPayout } from '../finance/ozon-payouts';
 import { Injectable, Logger } from '@nestjs/common';
 
 import { FinanceOperationRepository } from '../../database/postgres/repositories/finance-operation.repository';
+import { FinanceOzonBalanceRepository } from '../../database/postgres/repositories/finance-ozon-balance.repository';
 import { MarketplaceConnectionService } from '../../database/services/marketplace-connection.service';
 import { ProductService } from '../../database/services/product.service';
 import { ErrorReporter } from '../errors/error-reporter.service';
 import { FinanceImportService } from '../finance/finance-import.service';
 import { financeToday, requestRange, shiftDay } from '../finance/finance-period';
+import { isPeriodClosed } from '../finance/finance-period-status';
 import {
   ozonAccrualToRow,
   ozonAccrualTypesMap,
@@ -30,6 +32,9 @@ export const OZON_FINANCE_SKU_CONTEXT = 'finance:ozon-sku';
 
 /** Место сбоя раскладки выплат (TASK-184) — без id, довод троттлинга алертов. */
 export const OZON_PAYOUTS_CONTEXT = 'finance:ozon-payouts';
+
+/** Место сбоя загрузки сальдо месяца (TASK-227) — без id, довод троттлинга алертов. */
+export const OZON_BALANCE_CONTEXT = 'finance:ozon-balance';
 
 const moscowStart = (day: string) => new Date(`${day}T00:00:00+03:00`);
 
@@ -76,6 +81,7 @@ export class OzonFinanceService {
     private readonly imports: FinanceImportService,
     private readonly errors: ErrorReporter,
     private readonly operations: FinanceOperationRepository,
+    private readonly balances: FinanceOzonBalanceRepository,
   ) {}
 
   async importPeriod(
@@ -126,7 +132,34 @@ export class OzonFinanceService {
     );
     // И при `unchanged`: начисления те же, а выплаты могли прийти новые.
     if (result.status !== 'empty') await this.assignPayouts(telegramUserId, period, client, now);
+    await this.recordBalance(telegramUserId, period, client, now);
     return result;
+  }
+
+  /**
+   * Сальдо закрытого месяца (TASK-227) — документ сверки v2: начислено и
+   * исходящее Ozon против журнала. Незакрытый месяц не пишется: сальдо на
+   * сегодня — не документ месяца. Сбой — алерт, импорт цел (довод
+   * `assignPayouts`); следующий импорт загрузит заново.
+   */
+  private async recordBalance(
+    telegramUserId: string,
+    period: IFinancePeriod,
+    client: Pick<OzonSellerClient, 'balanceOfPeriod'>,
+    now: Date,
+  ): Promise<void> {
+    if (!isPeriodClosed(period.to, financeToday(now))) return;
+    try {
+      const balance = await client.balanceOfPeriod(period.from, period.to);
+      await this.balances.upsert(telegramUserId, period, balance, now);
+    } catch (error) {
+      void this.errors.report({
+        error,
+        telegramUserId,
+        source: 'queue',
+        context: OZON_BALANCE_CONTEXT,
+      });
+    }
   }
 
   /**

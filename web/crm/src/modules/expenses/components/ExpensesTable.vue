@@ -5,7 +5,7 @@
  */
 import type { ExpenseRow } from '../expenses.domain';
 
-import { Pencil, Trash2 } from 'lucide-vue-next';
+import { CircleAlert, Pencil, Trash2 } from 'lucide-vue-next';
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -37,7 +37,20 @@ const emit = defineEmits<{ edit: [id: string]; remove: [id: string] }>();
       <TableBody>
         <TableRow v-for="row in rows" :key="row.id">
           <TableCell>
-            <div class="font-medium">{{ row.categoryLabel }}</div>
+            <div class="flex items-center gap-1 font-medium">
+              {{ row.categoryLabel }}
+              <CircleAlert
+                v-if="row.doubleCountHint"
+                class="size-4 text-warn"
+                :aria-label="row.doubleCountHint"
+                role="img"
+              >
+                <title>{{ row.doubleCountHint }}</title>
+              </CircleAlert>
+            </div>
+            <div v-if="row.bindingLabel" class="text-xs text-muted-foreground">
+              {{ row.bindingLabel }}
+            </div>
             <div
               v-if="row.note"
               class="max-w-[18rem] truncate text-xs text-muted-foreground"

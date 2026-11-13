@@ -9,7 +9,9 @@ import {
   OzonSellerClient,
   mapAccrualTypes,
   mapAccrualsByDay,
+  combineOzonBalances,
   mapFinanceBalance,
+  mapFinanceBalanceTotals,
 } from '../../src/modules/ozon/ozon.client';
 import { pickFinanceMarketplaces } from '../../src/modules/telegram/queue/services/finance-schedule';
 
@@ -111,10 +113,7 @@ describe('OzonSellerClient.listAccrualsByDay', () => {
   it('справочник типов: id строкой, без id отбрасывается', async () => {
     const calls = stubRoutes({
       [OZON_PATHS.financeAccrualTypes]: () => ({
-        accrual_types: [
-          { id: 1, name: 'Acquiring', description: 'Эквайринг' },
-          { name: 'NoId' },
-        ],
+        accrual_types: [{ id: 1, name: 'Acquiring', description: 'Эквайринг' }, { name: 'NoId' }],
       }),
     });
     expect(await client().listAccrualTypes()).toEqual([
@@ -155,7 +154,9 @@ describe('OzonSellerClient.balanceOfDay (TASK-184)', () => {
   });
 
   it('разбор: обёртка result, голые числа, пустые выплаты, знак выплаты — модулем', () => {
-    expect(mapFinanceBalance({ result: { total: { opening_balance: 10, payments: [] } } }, 'd')).toEqual({
+    expect(
+      mapFinanceBalance({ result: { total: { opening_balance: 10, payments: [] } } }, 'd'),
+    ).toEqual({
       openingKopecks: 1000,
       paymentsKopecks: 0,
     });
@@ -167,9 +168,60 @@ describe('OzonSellerClient.balanceOfDay (TASK-184)', () => {
   it('нет total, нет сальдо или чужая валюта — ошибка, а не нули', () => {
     expect(() => mapFinanceBalance({}, '2026-10-05')).toThrow(/сальдо за 2026-10-05/);
     expect(() => mapFinanceBalance({ total: { payments: [] } }, 'd')).toThrow(/входящее сальдо/);
+    expect(() => mapFinanceBalance(balance([{ currency_code: 'USD', value: 1 }]), 'd')).toThrow(
+      /USD/,
+    );
+  });
+});
+
+describe('OzonSellerClient.balanceOfPeriod (TASK-227)', () => {
+  const total = (from: string, accrued: number | null, closing: number | null) => ({
+    total: {
+      opening_balance: { currency_code: 'RUB', value: from === '2026-10-01' ? 100 : 999 },
+      ...(accrued === null ? {} : { accrued: { currency_code: 'RUB', value: accrued } }),
+      ...(closing === null ? {} : { closing_balance: { currency_code: 'RUB', value: closing } }),
+      payments: [{ currency_code: 'RUB', value: -10 }],
+    },
+  });
+
+  it('31 день — два окна ≤ 30: входящее первого, исходящее последнего, суммы — сложены', async () => {
+    const calls = stubRoutes({
+      [OZON_PATHS.financeBalance]: (body: { date_from: string }) =>
+        body.date_from === '2026-10-01'
+          ? total(body.date_from, 300, 390)
+          : total(body.date_from, 5, 385),
+    });
+    expect(await client().balanceOfPeriod('2026-10-01', '2026-10-31')).toEqual({
+      openingKopecks: 10000,
+      accruedKopecks: 30500,
+      paymentsKopecks: 2000,
+      closingKopecks: 38500,
+    });
+    expect(calls.map((c) => c.body)).toEqual([
+      { date_from: '2026-10-01', date_to: '2026-10-30' },
+      { date_from: '2026-10-31', date_to: '2026-10-31' },
+    ]);
+  });
+
+  it('нет accrued/closing — null, а не ноль; чужая валюта — ошибка', () => {
+    expect(mapFinanceBalanceTotals(total('2026-10-01', null, null), 'r')).toEqual({
+      openingKopecks: 10000,
+      accruedKopecks: null,
+      paymentsKopecks: 1000,
+      closingKopecks: null,
+    });
     expect(() =>
-      mapFinanceBalance(balance([{ currency_code: 'USD', value: 1 }]), 'd'),
+      mapFinanceBalanceTotals(
+        {
+          total: { opening_balance: 1, accrued: { currency_code: 'USD', value: 1 }, payments: [] },
+        },
+        'r',
+      ),
     ).toThrow(/USD/);
+    const part = { openingKopecks: 1, accruedKopecks: 2, paymentsKopecks: 3, closingKopecks: 4 };
+    expect(
+      combineOzonBalances([part, { ...part, accruedKopecks: null }]).accruedKopecks,
+    ).toBeNull();
   });
 });
 

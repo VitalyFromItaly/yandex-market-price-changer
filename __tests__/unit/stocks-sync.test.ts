@@ -92,6 +92,7 @@ function serviceWith(
     products as never,
     errors as never,
     costHistory as never,
+    { recordPriceList: async () => 0 } as never,
   );
 }
 

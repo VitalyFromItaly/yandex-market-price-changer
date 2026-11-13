@@ -21,6 +21,8 @@ import type { IFinancePeriod } from './finance-period';
 import type { IOperationBreakdownPart } from './operation-breakdown';
 import type { ErrorReporter } from '../errors/error-reporter.service';
 
+import { accountingColumnsOf } from '../accounting/accounting-sub-articles';
+
 import { financeToday } from './finance-period';
 import { kopecksToRub, toKopecks } from './kopecks';
 import { OZON_RETURN_TYPES, OZON_SALE_TYPES, ozonAccrualTypeArticle } from './ozon-articles';
@@ -318,6 +320,9 @@ export function ozonAccrualToRow(
     documentVersion: ctx.documentVersion,
     periodKey: ctx.periodKey,
     raw,
+    // Реестр «Финучёта» (TASK-207): части с именами типов есть только здесь —
+    // в базу расшифровка ложится лишь у многостатейных строк.
+    ...accountingColumnsOf({ marketplace: 'ozon', transactionType: kind, raw, parts }),
     // Одна статья — расшифровка ничего не добавляет: строка и есть эта статья. У
     // нераспознанной строки расшифровка остаётся всегда: по ней алерт называет тип.
     ...(parts.length && (articles.size > 1 || article === 'unknown') ? { breakdown: parts } : {}),

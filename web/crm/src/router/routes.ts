@@ -1,6 +1,7 @@
 import type { MarketplaceKey, MarketplaceSection } from '@/navigation.sections';
 import type { RouteRecordRaw } from 'vue-router';
 
+import { accountingRoutes } from '@/modules/accounting/pages/routes';
 import { aiAnalystRoutes } from '@/modules/ai-analyst/pages/routes';
 import { authPublicRoutes } from '@/modules/auth/pages/routes';
 import { dashboardRoutes } from '@/modules/dashboard/pages/routes';
@@ -91,6 +92,7 @@ const accountRoutes: RouteRecordRaw[] = [
   ...productsRoutes,
   ...priceCalculatorRoutes,
   ...priceSetRoutes,
+  ...accountingRoutes,
   ...aiAnalystRoutes,
   ...notificationsRoutes,
   ...storesRoutes,

@@ -10,6 +10,7 @@ import { UserAccessService } from '../../src/database/services/user-access.servi
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { FinanceImportScheduler } from '../../src/modules/telegram/queue/services/finance-import.scheduler';
 import { SellerNotificationsScheduler } from '../../src/modules/telegram/queue/services/seller-notifications.scheduler';
+import { AccountingOrdersScheduler } from '../../src/modules/telegram/queue/services/accounting-orders.scheduler';
 import { StockPushScheduler } from '../../src/modules/telegram/queue/services/stock-push.scheduler';
 import { WeeklyDigestScheduler } from '../../src/modules/telegram/queue/services/weekly-digest.scheduler';
 import { AccessNotifierService } from '../../src/modules/access/access-notifier.service';
@@ -119,6 +120,7 @@ describe('AccessController', () => {
         { provide: SellerNotificationsScheduler, useValue: { refresh: vi.fn() } },
         { provide: WeeklyDigestScheduler, useValue: { refresh: digestRefresh } },
         { provide: StockPushScheduler, useValue: { refresh: pushRefresh } },
+        { provide: AccountingOrdersScheduler, useValue: { refresh: vi.fn() } },
         // Гвард висит на классе, поэтому Nest поднимает его вместе с
         // контроллером. Здесь проверяется НАЛИЧИЕ гварда, а его собственная
         // логика — в admin-auth.test.ts.

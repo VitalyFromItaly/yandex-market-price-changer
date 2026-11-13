@@ -18,6 +18,8 @@ import { FinanceDocumentRepository } from '../../src/database/postgres/repositor
 import { FinanceExpenseRepository } from '../../src/database/postgres/repositories/finance-expense.repository';
 import { FinanceOperationRepository } from '../../src/database/postgres/repositories/finance-operation.repository';
 import { FinancePeriodRepository } from '../../src/database/postgres/repositories/finance-period.repository';
+import { AccountingLotRepository } from '../../src/database/postgres/repositories/accounting-lot.repository';
+import { ProductService } from '../../src/database/services/product.service';
 import { FinancePurchaseRepository } from '../../src/database/postgres/repositories/finance-purchase.repository';
 import { FinanceTaxSettingsRepository } from '../../src/database/postgres/repositories/finance-tax-settings.repository';
 import { ActionLog } from '../../src/database/schemas/action-log.schema';
@@ -63,6 +65,7 @@ import { journalKeys, nettingRowToOperation } from '../../src/modules/finance/ym
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
 import * as XLSX from 'xlsx';
 import { inMemoryModel } from '../helpers/in-memory-model';
+import { productsStub } from '../helpers/purchases-service';
 import { createTestFinanceDb } from '../helpers/test-postgres';
 
 /**
@@ -315,6 +318,8 @@ describe('CRM «Финансы» по HTTP', { timeout: 60_000 }, () => {
         { provide: FinanceScreenService, useValue: screen },
         { provide: FinanceExpenseRepository, useValue: new FinanceExpenseRepository(pg.db) },
         { provide: FinancePurchaseRepository, useValue: new FinancePurchaseRepository(pg.db) },
+        { provide: AccountingLotRepository, useValue: new AccountingLotRepository(pg.db) },
+        { provide: ProductService, useValue: productsStub() },
         { provide: FinanceOperationRepository, useValue: operations },
         { provide: FinanceImportScheduler, useValue: pulls },
         {
@@ -422,7 +427,10 @@ describe('CRM «Финансы» по HTTP', { timeout: 60_000 }, () => {
       months: [previous.month, current.month, previous.month],
     });
     expect(response.status).toBe(202);
-    expect(await response.json()).toEqual({ queued: [current.month, previous.month], cooldown: [] });
+    expect(await response.json()).toEqual({
+      queued: [current.month, previous.month],
+      cooldown: [],
+    });
     const [user, marketplace, months] = pulls.pullNow.mock.calls[0];
     expect([user, marketplace]).toEqual([SELLER, 'ym']);
     expect(months).toEqual([current, previous]);
@@ -883,9 +891,10 @@ describe('CRM «Финансы» по HTTP', { timeout: 60_000 }, () => {
     const flow = (await cashflow.json()) as Record<string, unknown>;
     expect(flow.unsupported).toBeUndefined();
     expect(flow).toHaveProperty('receivable');
-    expect(
-      await (await call('GET', '/corrections?month=2026-09&marketplace=wb')).json(),
-    ).toEqual({ total: 0, items: [] });
+    expect(await (await call('GET', '/corrections?month=2026-09&marketplace=wb')).json()).toEqual({
+      total: 0,
+      items: [],
+    });
   });
 
   it('отметка аномалий: 400 на пустой список и не-boolean', async () => {

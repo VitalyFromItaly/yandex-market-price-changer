@@ -2,6 +2,7 @@ import 'dotenv/config';
 import mongoose from 'mongoose';
 
 import { YandexMarketSchema } from '../src/database/schemas/yandex-market.schema';
+import { ymReturnConditions } from '../src/modules/accounting/accounting-order-lines.domain';
 import { YandexApiClient, type IReturnRecord } from '../src/modules/yandex/yandex-api.client';
 import {
   RETURN_ACTIVE_STATUSES,
@@ -24,6 +25,11 @@ import {
  * Запуск:
  *   npx ts-node scripts/diagnose-returns.ts --user=<telegramUserId>
  *   npx ts-node scripts/diagnose-returns.ts --user=<id> --list
+ *   npx ts-node scripts/diagnose-returns.ts --user=<id> --instances
+ *
+ * `--instances` — возвраты с не-fit состоянием «Финучёта» (брак, утеря, неизвестно)
+ * с экземплярами и причиной покупателя (`decisions[].reasonType`): им проверяется
+ * состояние возврата (TASK-238) и брак FBS по причине покупателя (TASK-241).
  *
  * `--list` печатает построчно CREATED и записи без `shipmentStatus` — те две
  * группы, из-за которых расхождение и возникает.
@@ -74,7 +80,26 @@ function line(record: IReturnRecord): string {
     (record.refundStatus ?? '(нет)').padEnd(30),
     `оформлен ${(record.creationDate ?? '').slice(0, 10) || '(нет даты)'}`,
     `— ${returnStage(record.shipmentStatus, record.refundStatus)}`,
+    instancesOf(record),
   ].join(' ');
+}
+
+/**
+ * Экземпляры позиций (TASK-238): `артикул: stockType/status,…` и состояние для
+ * «Финучёта» (`ymReturnConditions`) — им проверяется, что Маркет присылает
+ * тип остатка на живых возвратах.
+ */
+function instancesOf(record: IReturnRecord): string {
+  const conditions = ymReturnConditions([record]).get(String(record.orderId));
+  const parts = (record.items ?? []).map((item) => {
+    const list = (item.instances ?? [])
+      .map((i) => `${i.stockType ?? '?'}/${i.status ?? '?'}`)
+      .join(',');
+    const reasons = (item.decisions ?? []).map((d) => d.reasonType ?? '?').join(',');
+    const condition = conditions?.get(item.offerId ?? '') ?? '—';
+    return `${item.offerId ?? '?'}: ${list || '(нет instances)'} [${reasons || 'нет decisions'}] → ${condition}`;
+  });
+  return parts.length ? `| ${parts.join('; ')}` : '| (нет позиций)';
 }
 
 async function main(): Promise<void> {
@@ -178,6 +203,56 @@ async function main(): Promise<void> {
     for (const r of noStatus) console.log(`  ${line(r)}`);
   } else {
     console.log('(построчно — с ключом --list)');
+  }
+
+  // 4. Состояние возврата для «Финучёта» (TASK-238/241): тип остатка экземпляров и причина покупателя.
+  const byStock = new Map<string, number>();
+  const byReason = new Map<string, number>();
+  for (const r of all) {
+    for (const item of r.items ?? []) {
+      for (const i of item.instances ?? []) {
+        const key = `${i.stockType ?? '(нет stockType)'}/${i.status ?? '(нет status)'}`;
+        byStock.set(key, (byStock.get(key) ?? 0) + 1);
+      }
+      for (const d of item.decisions ?? []) {
+        const key = d.reasonType ?? '(нет reasonType)';
+        byReason.set(key, (byReason.get(key) ?? 0) + 1);
+      }
+    }
+  }
+  console.log();
+  console.log('ЭКЗЕМПЛЯРЫ (stockType/status):');
+  if (!byStock.size) console.log('  (ни у одного возврата нет instances)');
+  for (const [key, n] of [...byStock].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${key.padEnd(40)} ${String(n).padStart(5)}`);
+  }
+  console.log();
+  console.log(
+    'ПРИЧИНЫ ПОКУПАТЕЛЯ (decisions[].reasonType; брак — BAD_QUALITY/DAMAGE_DELIVERY/WRONG_ITEM):',
+  );
+  if (!byReason.size) console.log('  (ни у одной позиции нет decisions)');
+  for (const [key, n] of [...byReason].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${key.padEnd(40)} ${String(n).padStart(5)}`);
+  }
+  const conditions = ymReturnConditions(all);
+  const byCondition = new Map<string, number>();
+  for (const byOffer of conditions.values()) {
+    for (const c of byOffer.values()) byCondition.set(c, (byCondition.get(c) ?? 0) + 1);
+  }
+  console.log();
+  console.log('СОСТОЯНИЕ ДЛЯ «ФИНУЧЁТА» (заказ × артикул):');
+  for (const [key, n] of [...byCondition].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${key.padEnd(40)} ${String(n).padStart(5)}`);
+  }
+  if (process.argv.includes('--instances')) {
+    console.log();
+    console.log('ВОЗВРАТЫ С НЕ-FIT СОСТОЯНИЕМ:');
+    const odd = all.filter((r) =>
+      [...(conditions.get(String(r.orderId))?.values() ?? [])].some((c) => c !== 'fit'),
+    );
+    for (const r of odd) console.log(`  ${line(r)}`);
+  } else {
+    console.log('(возвраты с не-fit состоянием — с ключом --instances)');
   }
 
   console.log();

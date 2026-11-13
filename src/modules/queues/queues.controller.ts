@@ -31,6 +31,7 @@ import {
   isQueueName,
   JOB_STATES,
   QUEUE_LIST,
+  cronEveryHours,
   cronToTime,
   reportTitleOf,
   userIdOf,
@@ -223,6 +224,9 @@ export class QueuesController {
           lastName: user?.lastName,
           // Идентификаторы магазина в ответ не попадают — правило панели.
           storeName: storeBy.get(job.telegramUserId)?.name,
+          // `frequent` — частая задача «Финучёта» (TASK-212): текущий месяц раз в N часов.
+          kind: job.kind,
+          everyHours: cronEveryHours(job.cron),
           time: cronToTime(job.cron),
           tz: job.tz,
           next: job.next,

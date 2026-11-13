@@ -35,7 +35,7 @@ npm run db:sync-indexes      # after adding/changing a Mongo index (mongoose nev
 `scripts/*.ts` (`npx ts-node scripts/<name>.ts --user=<telegramUserId> …`) are read-only diagnostics
 and one-off loaders against live data: `diagnose-{orders,returns,finance,tariffs,deep-history,polza,fby-stock}`,
 `{import,pnl,cashflow,anomalies}-finance`, `load-purchase-prices`, `seed-products`,
-`sync-ozon-catalog`, `preview-hosting-reminder`, `preview-stock-push`, `preview-price-set`, `backtest-forecast`, `backfill-stores`, and
+`sync-ozon-catalog`, `backfill-accounting-registry`, `backfill-accounting-cost-history`, `diagnose-accounting`, `sync-accounting-orders`, `preview-hosting-reminder`, `preview-stock-push`, `preview-price-set`, `backtest-forecast`, `backfill-stores`, and
 `eval-ai-analyst` (paid AI eval, only with `--run`; README ai-analyst). Each documents
 its flags and what it writes in its header. `clean-db` deletes data (dry run unless `--apply`; there
 are no backups). Scripts never boot `AppModule` — `BotRegistry` would
@@ -53,7 +53,9 @@ global prefix `/api`, `enableShutdownHooks()`.
 auth/logs → `YandexModule` → `TelegramModule` → … → `HealthModule` (last).
 
 - **Config:** never `process.env`, never `config.get()` outside `src/config/app-config.service.ts`.
-  A new variable = Joi rule in `env.validation.ts` + typed getter + `.env.example` + `docker-compose.yml`.
+  A new variable = Joi rule in `env.validation.ts` + typed getter + `.env.example` + `docker-compose.yml`,
+  **with a `.default()` or `.optional()`** — a key prod hasn't added yet must not fail startup. Required only via
+  `REQUIRED_ENV_KEYS` with a reason (`config.test.ts` enforces it, and `${X:?}` in compose only for those keys).
   Booleans are `valid('true','false')`, not `Joi.boolean()` (the string `'false'` is truthy).
 - **Data:** Mongo for everything (`src/database/README.md` — adding an entity is five registrations +
   `scripts/sync-indexes.ts`); Postgres only for finance (`src/modules/finance/README.md`). No
@@ -119,6 +121,16 @@ Short form; the reasons are in the linked README. Do not "simplify" any of these
 - Finance journal is integer kopecks; journal readers default to `marketplace: 'ym'`; marketplaces
   are never mixed in one number unless the screen says so.
 
+**Finance accounting «Финучёт» (`src/modules/accounting/README.md`)**
+
+- A second mechanism **beside** the current profit: `pnl.ts`, `order-feed.ts`, `returns-analytics.ts`, `profit-actual.ts`
+  are not called from it and not changed for it; same `finance_operations` journal, its own `accounting_*` tables.
+- Allocated amounts are always labeled (`*_allocated` rows with `method`) and never count as actual operations.
+- Unknown purchase cost is `null` («Неизвестная закупка»): `accountingCostAt`/FIFO never fall back to the price list
+  start, `PurchasePrice` or `Product.purchase`.
+- A deploy with a new `drizzle/` migration needs a Mongo + Postgres backup first (the app migrates itself on start,
+  drizzle has no down) — procedure and sync recovery in the README.
+
 **CRM (`src/modules/crm/README.md`)**
 
 - No logic in `src/modules/crm/` — delivery only; numbers come from the same services the bot uses.
@@ -175,7 +187,7 @@ Short form; the reasons are in the linked README. Do not "simplify" any of these
 `src/config/env.validation.ts` is the authority; `.env.example` documents every key. A missing or
 malformed variable fails startup with a Russian message naming it.
 
-- Required: `STOCK_WRITE_ENABLED`, `PRICE_WRITE_ENABLED`, `MARKETPLACE_WEBHOOK_IP_CHECK`, `MONGODB_URL`, `MONGODB_DATABASE`, `POSTGRES_URL`, `REDIS_HOST`,
+- Required (exactly `REQUIRED_ENV_KEYS` in `env.validation.ts`): `STOCK_WRITE_ENABLED`, `PRICE_WRITE_ENABLED`, `MONGODB_URL`, `MONGODB_DATABASE`, `POSTGRES_URL`, `REDIS_HOST`,
   `TELEGRAM_TOKEN`, `TELEGRAM_ADMIN_IDS`; `TELEGRAM_WEBHOOK_URL` only when `TELEGRAM_UPDATE_MODE=webhook`.
 - `TELEGRAM_WEBHOOK_URL` (inbound, Telegram → us) and `TELEGRAM_API_URL` (outbound Bot API mirror,
   scheme+host only — a path prefix is silently dropped) are opposite directions; don't swap them.
@@ -233,6 +245,7 @@ README = the area's rules **and** the reasons (each has a «Доводы и ис
 | Marketplace adapter, connections | `src/modules/marketplaces/README.md` |
 | «Передача остатков»: сквозной FBS-остаток и запись в ЯМ | `src/modules/stock-push/README.md` |
 | «Установка цен»: наценка/файл → план → запись цен ЯМ/Ozon/WB | `src/modules/price-set/README.md` |
+| «Финучёт»: фактический учёт рядом с текущим расчётом (фичи `fin_accounting*`, M29–M33), восстановление синхронизации, резервная копия перед миграциями | `src/modules/accounting/README.md` |
 | Seller notifications: rules, dedup, schedule, Telegram digest; shared stock assembly (`src/modules/inventory/`) | `src/modules/notifications/README.md` |
 | Ozon / Wildberries | `src/modules/ozon/README.md`, `src/modules/wb/README.md` |
 | AI (Polza, `AiService`, admin «ИИ» page) / tools / analyst | `src/modules/ai/`, `ai-tools/`, `ai-analyst/` READMEs |

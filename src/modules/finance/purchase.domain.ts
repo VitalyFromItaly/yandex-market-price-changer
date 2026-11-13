@@ -4,9 +4,17 @@
  *
  * Закупка — движение денег, а не расход P&L: себестоимость проданного P&L уже
  * берёт по продажам (`datedCosts`), и закупка партии там списала бы тот же
- * товар второй раз. Поэтому ни позиции, ни сумма закупки на прибыль не влияют —
- * они живут только в ДДС (`cashflow.ts`).
+ * товар второй раз. Поэтому ни позиции, ни сумма закупки на текущую прибыль не
+ * влияют — сумма живёт только в ДДС (`cashflow.ts`).
+ *
+ * «Финучёт» (режим Б, TASK-214): позиции становятся партиями, а доставка от
+ * поставщика и прочие расходы разносятся по ним в себестоимость. Эти расходы —
+ * отдельные поля: в сумму закупки и ДДС они не входят (решение `accounting_lots_storage`).
  */
+
+import type { TLotCostSplit } from '../accounting/accounting-lots.domain';
+
+import { DEFAULT_LOT_COST_SPLIT, isLotCostSplit } from '../accounting/accounting-lots.domain';
 
 import { isIsoDay, MAX_EXPENSE_KOPECKS } from './expense.domain';
 import { toKopecks } from './kopecks';
@@ -20,8 +28,9 @@ export const MAX_LINE_NAME_LENGTH = 200;
 export const MAX_LINE_COUNT = 1_000_000;
 
 /**
- * Позиция партии — справка (решение `purchase_lines_optional`): что пришло и
- * почём. На себестоимость не влияет: закуп товара — прайс и CostHistory.
+ * Позиция закупки (решение `purchase_lines_optional`): что пришло и почём.
+ * Текущая «Прибыль» берёт закуп из прайса и CostHistory, а «Финучёт» делает из
+ * позиции партию (TASK-214): артикул сопоставляется с товаром при сохранении.
  */
 export interface IPurchaseLine {
   sku: string;
@@ -38,6 +47,14 @@ export interface IPurchaseValue {
   amountKopecks: number;
   /** null — позиции не указаны. */
   lines: IPurchaseLine[] | null;
+  /**
+   * Доставка от поставщика, прочие расходы в себестоимость и методика их
+   * разнесения. undefined — поле не прислано: при создании берётся 0/`value`,
+   * при правке остаётся то, что в базе (форма без фичи `fin_accounting_lots` их не шлёт).
+   */
+  deliveryKopecks?: number;
+  otherCostsKopecks?: number;
+  lotCostSplit?: TLotCostSplit;
   note: string | null;
 }
 
@@ -48,7 +65,19 @@ export interface ITaxPaymentValue {
   note: string | null;
 }
 
-export type TPurchaseField = 'supplier' | 'paidDay' | 'amount' | 'lines' | 'note';
+export type TPurchaseField =
+  | 'supplier'
+  | 'paidDay'
+  | 'amount'
+  | 'lines'
+  | 'delivery'
+  | 'otherCosts'
+  | 'lotCostSplit'
+  | 'note';
+
+/** Доп. расходы есть, а позиций нет — разносить не на что. */
+export const EXTRA_WITHOUT_LINES_ERROR =
+  'Доставку и прочие расходы разносят по позициям — укажите позиции';
 
 type TValidation<V> = { ok: true; value: V } | { ok: false; field: TPurchaseField; error: string };
 
@@ -62,6 +91,19 @@ function amountOf(raw: unknown): { ok: true; kopecks: number } | { ok: false; er
   const kopecks = toKopecks(raw);
   if (kopecks === null) return { ok: false, error: 'Сумма — число в рублях, например 150000' };
   if (kopecks <= 0) return { ok: false, error: 'Сумма должна быть больше нуля' };
+  if (kopecks > MAX_PURCHASE_KOPECKS) return { ok: false, error: 'Слишком большая сумма' };
+  return { ok: true, kopecks };
+}
+
+/** Необязательная сумма ≥ 0: не прислана → undefined, пусто/null → 0. */
+function extraOf(
+  raw: unknown,
+): { ok: true; kopecks: number | undefined } | { ok: false; error: string } {
+  if (raw === undefined) return { ok: true, kopecks: undefined };
+  if (raw === null || (typeof raw === 'string' && !raw.trim())) return { ok: true, kopecks: 0 };
+  const kopecks = toKopecks(raw);
+  if (kopecks === null) return { ok: false, error: 'Сумма — число в рублях, например 1500' };
+  if (kopecks < 0) return { ok: false, error: 'Сумма не может быть отрицательной' };
   if (kopecks > MAX_PURCHASE_KOPECKS) return { ok: false, error: 'Слишком большая сумма' };
   return { ok: true, kopecks };
 }
@@ -151,19 +193,35 @@ export function validatePurchaseInput(input: Record<string, unknown>): TValidati
     return fail('lines', 'Сумма позиций не равна сумме закупки');
   }
 
+  const delivery = extraOf(input.delivery);
+  if (delivery.ok === false) return fail('delivery', delivery.error);
+  const otherCosts = extraOf(input.otherCosts);
+  if (otherCosts.ok === false) return fail('otherCosts', otherCosts.error);
+  if (!lines.lines && ((delivery.kopecks ?? 0) > 0 || (otherCosts.kopecks ?? 0) > 0)) {
+    return fail('lines', EXTRA_WITHOUT_LINES_ERROR);
+  }
+  let lotCostSplit: TLotCostSplit | undefined;
+  if (input.lotCostSplit !== undefined) {
+    if (input.lotCostSplit === null) lotCostSplit = DEFAULT_LOT_COST_SPLIT;
+    else if (isLotCostSplit(input.lotCostSplit)) lotCostSplit = input.lotCostSplit;
+    else return fail('lotCostSplit', 'Распределение — по стоимости или по штукам');
+  }
+
   const note = noteOf(input.note);
   if (note.ok === false) return fail('note', note.error);
 
-  return {
-    ok: true,
-    value: {
-      supplier,
-      paidDay,
-      amountKopecks: amount.kopecks,
-      lines: lines.lines,
-      note: note.note,
-    },
+  const value: IPurchaseValue = {
+    supplier,
+    paidDay,
+    amountKopecks: amount.kopecks,
+    lines: lines.lines,
+    note: note.note,
   };
+  // Не присланное не попадает в значение — правка его не перезапишет.
+  if (delivery.kopecks !== undefined) value.deliveryKopecks = delivery.kopecks;
+  if (otherCosts.kopecks !== undefined) value.otherCostsKopecks = otherCosts.kopecks;
+  if (lotCostSplit !== undefined) value.lotCostSplit = lotCostSplit;
+  return { ok: true, value };
 }
 
 export function validateTaxPaymentInput(

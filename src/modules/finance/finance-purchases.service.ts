@@ -1,4 +1,5 @@
-import type { TPurchaseField } from './purchase.domain';
+import type { IPurchaseValue, TPurchaseField } from './purchase.domain';
+import type { TFinanceTx } from '../../database/postgres/finance-db';
 import type {
   TFinancePurchaseRow,
   TFinanceTaxPaymentRow,
@@ -6,10 +7,17 @@ import type {
 
 import { Injectable } from '@nestjs/common';
 
+import { AccountingLotRepository } from '../../database/postgres/repositories/accounting-lot.repository';
 import { FinancePurchaseRepository } from '../../database/postgres/repositories/finance-purchase.repository';
+import { ProductService } from '../../database/services/product.service';
+import { lotsOfPurchase } from '../accounting/accounting-lots.domain';
 
 import { isUuid } from './expense.domain';
-import { validatePurchaseInput, validateTaxPaymentInput } from './purchase.domain';
+import {
+  EXTRA_WITHOUT_LINES_ERROR,
+  validatePurchaseInput,
+  validateTaxPaymentInput,
+} from './purchase.domain';
 
 /** Ввод закупки или уплаты налога не прошёл проверку — `field` говорит, под каким полем. */
 export class PurchaseValidationError extends Error {
@@ -39,10 +47,17 @@ export interface IPurchasesSnapshot {
  * Закупки партий и уплаченные налоги (TASK-122). Единственная дверь к ним:
  * CRM правит записи через неё, ДДС (`FinanceCashflowService`) читает через
  * неё же. В P&L ничего отсюда не идёт — закупка не расход прибыли.
+ *
+ * Сохранение закупки пересоздаёт её партии «Финучёта» (TASK-214) в той же
+ * транзакции; ДДС их не видит. Удаление снимает партии каскадом FK.
  */
 @Injectable()
 export class FinancePurchasesService {
-  constructor(private readonly repository: FinancePurchaseRepository) {}
+  constructor(
+    private readonly repository: FinancePurchaseRepository,
+    private readonly lots: AccountingLotRepository,
+    private readonly products: ProductService,
+  ) {}
 
   async snapshot(telegramUserId: string): Promise<IPurchasesSnapshot> {
     const [purchases, taxPayments] = await Promise.all([
@@ -69,7 +84,13 @@ export class FinancePurchasesService {
     telegramUserId: string,
     input: Record<string, unknown>,
   ): Promise<TFinancePurchaseRow> {
-    return this.repository.createPurchase(telegramUserId, purchaseValue(input));
+    const value = purchaseValue(input);
+    const productIds = await this.productIdsOf(telegramUserId, value);
+    return this.repository.inTransaction(async (tx) => {
+      const row = await this.repository.createPurchase(telegramUserId, value, tx);
+      await this.replaceLots(telegramUserId, row, productIds, tx);
+      return row;
+    });
   }
 
   async updatePurchase(
@@ -78,9 +99,14 @@ export class FinancePurchasesService {
     input: Record<string, unknown>,
   ): Promise<TFinancePurchaseRow> {
     if (!isUuid(id)) throw new PurchaseNotFoundError();
-    const row = await this.repository.updatePurchase(telegramUserId, id, purchaseValue(input));
-    if (!row) throw new PurchaseNotFoundError();
-    return row;
+    const value = purchaseValue(input);
+    const productIds = await this.productIdsOf(telegramUserId, value);
+    return this.repository.inTransaction(async (tx) => {
+      const row = await this.repository.updatePurchase(telegramUserId, id, value, tx);
+      if (!row) throw new PurchaseNotFoundError();
+      await this.replaceLots(telegramUserId, row, productIds, tx);
+      return row;
+    });
   }
 
   async removePurchase(telegramUserId: string, id: string): Promise<void> {
@@ -111,6 +137,34 @@ export class FinancePurchasesService {
     if (!isUuid(id) || !(await this.repository.removeTaxPayment(telegramUserId, id))) {
       throw new PurchaseNotFoundError();
     }
+  }
+
+  /** Артикул → товар; до транзакции — Mongo в неё не входит. */
+  private async productIdsOf(
+    telegramUserId: string,
+    value: IPurchaseValue,
+  ): Promise<Map<string, string>> {
+    if (!value.lines?.length) return new Map();
+    return this.products.resolveForPriceList(
+      telegramUserId,
+      value.lines.map((line) => line.sku),
+    );
+  }
+
+  /**
+   * Партии по сохранённой строке: при правке доставка могла остаться из базы,
+   * поэтому «расходы без позиций» проверяются ещё раз — откат всей правки.
+   */
+  private async replaceLots(
+    telegramUserId: string,
+    row: TFinancePurchaseRow,
+    productIds: ReadonlyMap<string, string>,
+    tx: TFinanceTx,
+  ): Promise<void> {
+    if (!row.lines?.length && (row.deliveryKopecks > 0 || row.otherCostsKopecks > 0)) {
+      throw new PurchaseValidationError('lines', EXTRA_WITHOUT_LINES_ERROR);
+    }
+    await this.lots.replaceForPurchase(telegramUserId, row.id, lotsOfPurchase(row, productIds), tx);
   }
 }
 

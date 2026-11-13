@@ -7,6 +7,7 @@
  * - Ежемесячный делится по дням СВОЕГО месяца (решение
  *   `expenses_allocation_month_days`): 30 000 ₽ в октябре — 30 000 / 31 в день.
  *   Поэтому полный месяц даёт ровно сумму, а не «×12/365».
+ * - Расход «за период» (TASK-220) делится по дням своего периода признания.
  * - Округление — на кусок месяца, не на день: `round(сумма × дней / дней в
  *   месяце)`. Округляй мы каждый день, 31 округление полного месяца дали бы
  *   30 000,01 вместо 30 000.
@@ -71,6 +72,21 @@ function monthlyShare(amountKopecks: number, start: string, end: string): number
   return share;
 }
 
+/**
+ * Расход за период признания (TASK-220, решение `expenses_v2_period_kind`):
+ * сумма делится по дням СВОЕГО периода, одно округление на пересечение —
+ * весь период даёт ровно сумму. Без конца (битая запись) — как разовый.
+ */
+function periodShare(expense: IAllocatableExpense, period: IFinancePeriod): number {
+  const own = { from: expense.fromDay, to: expense.toDay ?? expense.fromDay };
+  const start = own.from > period.from ? own.from : period.from;
+  const end = own.to < period.to ? own.to : period.to;
+  if (start > end) return 0;
+  const days = dayNumber(end) - dayNumber(start) + 1;
+  const total = dayNumber(own.to) - dayNumber(own.from) + 1;
+  return Math.round((expense.amountKopecks * days) / total);
+}
+
 /** Сколько копеек расхода приходится на период. */
 export function expenseShare(expense: IAllocatableExpense, period: IFinancePeriod): number {
   if (expense.kind === 'one_off') {
@@ -78,6 +94,7 @@ export function expenseShare(expense: IAllocatableExpense, period: IFinancePerio
       ? expense.amountKopecks
       : 0;
   }
+  if (expense.kind === 'period') return periodShare(expense, period);
   const start = expense.fromDay > period.from ? expense.fromDay : period.from;
   const until = expense.toDay ?? period.to;
   const end = until < period.to ? until : period.to;

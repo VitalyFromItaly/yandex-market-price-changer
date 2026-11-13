@@ -16,20 +16,20 @@ import { FinanceCorrectionRepository } from '../../src/database/postgres/reposit
 import { FinanceDiscrepancyRepository } from '../../src/database/postgres/repositories/finance-discrepancy.repository';
 import { FinanceDocumentRepository } from '../../src/database/postgres/repositories/finance-document.repository';
 import { FinanceExpenseRepository } from '../../src/database/postgres/repositories/finance-expense.repository';
-import { FinancePurchaseRepository } from '../../src/database/postgres/repositories/finance-purchase.repository';
 import { FinanceOperationRepository } from '../../src/database/postgres/repositories/finance-operation.repository';
+import { FinanceOzonBalanceRepository } from '../../src/database/postgres/repositories/finance-ozon-balance.repository';
 import { FinancePeriodRepository } from '../../src/database/postgres/repositories/finance-period.repository';
 import { FinanceTaxSettingsRepository } from '../../src/database/postgres/repositories/finance-tax-settings.repository';
 import { FinanceCashflowService } from '../../src/modules/finance/finance-cashflow.service';
 import { FinanceExpensesService } from '../../src/modules/finance/finance-expenses.service';
 import { FinanceImportService } from '../../src/modules/finance/finance-import.service';
 import { financePeriodKey, monthPeriod } from '../../src/modules/finance/finance-period';
-import { FinancePurchasesService } from '../../src/modules/finance/finance-purchases.service';
 import { FinanceReconcileService } from '../../src/modules/finance/finance-reconcile.service';
 import { FinanceTaxService } from '../../src/modules/finance/finance-tax.service';
 import { FLAT_YM_ONLY, FinanceService } from '../../src/modules/finance/finance.service';
 import { OZON_UNKNOWN_ARTICLE_CONTEXT } from '../../src/modules/finance/ozon-journal';
 import {
+  OZON_BALANCE_CONTEXT,
   OZON_FINANCE_SKU_CONTEXT,
   OZON_PAYOUTS_CONTEXT,
   OzonFinanceService,
@@ -37,6 +37,7 @@ import {
 } from '../../src/modules/ozon/ozon-finance.service';
 import { OzonNotConnectedError } from '../../src/modules/ozon/ozon-seller-client';
 import { createTestFinanceDb } from '../helpers/test-postgres';
+import { purchasesServiceOf } from '../helpers/purchases-service';
 
 /**
  * Импорт финансовых операций Ozon (TASK-131, TASK-194) на PGlite: настоящие
@@ -116,6 +117,8 @@ describe('Ozon → журнал finance_operations', () => {
   let catalog: () => Promise<unknown[]>;
   /** Сальдо дня «Ozon»: по умолчанию выплат нет. */
   let balanceOf: (day: string) => Promise<{ openingKopecks: number; paymentsKopecks: number }>;
+  /** Сальдо месяца «Ozon» (TASK-227). */
+  let periodBalance: () => Promise<unknown>;
   let credentials: Record<string, string> | null;
   let report: ReturnType<typeof vi.fn>;
   let ozon: OzonFinanceService;
@@ -127,6 +130,12 @@ describe('Ozon → журнал finance_operations', () => {
     fbs = [posting('P-1', '2026-09-10'), posting('P-2', '2026-08-25')];
     catalog = async () => [{ offerId: 'OF-1', sku: '900001', skus: ['900001', '900002'] }];
     balanceOf = async () => ({ openingKopecks: 0, paymentsKopecks: 0 });
+    periodBalance = async () => ({
+      openingKopecks: 0,
+      accruedKopecks: 350000,
+      paymentsKopecks: 0,
+      closingKopecks: 350000,
+    });
     credentials = { clientId: 'client-1', apiKey: 'SECRET' };
     report = vi.fn(async () => undefined);
     operationsRepo = new FinanceOperationRepository(test.db);
@@ -171,6 +180,7 @@ describe('Ozon → журнал finance_operations', () => {
       ),
       listFboPostings: vi.fn(async () => []),
       balanceOfDay: vi.fn((day: string) => balanceOf(day)),
+      balanceOfPeriod: vi.fn(() => periodBalance()),
     };
     ozon = new OzonFinanceService(
       { forCredentials: () => client } as never,
@@ -181,6 +191,7 @@ describe('Ozon → журнал finance_operations', () => {
       imports,
       { report } as never,
       operationsRepo,
+      new FinanceOzonBalanceRepository(test.db),
     );
   });
 
@@ -193,9 +204,10 @@ describe('Ozon → журнал finance_operations', () => {
     const written = await rows();
     expect(written).toHaveLength(3);
     // SKU Ozon → offer_id → товар → артикул ЯМ: по нему ищется закуп.
-    expect(
-      written.filter((r) => r.transactionType === 'POSTING_SALE').map((r) => r.sku),
-    ).toEqual(['A1', 'A1']);
+    expect(written.filter((r) => r.transactionType === 'POSTING_SALE').map((r) => r.sku)).toEqual([
+      'A1',
+      'A1',
+    ]);
     expect(written.every((r) => r.periodKey === OZON_KEY)).toBe(true);
 
     expect(await run()).toMatchObject({ status: 'unchanged', rows: 3 });
@@ -261,7 +273,10 @@ describe('Ozon → журнал finance_operations', () => {
   it('статус периода — свой, по Ozon; без соседних месяцев не «Проверено»', async () => {
     await run();
     const state = await septStatus();
-    expect(state).toMatchObject({ reportType: 'ozon-transaction-list', reconcileState: 'unchecked' });
+    expect(state).toMatchObject({
+      reportType: 'ozon-transaction-list',
+      reconcileState: 'unchecked',
+    });
     expect(state.reconcileNote).toMatch(/Нет отчёта прошлого и следующего месяца/);
     expect(state.status).not.toBe('verified');
   });
@@ -316,9 +331,7 @@ describe('Ozon → журнал finance_operations', () => {
   });
 
   it('незнакомое — в журнал статьёй unknown и один алерт', async () => {
-    operations = [
-      sale(1, { services: [{ type_id: 999, accrued: rub('-5') }], total: '1695' }),
-    ];
+    operations = [sale(1, { services: [{ type_id: 999, accrued: rub('-5') }], total: '1695' })];
     expect(await run()).toMatchObject({ status: 'imported', unknown: 1 });
     expect(report).toHaveBeenCalledWith(
       expect.objectContaining({ context: OZON_UNKNOWN_ARTICLE_CONTEXT }),
@@ -368,7 +381,7 @@ describe('Ozon → журнал finance_operations', () => {
       const cashflow = new FinanceCashflowService(
         operationsRepo,
         new FinanceExpensesService(new FinanceExpenseRepository(test.db)),
-        new FinancePurchasesService(new FinancePurchaseRepository(test.db)),
+        purchasesServiceOf(test.db),
       );
       const ozonFlow = await cashflow.build(SELLER, SEPT, NOW, 'ozon');
       expect(ozonFlow.cashflow.payouts).toEqual([
@@ -410,6 +423,50 @@ describe('Ozon → журнал finance_operations', () => {
       expect(report).toHaveBeenCalledWith(
         expect.objectContaining({ context: OZON_PAYOUTS_CONTEXT }),
       );
+    });
+  });
+
+  describe('сальдо месяца для сверки v2 (TASK-227)', () => {
+    // Лениво: база поднимается в beforeAll, после сбора тестов.
+    const balances = {
+      of: (...args: Parameters<FinanceOzonBalanceRepository['of']>) =>
+        new FinanceOzonBalanceRepository(test.db).of(...args),
+    };
+
+    it('закрытый месяц — сальдо записано, повтор заменяет; открытый — не пишется', async () => {
+      await run();
+      expect(await balances.of(SELLER, SEPT)).toEqual({
+        openingKopecks: 0,
+        accruedKopecks: 350000,
+        paymentsKopecks: 0,
+        closingKopecks: 350000,
+      });
+      periodBalance = async () => ({
+        openingKopecks: 1,
+        accruedKopecks: null,
+        paymentsKopecks: 2,
+        closingKopecks: null,
+      });
+      await run();
+      expect(await balances.of(SELLER, SEPT)).toMatchObject({
+        openingKopecks: 1,
+        accruedKopecks: null,
+      });
+
+      const october = monthPeriod(2026, 10);
+      await ozon.importPeriod(SELLER, october, NOW);
+      expect(await balances.of(SELLER, october)).toBeNull();
+    });
+
+    it('сбой сальдо — алерт, импорт цел', async () => {
+      periodBalance = async () => {
+        throw new Error('Ozon 500');
+      };
+      expect(await run()).toMatchObject({ status: 'imported' });
+      expect(report).toHaveBeenCalledWith(
+        expect.objectContaining({ context: OZON_BALANCE_CONTEXT }),
+      );
+      expect(await balances.of(SELLER, SEPT)).toBeNull();
     });
   });
 

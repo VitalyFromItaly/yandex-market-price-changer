@@ -492,6 +492,73 @@
 - **Фичи едут снимком в payload** (`IPriceSetJob.features`, довод `deepHistory`); тело плана из браузера не
   принимается — процессор пересчитывает его по `request` задачи плана.
 
+### «Финучёт» (M29, TASK-206)
+
+Правила, доводы, методы API, восстановление синхронизации — [`src/modules/accounting/README.md`](../accounting/README.md).
+Раздел аккаунта `ym-accounting` (`/ym/accounting`, фронт `web/crm/src/modules/accounting/`), открыт зонтиком
+`fin_accounting`; подфичи `fin_accounting_*` — будущие вкладки, в `FEATURES_WITHOUT_SECTION`.
+`GET crm/ym/accounting` → `{ ready: false }`; `GET …/sync` — журнал синхронизации (TASK-212);
+`GET|POST …/manual-operations`, `PUT|DELETE …/manual-operations/:id`, `GET …/:id/history` — ручные операции
+(TASK-208): мутации отвечают полным видом раздела, как «Расходы»; 400 `INVALID_MANUAL_OPERATION` с `field`,
+404 `MANUAL_OPERATION_NOT_FOUND`; повтор `POST` с тем же `clientKey` — тот же вид без дубля.
+`GET …/reconcile?month=ГГГГ-ММ[&marketplace=ym|ozon|wb]` — сверка v2 (ЯМ — TASK-226, Ozon/WB — TASK-227; пусто — первая доступная площадка `AccountingService.marketplacesOf`, ЯМ — всегда; Ozon/WB не подключён или закрыт — 403 `RECONCILE_MARKETPLACE_UNAVAILABLE`, мусор — 400 `INVALID_RECONCILE_MARKETPLACE`; в ответе `marketplaceOptions`) под `@RequireFeature(FIN_ACCOUNTING, FIN_ACCOUNTING_RECONCILE)`
+(метод заменяет фичи класса — `getAllAndOverride`, поэтому зонтик перечислен и здесь); 400 `INVALID_RECONCILE_MONTH`.
+Только чтение Postgres, Маркет не зовётся. Экран (TASK-228) — `ReconcileSection` на странице «Финучёта», виден только
+при зонтике и подфиче; месяцы — только закрытые, по умолчанию прошлый.
+Режим себестоимости (TASK-215): `GET|POST …/cost/settings` `{ method: 'historical_price' | 'lot_fifo' }` под
+`@RequireFeature(FIN_ACCOUNTING, FIN_ACCOUNTING_LOTS)`; 400 `INVALID_COST_METHOD` с `field: 'method'`; в ответе
+`options`. Хранится выбор продавца; режим Б действует только при открытой `fin_accounting_lots`. Карточка заказа
+отдаёт `cogsMethod`/`cogsMethodTitle`, список — `cogsMethod`.
+Партии (TASK-216): `GET …/lots` под теми же двумя фичами, уровня аккаунта (склад один на все площадки — без
+`scopeStore`): партии с поставщиком закупки, `remaining` — из того же FIFO, что себестоимость режима Б
+(`AccountingLotCostService.lotsWithRemaining`), не колонка базы; цена штуки и стоимость остатка — с доп. расходами,
+округлены до копейки (`toCrmLots`). Экран — `LotsSection` на странице «Финучёта» (переключатель А/Б через
+подтверждение «меняется только новый учёт» + таблица партий), метка метода в карточке заказа — при открытой
+`fin_accounting_lots`.
+Налог нового учёта (TASK-221): `GET|POST …/tax/settings` `{ baseRule: 'gross' | 'net' }` — правило агентской базы
+(400 `INVALID_TAX_BASE_RULE` с `field`); год — kind `accounting:tax-year` (`{ year }`, уровня аккаунта, под зонтиком):
+вид года «Налогов» (`toCrmTaxYear`) + правило, площадки и раскрытие базы по отчётным периодам. Экрана нет.
+Карточка и список заказов (TASK-222): kind `accounting:order` (`{ marketplace, orderId }`) и `accounting:orders`
+(`{ month: 'ГГГГ-ММ', marketplace?, state?, lossOnly? }`) под `fin_accounting` + `fin_accounting_orders`, магазина из
+URL (`scopeStore`; заказ ЯМ другой кампании — «не найден»). Числа и раскрытие до операций дают
+`AccountingOrderCardService`, `crm-accounting.domain` только разбирает params и переводит даты в строки, `campaign_id`
+в ответе нет. Список эхоит разобранный фильтр (`filter: { marketplace, state, lossOnly }`): замок задачи — на
+(продавец, kind, магазин), и без эха фронт не отличил бы ответ прежнего фильтра того же месяца.
+Экран (TASK-223) — `AccountingOrdersSection` на странице «Финучёта» при зонтике и подфиче: страница уровня аккаунта,
+а kind-ы магазинные, поэтому магазин выбирается в секции из списка «Магазинов» по имени (по умолчанию первый, при
+одном выбор скрыт; решение `accounting_orders_store_picker`). Месяц — с текущим включительно; клик по номеру —
+карточка в диалоге (`accounting:order`), строка суммы раскрывается до операций. Неизвестная прибыль — «Неизвестно» /
+«Неизвестная закупка», не 0; неокончательная помечена; подписи состояний и площадок — с сервера.
+Возвраты (TASK-225): kind `accounting:returns` (`{ month: 'ГГГГ-ММ' }`) под `fin_accounting` + `fin_accounting_returns`,
+магазина из URL; числа — `AccountingReturnsService` (карточки месяца + `returnResultOf`), копейки как есть. Экран —
+`AccountingReturnsSection` на странице «Финучёта»: магазин и месяц — как у заказов, площадки колонками (без общего
+итога), частые модели, возвращённые заказы; номер открывает карточку, только если открыт и раздел заказов.
+Аналитика (TASK-230): kind `accounting:analytics` (`{ period | range }`, тот же разбор, что у панели) под
+`fin_accounting` + `fin_accounting_dashboard`, магазина из URL; числа — `AccountingAnalyticsService` (ТОПы товаров по
+однотоварным заказам, убыточные заказы, возвраты моделей, средние комиссия/логистика, прибыль по дням, площадки рядом
+с `insufficientData` и причиной). Экран — главная «Финучёта» (TASK-231).
+Экран панели (TASK-231) — `AccountingDashboardSection` первой секцией страницы «Финучёта» при зонтике и
+`fin_accounting_dashboard`: магазин — как у заказов, базис — `OptionGroup` из `basisOptions` ответа, период — всегда
+`range` (пресеты `RangePicker` переводятся в «с — по» через `rangeOf`, пресетов сервера фронт не шлёт), площадка/бренд
+сразу, артикул и номер заказа — по «Применить». Своё у задач — по `periodEcho.range` + базису + эху фильтра (у раскрытия —
+ещё строка и блок). «Все площадки» — только `totals.all` сервера; метки «оценка» (`expectedKopecks ≠ 0`) и «Неизвестно»
+(`null` + причина) — подписи фронта по полям ответа, без расчётов. Ячейка строки раскрывается диалогом
+(`accounting:dashboard-drill`), номер заказа в нём и в убыточных — карточка, если открыт раздел заказов. Аналитика под
+той же фичей: площадка без данных — `Alert` с причиной, прибыль по дням — `AreaChart gaps` (линия на площадку,
+неизвестный день — разрыв, не 0), под ТОПами — `multiModelOrders`, `unknownModels`, `multiModelReturns`.
+Отчёт WB «Продвижение» файлом (TASK-209): `POST …/uploads/wb-promotion` (multipart `file` + `month`) под
+`fin_accounting` + `fin_accounting_uploads`, интерсептор и проверка файла/месяца — общие с загрузкой «Финансов»
+(`crm/finance/crm-finance-upload.ts`); отказы — те же коды `FINANCE_FILE_*`, 409 `NOT_CONNECTED` без WB. Карточка —
+`WbPromotionUploadCard` при зонтике и подфиче.
+История закупа v2 (TASK-235): `CostHistorySection` под одним зонтиком `fin_accounting` — поиск товара
+`GET …/cost-history/products?q=` (свой маршрут, объявлен до `cost-history/:productId`: «Товары» закрыты фичей
+`products`, а «Финучёт» от неё не зависит — решение `accounting_cost_history_product_search`; тот же
+`ProductCatalogService.list`, 20 вариантов, только id/артикул/название + валюты формы), записи и журнал, диалог
+`CostCorrectionDialog` (ошибка под полем из `field` 400 `INVALID_COST_CORRECTION`). Момент формы — `datetime-local` по
+Москве; правка записи шлёт её точный ISO, пока поле момента не трогали (запись прайса — с секундами, минутное поле
+завело бы новую запись рядом вместо исправления). Подписи источников и «Неизвестная закупка» — только сервер.
+Правила и доводы — `src/modules/accounting/README.md`.
+
 ### «Прогнозы» (M24, TASK-151)
 
 Раздел аккаунта `/ym/forecast` под фичей `forecast` (default off, `requires: [finance]`): до конца месяца —

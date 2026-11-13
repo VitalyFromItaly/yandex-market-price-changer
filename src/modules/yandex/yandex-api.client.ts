@@ -131,6 +131,34 @@ export interface IReturnItem {
   offerId?: string;
   marketSku?: number;
   count?: number;
+  /**
+   * Экземпляры позиции (`ReturnInstanceDTO`): тип остатка на складе и
+   * логистический статус штуки. Из них «Финучёт» выводит состояние возврата
+   * (`ymReturnConditions`, TASK-238). cis/imei не читаем — не нужны.
+   */
+  instances?: IReturnInstance[];
+  /**
+   * Решения по позиции (`ReturnDecisionDTO`): берём только причину покупателя —
+   * FBS-магазин не присылает `stockType`, и брак «Финучёт» узнаёт по `reasonType`
+   * (TASK-241). Суммы, комментарии и фото не читаем.
+   */
+  decisions?: IReturnDecision[];
+}
+
+/** Решение по возвращённой позиции: причина покупателя. */
+export interface IReturnDecision {
+  /** `ReturnDecisionReasonType`: BAD_QUALITY, DOES_NOT_FIT, WRONG_ITEM, DAMAGE_DELIVERY, … */
+  reasonType?: string;
+  /** `ReturnDecisionSubreasonType`: DAMAGED, BROKEN, USER_CHANGED_MIND, … */
+  subreasonType?: string;
+}
+
+/** Экземпляр возвращённой позиции. */
+export interface IReturnInstance {
+  /** `ReturnInstanceStockType`: FIT, DEFECT, EXPIRED, ANOMALY, … */
+  stockType?: string;
+  /** `ReturnInstanceStatusType`: CREATED, IN_TRANSIT, PICKED, LOST, UTILIZED, … */
+  status?: string;
 }
 
 export interface IReturnRecord {
@@ -166,6 +194,14 @@ export interface IReturnRecord {
 export interface IReturnsQuery {
   /** Отбор возвратов по статусу отгрузки, например «в пути». */
   shipmentStatuses?: string[];
+  /**
+   * «ГГГГ-ММ-ДД», включительно: отбор по дате ОБНОВЛЕНИЯ возврата (`fromDate`/
+   * `toDate`, не устаревшие `from_date`/`to_date`). Нужен «Финучёту» (TASK-238).
+   */
+  fromDate?: string;
+  toDate?: string;
+  /** Отбор по номерам заказов. */
+  orderIds?: number[];
   pageToken?: string;
   limit?: number;
 }
@@ -504,6 +540,9 @@ export class YandexApiClient {
       pageToken: query.pageToken,
       limit,
       shipmentStatuses: query.shipmentStatuses,
+      fromDate: query.fromDate,
+      toDate: query.toDate,
+      orderIds: query.orderIds,
     });
 
     const payload = data?.result ?? data;
@@ -1561,11 +1600,33 @@ function toReturnRecord(raw: unknown): IReturnRecord {
 }
 
 /** Сырая позиция возврата: артикул продавца в ответе называется `shopSku`. */
-type TRawReturnItem = { shopSku?: string; marketSku?: number; count?: number };
+type TRawReturnItem = {
+  shopSku?: string;
+  marketSku?: number;
+  count?: number;
+  instances?: IReturnInstance[];
+  decisions?: IReturnDecision[];
+};
 
 function toReturnItem(raw: TRawReturnItem): IReturnItem {
   const r = raw ?? {};
-  return { offerId: r.shopSku, marketSku: r.marketSku, count: r.count };
+  return {
+    offerId: r.shopSku,
+    marketSku: r.marketSku,
+    count: r.count,
+    instances: Array.isArray(r.instances)
+      ? r.instances.map((instance) => ({
+          stockType: instance?.stockType,
+          status: instance?.status,
+        }))
+      : undefined,
+    decisions: Array.isArray(r.decisions)
+      ? r.decisions.map((decision) => ({
+          reasonType: decision?.reasonType,
+          subreasonType: decision?.subreasonType,
+        }))
+      : undefined,
+  };
 }
 
 /** Сырая заявка FBY из ответа Partner API. */

@@ -269,6 +269,7 @@ describe('MarketplaceRegistry', () => {
       'stocks',
       'stockWrite',
       'priceWrite',
+      'orderLines',
     ]);
   });
 });

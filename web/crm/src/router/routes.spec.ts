@@ -18,6 +18,11 @@ describe('маршруты CRM', () => {
     }
   });
 
+  it('«Финучёт» — раздел аккаунта под /ym (TASK-206)', () => {
+    const router = makeRouter();
+    expect(router.resolve('/ym/accounting').name).toBe('ym-accounting');
+  });
+
   it('вкладка финансов и старый адрес ДДС', () => {
     const router = makeRouter();
     expect(router.resolve('/ym/finance/cashflow').name).toBe('ym-finance');

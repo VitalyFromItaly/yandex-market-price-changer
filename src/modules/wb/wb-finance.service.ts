@@ -1,4 +1,7 @@
-import type { TFinanceImportResult } from '../finance/finance-import.service';
+import type {
+  TFinanceImportResult,
+  TFinanceManualImportResult,
+} from '../finance/finance-import.service';
 import type { IFinancePeriod } from '../finance/finance-period';
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -7,7 +10,12 @@ import { MarketplaceConnectionService } from '../../database/services/marketplac
 import { ProductService } from '../../database/services/product.service';
 import { ErrorReporter } from '../errors/error-reporter.service';
 import { FinanceImportService } from '../finance/finance-import.service';
-import { financeToday, requestRange, shiftDay } from '../finance/finance-period';
+import {
+  WB_PROMOTION_REPORT_TYPE,
+  financeToday,
+  requestRange,
+  shiftDay,
+} from '../finance/finance-period';
 import {
   reportWbUnknownArticles,
   wbFinanceOriginal,
@@ -15,9 +23,10 @@ import {
   wbRowToOperation,
   wbRowsInPeriod,
 } from '../finance/wb-journal';
+import { parseWbPromotionFile, wbPromotionRowToOperation } from '../finance/wb-promotion-file';
 
 import { WbClientFactory } from './wb-client.factory';
-import { wbSellerClient } from './wb-seller-client';
+import { WbNotConnectedError, wbSellerClient } from './wb-seller-client';
 
 /** Место сбоя поиска товаров при импорте — без id, довод троттлинга алертов. */
 export const WB_FINANCE_SKU_CONTEXT = 'finance:wb-sku';
@@ -114,6 +123,33 @@ export class WbFinanceService {
           reportUnknown: (ops) => reportWbUnknownArticles(this.errors, ops, telegramUserId),
           refreshSku: true,
         };
+      },
+      now,
+    );
+  }
+
+  /**
+   * Отчёт кабинета «Продвижение» файлом (TASK-209) → справочные строки
+   * `promotion_report` за выбранный продавцом месяц. Разбор — до базы:
+   * нераспознанный файл не открывает соединения. Нет подключения WB —
+   * `WbNotConnectedError`: строки журнала WB без кабинета не пишем.
+   */
+  async importPromotionFile(
+    telegramUserId: string,
+    period: IFinancePeriod,
+    file: { buffer: Buffer; filename: string },
+    now: Date = new Date(),
+  ): Promise<TFinanceManualImportResult> {
+    const connection = await this.connections.findOne(telegramUserId, 'wb');
+    if (!connection) throw new WbNotConnectedError(telegramUserId);
+    const { rows } = parseWbPromotionFile(file.buffer, file.filename);
+    return await this.imports.importFileBatch(
+      { telegramUserId, period, marketplace: 'wb', reportType: WB_PROMOTION_REPORT_TYPE },
+      {
+        businessId: connection.accounts[0]?.id ?? '',
+        rows: rows.length,
+        original: file,
+        toOperations: (ctx) => rows.map((row) => wbPromotionRowToOperation(row, ctx)),
       },
       now,
     );

@@ -241,6 +241,26 @@ export class AppConfigService {
     return Number(this.config.get<number>('AI_USER_DAILY_LIMIT_RUB'));
   }
 
+  /** «Финучёт»: текущий месяц ЯМ и Ozon грузится раз в столько часов (1–12). */
+  get finAccountingSyncEveryHours(): number {
+    return Number(this.config.get<number>('FIN_ACCOUNTING_SYNC_EVERY_HOURS'));
+  }
+
+  /** «Финучёт»: снимок строк заказов ЯМ раз в столько минут (5–60). */
+  get finAccountingOrdersEveryMinutes(): number {
+    return Number(this.config.get<number>('FIN_ACCOUNTING_ORDERS_EVERY_MINUTES'));
+  }
+
+  /** «Финучёт»: окно перезагрузки — текущий и N−1 прошлых месяцев (1–12). */
+  get finAccountingReloadMonths(): number {
+    return Number(this.config.get<number>('FIN_ACCOUNTING_RELOAD_MONTHS'));
+  }
+
+  /** «Финучёт»: сколько отложенных повторов после сбоя загрузки периода (0–6). */
+  get finAccountingRetryAttempts(): number {
+    return Number(this.config.get<number>('FIN_ACCOUNTING_RETRY_ATTEMPTS'));
+  }
+
   /** Порог баланса Polza для самопроверки, ₽: ниже — warn. 0 — не предупреждать. */
   get polzaAiBalanceWarnRub(): number {
     return Number(this.config.get<number>('POLZA_AI_BALANCE_WARN_RUB'));

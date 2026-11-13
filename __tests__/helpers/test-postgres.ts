@@ -37,22 +37,37 @@ export interface ITestFinanceDb {
 }
 
 const TABLES = [
+  'accounting_cost_record_changes',
+  'accounting_cost_records',
+  'accounting_manual_operation_changes',
+  'accounting_manual_operations',
   'finance_anomalies',
   'finance_anomaly_reviews',
   'finance_discrepancies',
   'finance_act_services',
+  'finance_ozon_balances',
   'finance_periods',
+  'finance_sync_runs',
   'finance_corrections',
   'finance_operations',
   'finance_documents',
   'finance_expenses',
   'finance_expense_categories',
   'finance_tax_settings',
+  'accounting_lots',
   'finance_purchases',
   'finance_tax_years',
   'finance_tax_reductions',
   'finance_tax_reconciliations',
   'finance_tax_payments',
+  'accounting_order_line_versions',
+  'accounting_order_lines',
+  'accounting_order_sync_state',
+  'accounting_order_result_versions',
+  'accounting_order_results',
+  'accounting_allocation_settings',
+  'accounting_cost_settings',
+  'accounting_tax_settings',
 ];
 
 export const LIVE_POSTGRES_URL = process.env.TEST_POSTGRES_URL || undefined;

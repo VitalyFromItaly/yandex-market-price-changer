@@ -249,6 +249,19 @@ export const FEATURE = {
   PRICE_SET_WRITE_OZON: 'price_set_write_ozon',
   PRICE_SET_WRITE_WB: 'price_set_write_wb',
   /**
+   * «Финучёт» (M29, ТЗ «Фактический финансовый учёт», решение accounting_features_umbrella):
+   * второй механизм учёта рядом с текущим расчётом прибыли (accounting_beside_current).
+   * Зонтик открывает раздел аккаунта CRM; кнопки в боте нет — `featureGate` закрывать нечего.
+   */
+  FIN_ACCOUNTING: 'fin_accounting',
+  /** Экраны «Финучёта» — по флагу на продавца, каждый требует зонтик `fin_accounting`. */
+  FIN_ACCOUNTING_ORDERS: 'fin_accounting_orders',
+  FIN_ACCOUNTING_RETURNS: 'fin_accounting_returns',
+  FIN_ACCOUNTING_LOTS: 'fin_accounting_lots',
+  FIN_ACCOUNTING_RECONCILE: 'fin_accounting_reconcile',
+  FIN_ACCOUNTING_DASHBOARD: 'fin_accounting_dashboard',
+  FIN_ACCOUNTING_UPLOADS: 'fin_accounting_uploads',
+  /**
    * «Прогнозы» (TASK-151, ТЗ п.13): выручка, чистая, налог и поступления до конца
    * месяца, продажи до конца года, необходимые закупки — линейно по финжурналу.
    * Кнопки в боте нет — раздел аккаунта CRM, `featureGate` закрывать нечего.
@@ -409,6 +422,13 @@ const FEATURE_KEY_SET: Record<TFeatureKey, true> = {
   [FEATURE.PRICE_SET_WRITE_YM]: true,
   [FEATURE.PRICE_SET_WRITE_OZON]: true,
   [FEATURE.PRICE_SET_WRITE_WB]: true,
+  [FEATURE.FIN_ACCOUNTING]: true,
+  [FEATURE.FIN_ACCOUNTING_ORDERS]: true,
+  [FEATURE.FIN_ACCOUNTING_RETURNS]: true,
+  [FEATURE.FIN_ACCOUNTING_LOTS]: true,
+  [FEATURE.FIN_ACCOUNTING_RECONCILE]: true,
+  [FEATURE.FIN_ACCOUNTING_DASHBOARD]: true,
+  [FEATURE.FIN_ACCOUNTING_UPLOADS]: true,
   [FEATURE.FORECAST]: true,
   [FEATURE.PRICE_CALCULATOR]: true,
   [FEATURE.FINANCE_ANOMALIES]: true,
@@ -848,6 +868,74 @@ export const FEATURE_META: Readonly<Record<TFeatureKey, IFeatureMeta>> = {
     // Выключена: запись в чужой кабинет включает владелец по одному продавцу.
     defaultEnabled: false,
     requires: [FEATURE.PRICE_SET, FEATURE.WB],
+  },
+  [FEATURE.FIN_ACCOUNTING]: {
+    // Inline-only подпись: кнопки в боте нет, раздел живёт в CRM.
+    label: '📒 Финучёт',
+    description:
+      'Фактический финансовый учёт рядом с «Финансами»: заказы, возвраты, партии себестоимости ' +
+      'и сверка по журналу площадок. Текущий расчёт прибыли не меняется. Экраны открываются ' +
+      'своими функциями «Финучёта».',
+    // Выключена: новая функция, открывается по продавцу (new_functions_behind_feature).
+    defaultEnabled: false,
+  },
+  [FEATURE.FIN_ACCOUNTING_ORDERS]: {
+    // Inline-only подпись: вкладка внутри раздела «Финучёт» CRM.
+    label: '📒 Финучёт: заказы',
+    description:
+      'Фактическая прибыль по каждому заказу из операций журнала площадки. Работает только ' +
+      'вместе с «Финучётом».',
+    // Выключена: новая функция, открывается по продавцу (new_functions_behind_feature).
+    defaultEnabled: false,
+    requires: [FEATURE.FIN_ACCOUNTING],
+  },
+  [FEATURE.FIN_ACCOUNTING_RETURNS]: {
+    // Inline-only подпись: вкладка внутри раздела «Финучёт» CRM.
+    label: '📒 Финучёт: возвраты',
+    description:
+      'Возвраты и их фактические потери по журналу площадки. Работает только вместе с «Финучётом».',
+    // Выключена: новая функция, открывается по продавцу (new_functions_behind_feature).
+    defaultEnabled: false,
+    requires: [FEATURE.FIN_ACCOUNTING],
+  },
+  [FEATURE.FIN_ACCOUNTING_LOTS]: {
+    // Inline-only подпись: вкладка внутри раздела «Финучёт» CRM.
+    label: '📒 Финучёт: партии',
+    description:
+      'Себестоимость по партиям закупок (FIFO, доставка от поставщика в себестоимости). ' +
+      'Работает только вместе с «Финучётом».',
+    // Выключена: новая функция, открывается по продавцу (new_functions_behind_feature).
+    defaultEnabled: false,
+    requires: [FEATURE.FIN_ACCOUNTING],
+  },
+  [FEATURE.FIN_ACCOUNTING_RECONCILE]: {
+    // Inline-only подпись: вкладка внутри раздела «Финучёт» CRM.
+    label: '📒 Финучёт: сверка',
+    description:
+      'Сверка начислений площадки с выплатами и документами. Работает только вместе с «Финучётом».',
+    // Выключена: новая функция, открывается по продавцу (new_functions_behind_feature).
+    defaultEnabled: false,
+    requires: [FEATURE.FIN_ACCOUNTING],
+  },
+  [FEATURE.FIN_ACCOUNTING_DASHBOARD]: {
+    // Inline-only подпись: вкладка внутри раздела «Финучёт» CRM.
+    label: '📒 Финучёт: дашборд',
+    description:
+      'Сводка фактического учёта за период: выручка, удержания, себестоимость, прибыль. ' +
+      'Работает только вместе с «Финучётом».',
+    // Выключена: новая функция, открывается по продавцу (new_functions_behind_feature).
+    defaultEnabled: false,
+    requires: [FEATURE.FIN_ACCOUNTING],
+  },
+  [FEATURE.FIN_ACCOUNTING_UPLOADS]: {
+    // Inline-only подпись: карточка внутри раздела «Финучёт» CRM.
+    label: '📒 Финучёт: отчёты файлом',
+    description:
+      'Загрузка отчёта кабинета WB «Продвижение» файлом: реклама по кампаниям справочной ' +
+      'строкой (в прибыль не входит — она уже в удержаниях WB). Работает только вместе с «Финучётом».',
+    // Выключена: новая функция, открывается по продавцу (new_functions_behind_feature).
+    defaultEnabled: false,
+    requires: [FEATURE.FIN_ACCOUNTING],
   },
   [FEATURE.SKU_RATINGS]: {
     // Inline-only подпись: кнопки в боте нет, раздел живёт в CRM.

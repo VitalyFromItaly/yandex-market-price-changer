@@ -12,6 +12,7 @@ import { AdminAuthModule } from './modules/admin/admin-auth.module';
 import { AiAdminModule } from './modules/ai/ai-admin.module';
 import { AiModule } from './modules/ai/ai.module';
 import { AiToolsModule } from './modules/ai-tools/ai-tools.module';
+import { CrmAccountingModule } from './modules/crm/accounting/crm-accounting.module';
 import { CrmAiAnalystModule } from './modules/crm/ai-analyst/crm-ai-analyst.module';
 import { CrmCardsModule } from './modules/crm/cards/crm-cards.module';
 import { CrmConnectionsModule } from './modules/crm/connections/crm-connections.module';
@@ -137,6 +138,7 @@ import { YandexModule } from './modules/yandex/yandex.module';
     CrmStockPushModule,
     MarketplaceEventsModule,
     CrmPriceSetModule,
+    CrmAccountingModule,
     CrmSkuRatingsModule,
     CrmForecastModule,
     CrmPriceCalcModule,

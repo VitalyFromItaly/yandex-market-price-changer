@@ -154,6 +154,23 @@ describe('OzonSellerClient: обход отправлений', () => {
     expect(OZON_FBS_POSTINGS_LIMIT).toBe(100);
   });
 
+  it('сырые FBS/FBO для «Финучёта» — с with.financial_data, объекты как пришли', async () => {
+    const withMoney = raw(1, 'delivered', { financial_data: { products: [{ payout: 10 }] } });
+    const calls = stubRoutes({
+      [OZON_PATHS.fbsPostings]: () => ({ postings: [withMoney], has_next: false }),
+      [OZON_PATHS.fboPostings]: () => ({ postings: [], has_next: false }),
+    });
+    expect(await client().listFbsPostingsRaw(NOW, NOW)).toEqual([withMoney]);
+    expect(await client().listFboPostingsRaw(NOW, NOW)).toEqual([]);
+    expect(calls.map((c) => c.body.with)).toEqual([
+      { financial_data: true },
+      { financial_data: true },
+    ]);
+    // Обычный список — без блока with, как прежде.
+    await client().listFbsPostings(NOW, NOW);
+    expect(calls[2].body.with).toBeUndefined();
+  });
+
   it('FBO — тем же контрактом v3', async () => {
     const calls = stubRoutes({
       [OZON_PATHS.fboPostings]: (body) =>

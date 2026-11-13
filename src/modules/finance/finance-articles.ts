@@ -34,6 +34,7 @@ export type TFinanceArticle =
   | 'subscription'
   | 'other_services'
   | 'bonus_payment'
+  | 'promotion_report'
   | 'unknown';
 
 /**
@@ -76,6 +77,10 @@ export const FINANCE_ARTICLE_META: Record<TFinanceArticle, IFinanceArticleMeta> 
   subscription: { title: 'Абонентская плата', group: 'expense' },
   other_services: { title: 'Прочие услуги', group: 'expense' },
   bonus_payment: { title: 'Оплачено баллами (справочно)', group: 'reference' },
+  // Реклама WB из файла кабинета «Продвижение» (TASK-209). Справочно: в API та
+  // же реклама уже внутри удержаний (`deduction` → withholdings), расходом она
+  // посчиталась бы дважды (решение accounting_upload_reference_only).
+  promotion_report: { title: 'Реклама по отчёту «Продвижение» (справочно)', group: 'reference' },
   unknown: { title: 'Не распознано', group: 'unknown' },
 };
 

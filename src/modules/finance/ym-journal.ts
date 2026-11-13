@@ -10,6 +10,8 @@ import type { IFinanceOperationContext, IFinanceOperationRow } from './finance-j
 
 import { createHash } from 'node:crypto';
 
+import { accountingColumnsOf } from '../accounting/accounting-sub-articles';
+
 import { toKopecks } from './kopecks';
 import { classifyYmRow } from './ym-articles';
 
@@ -172,6 +174,14 @@ export function nettingRowToOperation(
     documentVersion: ctx.documentVersion,
     periodKey: ctx.periodKey,
     raw: row,
+    // Реестр «Финучёта» (TASK-207): статья выше не зависит от этих колонок.
+    ...accountingColumnsOf({
+      marketplace: 'ym',
+      transactionType: String(row.transactionType ?? ''),
+      transactionSource: text(row.transactionSource),
+      serviceName: text(row.offerOrServiceName),
+      raw: row,
+    }),
   };
 }
 

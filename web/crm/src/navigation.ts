@@ -4,6 +4,7 @@ import type { Component } from 'vue';
 import {
   BadgePercent,
   Bell,
+  BookOpenCheck,
   Boxes,
   Calculator,
   ChartColumn,
@@ -113,6 +114,11 @@ const NAV_META: Record<Section, SectionMeta> = {
     label: 'Финансы',
     icon: PiggyBank,
     description: 'Прибыль по журналу Маркета, движение денег, выплаты и сверка месяца',
+  },
+  accounting: {
+    label: 'Финучёт',
+    icon: BookOpenCheck,
+    description: 'Фактический учёт: заказы, возвраты, партии себестоимости и сверка',
   },
   'unit-economics': {
     label: 'Unit-экономика',

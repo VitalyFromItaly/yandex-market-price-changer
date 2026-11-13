@@ -22,6 +22,8 @@ import { MarketplaceConnectionService } from '../../src/database/services/market
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { FinanceExpenseRepository } from '../../src/database/postgres/repositories/finance-expense.repository';
 import { FinanceOperationRepository } from '../../src/database/postgres/repositories/finance-operation.repository';
+import { AccountingLotRepository } from '../../src/database/postgres/repositories/accounting-lot.repository';
+import { ProductService } from '../../src/database/services/product.service';
 import { FinancePurchaseRepository } from '../../src/database/postgres/repositories/finance-purchase.repository';
 import { FEATURE_DISABLED } from '../../src/modules/crm/crm-features.domain';
 import { CrmModule } from '../../src/modules/crm/crm.module';
@@ -35,6 +37,7 @@ import { FinanceExpensesService } from '../../src/modules/finance/finance-expens
 import { FinancePurchasesService } from '../../src/modules/finance/finance-purchases.service';
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
 import { inMemoryModel } from '../helpers/in-memory-model';
+import { productsStub } from '../helpers/purchases-service';
 import { createTestFinanceDb, type ITestFinanceDb } from '../helpers/test-postgres';
 
 const INITIAL = 'tg_rules_2026';
@@ -128,6 +131,8 @@ describe('CRM «Закупки» по HTTP', { timeout: 60_000 }, () => {
         FinanceCashflowService,
         { provide: FinanceExpenseRepository, useValue: new FinanceExpenseRepository(pg.db) },
         { provide: FinancePurchaseRepository, useValue: new FinancePurchaseRepository(pg.db) },
+        { provide: AccountingLotRepository, useValue: new AccountingLotRepository(pg.db) },
+        { provide: ProductService, useValue: productsStub({ W1: 'product-w1' }) },
         { provide: FinanceOperationRepository, useValue: new FinanceOperationRepository(pg.db) },
       ],
     })
@@ -248,5 +253,52 @@ describe('CRM «Закупки» по HTTP', { timeout: 60_000 }, () => {
       expect(response.status).toBe(404);
       expect(((await response.json()) as { code: string }).code).toBe(PURCHASE_NOT_FOUND);
     }
+  });
+
+  // TASK-214: доставка и прочие расходы партий — только при fin_accounting_lots.
+  const lined = {
+    ...batch,
+    amount: 1500,
+    lines: [{ sku: 'W1', count: 3, price: 500 }],
+    delivery: 300,
+    otherCosts: 0.01,
+    lotCostSplit: 'count',
+  };
+  type TLotsView = {
+    lotsEnabled: boolean;
+    purchases: { id: string; deliveryKopecks: number; otherCostsKopecks: number }[];
+  };
+
+  it('без fin_accounting_lots поля партий не принимаются и правка их не трогает', async () => {
+    await boot({ [FEATURE.PURCHASES]: true });
+    const created = (await (await call('POST', '', lined)).json()) as TLotsView;
+    expect(created.lotsEnabled).toBe(false);
+    expect(created.purchases[0]).toMatchObject({ deliveryKopecks: 0, otherCostsKopecks: 0 });
+    const lots = new AccountingLotRepository(pg.db);
+    expect(await lots.forPurchase(SELLER_ID, created.purchases[0].id)).toMatchObject([
+      { productId: 'product-w1', count: 3, extraKopecks: 0 },
+    ]);
+  });
+
+  it('с fin_accounting_lots — доставка в партиях, сумма закупки (ДДС) та же', async () => {
+    await boot({
+      [FEATURE.PURCHASES]: true,
+      [FEATURE.FIN_ACCOUNTING]: true,
+      [FEATURE.FIN_ACCOUNTING_LOTS]: true,
+    });
+    const created = (await (await call('POST', '', lined)).json()) as TLotsView & {
+      purchases: { amountKopecks: number; lotCostSplit: string }[];
+    };
+    expect(created.lotsEnabled).toBe(true);
+    expect(created.purchases[0]).toMatchObject({
+      amountKopecks: 150_000,
+      deliveryKopecks: 30_000,
+      otherCostsKopecks: 1,
+      lotCostSplit: 'count',
+    });
+    const lots = new AccountingLotRepository(pg.db);
+    expect(await lots.forPurchase(SELLER_ID, created.purchases[0].id)).toMatchObject([
+      { count: 3, remaining: 3, unitPriceKopecks: 50_000, extraKopecks: 30_001 },
+    ]);
   });
 });

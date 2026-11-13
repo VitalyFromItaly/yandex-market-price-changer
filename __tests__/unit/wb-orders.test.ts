@@ -244,6 +244,23 @@ describe('WbClient: обход по lastChangeDate', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('сырые строки для «Финучёта» — тот же обход и та же выдержка «Статистики»', async () => {
+    stubRoutes({
+      [ORDERS_URL]: () => [order('a', { finishedPrice: 1800 }), { srid: '' }],
+      [SALES_URL]: () => [{ srid: 'a', saleID: 'S1', forPay: 1600, lastChangeDate: '2026-10-12' }],
+    });
+    let clock = 0;
+    const sleep = vi.fn(async (ms: number) => {
+      clock += ms;
+    });
+    const client = new WbClient(TOKEN, { sleep, pacer: new WbStatisticsPacer(() => clock) });
+    const orders = await client.listSupplierOrdersRaw('2026-10-01');
+    expect(orders).toEqual([expect.objectContaining({ srid: 'a', finishedPrice: 1800 })]);
+    const sales = await client.listSupplierSalesRaw('2026-10-01');
+    expect(sales).toEqual([expect.objectContaining({ saleID: 'S1', forPay: 1600 })]);
+    expect(sleep.mock.calls).toEqual([[WB_STATISTICS_INTERVAL_MS]]);
+  });
+
   it('потолок полных страниц исчерпан — ошибка, а не обрезанный список', async () => {
     // Строки одной страницы общие: обходу важна только дата последней.
     const body = Array.from({ length: WB_STATISTICS_PAGE_ROWS - 1 }, (_, i) => order(`a${i}`));

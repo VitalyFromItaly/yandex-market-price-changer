@@ -22,7 +22,6 @@ import { FinanceDocumentRepository } from '../../src/database/postgres/repositor
 import { FinanceExpenseRepository } from '../../src/database/postgres/repositories/finance-expense.repository';
 import { FinanceOperationRepository } from '../../src/database/postgres/repositories/finance-operation.repository';
 import { FinancePeriodRepository } from '../../src/database/postgres/repositories/finance-period.repository';
-import { FinancePurchaseRepository } from '../../src/database/postgres/repositories/finance-purchase.repository';
 import { FinanceTaxSettingsRepository } from '../../src/database/postgres/repositories/finance-tax-settings.repository';
 import { ActionLog } from '../../src/database/schemas/action-log.schema';
 import { AiTurn } from '../../src/database/schemas/ai-turn.schema';
@@ -64,7 +63,6 @@ import {
   financeToday,
   monthPeriod,
 } from '../../src/modules/finance/finance-period';
-import { FinancePurchasesService } from '../../src/modules/finance/finance-purchases.service';
 import { parseScreenMonth, previousScreenMonth } from '../../src/modules/finance/finance-screen';
 import { FinanceScreenService } from '../../src/modules/finance/finance-screen.service';
 import { FinanceTaxService } from '../../src/modules/finance/finance-tax.service';
@@ -74,6 +72,7 @@ import { journalKeys, nettingRowToOperation } from '../../src/modules/finance/ym
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
 import { inMemoryModel } from '../helpers/in-memory-model';
 import { createTestFinanceDb } from '../helpers/test-postgres';
+import { purchasesServiceOf } from '../helpers/purchases-service';
 
 /**
  * «ИИ-разбор периода» (TASK-150): факты считает сервер из тех же дверей, что
@@ -151,11 +150,7 @@ beforeAll(async () => {
   documents = new FinanceDocumentRepository(pg.db);
   periods = new FinancePeriodRepository(pg.db);
   const expenses = new FinanceExpensesService(new FinanceExpenseRepository(pg.db));
-  cashflow = new FinanceCashflowService(
-    operations,
-    expenses,
-    new FinancePurchasesService(new FinancePurchaseRepository(pg.db)),
-  );
+  cashflow = new FinanceCashflowService(operations, expenses, purchasesServiceOf(pg.db));
   finance = new FinanceService(
     operations,
     periods,

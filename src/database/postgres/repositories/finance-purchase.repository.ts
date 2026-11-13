@@ -1,5 +1,5 @@
 import type { IPurchaseValue, ITaxPaymentValue } from '../../../modules/finance/purchase.domain';
-import type { TFinanceDb, TFinanceExecutor } from '../finance-db';
+import type { TFinanceDb, TFinanceExecutor, TFinanceTx } from '../finance-db';
 
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, gte, lte } from 'drizzle-orm';
@@ -21,6 +21,11 @@ const tp = financeTaxPayments;
 @Injectable()
 export class FinancePurchaseRepository {
   constructor(@Inject(FINANCE_DB) private readonly db: TFinanceDb) {}
+
+  /** Закупка и её партии (TASK-214) пишутся одной транзакцией. */
+  inTransaction<T>(run: (tx: TFinanceTx) => Promise<T>): Promise<T> {
+    return this.db.transaction(run);
+  }
 
   listPurchases(
     telegramUserId: string,

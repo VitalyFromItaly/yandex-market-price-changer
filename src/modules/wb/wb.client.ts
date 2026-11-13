@@ -502,6 +502,20 @@ export class WbClient {
   }
 
   /**
+   * Заказы, изменившиеся с `dateFrom`, сырыми строками (снимок строк заказов
+   * «Финучёта», TASK-211: нужны `finishedPrice`, `totalPrice`, которых в
+   * `IWbOrderRow` нет). Тот же обход и та же выдержка «Статистики».
+   */
+  public async listSupplierOrdersRaw(dateFrom: string): Promise<TRaw[]> {
+    return this.statisticsPages(WB_PATHS.supplierOrders, dateFrom, mapWbRawStatistics);
+  }
+
+  /** Выкупы и возвраты сырыми строками (`forPay`, дата продажи). Только чтение. */
+  public async listSupplierSalesRaw(dateFrom: string): Promise<TRaw[]> {
+    return this.statisticsPages(WB_PATHS.supplierSales, dateFrom, mapWbRawStatistics);
+  }
+
+  /**
    * Строки отчёта реализации за `dateFrom`…`dateTo` (`ГГГГ-ММ-ДД` по Москве),
    * еженедельные отчёты, в прежних именах полей. Курсор — `rrd_id` последней строки (`rrdId`), стоп
    * на пустом ответе. Неполное — `WbIncompleteResponseError`, а не тихий стоп:
@@ -921,6 +935,21 @@ export function mapWbOrders(raw: unknown): { rows: IWbOrderRow[]; count: number 
       isCancel: row.isCancel === true,
     }))
     .filter((row) => row.srid.length > 0);
+  return { rows, count: objects.length };
+}
+
+/**
+ * Ответ orders/sales «Статистики» как есть: строки без `srid` отсеяны,
+ * `lastChangeDate` поднят строкой для курсора обхода.
+ */
+export function mapWbRawStatistics(raw: unknown): {
+  rows: (TRaw & { lastChangeDate: string })[];
+  count: number;
+} {
+  const objects = objectsOf(raw);
+  const rows = objects
+    .filter((row) => textOf(row.srid).length > 0)
+    .map((row) => ({ ...row, lastChangeDate: textOf(row.lastChangeDate) }));
   return { rows, count: objects.length };
 }
 

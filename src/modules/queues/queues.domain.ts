@@ -117,6 +117,17 @@ export function cronToTime(cron: unknown): string | null {
 }
 
 /**
+ * «Раз в N часов» из cron частой задачи «Финучёта» (TASK-212): минута, затем
+ * в поле часов звёздочка с шагом N или без шага (каждый час); иначе null.
+ */
+export function cronEveryHours(cron: unknown): number | null {
+  if (typeof cron !== 'string') return null;
+  const match = cron.trim().match(/^\d{1,2} \*(?:\/(\d{1,2}))? \* \* \*$/);
+  if (!match) return null;
+  return match[1] ? Number(match[1]) : 1;
+}
+
+/**
  * Название отчёта для строки рассылки. Неизвестный ключ показывается как есть:
  * осиротевшее расписание — ровно то, что администратор хочет увидеть.
  */

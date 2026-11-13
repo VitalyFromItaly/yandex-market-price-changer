@@ -114,6 +114,29 @@ export type TFinanceManualImportResult =
     });
 
 /**
+ * Строки netting ЯМ → операции версии: классификатор, ключ уже записанной
+ * операции вместо своего (ручная загрузка, `matchExistingOperations`) и
+ * расшифровка сводной строки акта (TASK-155).
+ */
+function ymOperationsOf(
+  rows: readonly Record<string, unknown>[],
+  keys: readonly string[],
+  ctx: IFinanceOperationContext,
+  extra: {
+    operationKeys?: readonly (string | undefined)[];
+    breakdowns?: ReadonlyMap<string, IOperationBreakdownPart[]>;
+  },
+): IFinanceOperationRow[] {
+  return rows.map((row, i) => {
+    const op = nettingRowToOperation(row, keys[i], ctx);
+    const reuse = extra.operationKeys?.[i];
+    const keyed = reuse ? { ...op, operationKey: reuse } : op;
+    const breakdown = extra.breakdowns?.get(keyed.operationKey);
+    return breakdown ? { ...keyed, breakdown } : keyed;
+  });
+}
+
+/**
  * united-netting/generate и united-marketplace-services/generate: лимит Маркета —
  * 1 генерация в минуту на кабинет («1 points per 1 minute … for businessId»). Ночной проход заказывает подряд
  * текущий и прошлый месяц (по понедельникам ещё позапрошлый), кнопка CRM — несколько
@@ -651,11 +674,12 @@ export class FinanceImportService {
       today: financeToday(now),
     });
     const outcome = await this.importRows({
+      marketplace: 'ym',
+      reportType: YM_NETTING_REPORT_TYPE,
       telegramUserId,
       businessId: String(store.business_id),
       period,
-      rows,
-      keys,
+      toOperations: (ctx) => ymOperationsOf(rows, keys, ctx, { breakdowns: breakdowns.parts }),
       breakdowns: breakdowns.parts,
       actTotals: breakdowns.totals,
       original: {
@@ -943,12 +967,18 @@ export class FinanceImportService {
     let outcome: Awaited<ReturnType<FinanceImportService['importRows']>>;
     try {
       outcome = await this.importRows({
+        marketplace: 'ym',
+        reportType: YM_NETTING_REPORT_TYPE,
         telegramUserId,
         businessId: String(store.business_id),
         period,
-        rows: kept.map((k) => k.row),
-        keys: kept.map((k) => k.key),
-        operationKeys: kept.map((k) => k.operationKey),
+        toOperations: (ctx) =>
+          ymOperationsOf(
+            kept.map((k) => k.row),
+            kept.map((k) => k.key),
+            ctx,
+            { operationKeys: kept.map((k) => k.operationKey) },
+          ),
         original: { buffer, filename, contentType: contentTypeOf(filename) },
         source: 'manual',
         now,
@@ -991,6 +1021,71 @@ export class FinanceImportService {
 
     const followUp = this.recordManualFollowUp({ telegramUserId, period }, result, now);
     return { result, followUp };
+  }
+
+  /**
+   * Ручная загрузка отчёта площадки, чьи строки уже разобраны (TASK-209, WB
+   * «Продвижение»): тот же `importRows`, что у ЯМ, — версия документа с
+   * оригиналом (тот же sha256 → `unchanged`), только добавление и обновление
+   * (`finance_upload_append_only`), upsert по ключу операции. Сверки, статуса
+   * месяца и аномалий нет: файл — справочная статья, а не журнал месяца.
+   */
+  async importFileBatch(
+    request: IFinanceImportRequest & { marketplace: TFinanceMarketplace; reportType: string },
+    batch: Pick<IFinanceJournalBatch, 'businessId' | 'toOperations'> & {
+      rows: number;
+      original: { buffer: Buffer; filename: string };
+    },
+    now: Date = new Date(),
+  ): Promise<TFinanceManualImportResult> {
+    const { telegramUserId, period, marketplace, reportType } = request;
+    if (!telegramUserId) throw new Error('Ручная загрузка финансов без telegramUserId');
+    assertFinancePeriod(period);
+    const { buffer, filename } = batch.original;
+
+    let outcome: Awaited<ReturnType<FinanceImportService['importRows']>>;
+    try {
+      outcome = await this.importRows({
+        marketplace,
+        reportType,
+        telegramUserId,
+        businessId: batch.businessId,
+        period,
+        toOperations: batch.toOperations,
+        original: { buffer, filename, contentType: contentTypeOf(filename) },
+        source: 'manual',
+        now,
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) throw new FinanceImportBusyError();
+      throw error;
+    }
+
+    if (!outcome.created) {
+      return {
+        status: 'unchanged',
+        period,
+        documentVersion: outcome.document.version,
+        rows: outcome.document.rowCount ?? 0,
+      };
+    }
+    const { applied } = outcome;
+    this.logger.log(
+      `Файл ${reportType} ${telegramUserId} ${period.from}…${period.to} ` +
+        `v${outcome.document.version}: строк ${batch.rows}, новых ${applied.inserted}, ` +
+        `уже было ${applied.matched}`,
+    );
+    return {
+      status: 'imported',
+      period,
+      documentId: outcome.document.id,
+      documentVersion: outcome.document.version,
+      rows: batch.rows,
+      inserted: applied.inserted,
+      matched: applied.matched,
+      skippedSuperseded: 0,
+      unknown: 0,
+    };
   }
 
   /** Сверка, статус и аномалии после ручной загрузки — как после импорта; не бросает. */
@@ -1039,14 +1134,15 @@ export class FinanceImportService {
    * снятия выпавших, и пустая выплата из файла не стирает записанную.
    */
   private async importRows(input: {
+    /** Чей журнал и какой отчёт: от них ключ периода и счётчик версий документа. */
+    marketplace: TFinanceMarketplace;
+    reportType: string;
     telegramUserId: string;
     businessId: string;
     period: IFinancePeriod;
-    rows: readonly Record<string, unknown>[];
-    keys: readonly string[];
-    /** Ключ уже записанной операции для строки — вместо ключа из `keys`. */
-    operationKeys?: readonly (string | undefined)[];
-    /** Расшифровки сводных строк акта по operationKey (TASK-155). */
+    /** Строки журнала версии; контекст — её id, номер и ключ периода. */
+    toOperations(ctx: IFinanceOperationContext): IFinanceOperationRow[];
+    /** Расшифровки сводных строк акта по operationKey (TASK-155) — дописать к неизменной версии. */
     breakdowns?: ReadonlyMap<string, IOperationBreakdownPart[]>;
     /** Итоги актов из отчёта услуг (TASK-158) — в той же транзакции. */
     actTotals?: readonly IYmActServicesTotal[];
@@ -1054,16 +1150,16 @@ export class FinanceImportService {
     source: TFinanceDocumentSource;
     now: Date;
   }) {
-    const { telegramUserId, businessId, period, rows, keys, source } = input;
-    const periodKey = financePeriodKey(YM_NETTING_REPORT_TYPE, period);
+    const { marketplace, reportType, telegramUserId, businessId, period, source } = input;
+    const periodKey = financePeriodKey(reportType, period);
 
     return await this.db.transaction(async (tx) => {
       const { document, created } = await this.documents.registerVersion(
         {
-          marketplace: 'ym',
+          marketplace,
           telegramUserId,
           businessId,
-          reportType: YM_NETTING_REPORT_TYPE,
+          reportType,
           periodFrom: period.from,
           periodTo: period.to,
           ...input.original,
@@ -1084,18 +1180,12 @@ export class FinanceImportService {
         return { document, created: false as const };
       }
 
-      const ops = rows.map((row, i) => {
-        const op = nettingRowToOperation(row, keys[i], {
-          telegramUserId,
-          businessId,
-          documentId: document.id,
-          documentVersion: document.version,
-          periodKey,
-        });
-        const reuse = input.operationKeys?.[i];
-        const keyed = reuse ? { ...op, operationKey: reuse } : op;
-        const breakdown = input.breakdowns?.get(keyed.operationKey);
-        return breakdown ? { ...keyed, breakdown } : keyed;
+      const ops = input.toOperations({
+        telegramUserId,
+        businessId,
+        documentId: document.id,
+        documentVersion: document.version,
+        periodKey,
       });
       const applied = await this.apply(tx, {
         telegramUserId,
@@ -1105,6 +1195,7 @@ export class FinanceImportService {
         documentId: document.id,
         documentVersion: document.version,
         appendOnly: source === 'manual',
+        marketplace,
         now: input.now,
       });
       await this.documents.markImported(telegramUserId, document.id, ops.length, tx);

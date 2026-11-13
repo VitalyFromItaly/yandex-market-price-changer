@@ -14,7 +14,6 @@ import { FinanceDocumentRepository } from '../../src/database/postgres/repositor
 import { FinanceExpenseRepository } from '../../src/database/postgres/repositories/finance-expense.repository';
 import { FinanceOperationRepository } from '../../src/database/postgres/repositories/finance-operation.repository';
 import { FinancePeriodRepository } from '../../src/database/postgres/repositories/finance-period.repository';
-import { FinancePurchaseRepository } from '../../src/database/postgres/repositories/finance-purchase.repository';
 import { FinanceTaxSettingsRepository } from '../../src/database/postgres/repositories/finance-tax-settings.repository';
 import { CRM_SECTIONS } from '../../src/modules/crm/crm-features.domain';
 import {
@@ -38,7 +37,6 @@ import { FINANCE_ARTICLE_KEYS } from '../../src/modules/finance/finance-articles
 import { FinanceCashflowService } from '../../src/modules/finance/finance-cashflow.service';
 import { FinanceExpensesService } from '../../src/modules/finance/finance-expenses.service';
 import { financePeriodKey, monthPeriod } from '../../src/modules/finance/finance-period';
-import { FinancePurchasesService } from '../../src/modules/finance/finance-purchases.service';
 import { FinanceTaxService } from '../../src/modules/finance/finance-tax.service';
 import { FinanceService } from '../../src/modules/finance/finance.service';
 import { PNL_SECTION } from '../../src/modules/finance/pnl';
@@ -53,6 +51,7 @@ import {
 import { PERIOD } from '../../src/modules/yandex/reports/report-period';
 import { YandexDateRangeError } from '../../src/modules/yandex/yandex-date-window';
 import { createTestFinanceDb } from '../helpers/test-postgres';
+import { purchasesServiceOf } from '../helpers/purchases-service';
 
 /**
  * «Обзор» CRM (TASK-125): карточки — из того же `FinanceService.build`, что
@@ -108,11 +107,7 @@ beforeAll(async () => {
   operations = new FinanceOperationRepository(pg.db);
   documents = new FinanceDocumentRepository(pg.db);
   const expenses = new FinanceExpensesService(new FinanceExpenseRepository(pg.db));
-  cashflow = new FinanceCashflowService(
-    operations,
-    expenses,
-    new FinancePurchasesService(new FinancePurchaseRepository(pg.db)),
-  );
+  cashflow = new FinanceCashflowService(operations, expenses, purchasesServiceOf(pg.db));
   finance = new FinanceService(
     operations,
     new FinancePeriodRepository(pg.db),
@@ -483,7 +478,10 @@ describe('площадка экрана (TASK-183)', () => {
       placement: null,
       byLocation: {
         seller: { 'OZ-A1': { available: 2, reserved: null } },
-        marketplace: { 'OZ-A1': { available: 1, reserved: null }, X: { available: 4, reserved: 0 } },
+        marketplace: {
+          'OZ-A1': { available: 1, reserved: null },
+          X: { available: 4, reserved: 0 },
+        },
       },
     }));
     const order = (stage: string, sales: number | null, count = 1) => ({
@@ -544,8 +542,14 @@ describe('площадка экрана (TASK-183)', () => {
     const listOrders = vi.fn(async () => ({ orders: [], cancelled: [{}, {}, {}] }));
     const reports = { collectPlacedOrders: vi.fn() };
     const kinds = overviewKinds({ marketplaces: ozonRegistry(vi.fn(), listOrders), reports });
-    const month = { from: '2026-10-01', to: '2026-10-15', prevFrom: SEPT.from, prevTo: '2026-09-15' };
-    const counted = (await kinds.cancelled(ozonOf(month), OCT_15)).data as ICrmOverviewCancelledView;
+    const month = {
+      from: '2026-10-01',
+      to: '2026-10-15',
+      prevFrom: SEPT.from,
+      prevTo: '2026-09-15',
+    };
+    const counted = (await kinds.cancelled(ozonOf(month), OCT_15))
+      .data as ICrmOverviewCancelledView;
     expect(counted).toMatchObject({ marketplace: 'ozon', count: 3, note: null, stores: 1 });
     expect(listOrders).toHaveBeenCalledWith(
       { telegramUserId: SELLER, marketplace: 'ozon' },

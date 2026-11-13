@@ -127,6 +127,9 @@ export const CRM_SECTIONS: Readonly<Record<string, readonly TFeatureKey[]>> = {
   'ym-price-calculator': [FEATURE.PRICE_CALCULATOR],
   // «Установка цен» — аккаунта: товары и закуп одни на все площадки, цены ЯМ — бизнесовые.
   'ym-price-set': [FEATURE.PRICE_SET],
+  // «Финучёт» — аккаунта: журнал бизнесовый, учёт по всему кабинету и всем площадкам.
+  // Раздел открывает только зонтик; подфичи — вкладки внутри (crm-parity).
+  'ym-accounting': [FEATURE.FIN_ACCOUNTING],
   // «ИИ-аналитик» — аккаунта: журнал бизнесовый; ai и finance свёрнуты в фичу (requires).
   // Вкладки «Чат» и «Разбор периода» (TASK-150) — раздел открыт любой из них.
   'ym-ai-analyst': [FEATURE.AI_ANALYST, FEATURE.AI_PERIOD_REVIEW],

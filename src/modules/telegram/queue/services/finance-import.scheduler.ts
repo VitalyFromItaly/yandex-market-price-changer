@@ -1,4 +1,5 @@
 import type { TFinanceMarketplace } from '../../../../database/postgres/finance.schema';
+import type { IFinancePeriod } from '../../../finance/finance-period';
 import type { IFinanceScreenMonth } from '../../../finance/finance-screen';
 import type { IFinanceImportJob } from '../processors/finance-import.processor';
 
@@ -17,20 +18,35 @@ import { MOSCOW_TIME_ZONE } from '../../../yandex/reports/moscow-day';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
 
 import {
+  ACCOUNTING_FREQUENT_MARKETPLACES,
+  accountingCron,
+  accountingJobId,
   financeCron,
   financeJobId,
   financePullCooldownUntil,
   financePullJobId,
+  financeRetryJobId,
+  mergeMarketplaceMaps,
+  parseAccountingJobId,
   parseFinanceJobId,
+  pickAccountingMarketplaces,
   pickFinanceMarketplaces,
 } from './finance-schedule';
 
 /** Повторяемая задача продавца — то, что видит карточка в панели. */
 export interface IFinanceScheduledJob {
   telegramUserId: string;
+  /** `nightly` — ночной проход (`finance-`), `frequent` — текущий месяц «Финучёта» (`finacc-`). */
+  kind: 'nightly' | 'frequent';
   cron: string;
   tz: string;
   next: number;
+}
+
+/** Кому что грузить: ночной проход (`finance` ∪ `fin_accounting`) и «Финучёт» отдельно. */
+export interface IFinanceEligibility {
+  nightly: Map<string, TFinanceMarketplace[]>;
+  accounting: Map<string, TFinanceMarketplace[]>;
 }
 
 /** Итог кнопки «Загрузить из Маркета»: что поставлено и что ждёт кулдауна. */
@@ -90,13 +106,15 @@ export class FinanceImportScheduler implements OnApplicationBootstrap {
 
   /**
    * Чьи журналы и каких площадок грузить — по Mongo, одним `$in` на площадку.
-   * Задача на продавца одна, площадки проходит процессор (TASK-131).
+   * Задача на продавца одна, площадки проходит процессор (TASK-131). Ночной
+   * проход — продавцам «Финансов» и «Финучёта» (TASK-212); частая задача —
+   * только «Финучёту».
    */
-  async wantedMarketplaces(): Promise<Map<string, TFinanceMarketplace[]>> {
+  async eligibility(): Promise<IFinanceEligibility> {
     const accounts = await this.access.list();
     const adminIds = this.config.telegramAdminIds;
     const ids = [...new Set([...accounts.map((a) => a.telegramUserId), ...adminIds.map(String)])];
-    if (!ids.length) return new Map();
+    if (!ids.length) return { nightly: new Map(), accounting: new Map() };
 
     const [stores, ozon, wb] = await Promise.all([
       this.stores.findByTelegramUsers(ids),
@@ -108,7 +126,22 @@ export class FinanceImportScheduler implements OnApplicationBootstrap {
         .filter((store) => store.campaign_id && store.business_id && store.token)
         .map((store) => store.telegramUserId),
     );
-    return pickFinanceMarketplaces(accounts, adminIds, { ym, ozon, wb });
+    const configured = { ym, ozon, wb };
+    const finance = pickFinanceMarketplaces(accounts, adminIds, configured);
+    // Админов в авторасписании «Финучёта» нет (довод `notifications_admins_not_auto`):
+    // флаги они обходят, а частая загрузка без согласия жгла бы квоту ЯМ их магазина.
+    const accounting = pickAccountingMarketplaces(accounts, [], configured);
+    return { nightly: mergeMarketplaceMaps(finance, accounting), accounting };
+  }
+
+  /** Площадки ночного прохода по продавцам. */
+  async wantedMarketplaces(): Promise<Map<string, TFinanceMarketplace[]>> {
+    return (await this.eligibility()).nightly;
+  }
+
+  /** Площадки «Финучёта» одного продавца — окно перезагрузки, повторы, уведомление о сбое. */
+  async accountingMarketplacesFor(telegramUserId: string): Promise<TFinanceMarketplace[]> {
+    return (await this.eligibility()).accounting.get(telegramUserId) ?? [];
   }
 
   /** Кому положена загрузка хоть одной площадки. */
@@ -133,17 +166,45 @@ export class FinanceImportScheduler implements OnApplicationBootstrap {
    * завести. Чужие повторяемые задачи очереди не трогаются.
    */
   async reconcile(): Promise<{ added: number; removed: number }> {
-    const wanted = new Map((await this.wanted()).map((id) => [financeJobId(id), financeCron(id)]));
+    const { nightly, accounting } = await this.eligibility();
+    const wanted = new Map([...nightly.keys()].map((id) => [financeJobId(id), financeCron(id)]));
+    // Частая задача «Финучёта» (TASK-212): своя ветка со своим префиксом, чтобы
+    // ни одна сверка не снимала чужие задачи.
+    const everyHours = this.config.finAccountingSyncEveryHours;
+    const frequent = new Map(
+      [...accounting.entries()]
+        .filter(([, list]) => list.some((mp) => ACCOUNTING_FREQUENT_MARKETPLACES.has(mp)))
+        .map(([id]) => [accountingJobId(id), accountingCron(id, everyHours)]),
+    );
     let removed = 0;
 
     for (const job of await this.queue.getRepeatableJobs()) {
-      if (!parseFinanceJobId(job.id)) continue;
-      if (job.id && wanted.get(job.id) === job.cron) {
-        wanted.delete(job.id);
+      let own: Map<string, string> | null = null;
+      if (parseFinanceJobId(job.id)) own = wanted;
+      else if (parseAccountingJobId(job.id)) own = frequent;
+      if (!own) continue;
+      if (job.id && own.get(job.id) === job.cron) {
+        own.delete(job.id);
         continue;
       }
       await this.queue.removeRepeatableByKey(job.key);
       removed += 1;
+    }
+
+    for (const [jobId, cron] of frequent) {
+      const payload: IFinanceImportJob = {
+        telegramUserId: parseAccountingJobId(jobId) ?? '',
+        scheduled: true,
+        mode: 'frequent',
+      };
+      await this.queue.add(JOB_TYPES.IMPORT_FINANCE, payload, {
+        jobId,
+        repeat: { cron, tz: MOSCOW_TIME_ZONE },
+        removeOnComplete: 20,
+        removeOnFail: 50,
+        // Сбой периода повторяет сам процессор отложенной задачей, не Bull.
+        attempts: 1,
+      });
     }
 
     for (const [jobId, cron] of wanted) {
@@ -162,7 +223,7 @@ export class FinanceImportScheduler implements OnApplicationBootstrap {
       });
     }
 
-    return { added: wanted.size, removed };
+    return { added: wanted.size + frequent.size, removed };
   }
 
   /**
@@ -208,6 +269,7 @@ export class FinanceImportScheduler implements OnApplicationBootstrap {
         result.cooldown.push({ month, checkedAt, until: until.toISOString() });
         continue;
       }
+      // trigger не пишется: разовая задача без него — кнопка (`manual`).
       const payload: IFinanceImportJob = { telegramUserId, marketplace, ...period };
       await this.queue.add(JOB_TYPES.IMPORT_FINANCE, payload, {
         jobId: financePullJobId(telegramUserId, marketplace, month),
@@ -221,12 +283,44 @@ export class FinanceImportScheduler implements OnApplicationBootstrap {
     return result;
   }
 
+  /**
+   * Отложенный повтор загрузки периода после сбоя (TASK-212): разовая задача в
+   * ту же очередь и тот же `@Process`, через `delayMs`. Не `attempts` Bull —
+   * довод `syncRetryDelayMs`.
+   */
+  async scheduleRetry(
+    telegramUserId: string,
+    marketplace: TFinanceMarketplace,
+    period: IFinancePeriod,
+    attempt: number,
+    delayMs: number,
+  ): Promise<void> {
+    const payload: IFinanceImportJob = {
+      telegramUserId,
+      marketplace,
+      ...period,
+      trigger: 'retry',
+      attempt,
+    };
+    await this.queue.add(JOB_TYPES.IMPORT_FINANCE, payload, {
+      jobId: financeRetryJobId(telegramUserId, marketplace, period.from.slice(0, 7), attempt),
+      delay: delayMs,
+      removeOnComplete: true,
+      removeOnFail: true,
+      attempts: 1,
+    });
+  }
+
   /** Заведённые задачи загрузки — для карточки «Очереди». */
   async jobs(): Promise<IFinanceScheduledJob[]> {
     const rows: IFinanceScheduledJob[] = [];
     for (const job of await this.queue.getRepeatableJobs()) {
-      const telegramUserId = parseFinanceJobId(job.id);
-      if (telegramUserId) rows.push({ telegramUserId, cron: job.cron, tz: job.tz, next: job.next });
+      const nightly = parseFinanceJobId(job.id);
+      const frequent = parseAccountingJobId(job.id);
+      const telegramUserId = nightly ?? frequent;
+      if (!telegramUserId) continue;
+      const kind = nightly ? 'nightly' : 'frequent';
+      rows.push({ telegramUserId, kind, cron: job.cron, tz: job.tz, next: job.next });
     }
     return rows;
   }

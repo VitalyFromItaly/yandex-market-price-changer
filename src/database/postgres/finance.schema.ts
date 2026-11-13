@@ -1,4 +1,31 @@
-import type { TExpenseKind } from '../../modules/finance/expense.domain';
+import type {
+  IAccountingCostValue,
+  TAccountingCostChangeAction,
+  TAccountingCostSource,
+} from '../../modules/accounting/accounting-cost-history.domain';
+import type {
+  TAccountingCostMethod,
+  TLotCostSplit,
+  TReturnCondition,
+} from '../../modules/accounting/accounting-lots.domain';
+import type {
+  IAccountingOrderLineValue,
+  TAccountingOrderLineSource,
+  TAccountingOrdersSyncOutcome,
+} from '../../modules/accounting/accounting-order-lines.domain';
+import type { TAccountingSubArticle } from '../../modules/accounting/accounting-sub-articles';
+import type { TTaxBaseRule } from '../../modules/accounting/accounting-tax';
+import type {
+  IManualOperationValue,
+  TManualOperationAction,
+} from '../../modules/accounting/manual-operation.domain';
+import type {
+  IOrderProfit,
+  TOrderProfitState,
+  TOrderResultSnapshotReason,
+} from '../../modules/accounting/order-profit-state';
+import type { TAllocationMethod } from '../../modules/accounting/store-cost-allocation';
+import type { TExpenseKind, TExpenseScope } from '../../modules/finance/expense.domain';
 import type { TAnomalyKind } from '../../modules/finance/finance-anomalies';
 import type { TFinanceArticle } from '../../modules/finance/finance-articles';
 import type {
@@ -11,10 +38,12 @@ import type {
   TFinanceReconcileStateKey,
 } from '../../modules/finance/finance-period-status';
 import type { TReconcileKind } from '../../modules/finance/finance-reconcile';
+import type { TFinanceSyncOutcome, TFinanceSyncTrigger } from '../../modules/finance/finance-sync';
 import type { IOperationBreakdownPart } from '../../modules/finance/operation-breakdown';
 import type { IPurchaseLine } from '../../modules/finance/purchase.domain';
 import type { TTaxReductionKind, TTaxYearPeriod } from '../../modules/finance/tax-year.domain';
 import type { TTaxRecognition, TTaxRegime } from '../../modules/finance/tax.domain';
+import type { IProductPurchase } from '../../modules/products/product.domain';
 import type { TMarketplace } from '../../shared/marketplace';
 
 import { sql } from 'drizzle-orm';
@@ -206,6 +235,20 @@ export const financeOperations = pgTable(
      * которого отчёт услуг не загрузился, расшифровки не несут.
      */
     breakdown: jsonb('breakdown').$type<IOperationBreakdownPart[]>(),
+    /**
+     * Реестр «Финучёта» (ТЗ п.10, TASK-207, решение `accounting_same_journal`):
+     * колонки нового движка, текущий P&L их не читает. Все nullable: значение
+     * ставится только из явного поля площадки, неизвестное — null, не выдумка.
+     * Подстатья — `accounting-sub-articles.ts`; повторный импорт дозаполняет,
+     * пустое не стирает записанное.
+     */
+    currency: text('currency'),
+    /** Позиция заказа — площадки в строке журнала не отдают (матрица, п.20). */
+    itemId: text('item_id'),
+    /** Дата отражения в отчёте площадки. */
+    reportedAt: moment('reported_at'),
+    processingStatus: text('processing_status'),
+    subArticle: text('sub_article').$type<TAccountingSubArticle>(),
     createdAt: moment('created_at').notNull().defaultNow(),
     updatedAt: moment('updated_at').notNull().defaultNow(),
   },
@@ -314,6 +357,45 @@ export const financePeriods = pgTable(
 );
 
 /**
+ * Журнал синхронизации финансов (TASK-212, ТЗ п.11): одна строка на попытку
+ * загрузки периода площадки. `finance_periods` — последнее состояние (каждая
+ * попытка перезаписывает), здесь — история: когда пробовали, чем кончилось,
+ * какая по счёту, и отдельно от неё — когда был последний УСПЕХ.
+ *
+ * Пишет процессор очереди finance-import на каждую попытку, кроме
+ * «площадка не подключена до старта». Хранится `SYNC_RUNS_RETENTION_DAYS`.
+ */
+export const financeSyncRuns = pgTable(
+  'finance_sync_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    marketplace: text('marketplace').$type<TFinanceMarketplace>().notNull(),
+    telegramUserId: text('telegram_user_id').notNull(),
+    periodKey: text('period_key').notNull(),
+    periodFrom: text('period_from').notNull(),
+    periodTo: text('period_to').notNull(),
+    trigger: text('trigger').$type<TFinanceSyncTrigger>().notNull(),
+    /** 1 — первая попытка, 2… — повторы после сбоя. */
+    attempt: integer('attempt').notNull(),
+    outcome: text('outcome').$type<TFinanceSyncOutcome>().notNull(),
+    error: text('error'),
+    startedAt: moment('started_at').notNull(),
+    finishedAt: moment('finished_at').notNull(),
+  },
+  (t) => [
+    // Последняя попытка и последний успех периода — по убыванию времени.
+    index('finance_sync_runs_period_idx').on(
+      t.telegramUserId,
+      t.marketplace,
+      t.periodKey,
+      t.finishedAt,
+    ),
+    // Чистка по сроку хранения.
+    index('finance_sync_runs_finished_idx').on(t.finishedAt),
+  ],
+);
+
+/**
  * Находки сверки журнала с заказами и выплатами (TASK-113). Список целиком
  * заменяется каждой сверкой периода (`replacePeriod`): находка — вывод из
  * текущих данных, а не событие, и вчерашняя, которую сегодня закрыл соседний
@@ -377,6 +459,34 @@ export const financeActServices = pgTable(
     updatedAt: moment('updated_at').notNull().defaultNow(),
   },
   (t) => [uniqueIndex('finance_act_services_act_uq').on(t.marketplace, t.telegramUserId, t.actDay)],
+);
+
+/**
+ * Сальдо Ozon за закрытый месяц (TASK-227, решение `accounting_reconcile_ozon_balance`):
+ * `/v1/finance/balance` за месяц — входящее, начислено, выплачено, исходящее. Это
+ * единственный документ Ozon, независимый от строк журнала: сверка v2 сверяет с
+ * ним итог начислений и остаток. Пишет импорт Ozon, читает сверка — на запрос
+ * сверки Ozon не зовётся (решение `accounting_reconcile_on_demand`).
+ *
+ * `accrued`/`closing` — null, если Ozon их не отдал: тогда документа нет, а не ноль.
+ */
+export const financeOzonBalances = pgTable(
+  'finance_ozon_balances',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    telegramUserId: text('telegram_user_id').notNull(),
+    /** Границы месяца по Москве, ГГГГ-ММ-ДД. */
+    periodFrom: text('period_from').notNull(),
+    periodTo: text('period_to').notNull(),
+    openingKopecks: money('opening_kopecks').notNull(),
+    accruedKopecks: money('accrued_kopecks'),
+    paymentsKopecks: money('payments_kopecks').notNull(),
+    closingKopecks: money('closing_kopecks'),
+    loadedAt: moment('loaded_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('finance_ozon_balances_period_uq').on(t.telegramUserId, t.periodFrom, t.periodTo),
+  ],
 );
 
 /**
@@ -469,10 +579,298 @@ export const financeExpenses = pgTable(
     /** «ГГГГ-ММ-ДД» включительно, только у ежемесячной; null — без конца. */
     toDay: text('to_day'),
     note: text('note'),
+    // ── v2 для «Финучёта» (TASK-220, миграция 0024): всё nullable — записи до v2
+    // читаются как «весь бизнес» без источника, текущий P&L этих полей не читает.
+    /** Откуда расход: счёт, выписка, чек. */
+    source: text('source'),
+    /** К чему относится; null — `business`. */
+    scope: text('scope').$type<TExpenseScope>(),
+    marketplace: text('marketplace').$type<TFinanceMarketplace>(),
+    /** Номер заказа площадки — только у `scope = 'order'`. */
+    orderId: text('order_id'),
+    /** Артикул продавца — только у `scope = 'product'`. */
+    sku: text('sku'),
+    /** Статья реестра, которую расход повторял при сохранении; null — совпадения не было. */
+    doubleCountArticle: text('double_count_article').$type<TFinanceArticle>(),
     createdAt: moment('created_at').notNull().defaultNow(),
     updatedAt: moment('updated_at').notNull().defaultNow(),
   },
   (t) => [index('finance_expenses_user_from_idx').on(t.telegramUserId, t.fromDay)],
+);
+
+/**
+ * Ручные операции реестра «Финучёта» (ТЗ п.1, TASK-208): начисления, которых нет
+ * ни в API, ни в файлах площадки. Своя таблица, не `finance_operations`
+ * (решение `accounting_manual_ops_own_table`): ни один читатель текущего P&L её
+ * не выбирает, а `markSuperseded`/`findStale` новой версии отчёта её не видят —
+ * загрузка из API не может «заменить» ручную строку.
+ *
+ * `client_key` — uuid формы: повторная отправка той же формы находит уже
+ * созданную строку (уникальный индекс), а не заводит дубль. Удаление мягкое
+ * (`deleted_at`): история изменений ссылается на строку и не теряется.
+ */
+export const accountingManualOperations = pgTable(
+  'accounting_manual_operations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    telegramUserId: text('telegram_user_id').notNull(),
+    clientKey: uuid('client_key').notNull(),
+    marketplace: text('marketplace').$type<TFinanceMarketplace>().notNull(),
+    article: text('article').$type<TFinanceArticle>().notNull(),
+    subArticle: text('sub_article').$type<TAccountingSubArticle>(),
+    /** Со знаком, как в журнале: «+» — деньги продавцу, «−» — удержание. */
+    amountKopecks: money('amount_kopecks').notNull(),
+    /** «ГГГГ-ММ-ДД» — день начисления. */
+    accruedOn: text('accrued_on').notNull(),
+    orderId: text('order_id'),
+    sku: text('sku'),
+    source: text('source').notNull(),
+    documentNumber: text('document_number'),
+    note: text('note'),
+    /** Кто завёл: telegramUserId из CRM (админ «за продавца» — в журнале изменений). */
+    author: text('author').notNull(),
+    createdAt: moment('created_at').notNull().defaultNow(),
+    updatedAt: moment('updated_at').notNull().defaultNow(),
+    deletedAt: moment('deleted_at'),
+  },
+  (t) => [
+    uniqueIndex('accounting_manual_operations_client_key_uq').on(t.telegramUserId, t.clientKey),
+    index('accounting_manual_operations_user_day_idx')
+      .on(t.telegramUserId, t.accruedOn)
+      .where(sql`${t.deletedAt} IS NULL`),
+  ],
+);
+
+/**
+ * Журнал изменений ручных операций (TASK-208): создание, правка, удаление —
+ * было/стало (значение формы целиком), кто и когда. Только дописывается.
+ */
+export const accountingManualOperationChanges = pgTable(
+  'accounting_manual_operation_changes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    operationId: uuid('operation_id')
+      .notNull()
+      .references(() => accountingManualOperations.id),
+    telegramUserId: text('telegram_user_id').notNull(),
+    action: text('action').$type<TManualOperationAction>().notNull(),
+    before: jsonb('before').$type<IManualOperationValue>(),
+    after: jsonb('after').$type<IManualOperationValue>(),
+    author: text('author').notNull(),
+    /** Админ, действовавший за продавца. */
+    impersonatedBy: text('impersonated_by'),
+    createdAt: moment('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('accounting_manual_operation_changes_op_idx').on(t.operationId, t.createdAt)],
+);
+
+/**
+ * История закупа v2 «Финучёта» (ТЗ п.2, TASK-213, решение `accounting_cost_history_v2`):
+ * с какого МОМЕНТА действует закуп товара. Своя таблица, не `CostHistory` (Mongo):
+ * текущая «Прибыль» её не видит по построению, а у v2 другое правило — строгая
+ * «Неизвестная закупка» без стартовой записи (`accounting_unknown_cost_strict`).
+ *
+ * `product_id` — id товара Mongo строкой, без FK (правило products README:
+ * «string, no ref»). `purchase` — закуп как `IProductPurchase` (цена в валюте,
+ * валюта, курс, доп. расходы): цены в валюте дробные, копейки их бы округлили.
+ * Ключ — (продавец, товар, момент): две загрузки за день — две записи. Строки
+ * не удаляются; исправление переписывает закуп записи и пишет журнал.
+ */
+export const accountingCostRecords = pgTable(
+  'accounting_cost_records',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    telegramUserId: text('telegram_user_id').notNull(),
+    productId: text('product_id').notNull(),
+    validFrom: moment('valid_from').notNull(),
+    purchase: jsonb('purchase').$type<IProductPurchase>().notNull(),
+    source: text('source').$type<TAccountingCostSource>().notNull(),
+    /** Кто исправил руками; у прайса и переноса — null. */
+    author: text('author'),
+    createdAt: moment('created_at').notNull().defaultNow(),
+    updatedAt: moment('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('accounting_cost_records_key_uq').on(t.telegramUserId, t.productId, t.validFrom),
+  ],
+);
+
+/**
+ * Журнал исправлений истории закупа v2 (TASK-213): было/стало, автор, причина.
+ * Только дописывается; загрузка прайса сюда не пишет (её строки видны по `source`).
+ */
+export const accountingCostRecordChanges = pgTable(
+  'accounting_cost_record_changes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    recordId: uuid('record_id')
+      .notNull()
+      .references(() => accountingCostRecords.id),
+    telegramUserId: text('telegram_user_id').notNull(),
+    productId: text('product_id').notNull(),
+    action: text('action').$type<TAccountingCostChangeAction>().notNull(),
+    before: jsonb('before').$type<IAccountingCostValue>(),
+    after: jsonb('after').$type<IAccountingCostValue>().notNull(),
+    author: text('author').notNull(),
+    /** Админ, действовавший за продавца. */
+    impersonatedBy: text('impersonated_by'),
+    reason: text('reason').notNull(),
+    createdAt: moment('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    index('accounting_cost_record_changes_product_idx').on(
+      t.telegramUserId,
+      t.productId,
+      t.createdAt,
+    ),
+  ],
+);
+
+/**
+ * Снимок строк заказов «Финучёта» (TASK-210, решение `accounting_order_lines_sync`):
+ * текущее состояние позиции заказа. Ключ — (площадка, продавец, заказ, позиция);
+ * изменение значимых полей (`fingerprint`) поднимает `version` и пишет строку в
+ * `accounting_order_line_versions`, старая версия остаётся там. Опрос без
+ * изменений трогает только `last_seen_at`. Деньги — копейки за единицу, кроме
+ * `revenue_kopecks` (вся позиция); неизвестное — null.
+ *
+ * `campaign_id` — служебный: продавцу его не показывают (инвариант бота).
+ */
+export const accountingOrderLines = pgTable(
+  'accounting_order_lines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    marketplace: text('marketplace').$type<TFinanceMarketplace>().notNull(),
+    telegramUserId: text('telegram_user_id').notNull(),
+    orderId: text('order_id').notNull(),
+    itemId: text('item_id').notNull(),
+    /** Магазин ЯМ; у Ozon/WB — null (TASK-211). */
+    campaignId: text('campaign_id'),
+    offerId: text('offer_id'),
+    offerName: text('offer_name'),
+    count: integer('count').notNull(),
+    priceKopecks: money('price_kopecks'),
+    buyerPriceKopecks: money('buyer_price_kopecks'),
+    buyerPriceBeforeDiscountKopecks: money('buyer_price_before_discount_kopecks'),
+    /** Null — площадка субсидий не присылает (Ozon). */
+    marketplaceSubsidyKopecks: money('marketplace_subsidy_kopecks'),
+    sellerDiscountKopecks: money('seller_discount_kopecks'),
+    /** К признанию дохода за всю позицию (у Ozon — цена продавца × кол-во). */
+    revenueKopecks: money('revenue_kopecks'),
+    /** К выплате за единицу (Ozon `payout`, WB `forPay`); ЯМ — null. */
+    payoutKopecks: money('payout_kopecks'),
+    /** Комиссия площадки за единицу (Ozon `commission_amount`). */
+    commissionKopecks: money('commission_kopecks'),
+    status: text('status'),
+    substatus: text('substatus'),
+    /** «ГГГГ-ММ-ДД», Москва. */
+    createdOn: text('created_on'),
+    soldOn: text('sold_on'),
+    deliveryOn: text('delivery_on'),
+    returnedOn: text('returned_on'),
+    /** Состояние возврата для FIFO (TASK-238): ЯМ — из `instances`; null = неизвестно. */
+    returnCondition: text('return_condition').$type<TReturnCondition>(),
+    source: text('source').$type<TAccountingOrderLineSource>().notNull(),
+    version: integer('version').notNull(),
+    fingerprint: text('fingerprint').notNull(),
+    firstSeenAt: moment('first_seen_at').notNull().defaultNow(),
+    lastSeenAt: moment('last_seen_at').notNull().defaultNow(),
+    changedAt: moment('changed_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('accounting_order_lines_key_uq').on(
+      t.marketplace,
+      t.telegramUserId,
+      t.orderId,
+      t.itemId,
+    ),
+    index('accounting_order_lines_user_created_idx').on(t.telegramUserId, t.createdOn),
+  ],
+);
+
+/** Версии строк заказов: полная копия значимых полей на каждую версию. Только дописывается. */
+export const accountingOrderLineVersions = pgTable(
+  'accounting_order_line_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    lineId: uuid('line_id')
+      .notNull()
+      .references(() => accountingOrderLines.id),
+    telegramUserId: text('telegram_user_id').notNull(),
+    version: integer('version').notNull(),
+    value: jsonb('value').$type<IAccountingOrderLineValue>().notNull(),
+    fingerprint: text('fingerprint').notNull(),
+    capturedAt: moment('captured_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('accounting_order_line_versions_uq').on(t.lineId, t.version)],
+);
+
+/**
+ * Снимок результата заказа «Финучёта» (TASK-218): текущая версия — состояние
+ * прибыли (`forecast | preliminary | reconciled`), итог и его разделение на
+ * подтверждённое и ожидаемое. Смена отпечатка поднимает `version` и пишет строку в
+ * `accounting_order_result_versions` с причиной; прежние версии не переписываются.
+ */
+export const accountingOrderResults = pgTable(
+  'accounting_order_results',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    marketplace: text('marketplace').$type<TFinanceMarketplace>().notNull(),
+    telegramUserId: text('telegram_user_id').notNull(),
+    orderId: text('order_id').notNull(),
+    version: integer('version').notNull(),
+    fingerprint: text('fingerprint').notNull(),
+    state: text('state').$type<TOrderProfitState>().notNull(),
+    /** Null — обязательная строка карточки неизвестна. */
+    netKopecks: money('net_kopecks'),
+    confirmedKopecks: money('confirmed_kopecks').notNull(),
+    expectedKopecks: money('expected_kopecks').notNull(),
+    changedAt: moment('changed_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('accounting_order_results_key_uq').on(t.marketplace, t.telegramUserId, t.orderId),
+  ],
+);
+
+/** Версии результата заказа: полная карточка и причина на каждую версию. Только дописывается. */
+export const accountingOrderResultVersions = pgTable(
+  'accounting_order_result_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    resultId: uuid('result_id')
+      .notNull()
+      .references(() => accountingOrderResults.id),
+    telegramUserId: text('telegram_user_id').notNull(),
+    version: integer('version').notNull(),
+    state: text('state').$type<TOrderProfitState>().notNull(),
+    value: jsonb('value').$type<IOrderProfit>().notNull(),
+    fingerprint: text('fingerprint').notNull(),
+    reason: text('reason').$type<TOrderResultSnapshotReason>().notNull(),
+    capturedAt: moment('captured_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('accounting_order_result_versions_uq').on(t.resultId, t.version)],
+);
+
+/**
+ * Состояние опроса строк заказов: одна строка на (продавец, площадка) —
+ * последняя попытка и отдельно последний УСПЕХ с верхом его окна (`cursor_at`,
+ * от него считается следующее окно). Своя таблица, не `finance_sync_runs`: у той
+ * период — месяц журнала, и её `states()` смешал бы заказы с экраном загрузки.
+ */
+export const accountingOrderSyncState = pgTable(
+  'accounting_order_sync_state',
+  {
+    telegramUserId: text('telegram_user_id').notNull(),
+    marketplace: text('marketplace').$type<TFinanceMarketplace>().notNull(),
+    lastAttemptAt: moment('last_attempt_at').notNull(),
+    lastOutcome: text('last_outcome').$type<TAccountingOrdersSyncOutcome>().notNull(),
+    lastError: text('last_error'),
+    lastSuccessAt: moment('last_success_at'),
+    cursorAt: moment('cursor_at'),
+    linesSeen: integer('lines_seen').notNull().default(0),
+    versionsWritten: integer('versions_written').notNull().default(0),
+  },
+  (t) => [uniqueIndex('accounting_order_sync_state_uq').on(t.telegramUserId, t.marketplace)],
 );
 
 /**
@@ -494,10 +892,49 @@ export const financeTaxSettings = pgTable('finance_tax_settings', {
 });
 
 /**
+ * Методика распределения общих расходов «Финучёта» (TASK-219, решение
+ * `accounting_allocation_method`): одна строка на продавца, одна методика на все
+ * виды (реклама, общие расходы, налог). Нет строки — `DEFAULT_ALLOCATION_METHOD`
+ * (по выручке): хранится только явный выбор продавца.
+ */
+export const accountingAllocationSettings = pgTable('accounting_allocation_settings', {
+  telegramUserId: text('telegram_user_id').primaryKey(),
+  method: text('method').$type<TAllocationMethod>().notNull(),
+  updatedAt: moment('updated_at').notNull().defaultNow(),
+});
+
+/**
+ * Режим себестоимости «Финучёта» (TASK-215, решение `accounting_cost_mode_setting`):
+ * одна строка на продавца. Нет строки — `DEFAULT_ACCOUNTING_COST_METHOD` (А —
+ * закуп из прайса): хранится только явный выбор продавца.
+ */
+export const accountingCostSettings = pgTable('accounting_cost_settings', {
+  telegramUserId: text('telegram_user_id').primaryKey(),
+  method: text('method').$type<TAccountingCostMethod>().notNull(),
+  updatedAt: moment('updated_at').notNull().defaultNow(),
+});
+
+/**
+ * Правило налоговой базы «Финучёта» при продаже через площадку-агента (TASK-221,
+ * решение `accounting_tax_base_gross`): одна строка на продавца. Нет строки —
+ * `DEFAULT_TAX_BASE_RULE` (валовая): хранится только явный выбор продавца.
+ * Режим, ставка и дата признания — по-прежнему `finance_tax_settings`.
+ */
+export const accountingTaxSettings = pgTable('accounting_tax_settings', {
+  telegramUserId: text('telegram_user_id').primaryKey(),
+  baseRule: text('base_rule').$type<TTaxBaseRule>().notNull(),
+  updatedAt: moment('updated_at').notNull().defaultNow(),
+});
+
+/**
  * Закупка партии (TASK-122): поставщик, день оплаты, сумма и необязательные
  * позиции. Движение денег, а НЕ расход P&L — себестоимость проданного P&L
  * берёт по продажам, и закупка там списала бы товар второй раз. Площадки нет:
  * партия покупается на бизнес, а не на кабинет.
+ *
+ * Доставка от поставщика и прочие расходы (TASK-214) — только в себестоимость
+ * партий «Финучёта» (`accounting_lots`): в `amount_kopecks` и ДДС они не идут
+ * (решение `accounting_lots_storage`).
  */
 export const financePurchases = pgTable(
   'finance_purchases',
@@ -508,13 +945,56 @@ export const financePurchases = pgTable(
     /** «ГГГГ-ММ-ДД» — день оплаты, по нему закупка ложится в ДДС. */
     paidDay: text('paid_day').notNull(),
     amountKopecks: money('amount_kopecks').notNull(),
-    /** Позиции — справка; null — не указаны (решение `purchase_lines_optional`). */
+    /**
+     * Позиции; null — не указаны (решение `purchase_lines_optional`). Текущую
+     * «Прибыль» не трогают, а в «Финучёте» становятся партиями (TASK-214).
+     */
     lines: jsonb('lines').$type<IPurchaseLine[] | null>(),
+    /** Доставка от поставщика — в себестоимость партий, не в ДДС. */
+    deliveryKopecks: money('delivery_kopecks').notNull().default(0),
+    /** Прочие расходы, включаемые в себестоимость партий, — не в ДДС. */
+    otherCostsKopecks: money('other_costs_kopecks').notNull().default(0),
+    /** Как разнести доставку и прочие по строкам: по стоимости или по штукам. */
+    lotCostSplit: text('lot_cost_split').$type<TLotCostSplit>().notNull().default('value'),
     note: text('note'),
     createdAt: moment('created_at').notNull().defaultNow(),
     updatedAt: moment('updated_at').notNull().defaultNow(),
   },
   (t) => [index('finance_purchases_user_paid_idx').on(t.telegramUserId, t.paidDay)],
+);
+
+/**
+ * Партии «Финучёта» (TASK-214, режим Б себестоимости): строка закупки с
+ * количеством, остатком, ценой за штуку и долей доп. расходов закупки на всю
+ * строку (`extra_kopecks` — точно; на штуки её делит `extraForUnits`). Партии
+ * закупки пересоздаются целиком при каждом её сохранении и уходят вместе с ней
+ * (каскад) — FIFO (TASK-215) пересчитывается с нуля. `product_id` — товар Mongo
+ * строкой без ref; null — артикул не сопоставлен, `sku` хранится всегда.
+ */
+export const accountingLots = pgTable(
+  'accounting_lots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    telegramUserId: text('telegram_user_id').notNull(),
+    purchaseId: uuid('purchase_id')
+      .notNull()
+      .references(() => financePurchases.id, { onDelete: 'cascade' }),
+    lineIndex: integer('line_index').notNull(),
+    productId: text('product_id'),
+    sku: text('sku').notNull(),
+    name: text('name'),
+    count: integer('count').notNull(),
+    remaining: integer('remaining').notNull(),
+    unitPriceKopecks: money('unit_price_kopecks').notNull(),
+    extraKopecks: money('extra_kopecks').notNull(),
+    /** «ГГГГ-ММ-ДД» — день поступления (пока = день оплаты закупки). */
+    receivedDay: text('received_day').notNull(),
+    createdAt: moment('created_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('accounting_lots_purchase_line_uq').on(t.purchaseId, t.lineIndex),
+    index('accounting_lots_product_idx').on(t.telegramUserId, t.productId, t.receivedDay),
+  ],
 );
 
 /**
@@ -599,14 +1079,25 @@ export const financeSchema = {
   financeOperations,
   financeCorrections,
   financePeriods,
+  financeSyncRuns,
   financeDiscrepancies,
   financeActServices,
+  financeOzonBalances,
   financeAnomalies,
   financeAnomalyReviews,
   financeExpenseCategories,
   financeExpenses,
+  accountingManualOperations,
+  accountingManualOperationChanges,
+  accountingOrderLines,
+  accountingOrderLineVersions,
+  accountingOrderSyncState,
   financeTaxSettings,
+  accountingAllocationSettings,
+  accountingCostSettings,
+  accountingTaxSettings,
   financePurchases,
+  accountingLots,
   financeTaxPayments,
   financeTaxYears,
   financeTaxReductions,

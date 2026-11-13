@@ -1,4 +1,4 @@
-import type { ExpenseBody, ExpensesView } from '../../expenses.domain';
+import type { ExpenseBody, ExpensesSaveResponse, ExpensesView } from '../../expenses.domain';
 
 import { ref } from 'vue';
 
@@ -33,8 +33,16 @@ export function useExpenses(onChanged: () => void) {
     onChanged();
   }
 
-  const create = (body: ExpenseBody) => apply(expensesApi.create(body));
-  const update = (id: string, body: ExpenseBody) => apply(expensesApi.update(id, body));
+  /** Сохранение расхода: вид — как у любой записи, наружу — предупреждение сервера. */
+  async function save(request: Promise<ExpensesSaveResponse>): Promise<string | null> {
+    const { warning, ...next } = await request;
+    setView(next);
+    onChanged();
+    return warning ?? null;
+  }
+
+  const create = (body: ExpenseBody) => save(expensesApi.create(body));
+  const update = (id: string, body: ExpenseBody) => save(expensesApi.update(id, body));
   const remove = (id: string) => apply(expensesApi.remove(id));
   const addCategory = (name: string) => apply(expensesApi.addCategory(name));
   const removeCategory = (id: string) => apply(expensesApi.removeCategory(id));

@@ -11,11 +11,13 @@ import type {
   TNotificationRule,
   TThresholdUnit,
 } from '../../notifications/notifications.domain';
+import type { TFeatureMap } from '../../telegram/bots/shared/features.domain';
 
 import { MARKETPLACE_LABEL, MARKETPLACES } from '../../../shared/marketplace';
 import {
   NOTIFICATION_RULES,
   NOTIFICATION_RULE_KEYS,
+  isRuleAvailable,
   thresholdError,
 } from '../../notifications/notifications.domain';
 import { parseScheduleTime } from '../../yandex/reports/schedule-time';
@@ -102,12 +104,14 @@ export function toCrmNotifications(page: ISellerNotificationPage): ICrmNotificat
 export function toCrmNotificationSettings(
   settings: ISellerNotificationSettings,
   telegramAvailable: boolean,
+  features: TFeatureMap | null = null,
 ): ICrmNotificationSettingsView {
   return {
     telegramAvailable,
     telegram: settings.telegram,
     time: settings.time,
-    rules: NOTIFICATION_RULE_KEYS.map((key) => {
+    // Правило со своей фичей (сбой загрузки «Финучёта») без неё не показывается.
+    rules: NOTIFICATION_RULE_KEYS.filter((key) => isRuleAvailable(key, features)).map((key) => {
       const meta = NOTIFICATION_RULES[key];
       return {
         key,

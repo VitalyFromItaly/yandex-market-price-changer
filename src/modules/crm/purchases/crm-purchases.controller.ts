@@ -19,12 +19,17 @@ import {
   PurchaseNotFoundError,
   PurchaseValidationError,
 } from '../../finance/finance-purchases.service';
-import { FEATURE } from '../../telegram/bots/shared/features.domain';
+import { FEATURE, isFeatureEnabled } from '../../telegram/bots/shared/features.domain';
 import { RequireFeature } from '../crm-auth.decorators';
 import { CrmJwtGuard, IRequestWithCrmUser } from '../crm-jwt.guard';
 import { bodyObject } from '../expenses/crm-expenses.domain';
 
-import { INVALID_PURCHASE, PURCHASE_NOT_FOUND, toCrmPurchasesView } from './crm-purchases.domain';
+import {
+  INVALID_PURCHASE,
+  PURCHASE_NOT_FOUND,
+  toCrmPurchasesView,
+  withoutLotFields,
+} from './crm-purchases.domain';
 
 /**
  * «Закупки» CRM (TASK-122): закупки партий и уплаченные налоги. Полный адрес —
@@ -51,7 +56,10 @@ export class CrmPurchasesController {
     @Body() body: unknown,
   ): Promise<ICrmPurchasesView> {
     await this.guarded(() =>
-      this.purchases.createPurchase(request.crmUser.telegramUserId, bodyObject(body)),
+      this.purchases.createPurchase(
+        request.crmUser.telegramUserId,
+        this.purchaseBody(request, body),
+      ),
     );
     return this.viewOf(request);
   }
@@ -95,7 +103,11 @@ export class CrmPurchasesController {
     @Body() body: unknown,
   ): Promise<ICrmPurchasesView> {
     await this.guarded(() =>
-      this.purchases.updatePurchase(request.crmUser.telegramUserId, id, bodyObject(body)),
+      this.purchases.updatePurchase(
+        request.crmUser.telegramUserId,
+        id,
+        this.purchaseBody(request, body),
+      ),
     );
     return this.viewOf(request);
   }
@@ -110,7 +122,19 @@ export class CrmPurchasesController {
   }
 
   private async viewOf(request: IRequestWithCrmUser): Promise<ICrmPurchasesView> {
-    return toCrmPurchasesView(await this.purchases.snapshot(request.crmUser.telegramUserId));
+    return toCrmPurchasesView(
+      await this.purchases.snapshot(request.crmUser.telegramUserId),
+      lotsEnabled(request),
+    );
+  }
+
+  /**
+   * Тело закупки. Без `fin_accounting_lots` поля партий отбрасываются: так правка
+   * из формы без них не обнулит доставку, внесённую при открытой фиче.
+   */
+  private purchaseBody(request: IRequestWithCrmUser, body: unknown): Record<string, unknown> {
+    const input = bodyObject(body);
+    return lotsEnabled(request) ? input : withoutLotFields(input);
   }
 
   /** Ошибки сервиса → коды раздела; прочее уходит общему фильтру как есть. */
@@ -136,4 +160,8 @@ export class CrmPurchasesController {
       throw error;
     }
   }
+}
+
+function lotsEnabled(request: IRequestWithCrmUser): boolean {
+  return isFeatureEnabled(request.crmUser.features ?? {}, FEATURE.FIN_ACCOUNTING_LOTS);
 }

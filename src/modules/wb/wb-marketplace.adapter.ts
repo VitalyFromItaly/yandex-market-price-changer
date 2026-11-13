@@ -5,6 +5,7 @@ import type {
   IMarketplaceCatalog,
   IMarketplaceConnector,
   IMarketplaceFinance,
+  IMarketplaceOrderLineSource,
   IMarketplaceOrderSource,
   IMarketplacePriceWriter,
   IMarketplaceStockLevels,
@@ -94,6 +95,14 @@ export class WbMarketplaceAdapter implements IMarketplaceAdapter {
     writePrices: (ref, updates) =>
       notConnectedAsRegistryError(ref.telegramUserId, () =>
         this.wbPriceWrite.writePrices(ref.telegramUserId, updates),
+      ),
+  };
+
+  /** Сырьё снимка строк заказов «Финучёта» (TASK-211) — только чтение. */
+  readonly orderLines: IMarketplaceOrderLineSource = {
+    rawOrderLines: (ref, window) =>
+      notConnectedAsRegistryError(ref.telegramUserId, () =>
+        this.wbOrders.rawOrderLines(ref.telegramUserId, window),
       ),
   };
 

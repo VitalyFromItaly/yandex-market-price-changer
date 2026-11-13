@@ -118,4 +118,20 @@ describe('allocate — разовый расход и сводка', () => {
       byExpense: [],
     });
   });
+
+  it('«за период» (TASK-220) — по дням своего периода, весь период = ровно сумма', () => {
+    const season: IAllocatableExpense = {
+      id: 'season',
+      category: 'advertising',
+      kind: 'period',
+      amountKopecks: 1_000_000,
+      fromDay: '2026-10-10',
+      toDay: '2026-11-08',
+    };
+    // 30 дней периода: 22 в октябре, 8 в ноябре.
+    expect(expenseShare(season, { from: '2026-10-01', to: '2026-10-31' })).toBe(733_333);
+    expect(expenseShare(season, { from: '2026-11-01', to: '2026-11-30' })).toBe(266_667);
+    expect(expenseShare(season, { from: '2026-01-01', to: '2026-12-31' })).toBe(1_000_000);
+    expect(expenseShare(season, { from: '2026-12-01', to: '2026-12-31' })).toBe(0);
+  });
 });

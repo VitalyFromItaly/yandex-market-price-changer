@@ -29,6 +29,7 @@ export const SECTION_KIND = {
   taxes: 'account',
   purchases: 'account',
   finance: 'marketplace',
+  accounting: 'account',
   'unit-economics': 'marketplace',
   'sales-analytics': 'marketplace',
   'marketplaces-dashboard': 'account',

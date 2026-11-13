@@ -45,6 +45,7 @@ export const OVERVIEW_SERVICE_GROUP: Record<TFinanceArticle, TOverviewServiceGro
   subscription: 'otherServices',
   other_services: 'otherServices',
   bonus_payment: null,
+  promotion_report: null,
   unknown: null,
 };
 

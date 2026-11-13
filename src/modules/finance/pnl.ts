@@ -37,6 +37,7 @@ import type { ITaxSettings } from './tax.domain';
 import type { TYmGoodsMovement } from './ym-articles';
 import type { TFinanceMarketplace } from '../../database/postgres/finance.schema';
 import type { IUnconfirmedProfit } from '../../shared/profit-confirmation';
+import type { TAccountingSubArticle } from '../accounting/accounting-sub-articles';
 
 import { unconfirmedOf } from '../../shared/profit-confirmation';
 
@@ -88,6 +89,11 @@ export interface IPnlOperation {
   count: string | null;
   /** Площадка строки; нет — ЯМ (вызовы до TASK-131). Решает, чьё правило движения товара. */
   marketplace?: TFinanceMarketplace;
+  /**
+   * Подстатья реестра «Финучёта» (TASK-207); null — не определена. Читает только
+   * налог нового учёта (TASK-221) — P&L строку по ней не делит.
+   */
+  subArticle?: TAccountingSubArticle | null;
 }
 
 /** Штуки из сырой строки: только целое > 0, иначе null — себестоимость не угадываем. */
@@ -152,6 +158,7 @@ export const PNL_SECTION: Record<TFinanceArticle, TPnlSection> = {
   subscription: 'marketplace',
   other_services: 'marketplace',
   bonus_payment: 'reference',
+  promotion_report: 'reference',
   unknown: 'unrecognized',
 };
 

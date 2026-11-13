@@ -1,4 +1,8 @@
-import type { ICrmExpenseAllocationView, ICrmExpensesView } from './crm-expenses.domain';
+import type {
+  ICrmExpenseAllocationView,
+  ICrmExpensesSaveView,
+  ICrmExpensesView,
+} from './crm-expenses.domain';
 
 import {
   BadRequestException,
@@ -31,6 +35,7 @@ import {
   EXPENSE_NOT_FOUND,
   INVALID_EXPENSE,
   bodyObject,
+  expenseWarningOf,
   toCrmAllocationView,
   toCrmExpensesView,
 } from './crm-expenses.domain';
@@ -74,11 +79,11 @@ export class CrmExpensesController {
   async create(
     @Req() request: IRequestWithCrmUser,
     @Body() body: unknown,
-  ): Promise<ICrmExpensesView> {
-    await this.guarded(() =>
+  ): Promise<ICrmExpensesSaveView> {
+    const row = await this.guarded(() =>
       this.expenses.create(request.crmUser.telegramUserId, bodyObject(body)),
     );
-    return this.viewOf(request);
+    return { ...(await this.viewOf(request)), warning: expenseWarningOf(row) };
   }
 
   @Put(':id')
@@ -86,11 +91,11 @@ export class CrmExpensesController {
     @Req() request: IRequestWithCrmUser,
     @Param('id') id: string,
     @Body() body: unknown,
-  ): Promise<ICrmExpensesView> {
-    await this.guarded(() =>
+  ): Promise<ICrmExpensesSaveView> {
+    const row = await this.guarded(() =>
       this.expenses.update(request.crmUser.telegramUserId, id, bodyObject(body)),
     );
-    return this.viewOf(request);
+    return { ...(await this.viewOf(request)), warning: expenseWarningOf(row) };
   }
 
   @Delete(':id')

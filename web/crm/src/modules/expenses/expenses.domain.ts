@@ -4,7 +4,14 @@
  * тем же `allocate`, что возьмёт P&L; фронт только показывает.
  */
 
-export type ExpenseKind = 'one_off' | 'monthly';
+export type ExpenseKind = 'one_off' | 'monthly' | 'period';
+
+/** К чему относится расход в «Финучёте» (TASK-220); у записей до v2 — `business`. */
+export type ExpenseScope = 'business' | 'marketplace' | 'order' | 'product';
+export type ExpenseMarketplace = 'ym' | 'ozon' | 'wb';
+
+/** Привязку к заказу/товару читает «Финучёт» — поля формы видны, когда он открыт. */
+export const EXPENSE_BINDING_FEATURE = 'fin_accounting';
 
 export interface ExpenseCategory {
   /** Ключ предустановленной категории или uuid своей — то, что уходит в форме. */
@@ -24,16 +31,35 @@ export interface Expense {
   /** ГГГГ-ММ-ДД включительно; null — без конца (и всегда у разового). */
   toDay: string | null;
   note: string | null;
+  source: string | null;
+  scope: ExpenseScope;
+  scopeLabel: string;
+  marketplace: ExpenseMarketplace | null;
+  orderId: string | null;
+  sku: string | null;
+  /** Статья реестра площадки, которую расход повторял при сохранении; null — не повторял. */
+  doubleCount: string | null;
 }
 
 export interface ExpensesView {
   categories: ExpenseCategory[];
+  scopes: { key: ExpenseScope; label: string }[];
   expenses: Expense[];
-  limits: { noteMaxLength: number; categoryNameMaxLength: number };
+  limits: {
+    noteMaxLength: number;
+    categoryNameMaxLength: number;
+    sourceMaxLength: number;
+    refMaxLength: number;
+  };
 }
 
 /** Ответ API совпадает с видом: сервер уже перечисляет поля сам. */
 export type ExpensesResponse = ExpensesView;
+
+/** Ответ сохранения: вид + предупреждение о двойном учёте с реестром площадки. */
+export interface ExpensesSaveResponse extends ExpensesView {
+  warning: string | null;
+}
 
 export interface ExpenseAllocation {
   from: string;
@@ -60,6 +86,12 @@ export interface ExpenseForm {
   fromDay: string;
   toDay: string;
   note: string;
+  source: string;
+  scope: ExpenseScope;
+  /** '' — не выбрана. */
+  marketplace: ExpenseMarketplace | '';
+  orderId: string;
+  sku: string;
 }
 
 export interface ExpenseBody {
@@ -69,9 +101,25 @@ export interface ExpenseBody {
   fromDay: string;
   toDay: string | null;
   note: string | null;
+  source: string | null;
+  scope: ExpenseScope;
+  marketplace: ExpenseMarketplace | null;
+  orderId: string | null;
+  sku: string | null;
 }
 
-export type ExpenseField = 'kind' | 'category' | 'amount' | 'fromDay' | 'toDay' | 'note';
+export type ExpenseField =
+  | 'kind'
+  | 'category'
+  | 'amount'
+  | 'fromDay'
+  | 'toDay'
+  | 'note'
+  | 'source'
+  | 'scope'
+  | 'marketplace'
+  | 'orderId'
+  | 'sku';
 
 /** Ошибка под полем формы; `form` — общая, без поля. */
 export type ExpenseErrors = Partial<Record<ExpenseField | 'form', string>>;
@@ -87,6 +135,10 @@ export interface ExpenseRow {
   /** «в месяц» у ежемесячного, null у разового. */
   amountSuffix: string | null;
   note: string | null;
+  /** «Заказ ЯМ 555» / «Товар A1» / «Ozon»; null — весь бизнес. */
+  bindingLabel: string | null;
+  /** Подсказка о двойном учёте; null — совпадения с реестром не было. */
+  doubleCountHint: string | null;
 }
 
 export interface AllocationModel {

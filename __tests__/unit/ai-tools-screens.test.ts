@@ -29,7 +29,6 @@ import { CrmPriceCalcKinds } from '../../src/modules/crm/price-calculator/crm-pr
 import { FinanceCashflowService } from '../../src/modules/finance/finance-cashflow.service';
 import { FinanceExpensesService } from '../../src/modules/finance/finance-expenses.service';
 import { financePeriodKey, monthPeriod } from '../../src/modules/finance/finance-period';
-import { FinancePurchasesService } from '../../src/modules/finance/finance-purchases.service';
 import { FinanceTaxYearDataService } from '../../src/modules/finance/finance-tax-year-data.service';
 import { FinanceTaxYearService } from '../../src/modules/finance/finance-tax-year.service';
 import { FinanceTaxService } from '../../src/modules/finance/finance-tax.service';
@@ -39,6 +38,7 @@ import { journalKeys, nettingRowToOperation } from '../../src/modules/finance/ym
 import { FEATURE } from '../../src/modules/telegram/bots/shared/features.domain';
 import { PRICE_CALC_FAILURE_TEXT, priceFor } from '../../src/shared/price-calc';
 import { createTestFinanceDb } from '../helpers/test-postgres';
+import { purchasesServiceOf } from '../helpers/purchases-service';
 
 /**
  * Инструменты денег, налогов, цены и расходов (TASK-165) на PGlite: каждый —
@@ -116,11 +116,7 @@ beforeAll(async () => {
     { build: vi.fn() } as never,
     { report: vi.fn() } as never,
   );
-  cashflow = new FinanceCashflowService(
-    operations,
-    expenses,
-    new FinancePurchasesService(new FinancePurchaseRepository(pg.db)),
-  );
+  cashflow = new FinanceCashflowService(operations, expenses, purchasesServiceOf(pg.db));
   taxYear = new FinanceTaxYearService(
     finance,
     taxes,

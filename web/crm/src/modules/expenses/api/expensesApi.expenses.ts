@@ -4,6 +4,7 @@ import type {
   ExpenseAllocationResponse,
   ExpenseBody,
   ExpensesResponse,
+  ExpensesSaveResponse,
   ExpensesView,
 } from '../expenses.domain';
 
@@ -15,10 +16,12 @@ const BASE = '/ym/expenses';
 export const expensesApi = {
   get: (): Promise<ExpensesView> => http.get<ExpensesResponse>(BASE),
 
-  create: (body: ExpenseBody): Promise<ExpensesView> => http.post<ExpensesResponse>(BASE, body),
+  /** Сохранение — вид и предупреждение о двойном учёте (TASK-220). */
+  create: (body: ExpenseBody): Promise<ExpensesSaveResponse> =>
+    http.post<ExpensesSaveResponse>(BASE, body),
 
-  update: (id: string, body: ExpenseBody): Promise<ExpensesView> =>
-    http.put<ExpensesResponse>(`${BASE}/${encodeURIComponent(id)}`, body),
+  update: (id: string, body: ExpenseBody): Promise<ExpensesSaveResponse> =>
+    http.put<ExpensesSaveResponse>(`${BASE}/${encodeURIComponent(id)}`, body),
 
   remove: (id: string): Promise<ExpensesView> =>
     http.delete<ExpensesResponse>(`${BASE}/${encodeURIComponent(id)}`),

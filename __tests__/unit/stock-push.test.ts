@@ -509,6 +509,7 @@ function writer(client: ReturnType<typeof fakeClient>, stockWriteEnabled = true)
     {} as never,
     { report: vi.fn() } as never,
     {} as never,
+    {} as never,
   );
 }
 

@@ -70,6 +70,7 @@ export class QueuesService {
     @InjectQueue(QUEUE_NAMES.FINANCE_IMPORT) financeImport: Queue,
     @InjectQueue(QUEUE_NAMES.SELLER_NOTIFICATIONS) sellerNotifications: Queue,
     @InjectQueue(QUEUE_NAMES.AI_WEEKLY_DIGEST) aiWeeklyDigest: Queue,
+    @InjectQueue(QUEUE_NAMES.ACCOUNTING_ORDERS) accountingOrders: Queue,
   ) {
     this.queues = new Map([
       [QUEUE_NAMES.FILE_PROCESSING, fileProcessing],
@@ -80,6 +81,7 @@ export class QueuesService {
       [QUEUE_NAMES.FINANCE_IMPORT, financeImport],
       [QUEUE_NAMES.SELLER_NOTIFICATIONS, sellerNotifications],
       [QUEUE_NAMES.AI_WEEKLY_DIGEST, aiWeeklyDigest],
+      [QUEUE_NAMES.ACCOUNTING_ORDERS, accountingOrders],
     ]);
   }
 

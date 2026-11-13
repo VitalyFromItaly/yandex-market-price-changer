@@ -77,6 +77,26 @@ export const FEATURES_WITHOUT_SECTION: Readonly<Partial<Record<TFeatureKey, stri
   [FEATURE.PRICE_SET_WRITE_WB]:
     'Запись в WB кнопкой «Записать цены» в плане «Установки цен» (TASK-202); без фичи ' +
     'площадка в плане «только просмотр», а apply её не пишет.',
+  [FEATURE.FIN_ACCOUNTING_ORDERS]:
+    'Вкладка внутри «Финучёта» (ym-accounting, TASK-206); экран — в M29–M33, ' +
+    'маршрут требует fin_accounting и fin_accounting_orders.',
+  [FEATURE.FIN_ACCOUNTING_RETURNS]:
+    'Секция «Возвраты» внутри «Финучёта» (ym-accounting, TASK-225), kind accounting:returns; ' +
+    'маршрут требует fin_accounting, секция и kind — ещё fin_accounting_returns.',
+  [FEATURE.FIN_ACCOUNTING_LOTS]:
+    'Вкладка внутри «Финучёта» (ym-accounting, TASK-206); экран — в M29–M33, ' +
+    'маршрут требует fin_accounting и fin_accounting_lots (поля партий в закупке, cost/settings — режим ' +
+    'себестоимости А/Б, TASK-215; lots — партии с остатками, экран LotsSection, TASK-216).',
+  [FEATURE.FIN_ACCOUNTING_RECONCILE]:
+    'Вкладка внутри «Финучёта» (ym-accounting, TASK-206); экран — в M29–M33, ' +
+    'маршрут требует fin_accounting и fin_accounting_reconcile.',
+  [FEATURE.FIN_ACCOUNTING_DASHBOARD]:
+    'Вкладка внутри «Финучёта» (ym-accounting, TASK-206); экран — в M29–M33, ' +
+    'маршрут требует fin_accounting и fin_accounting_dashboard; kind-ы accounting:dashboard, ' +
+    'accounting:dashboard-drill и аналитика accounting:analytics (TASK-230).',
+  [FEATURE.FIN_ACCOUNTING_UPLOADS]:
+    'Карточка внутри «Финучёта» (ym-accounting, TASK-209): загрузка отчёта WB «Продвижение» файлом, ' +
+    'маршрут требует fin_accounting и fin_accounting_uploads.',
   [FEATURE.PROFIT_ACTUAL]:
     'Модификатор «Прибыли» (ym-profit): строка фактической чистой и период «Прошлый месяц», ' +
     'флаг едет снимком features задачи profit:profit.',

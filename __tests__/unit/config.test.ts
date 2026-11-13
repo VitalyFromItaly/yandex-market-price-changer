@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
-import { envValidationSchema } from '../../src/config/env.validation';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
+import { envValidationSchema, REQUIRED_ENV_KEYS } from '../../src/config/env.validation';
 import { AppConfigService } from '../../src/config/app-config.service';
 
 /** Полный валидный набор — база для сценариев «убрали одну переменную». */
@@ -27,7 +30,6 @@ describe('envValidationSchema', () => {
   it.each([
     'STOCK_WRITE_ENABLED',
     'PRICE_WRITE_ENABLED',
-    'MARKETPLACE_WEBHOOK_IP_CHECK',
     'MONGODB_URL',
     'MONGODB_DATABASE',
     'POSTGRES_URL',
@@ -91,7 +93,31 @@ describe('envValidationSchema', () => {
     expect(error!.message).toContain('false');
   });
 
-  it.each(['1', 'yes', ''])('MARKETPLACE_WEBHOOK_IP_CHECK отвергает %o', (value) => {
+  it('обязательны ровно REQUIRED_ENV_KEYS — новая переменная без умолчания роняет CI, а не прод', () => {
+    const { error } = envValidationSchema.validate({}, { abortEarly: false });
+    const required = error.details
+      .filter((detail) => detail.type === 'any.required')
+      .map((detail) => String(detail.path[0]));
+    expect(required.sort()).toEqual(Object.keys(REQUIRED_ENV_KEYS).sort());
+  });
+
+  it('docker-compose требует (`${X:?}`) только ключи из REQUIRED_ENV_KEYS', () => {
+    const compose = readFileSync(join(__dirname, '../../docker-compose.yml'), 'utf8');
+    const strict = [...compose.matchAll(/\$\{(\w+):\?/g)].map((match) => match[1]);
+    expect(strict.length).toBeGreaterThan(0);
+    for (const key of strict) expect(Object.keys(REQUIRED_ENV_KEYS)).toContain(key);
+  });
+
+  it.each([undefined, ''])('MARKETPLACE_WEBHOOK_IP_CHECK %o → true', (raw) => {
+    const env: Record<string, string> = { ...VALID_ENV };
+    if (raw === undefined) delete env.MARKETPLACE_WEBHOOK_IP_CHECK;
+    else env.MARKETPLACE_WEBHOOK_IP_CHECK = raw;
+    const { error, value } = envValidationSchema.validate(env);
+    expect(error).toBeUndefined();
+    expect(value.MARKETPLACE_WEBHOOK_IP_CHECK).toBe('true');
+  });
+
+  it.each(['1', 'yes', 'True'])('MARKETPLACE_WEBHOOK_IP_CHECK отвергает %o', (value) => {
     const { error } = envValidationSchema.validate({
       ...VALID_ENV,
       MARKETPLACE_WEBHOOK_IP_CHECK: value,

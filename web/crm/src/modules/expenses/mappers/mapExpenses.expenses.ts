@@ -6,7 +6,9 @@ import type {
   ExpenseField,
   ExpenseForm,
   ExpenseKind,
+  ExpenseMarketplace,
   ExpenseRow,
+  ExpenseScope,
 } from '../expenses.domain';
 
 import { EXPENSE_ERROR_CODE } from '../expenses.domain';
@@ -17,11 +19,39 @@ import { formatDay, formatRub } from '@/shared/utils';
 export const KIND_OPTIONS: readonly { value: ExpenseKind; label: string }[] = [
   { value: 'monthly', label: 'Ежемесячный' },
   { value: 'one_off', label: 'Разовый' },
+  { value: 'period', label: 'За период' },
 ];
 
-const KIND_LABEL: Record<ExpenseKind, string> = { monthly: 'Ежемесячно', one_off: 'Разово' };
+const KIND_LABEL: Record<ExpenseKind, string> = {
+  monthly: 'Ежемесячно',
+  one_off: 'Разово',
+  period: 'За период',
+};
 
-const FIELDS: readonly ExpenseField[] = ['kind', 'category', 'amount', 'fromDay', 'toDay', 'note'];
+const MARKETPLACE_LABEL: Record<ExpenseMarketplace, string> = {
+  ym: 'Яндекс Маркет',
+  ozon: 'Ozon',
+  wb: 'Wildberries',
+};
+
+export const MARKETPLACE_OPTIONS: readonly { value: ExpenseMarketplace; label: string }[] = (
+  Object.keys(MARKETPLACE_LABEL) as ExpenseMarketplace[]
+).map((value) => ({ value, label: MARKETPLACE_LABEL[value] }));
+
+const FIELD_SET: Record<ExpenseField, true> = {
+  kind: true,
+  category: true,
+  amount: true,
+  fromDay: true,
+  toDay: true,
+  note: true,
+  source: true,
+  scope: true,
+  marketplace: true,
+  orderId: true,
+  sku: true,
+};
+const FIELDS = Object.keys(FIELD_SET) as ExpenseField[];
 
 export { formatDay };
 
@@ -35,6 +65,16 @@ function whenLabel(expense: Expense): string {
   return `${formatDay(expense.fromDay)} — ${formatDay(expense.toDay)}`;
 }
 
+function bindingLabel(expense: Expense): string | null {
+  const market = expense.marketplace ? MARKETPLACE_LABEL[expense.marketplace] : null;
+  if (expense.scope === 'marketplace') return market;
+  if (expense.scope === 'order')
+    return `Заказ ${expense.orderId ?? ''}${market ? `, ${market}` : ''}`;
+  if (expense.scope === 'product')
+    return `Товар ${expense.sku ?? ''}${market ? `, ${market}` : ''}`;
+  return null;
+}
+
 export function toExpenseRow(expense: Expense): ExpenseRow {
   return {
     id: expense.id,
@@ -44,6 +84,10 @@ export function toExpenseRow(expense: Expense): ExpenseRow {
     amount: kopecksToRubText(expense.amountKopecks),
     amountSuffix: expense.kind === 'monthly' ? 'в месяц' : null,
     note: expense.note,
+    bindingLabel: bindingLabel(expense),
+    doubleCountHint: expense.doubleCount
+      ? `Площадка уже начисляет «${expense.doubleCount}» — возможен двойной учёт`
+      : null,
   };
 }
 
@@ -61,7 +105,19 @@ function amountInput(kopecks: number): string {
 /** Форма нового расхода или правки существующего. */
 export function toExpenseForm(expense: Expense | null, today: string): ExpenseForm {
   if (expense === null) {
-    return { kind: 'monthly', category: 'rent', amount: '', fromDay: today, toDay: '', note: '' };
+    return {
+      kind: 'monthly',
+      category: 'rent',
+      amount: '',
+      fromDay: today,
+      toDay: '',
+      note: '',
+      source: '',
+      scope: 'business',
+      marketplace: '',
+      orderId: '',
+      sku: '',
+    };
   }
   return {
     kind: expense.kind,
@@ -70,18 +126,41 @@ export function toExpenseForm(expense: Expense | null, today: string): ExpenseFo
     fromDay: expense.fromDay,
     toDay: expense.toDay ?? '',
     note: expense.note ?? '',
+    source: expense.source ?? '',
+    scope: expense.scope,
+    marketplace: expense.marketplace ?? '',
+    orderId: expense.orderId ?? '',
+    sku: expense.sku ?? '',
+  };
+}
+
+const textOrNull = (value: string): string | null => {
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+};
+
+/** Поля привязки — только нужные выбранной: лишние сервер отбросил бы и сам. */
+function binding(form: ExpenseForm): Pick<ExpenseBody, 'marketplace' | 'orderId' | 'sku'> {
+  const scope: ExpenseScope = form.scope;
+  const marketplace = scope === 'business' || form.marketplace === '' ? null : form.marketplace;
+  return {
+    marketplace,
+    orderId: scope === 'order' ? textOrNull(form.orderId) : null,
+    sku: scope === 'product' ? textOrNull(form.sku) : null,
   };
 }
 
 export function expenseBody(form: ExpenseForm): ExpenseBody {
-  const note = form.note.trim();
   return {
     kind: form.kind,
     category: form.category,
     amount: form.amount.trim(),
     fromDay: form.fromDay,
-    toDay: form.kind === 'monthly' && form.toDay !== '' ? form.toDay : null,
-    note: note === '' ? null : note,
+    toDay: form.kind !== 'one_off' && form.toDay !== '' ? form.toDay : null,
+    note: textOrNull(form.note),
+    source: textOrNull(form.source),
+    scope: form.scope,
+    ...binding(form),
   };
 }
 

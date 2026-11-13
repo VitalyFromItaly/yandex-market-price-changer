@@ -22,6 +22,12 @@ import {
   financePullCooldownUntil,
   financePullJobId,
   parseFinanceJobId,
+  accountingCron,
+  financeRetryJobId,
+  mergeMarketplaceMaps,
+  parseAccountingJobId,
+  pickAccountingMarketplaces,
+  pickFinanceMarketplaces,
   pickFinanceUsers,
 } from '../../src/modules/telegram/queue/services/finance-schedule';
 import { MOSCOW_TIME_ZONE } from '../../src/modules/yandex/reports/moscow-day';
@@ -263,7 +269,7 @@ function build(
         })),
     ),
   };
-  const config = { telegramAdminIds: adminIds };
+  const config = { telegramAdminIds: adminIds, finAccountingSyncEveryHours: 3 };
   const errors = { report: vi.fn(async () => undefined) };
   return {
     errors,
@@ -343,7 +349,7 @@ describe('FinanceImportScheduler', () => {
     ]);
     const { scheduler } = build(queue, [], []);
     expect(await scheduler.jobs()).toEqual([
-      { telegramUserId: '111', cron: '7 4 * * *', tz: MOSCOW_TIME_ZONE, next: 1 },
+      { telegramUserId: '111', kind: 'nightly', cron: '7 4 * * *', tz: MOSCOW_TIME_ZONE, next: 1 },
     ]);
   });
 
@@ -382,7 +388,9 @@ describe('«Загрузить из Маркета» (pullNow)', () => {
     expect(financePullCooldownUntil(recent, NOW)).toEqual(
       new Date(recent.getTime() + FINANCE_PULL_COOLDOWN_MS),
     );
-    expect(financePullCooldownUntil(new Date(NOW.getTime() - FINANCE_PULL_COOLDOWN_MS), NOW)).toBeNull();
+    expect(
+      financePullCooldownUntil(new Date(NOW.getTime() - FINANCE_PULL_COOLDOWN_MS), NOW),
+    ).toBeNull();
   });
 
   it('ставит по задаче на месяц: payload без токена, одна попытка, удаляется после', async () => {
@@ -397,12 +405,22 @@ describe('«Загрузить из Маркета» (pullNow)', () => {
       [
         JOB_TYPES.IMPORT_FINANCE,
         { telegramUserId: '111', marketplace: 'ym', ...OCT.period },
-        { jobId: 'finpull-ym-111-2026-10', removeOnComplete: true, removeOnFail: true, attempts: 1 },
+        {
+          jobId: 'finpull-ym-111-2026-10',
+          removeOnComplete: true,
+          removeOnFail: true,
+          attempts: 1,
+        },
       ],
       [
         JOB_TYPES.IMPORT_FINANCE,
         { telegramUserId: '111', marketplace: 'ym', ...SEP.period },
-        { jobId: 'finpull-ym-111-2026-09', removeOnComplete: true, removeOnFail: true, attempts: 1 },
+        {
+          jobId: 'finpull-ym-111-2026-09',
+          removeOnComplete: true,
+          removeOnFail: true,
+          attempts: 1,
+        },
       ],
     ]);
   });
@@ -445,5 +463,97 @@ describe('«Загрузить из Маркета» (pullNow)', () => {
       );
     }
     expect(queue.add).not.toHaveBeenCalled();
+  });
+});
+
+describe('«Финучёт»: частая загрузка и повторы (TASK-212)', () => {
+  const ACC = {
+    telegramUserId: '222',
+    status: 'approved',
+    features: { [FEATURE.FIN_ACCOUNTING]: true, [FEATURE.OZON]: true },
+  };
+  const configured = {
+    ym: new Set(['111', '222', '9']),
+    ozon: new Set(['222']),
+    wb: new Set(['222']),
+  };
+
+  it('cron — раз в N часов, минута от хэша, без двоеточий в id', () => {
+    const cron = accountingCron('222', 3);
+    expect(cron).toMatch(/^\d{1,2} \*\/3 \* \* \*$/);
+    expect(cron.split(' ')[0]).toBe(financeCron('222').split(' ')[0]);
+    expect(accountingCron('222', 1)).toMatch(/^\d{1,2} \* \* \* \*$/);
+    expect(parseAccountingJobId('finacc-222')).toBe('222');
+    expect(parseFinanceJobId('finacc-222')).toBeNull();
+    expect(financeRetryJobId('222', 'ozon', '2026-10', 2)).toBe('finretry-ozon-222-2026-10-2');
+    expect(financeRetryJobId('222', 'ozon', '2026-10', 2)).not.toContain(':');
+  });
+
+  it('площадки по зонтику fin_accounting, а не finance; WB — только с фичей wb', () => {
+    const map = pickAccountingMarketplaces([SELLER, ACC], [], configured);
+    expect([...map.entries()]).toEqual([['222', ['ym', 'ozon']]]);
+    // Ночной проход — объединение «Финансов» и «Финучёта».
+    const nightly = mergeMarketplaceMaps(pickFinanceMarketplaces([SELLER], [], configured), map);
+    expect([...nightly.entries()]).toEqual([
+      ['111', ['ym']],
+      ['222', ['ym', 'ozon']],
+    ]);
+  });
+
+  it('сверка заводит finacc- продавцу «Финучёта», не трогая finance-* и чужие; админу — нет', async () => {
+    const queue = fakeQueue([{ id: 'hosting-reminder', cron: '0 10 28-31 * *' }]);
+    const { scheduler } = build(queue, [SELLER, ACC], ['111', '222', '555'], [555]);
+
+    await scheduler.reconcile();
+    const ids = (await queue.getRepeatableJobs()).map((job) => job.id).sort();
+    expect(ids).toEqual([
+      'finacc-222',
+      'finance-111',
+      'finance-222',
+      'finance-555',
+      'hosting-reminder',
+    ]);
+    const frequent = queue.add.mock.calls.find(([, , opts]) => opts.jobId === 'finacc-222');
+    expect(frequent[1]).toEqual({ telegramUserId: '222', scheduled: true, mode: 'frequent' });
+    expect(frequent[2]).toMatchObject({ repeat: { cron: accountingCron('222', 3) }, attempts: 1 });
+
+    // Вторая сверка ничего не снимает и не ставит.
+    expect(await scheduler.reconcile()).toEqual({ added: 0, removed: 0 });
+    // Фичу закрыли — снимается только finacc-.
+    const { scheduler: after } = build(queue, [SELLER], ['111', '222', '555'], [555]);
+    expect(await after.reconcile()).toEqual({ added: 0, removed: 2 });
+    const left = (await queue.getRepeatableJobs()).map((job) => job.id).sort();
+    expect(left).toEqual(['finance-111', 'finance-555', 'hosting-reminder']);
+  });
+
+  it('jobs() различает ночной проход и частую задачу', async () => {
+    const queue = fakeQueue([
+      { id: 'finance-222', cron: '7 4 * * *' },
+      { id: 'finacc-222', cron: '7 */3 * * *' },
+    ]);
+    const { scheduler } = build(queue, [], []);
+    expect((await scheduler.jobs()).map((job) => job.kind).sort()).toEqual(['frequent', 'nightly']);
+  });
+
+  it('повтор — разовая отложенная задача той же очереди, номер попытки в id и payload', async () => {
+    // Разовая задача, не повторяемая: заглушке повторяемых она не по форме.
+    const queue = { add: vi.fn(async () => undefined) };
+    const { scheduler } = build(queue as never, [], []);
+    await scheduler.scheduleRetry('222', 'ozon', monthPeriod(2026, 10), 2, 600_000);
+    const [name, data, opts] = queue.add.mock.calls[0];
+    expect(name).toBe(JOB_TYPES.IMPORT_FINANCE);
+    expect(data).toEqual({
+      telegramUserId: '222',
+      marketplace: 'ozon',
+      from: '2026-10-01',
+      to: '2026-10-31',
+      trigger: 'retry',
+      attempt: 2,
+    });
+    expect(opts).toMatchObject({
+      jobId: 'finretry-ozon-222-2026-10-2',
+      delay: 600_000,
+      attempts: 1,
+    });
   });
 });

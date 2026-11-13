@@ -1,6 +1,10 @@
 import type { TOzonScheme } from './ozon-orders';
 import type { IOzonPosting } from './ozon.client';
-import type { IMarketplaceOrder, IMarketplaceOrders } from '../marketplaces/marketplace-adapter';
+import type {
+  IMarketplaceOrder,
+  IMarketplaceOrders,
+  IMarketplaceRawOrderLine,
+} from '../marketplaces/marketplace-adapter';
 import type { IReportPeriod } from '../yandex/reports/report-period';
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -62,7 +66,34 @@ export class OzonOrdersService {
       cancelled: all.filter((order) => order.stage === 'cancelled'),
     };
   }
+
+  /**
+   * Сырые отправления FBS и FBO с `financial_data`, начатые в `window`
+   * (снимок строк заказов «Финучёта», TASK-211). Окно режется на куски ≤ 30
+   * дней, как заказы; отправление на стыке кусков — один раз (последнее).
+   */
+  async rawOrderLines(
+    telegramUserId: string,
+    window: { from: Date; to: Date },
+  ): Promise<IMarketplaceRawOrderLine[]> {
+    const client = await ozonSellerClient(this.clients, this.connections, telegramUserId);
+    const byNumber = new Map<string, IMarketplaceRawOrderLine>();
+    const keep = (kind: IMarketplaceRawOrderLine['kind'], raw: Record<string, unknown>) => {
+      const number = typeof raw.posting_number === 'string' ? raw.posting_number : '';
+      if (number) byNumber.set(number, { kind, raw });
+    };
+    for (let start = window.from.getTime(); start < window.to.getTime(); start += RAW_WINDOW_MS) {
+      const since = new Date(start);
+      const to = new Date(Math.min(start + RAW_WINDOW_MS, window.to.getTime()));
+      for (const raw of await client.listFbsPostingsRaw(since, to)) keep('ozon-fbs', raw);
+      for (const raw of await client.listFboPostingsRaw(since, to)) keep('ozon-fbo', raw);
+    }
+    return [...byNumber.values()];
+  }
 }
+
+/** Шаг окна сырого обхода: тот же предел 30 дней, что у заказов. */
+const RAW_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Окна периода; «Всего» — последние 30 московских дней по сегодня. */
 export const ozonWindows = marketplaceOrderWindows;

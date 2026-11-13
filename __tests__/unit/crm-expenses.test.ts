@@ -195,9 +195,26 @@ describe('CRM «Расходы» по HTTP', { timeout: 60_000 }, () => {
       'warehouse',
       'salaries',
       'rent',
+      'marketplace_subscriptions',
+      'advertising',
+      'website',
+      'servers_software',
+      'bank',
+      'accounting',
       'other',
     ]);
-    expect(view.limits).toEqual({ noteMaxLength: 200, categoryNameMaxLength: 60 });
+    expect(view.scopes.map((s: { key: string }) => s.key)).toEqual([
+      'business',
+      'marketplace',
+      'order',
+      'product',
+    ]);
+    expect(view.limits).toEqual({
+      noteMaxLength: 200,
+      categoryNameMaxLength: 60,
+      sourceMaxLength: 200,
+      refMaxLength: 100,
+    });
   });
 
   it('аренда 30 000 ₽/мес: неделя ≈ 7 000 ₽, правка суммы сразу видна в распределении', async () => {
@@ -213,7 +230,12 @@ describe('CRM «Расходы» по HTTP', { timeout: 60_000 }, () => {
       categoryLabel: 'Аренда',
       amountKopecks: 3_000_000,
       toDay: null,
+      scope: 'business',
+      scopeLabel: 'Весь бизнес',
+      source: null,
+      doubleCount: null,
     });
+    expect(view.warning).toBeNull();
     // Значение целиком, в кавычках: голое «222» встречается внутри случайного uuid записи
     // (~0,5 % прогонов) — так тест и мигал (TASK-174).
     expect(JSON.stringify(view)).not.toContain('telegramUserId');

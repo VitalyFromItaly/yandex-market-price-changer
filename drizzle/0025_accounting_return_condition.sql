@@ -1,0 +1,1 @@
+ALTER TABLE "accounting_order_lines" ADD COLUMN "return_condition" text;

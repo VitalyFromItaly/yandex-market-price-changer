@@ -523,13 +523,23 @@ function dataSummary(job: IQueueJobRow): string {
           Статусы периодов недоступны (Postgres): {{ finance.periodsError }}
         </p>
         <p>
-          Продавцов с ночной загрузкой: <b class="tnum">{{ finance.items.length }}</b>
+          Продавцов с ночной загрузкой:
+          <b class="tnum">{{ finance.items.filter((r) => r.kind !== 'frequent').length }}</b>
+          <template v-if="finance.items.some((r) => r.kind === 'frequent')">
+            · с частой загрузкой «Финучёта»:
+            <b class="tnum">{{ finance.items.filter((r) => r.kind === 'frequent').length }}</b>
+          </template>
         </p>
         <ul v-if="finance.items.length" class="recipients">
-          <li v-for="row in finance.items" :key="row.telegramUserId">
+          <li v-for="row in finance.items" :key="`${row.kind}-${row.telegramUserId}`">
             <span class="name">{{ who(row) }}</span>
             <span class="muted">{{ row.storeName || 'магазин без названия' }}</span>
-            <div>
+            <div v-if="row.kind === 'frequent'">
+              Текущий месяц «Финучёта» — каждые
+              <b class="tnum">{{ row.everyHours ?? '?' }} ч</b>, следующая:
+              <b class="tnum">{{ formatMs(row.next) }}</b>
+            </div>
+            <div v-else>
               Следующая загрузка: <b class="tnum">{{ formatMs(row.next) }}</b>
               <span class="muted">({{ row.time ? `${row.time} МСК` : row.tz }})</span>
             </div>

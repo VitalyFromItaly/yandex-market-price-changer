@@ -1,18 +1,24 @@
+import type { TFinanceMarketplace } from '../../../database/postgres/finance.schema';
 import type {
   TFinanceExpenseCategoryRow,
   TFinanceExpenseRow,
 } from '../../../database/postgres/repositories/finance-expense.repository';
 import type { IExpenseAllocation } from '../../finance/expense-allocation';
-import type { TExpenseKind } from '../../finance/expense.domain';
+import type { TExpenseKind, TExpenseScope } from '../../finance/expense.domain';
 import type { IExpensesSnapshot } from '../../finance/finance-expenses.service';
 
 import {
   EXPENSE_CATEGORIES,
+  EXPENSE_SCOPE_TITLE,
   MAX_EXPENSE_CATEGORY_NAME_LENGTH,
   MAX_EXPENSE_NOTE_LENGTH,
+  MAX_EXPENSE_REF_LENGTH,
+  MAX_EXPENSE_SOURCE_LENGTH,
   PRESET_EXPENSE_CATEGORIES,
+  doubleCountWarningOf,
   labelResolver,
 } from '../../finance/expense.domain';
+import { FINANCE_ARTICLE_META } from '../../finance/finance-articles';
 
 /**
  * Раздел «Расходы» CRM (TASK-121): вид для фронта. Правила ввода — в
@@ -43,12 +49,37 @@ export interface ICrmExpenseView {
   fromDay: string;
   toDay: string | null;
   note: string | null;
+  /** v2 (TASK-220): источник, привязка; `scope` у записей до v2 — `business`. */
+  source: string | null;
+  scope: TExpenseScope;
+  scopeLabel: string;
+  marketplace: TFinanceMarketplace | null;
+  orderId: string | null;
+  sku: string | null;
+  /** Подпись статьи реестра, которую расход повторял при сохранении; null — не повторял. */
+  doubleCount: string | null;
 }
 
 export interface ICrmExpensesView {
   categories: ICrmExpenseCategoryView[];
+  /** Привязки расхода по порядку формы. */
+  scopes: { key: TExpenseScope; label: string }[];
   expenses: ICrmExpenseView[];
-  limits: { noteMaxLength: number; categoryNameMaxLength: number };
+  limits: {
+    noteMaxLength: number;
+    categoryNameMaxLength: number;
+    sourceMaxLength: number;
+    refMaxLength: number;
+  };
+}
+
+/** Ответ сохранения: вид раздела + предупреждение о двойном учёте (TASK-220). */
+export interface ICrmExpensesSaveView extends ICrmExpensesView {
+  warning: string | null;
+}
+
+export function expenseWarningOf(row: Pick<TFinanceExpenseRow, 'doubleCountArticle'>) {
+  return doubleCountWarningOf(row.doubleCountArticle);
 }
 
 export interface ICrmExpenseAllocationView {
@@ -72,6 +103,13 @@ export function toCrmExpenseView(
     fromDay: row.fromDay,
     toDay: row.toDay,
     note: row.note,
+    source: row.source,
+    scope: row.scope ?? 'business',
+    scopeLabel: EXPENSE_SCOPE_TITLE[row.scope ?? 'business'],
+    marketplace: row.marketplace,
+    orderId: row.orderId,
+    sku: row.sku,
+    doubleCount: row.doubleCountArticle ? FINANCE_ARTICLE_META[row.doubleCountArticle].title : null,
   };
 }
 
@@ -86,10 +124,16 @@ export function toCrmExpensesView(snapshot: IExpensesSnapshot): ICrmExpensesView
       })),
       ...snapshot.categories.map((row) => ({ key: row.id, label: row.name, custom: true })),
     ],
+    scopes: (Object.keys(EXPENSE_SCOPE_TITLE) as TExpenseScope[]).map((key) => ({
+      key,
+      label: EXPENSE_SCOPE_TITLE[key],
+    })),
     expenses: snapshot.expenses.map((row) => toCrmExpenseView(row, labelOf)),
     limits: {
       noteMaxLength: MAX_EXPENSE_NOTE_LENGTH,
       categoryNameMaxLength: MAX_EXPENSE_CATEGORY_NAME_LENGTH,
+      sourceMaxLength: MAX_EXPENSE_SOURCE_LENGTH,
+      refMaxLength: MAX_EXPENSE_REF_LENGTH,
     },
   };
 }

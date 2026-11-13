@@ -1,13 +1,17 @@
 import type { TFinanceMarketplace } from '../../database/postgres/finance.schema';
 import type { IFinanceAnomalyRow } from '../../database/postgres/repositories/finance-anomaly.repository';
 import type { TAnomalyKind } from '../finance/finance-anomalies';
+import type { IFinanceSyncPeriodState } from '../finance/finance-sync';
 import type { IPnl } from '../finance/pnl';
 import type { IReturnFigures } from '../finance/returns-analytics';
 import type { ITaxYearWarning } from '../finance/tax-year';
 import type { IInventorySnapshot } from '../inventory/inventory.domain';
+import type { TFeatureKey, TFeatureMap } from '../telegram/bots/shared/features.domain';
 
+import { isSyncFailureFinal } from '../finance/finance-sync';
 import { DEFAULT_COVER_DAYS, purchaseNeedsOf } from '../finance/forecast-purchases';
 import { INVENTORY_LOW_DAYS, daysLeftOf } from '../finance/inventory';
+import { FEATURE, isFeatureEnabled } from '../telegram/bots/shared/features.domain';
 
 import { NOTIFICATION_TEXT } from './notifications.text';
 
@@ -32,6 +36,7 @@ export const NOTIFICATION_RULE = {
   STOCK_VALUE_HIGH: 'stock_value_high',
   RETURNS_GROWTH: 'returns_growth',
   TAX_LIMIT: 'tax_limit',
+  FINANCE_SYNC_FAILED: 'finance_sync_failed',
 } as const;
 
 export type TNotificationRule = (typeof NOTIFICATION_RULE)[keyof typeof NOTIFICATION_RULE];
@@ -47,6 +52,11 @@ export interface INotificationRuleMeta {
   /** Допустимый диапазон порога (включительно). */
   min: number | null;
   max: number | null;
+  /**
+   * Фича, без которой правила у продавца нет (TASK-212): в настройках CRM оно
+   * не показывается, а проверка его не считает. Нет — правило общее.
+   */
+  feature?: TFeatureKey;
 }
 
 /** Окна сравнения: неделя к неделе для продаж и расходов, 28 дней к 28 для возвратов и убытка. */
@@ -169,7 +179,23 @@ export const NOTIFICATION_RULES: Record<TNotificationRule, INotificationRuleMeta
     min: null,
     max: null,
   },
+  finance_sync_failed: {
+    label: 'Сбой загрузки финансов',
+    description:
+      'Загрузка месяца площадки для «Финучёта» не удалась и после всех повторов (по каждому месяцу).',
+    unit: null,
+    defaultThreshold: null,
+    min: null,
+    max: null,
+    feature: FEATURE.FIN_ACCOUNTING,
+  },
 };
+
+/** Правило положено продавцу: без своей фичи его нет ни в настройках, ни в проверке. */
+export function isRuleAvailable(rule: TNotificationRule, features: TFeatureMap | null): boolean {
+  const feature = NOTIFICATION_RULES[rule].feature;
+  return !feature || isFeatureEnabled(features ?? {}, feature);
+}
 
 export const NOTIFICATION_RULE_KEYS = Object.keys(NOTIFICATION_RULES) as TNotificationRule[];
 
@@ -460,6 +486,38 @@ export function returnsEvents(
 const TAX_LEVELS: ReadonlySet<string> = new Set(['approaching', 'forecast_exceeds', 'exceeded']);
 
 /** Предупреждения налогового года: состояние — уровень (подошёл → прогноз → превышен). */
+/**
+ * Сбой загрузки финансов «Финучёта» (TASK-212): месяц площадки, чья последняя
+ * попытка — сбой и повторов больше не будет (`isSyncFailureFinal`). Предмет —
+ * площадка и месяц, отпечаток — «failed»: число попыток в нём нет, иначе каждый
+ * ночной сбой того же месяца слал бы новое уведомление. Успешная загрузка
+ * снимает его — события больше нет.
+ */
+export function financeSyncEvents(
+  states: readonly IFinanceSyncPeriodState[],
+  maxRetries: number,
+  settings: TNotificationRuleSettings,
+): INotificationEvent[] {
+  if (!enabled(settings, NOTIFICATION_RULE.FINANCE_SYNC_FAILED)) return [];
+  return states
+    .filter((state) => isSyncFailureFinal(state, maxRetries))
+    .map((state) => {
+      const month = state.from.slice(0, 7);
+      return {
+        rule: NOTIFICATION_RULE.FINANCE_SYNC_FAILED,
+        subjectKey: `${state.marketplace}:${month}`,
+        fingerprint: 'failed',
+        marketplace: state.marketplace,
+        ...NOTIFICATION_TEXT.financeSyncFailed({
+          marketplace: state.marketplace,
+          month,
+          attempts: state.lastAttempt,
+          lastSuccessAt: state.lastSuccessAt,
+        }),
+      };
+    });
+}
+
 export function taxEvents(
   warnings: readonly ITaxYearWarning[],
   settings: TNotificationRuleSettings,

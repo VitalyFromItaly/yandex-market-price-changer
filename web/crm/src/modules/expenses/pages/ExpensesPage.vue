@@ -14,6 +14,7 @@ import ExpenseDialog from '../components/ExpenseDialog.vue';
 import ExpensesTable from '../components/ExpensesTable.vue';
 import { useExpenseDialog } from '../composables/useExpenseDialog.expenses';
 import { useExpenseRemoval } from '../composables/useExpenseRemoval.expenses';
+import { EXPENSE_BINDING_FEATURE } from '../expenses.domain';
 import { toAllocationModel } from '../mappers/mapAllocation.expenses';
 import { categoryOptions, toExpenseRow } from '../mappers/mapExpenses.expenses';
 import { useExpensesStore } from '../store/store.expenses';
@@ -24,6 +25,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useAuthStore } from '@/modules/auth/store/store.auth';
 
 const store = useExpensesStore();
 const { view, error, allocation, preset, allocationError, allocationLoading } = storeToRefs(store);
@@ -33,6 +35,12 @@ const removal = useExpenseRemoval();
 
 const rows = computed(() => (view.value ? view.value.expenses.map(toExpenseRow) : []));
 const options = computed(() => (view.value ? categoryOptions(view.value.categories) : []));
+const scopeOptions = computed(() =>
+  view.value ? view.value.scopes.map((s) => ({ value: s.key, label: s.label })) : [],
+);
+const auth = useAuthStore();
+/** Привязку читает «Финучёт»: без него поля в форме лишние (запись их всё равно хранит). */
+const bindingOpen = computed(() => auth.me?.features[EXPENSE_BINDING_FEATURE] === true);
 const allocationModel = computed(() =>
   allocation.value ? toAllocationModel(allocation.value) : null,
 );
@@ -122,7 +130,11 @@ onMounted(() => {
     v-model:form="dialog.form.value"
     :title="dialog.title.value"
     :categories="options"
+    :scopes="scopeOptions"
     :note-max-length="view.limits.noteMaxLength"
+    :source-max-length="view.limits.sourceMaxLength"
+    :ref-max-length="view.limits.refMaxLength"
+    :show-binding="bindingOpen"
     :errors="dialog.errors.value"
     :busy="dialog.busy.value"
     @save="dialog.save()"

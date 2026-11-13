@@ -2,6 +2,7 @@ import type {
   TFinancePurchaseRow,
   TFinanceTaxPaymentRow,
 } from '../../../database/postgres/repositories/finance-purchase.repository';
+import type { TLotCostSplit } from '../../accounting/accounting-lots.domain';
 import type { IPurchasesSnapshot } from '../../finance/finance-purchases.service';
 import type { IPurchaseLine } from '../../finance/purchase.domain';
 
@@ -28,6 +29,10 @@ export interface ICrmPurchaseView {
   paidDay: string;
   amountKopecks: number;
   lines: IPurchaseLine[] | null;
+  /** Доставка от поставщика и прочие расходы в себестоимость партий (TASK-214) — не в ДДС. */
+  deliveryKopecks: number;
+  otherCostsKopecks: number;
+  lotCostSplit: TLotCostSplit;
   note: string | null;
 }
 
@@ -42,6 +47,17 @@ export interface ICrmPurchasesView {
   purchases: ICrmPurchaseView[];
   taxPayments: ICrmTaxPaymentView[];
   limits: { supplierMaxLength: number; noteMaxLength: number; linesMax: number };
+  /** Открыта `fin_accounting_lots`: форма показывает доставку и прочие расходы партий. */
+  lotsEnabled: boolean;
+}
+
+/** Поля партий в теле закупки: без `fin_accounting_lots` их не принимаем — в базе остаётся прежнее. */
+export const LOT_INPUT_FIELDS = ['delivery', 'otherCosts', 'lotCostSplit'] as const;
+
+export function withoutLotFields(body: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...body };
+  for (const field of LOT_INPUT_FIELDS) delete rest[field];
+  return rest;
 }
 
 export function toCrmPurchaseView(row: TFinancePurchaseRow): ICrmPurchaseView {
@@ -51,6 +67,9 @@ export function toCrmPurchaseView(row: TFinancePurchaseRow): ICrmPurchaseView {
     paidDay: row.paidDay,
     amountKopecks: row.amountKopecks,
     lines: row.lines ?? null,
+    deliveryKopecks: row.deliveryKopecks,
+    otherCostsKopecks: row.otherCostsKopecks,
+    lotCostSplit: row.lotCostSplit,
     note: row.note,
   };
 }
@@ -59,7 +78,10 @@ export function toCrmTaxPaymentView(row: TFinanceTaxPaymentRow): ICrmTaxPaymentV
   return { id: row.id, paidDay: row.paidDay, amountKopecks: row.amountKopecks, note: row.note };
 }
 
-export function toCrmPurchasesView(snapshot: IPurchasesSnapshot): ICrmPurchasesView {
+export function toCrmPurchasesView(
+  snapshot: IPurchasesSnapshot,
+  lotsEnabled: boolean,
+): ICrmPurchasesView {
   return {
     purchases: snapshot.purchases.map(toCrmPurchaseView),
     taxPayments: snapshot.taxPayments.map(toCrmTaxPaymentView),
@@ -68,5 +90,6 @@ export function toCrmPurchasesView(snapshot: IPurchasesSnapshot): ICrmPurchasesV
       noteMaxLength: MAX_PURCHASE_NOTE_LENGTH,
       linesMax: MAX_PURCHASE_LINES,
     },
+    lotsEnabled,
   };
 }

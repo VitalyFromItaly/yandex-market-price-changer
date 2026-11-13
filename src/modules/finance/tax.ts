@@ -42,6 +42,7 @@ export const TAX_BASE_ARTICLES: Record<TFinanceArticle, boolean> = {
   subscription: false,
   other_services: false,
   bonus_payment: false,
+  promotion_report: false,
   unknown: false,
 };
 
@@ -89,17 +90,22 @@ function percentOf(kopecks: number, basisPoints: number): number {
  * Минимальный налог по закону считается за год; за произвольный период
  * «Финансов» это оценка. Налоговый модуль ИП (TASK-146, `tax-year.ts`) берёт
  * его только у годового периода, у авансов — `regularKopecks`.
+ *
+ * `baseArticles` — какие статьи облагаются. Умолчание — `TAX_BASE_ARTICLES`
+ * (валовая база P&L); другой набор передаёт только налог «Финучёта» (TASK-221,
+ * правило агентской базы «нетто»), формула при этом та же.
  */
 export function taxOf(
   settings: ITaxSettings,
   lines: readonly ITaxRevenueLine[],
   period: IFinancePeriod,
   deductibleKopecks = 0,
+  baseArticles: Readonly<Record<TFinanceArticle, boolean>> = TAX_BASE_ARTICLES,
 ): ITaxResult {
   let income = 0;
   let undated = 0;
   for (const line of lines) {
-    if (!TAX_BASE_ARTICLES[line.article]) continue;
+    if (!baseArticles[line.article]) continue;
     const day = settings.recognition === 'payment' ? line.paidDay : line.realizedDay;
     if (!day) {
       undated += 1;

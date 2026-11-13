@@ -18,12 +18,19 @@ const api = vi.hoisted(() => ({
   allocation: vi.fn(),
 }));
 vi.mock('../api/expensesApi.expenses', () => ({ expensesApi: api }));
-vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
+vi.mock('@/components/ui/toast', () => ({ toast: toastMock }));
 
 const VIEW: ExpensesView = {
   categories: [],
+  scopes: [],
   expenses: [],
-  limits: { noteMaxLength: 200, categoryNameMaxLength: 60 },
+  limits: {
+    noteMaxLength: 200,
+    categoryNameMaxLength: 60,
+    sourceMaxLength: 200,
+    refMaxLength: 100,
+  },
 };
 const rent: Expense = {
   id: 'e1',
@@ -34,6 +41,13 @@ const rent: Expense = {
   fromDay: '2026-10-01',
   toDay: null,
   note: null,
+  source: null,
+  scope: 'business',
+  scopeLabel: 'Весь бизнес',
+  marketplace: null,
+  orderId: null,
+  sku: null,
+  doubleCount: null,
 };
 
 beforeEach(() => {
@@ -52,10 +66,32 @@ describe('useExpenseDialog', () => {
     expect(dialog.form.value.fromDay).toBe('2026-10-15');
 
     dialog.form.value = { ...dialog.form.value, amount: '30 000' };
-    api.create.mockResolvedValueOnce(VIEW);
+    api.create.mockResolvedValueOnce({ ...VIEW, warning: null });
     await dialog.save();
     expect(api.create).toHaveBeenCalledWith(expect.objectContaining({ amount: '30 000' }));
     expect(dialog.open.value).toBe(false);
+    expect(toastMock.info).not.toHaveBeenCalled();
+  });
+
+  it('двойной учёт: запись сохранена, диалог закрыт, предупреждение — отдельным тостом', async () => {
+    toastMock.info.mockReset();
+    const dialog = useExpenseDialog(() => '2026-10-15');
+    dialog.openCreate();
+    dialog.form.value = {
+      ...dialog.form.value,
+      category: 'marketplace_subscriptions',
+      amount: '1990',
+    };
+    api.create.mockResolvedValueOnce({
+      ...VIEW,
+      warning: 'Площадка уже начисляет «Абонентская плата»',
+    });
+    await dialog.save();
+    expect(dialog.open.value).toBe(false);
+    expect(toastMock.info).toHaveBeenCalledWith(
+      'Проверьте двойной учёт',
+      'Площадка уже начисляет «Абонентская плата»',
+    );
   });
 
   it('правка шлёт PUT своей записи; ошибка поля — под поле, диалог остаётся', async () => {

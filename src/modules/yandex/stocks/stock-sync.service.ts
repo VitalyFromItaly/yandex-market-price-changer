@@ -10,6 +10,7 @@ import { AppConfigService } from '../../../config/app-config.service';
 import { CostHistoryService } from '../../../database/services/cost-history.service';
 import { ProductService } from '../../../database/services/product.service';
 import { PurchasePriceService } from '../../../database/services/purchase-price.service';
+import { AccountingCostHistoryService } from '../../accounting/accounting-cost-history.service';
 import { ErrorReporter } from '../../errors/error-reporter.service';
 import {
   productRowsFromPriceList,
@@ -169,6 +170,7 @@ export class StockSyncService {
     private readonly products: ProductService,
     private readonly errors: ErrorReporter,
     private readonly costHistory: CostHistoryService,
+    private readonly accountingCostHistory: AccountingCostHistoryService,
   ) {}
 
   /**
@@ -493,6 +495,7 @@ export class StockSyncService {
     const rows = productRowsFromPriceList(purchases);
     await this.saveProducts(telegramUserId, rows);
     await this.saveCostHistory(telegramUserId, rows, previous);
+    await this.saveAccountingCostHistory(telegramUserId, rows, previous);
     return saved;
   }
 
@@ -517,6 +520,30 @@ export class StockSyncService {
         error,
         source: 'queue',
         context: 'products:cost-history',
+        telegramUserId,
+      });
+    }
+  }
+
+  /**
+   * История закупа v2 «Финучёта» (TASK-213): запись с моментом загрузки, только
+   * по изменившимся товарам. Рядом с текущей историей, а не вместо: та кормит
+   * текущую «Прибыль» и не меняется. Сбой не роняет загрузку и не глотается;
+   * пропущенная загрузка — пропущенное изменение цены в v2 (known-gaps).
+   */
+  private async saveAccountingCostHistory(
+    telegramUserId: string,
+    rows: readonly IProductPriceRow[],
+    previous: ReadonlyMap<string, IPurchaseRow>,
+  ): Promise<void> {
+    try {
+      await this.accountingCostHistory.recordPriceList(telegramUserId, rows, previous);
+    } catch (error) {
+      this.logger.error(`Не удалось записать историю закупа v2: ${String(error)}`);
+      void this.errors.report({
+        error,
+        source: 'queue',
+        context: 'accounting:cost-history',
         telegramUserId,
       });
     }

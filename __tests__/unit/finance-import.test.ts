@@ -321,6 +321,19 @@ describe('FinanceImportProcessor', () => {
    * `importAndRecord`: процессор ходит через реестр (TASK-127, TASK-162), а
    * проверяется то же — что ушло в импорт финансов.
    */
+  /** Надёжность «Финучёта» (TASK-212) — у продавца без `fin_accounting` ничего не делает. */
+  function syncStub() {
+    return {
+      accountingMarketplacesFor: vi.fn(async () => []),
+      reloadWindow: vi.fn(() => []),
+      record: vi.fn(async () => undefined),
+      afterFailure: vi.fn(async () => 'retry'),
+      notify: vi.fn(async () => undefined),
+      missed: vi.fn(async () => []),
+      prune: vi.fn(async () => undefined),
+    };
+  }
+
   function registryOf(importAndRecord: (request: unknown) => unknown) {
     return {
       withCapability: () => ['ym', 'ozon'],
@@ -345,6 +358,7 @@ describe('FinanceImportProcessor', () => {
       registryOf(importAndRecord) as never,
       {} as never,
       {} as never,
+      syncStub() as never,
     );
     const data = { telegramUserId: '111', from: '2026-09-01', to: '2026-09-30' };
 
@@ -359,7 +373,12 @@ describe('FinanceImportProcessor', () => {
 
   it('упавшая джоба уходит в ErrorReporter со своим context', () => {
     const report = vi.fn(async () => undefined);
-    const processor = new FinanceImportProcessor({} as never, {} as never, { report } as never);
+    const processor = new FinanceImportProcessor(
+      {} as never,
+      {} as never,
+      { report } as never,
+      syncStub() as never,
+    );
     processor.onFailed(
       { data: { telegramUserId: '111', from: '2026-09-01', to: '2026-09-30' } } as never,
       new Error('boom'),
@@ -390,6 +409,7 @@ describe('FinanceImportProcessor', () => {
         registryOf(importAndRecord) as never,
         scheduler as never,
         { report } as never,
+        syncStub() as never,
       );
 
       const run = await processor.handle({
@@ -418,6 +438,7 @@ describe('FinanceImportProcessor', () => {
         registryOf(importAndRecord) as never,
         scheduler as never,
         {} as never,
+        syncStub() as never,
       );
 
       const run = await processor.handle({

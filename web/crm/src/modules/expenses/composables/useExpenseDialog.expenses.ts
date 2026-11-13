@@ -40,10 +40,12 @@ export function useExpenseDialog(today: () => string = () => moscowToday()) {
     const target = editing.value;
     try {
       const body = expenseBody(form.value);
-      if (target === null) await store.create(body);
-      else await store.update(target.id, body);
+      const warning =
+        target === null ? await store.create(body) : await store.update(target.id, body);
       open.value = false;
       toast.success('Сохранено', target === null ? 'Расход добавлен' : 'Расход изменён');
+      // Двойной учёт не блокирует запись — продавец решает сам (TASK-220).
+      if (warning) toast.info('Проверьте двойной учёт', warning);
     } catch (e) {
       errors.value = mapExpenseError(e, 'Не удалось сохранить расход');
     } finally {

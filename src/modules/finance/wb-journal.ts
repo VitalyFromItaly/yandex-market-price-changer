@@ -26,6 +26,8 @@ import type { IFinancePeriod } from './finance-period';
 import type { IOperationBreakdownPart } from './operation-breakdown';
 import type { ErrorReporter } from '../errors/error-reporter.service';
 
+import { accountingColumnsOf } from '../accounting/accounting-sub-articles';
+
 import { financeToday } from './finance-period';
 import { kopecksToRub, toKopecks } from './kopecks';
 import { parseOzonDateTime } from './ozon-journal';
@@ -194,6 +196,12 @@ export function wbRowToOperation(
     documentVersion: ctx.documentVersion,
     periodKey: ctx.periodKey,
     raw,
+    // Реестр «Финучёта» (TASK-207).
+    ...accountingColumnsOf({
+      marketplace: 'wb',
+      transactionType: text(raw.supplier_oper_name),
+      raw,
+    }),
     ...(articles.size > 1 ? { breakdown: parts } : {}),
   };
 }

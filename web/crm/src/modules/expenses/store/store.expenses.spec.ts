@@ -21,8 +21,14 @@ vi.mock('../api/expensesApi.expenses', () => ({ expensesApi: api }));
 
 const VIEW: ExpensesView = {
   categories: [{ key: 'rent', label: 'Аренда', custom: false }],
+  scopes: [],
   expenses: [],
-  limits: { noteMaxLength: 200, categoryNameMaxLength: 60 },
+  limits: {
+    noteMaxLength: 200,
+    categoryNameMaxLength: 60,
+    sourceMaxLength: 200,
+    refMaxLength: 100,
+  },
 };
 const allocationOf = (totalKopecks: number) => ({
   from: '2026-10-01',
@@ -55,17 +61,24 @@ describe('стор «Расходы»', () => {
   it('запись заменяет вид ответом и перечитывает распределение', async () => {
     const store = useExpensesStore();
     const created = { ...VIEW, expenses: [{ id: 'e1' } as ExpensesView['expenses'][number]] };
-    api.create.mockResolvedValueOnce(created);
+    api.create.mockResolvedValueOnce({ ...created, warning: 'двойной учёт' });
     api.allocation.mockResolvedValueOnce(allocationOf(3_000_000));
 
-    await store.create({
+    const warning = await store.create({
       kind: 'monthly',
       category: 'rent',
       amount: '30000',
       fromDay: '2026-10-01',
       toDay: null,
       note: null,
+      source: null,
+      scope: 'business',
+      marketplace: null,
+      orderId: null,
+      sku: null,
     });
+    // Предупреждение — наружу, в вид раздела не попадает.
+    expect(warning).toBe('двойной учёт');
     expect(store.view).toEqual(created);
     await vi.waitFor(() => expect(store.allocation?.totalKopecks).toBe(3_000_000));
   });

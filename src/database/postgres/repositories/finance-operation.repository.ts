@@ -92,6 +92,13 @@ const MUTABLE_ON_CONFLICT = {
   // Расшифровка сводной строки (TASK-155): пустая не стирает записанную — её
   // не несут ручная загрузка и импорт, у которого отчёт услуг не загрузился.
   breakdown: sql`COALESCE(excluded.breakdown, ${t.breakdown})`,
+  // Реестр «Финучёта» (TASK-207): повторный импорт дозаполняет колонки строк,
+  // записанных до них, а пустое (ручной файл, площадка не дала) не стирает.
+  currency: sql`COALESCE(excluded.currency, ${t.currency})`,
+  itemId: sql`COALESCE(excluded.item_id, ${t.itemId})`,
+  reportedAt: sql`COALESCE(excluded.reported_at, ${t.reportedAt})`,
+  processingStatus: sql`COALESCE(excluded.processing_status, ${t.processingStatus})`,
+  subArticle: sql`COALESCE(excluded.sub_article, ${t.subArticle})`,
   updatedAt: sql`now()`,
 };
 
@@ -369,12 +376,52 @@ export class FinanceOperationRepository {
   }
 
   /**
+   * Живые операции окна для сверки v2 «Финучёта» (TASK-226): поля сверки плюс
+   * подстатья, даты, услуга и расшифровка сводной строки. Тот же индекс, что у
+   * `liveForReconcile`; существующий метод не трогаем — его читает `reconcile()`.
+   */
+  async liveForAccountingReconcile(
+    telegramUserId: string,
+    accruedFrom: Date,
+    accruedTo: Date,
+    marketplace: TFinanceMarketplace = 'ym',
+    executor: TFinanceExecutor = this.db,
+  ) {
+    return await executor
+      .select({
+        id: t.id,
+        orderId: t.orderId,
+        article: t.article,
+        subArticle: t.subArticle,
+        amountKopecks: t.amountKopecks,
+        accruedAt: t.accruedAt,
+        actDate: t.actDate,
+        bankOrderId: t.bankOrderId,
+        bankSumKopecks: t.bankSumKopecks,
+        paidAt: t.paidAt,
+        serviceName: t.serviceName,
+        breakdown: t.breakdown,
+      })
+      .from(t)
+      .where(
+        and(
+          eq(t.marketplace, marketplace),
+          eq(t.telegramUserId, telegramUserId),
+          isNull(t.supersededAt),
+          gte(t.accruedAt, accruedFrom),
+          lte(t.accruedAt, accruedTo),
+        ),
+      );
+  }
+
+  /**
    * Дни актов (по Москве), строки которых лежат в периоде, — какие акты сверять
    * с отчётом услуг в этом месяце (TASK-158).
    */
   async actDaysOfPeriod(
     telegramUserId: string,
     periodKey: string,
+    marketplace: TFinanceMarketplace = 'ym',
     executor: TFinanceExecutor = this.db,
   ): Promise<string[]> {
     const rows = await executor
@@ -382,7 +429,7 @@ export class FinanceOperationRepository {
       .from(t)
       .where(
         and(
-          eq(t.marketplace, 'ym'),
+          eq(t.marketplace, marketplace),
           eq(t.telegramUserId, telegramUserId),
           eq(t.periodKey, periodKey),
           isNull(t.supersededAt),
@@ -402,6 +449,7 @@ export class FinanceOperationRepository {
   async actJournalSums(
     telegramUserId: string,
     actDays: readonly string[],
+    marketplace: TFinanceMarketplace = 'ym',
     executor: TFinanceExecutor = this.db,
   ): Promise<Map<string, IReconcileActJournal>> {
     const result = new Map<string, IReconcileActJournal>();
@@ -421,7 +469,7 @@ export class FinanceOperationRepository {
       .from(t)
       .where(
         and(
-          eq(t.marketplace, 'ym'),
+          eq(t.marketplace, marketplace),
           eq(t.telegramUserId, telegramUserId),
           isNull(t.supersededAt),
           gte(t.actDate, from),
@@ -473,6 +521,8 @@ export class FinanceOperationRepository {
       marketplace: t.marketplace,
       count: COUNT_OF[marketplace],
       breakdown: t.breakdown,
+      // Подстатья реестра — налогу «Финучёта» (TASK-221, корректировки базы); P&L её не читает.
+      subArticle: t.subArticle,
     };
     const live = and(
       eq(t.marketplace, marketplace),
@@ -534,6 +584,8 @@ export class FinanceOperationRepository {
           marketplace: t.marketplace,
           count: COUNT_OF[marketplace],
           breakdown: t.breakdown,
+          // Подстатья — карточке заказа «Финучёта» (TASK-222); «Лента заказов» её не читает.
+          subArticle: t.subArticle,
         })
         .from(t)
         .where(
@@ -548,6 +600,52 @@ export class FinanceOperationRepository {
       rows.push(...expandBreakdown(part));
     }
     return rows;
+  }
+
+  /**
+   * Живые строки площадки без номера заказа, начисленные в окне `[from, to)`, —
+   * общие расходы магазина для распределения по заказам «Финучёта» (TASK-219/222).
+   * В том же виде, что `liveForPnl`: сводная строка с расшифровкой — по части на статью.
+   */
+  async liveStoreLevelBetween(
+    telegramUserId: string,
+    from: Date,
+    to: Date,
+    marketplace: TFinanceMarketplace = 'ym',
+    executor: TFinanceExecutor = this.db,
+  ): Promise<IPnlOperation[]> {
+    const rows = await executor
+      .select({
+        id: t.id,
+        article: t.article,
+        amountKopecks: t.amountKopecks,
+        orderId: t.orderId,
+        sku: t.sku,
+        serviceName: t.serviceName,
+        transactionType: t.transactionType,
+        transactionSource: t.transactionSource,
+        accruedAt: t.accruedAt,
+        paidAt: t.paidAt,
+        actDate: t.actDate,
+        model: t.model,
+        marketplace: t.marketplace,
+        count: COUNT_OF[marketplace],
+        breakdown: t.breakdown,
+        subArticle: t.subArticle,
+      })
+      .from(t)
+      .where(
+        and(
+          eq(t.telegramUserId, telegramUserId),
+          eq(t.marketplace, marketplace),
+          isNull(t.supersededAt),
+          isNull(t.orderId),
+          gte(t.accruedAt, from),
+          lt(t.accruedAt, to),
+        ),
+      )
+      .orderBy(t.accruedAt, t.id);
+    return expandBreakdown(rows);
   }
 
   /**

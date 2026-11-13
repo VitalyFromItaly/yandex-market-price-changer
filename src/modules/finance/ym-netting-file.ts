@@ -40,7 +40,7 @@ export type TNettingField =
   | 'bankSum'
   | 'vatRate';
 
-type TValueKind = 'text' | 'id' | 'money' | 'count' | 'dateTime' | 'date';
+export type TValueKind = 'text' | 'id' | 'money' | 'count' | 'dateTime' | 'date';
 
 interface INettingColumn {
   /** Подпись для отказа «не нашли колонки». */
@@ -303,7 +303,8 @@ export function parseYmNettingFile(buffer: Buffer, fileName: string): INettingFi
   return { rows, sheet: best.sheet, headerRow: best.row + 1, fields: [...best.columns.values()] };
 }
 
-function readWorkbook(buffer: Buffer, fileName: string): XLSX.WorkBook {
+/** Книга из файла продавца; не читается — `NettingFileError('unreadable')`. Общая с парсером WB. */
+export function readWorkbook(buffer: Buffer, fileName: string): XLSX.WorkBook {
   try {
     return readSpreadsheet(buffer, fileName);
   } catch (error) {
@@ -314,9 +315,11 @@ function readWorkbook(buffer: Buffer, fileName: string): XLSX.WorkBook {
   }
 }
 
-const INVALID = Symbol('invalid');
+/** Ячейка не разобралась по своему виду — отказ строки, а не тихий пропуск. */
+export const INVALID = Symbol('invalid');
 
-function convertCell(value: unknown, kind: TValueKind): unknown {
+/** Ячейка → значение в форме JSON площадки; пусто — undefined. Общая с парсером WB. */
+export function convertCell(value: unknown, kind: TValueKind): unknown {
   if (value === null || value === undefined) return undefined;
   if (typeof value === 'string' && !value.trim()) return undefined;
   switch (kind) {

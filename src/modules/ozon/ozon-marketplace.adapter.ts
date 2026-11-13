@@ -6,6 +6,7 @@ import type {
   IMarketplaceCatalog,
   IMarketplaceConnector,
   IMarketplaceFinance,
+  IMarketplaceOrderLineSource,
   IMarketplaceOrderSource,
   IMarketplacePriceWriter,
   IMarketplaceStockLevels,
@@ -90,6 +91,14 @@ export class OzonMarketplaceAdapter implements IMarketplaceAdapter {
     writePrices: (ref, updates) =>
       notConnectedAsRegistryError(ref.telegramUserId, () =>
         this.ozonPriceWrite.writePrices(ref.telegramUserId, updates),
+      ),
+  };
+
+  /** Сырьё снимка строк заказов «Финучёта» (TASK-211) — только чтение. */
+  readonly orderLines: IMarketplaceOrderLineSource = {
+    rawOrderLines: (ref, window) =>
+      notConnectedAsRegistryError(ref.telegramUserId, () =>
+        this.ozonOrders.rawOrderLines(ref.telegramUserId, window),
       ),
   };
 

@@ -134,6 +134,10 @@ export class CrmNotificationsController {
 
   private async settingsView(request: IRequestWithCrmUser): Promise<ICrmNotificationSettingsView> {
     const settings = await this.settings.get(request.crmUser.telegramUserId);
-    return toCrmNotificationSettings(settings, this.telegramOpen(request));
+    return toCrmNotificationSettings(
+      settings,
+      this.telegramOpen(request),
+      request.crmUser.features,
+    );
   }
 }

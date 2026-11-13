@@ -540,6 +540,9 @@ export interface IFinanceImportRow {
   firstName?: string;
   lastName?: string;
   storeName?: string;
+  /** `nightly` — ночной проход, `frequent` — текущий месяц «Финучёта» раз в `everyHours` ч. */
+  kind: 'nightly' | 'frequent';
+  everyHours: number | null;
   time: string | null;
   tz: string;
   next: number;

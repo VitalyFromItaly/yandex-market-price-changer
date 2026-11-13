@@ -85,6 +85,104 @@
       "when": 1792330547132,
       "tag": "0011_finance_operations_order_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794122185677,
+      "tag": "0012_accounting_registry_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794122683401,
+      "tag": "0013_finance_sync_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794123751784,
+      "tag": "0014_accounting_manual_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794138061978,
+      "tag": "0015_accounting_order_lines",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794139510562,
+      "tag": "0016_accounting_order_lines_ozon_wb",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794142445296,
+      "tag": "0017_accounting_cost_history_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794151887286,
+      "tag": "0018_accounting_order_results",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794201843331,
+      "tag": "0019_accounting_allocation_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794207241775,
+      "tag": "0020_accounting_tax_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794221490703,
+      "tag": "0021_finance_ozon_balances",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794233887555,
+      "tag": "0022_accounting_lots",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794276627296,
+      "tag": "0023_accounting_cost_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794313922419,
+      "tag": "0024_expenses_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794407123446,
+      "tag": "0025_accounting_return_condition",
+      "breakpoints": true
     }
   ]
 }

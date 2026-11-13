@@ -18,7 +18,7 @@ services:
       - STOCK_WRITE_ENABLED=${STOCK_WRITE_ENABLED:?нужно задать STOCK_WRITE_ENABLED в .env (true в проде, false локально)}
       # Запись цен («Установка цен») — тот же принцип, отдельный рычаг.
       - PRICE_WRITE_ENABLED=${PRICE_WRITE_ENABLED:?нужно задать PRICE_WRITE_ENABLED в .env (false локально)}
-      - MARKETPLACE_WEBHOOK_IP_CHECK=${MARKETPLACE_WEBHOOK_IP_CHECK:?нужно задать MARKETPLACE_WEBHOOK_IP_CHECK в .env (true в проде)}
+      - MARKETPLACE_WEBHOOK_IP_CHECK=${MARKETPLACE_WEBHOOK_IP_CHECK:-true}
       - MONGODB_URL=mongodb://root:secret@mongodb:27017/
       - MONGODB_DATABASE=${MONGODB_DATABASE:-yandex-market-price-changer}
       # Postgres — только финансовый журнал (решение finance_postgres).
@@ -57,6 +57,12 @@ services:
       - AI_USER_DAILY_LIMIT_RUB=${AI_USER_DAILY_LIMIT_RUB:-50}
       # Порог баланса Polza для самопроверки, ₽; 0 — не предупреждать.
       - POLZA_AI_BALANCE_WARN_RUB=${POLZA_AI_BALANCE_WARN_RUB:-200}
+      # «Финучёт» (TASK-212): частота текущего месяца, ч; окно перезагрузки, мес; повторы после сбоя.
+      - FIN_ACCOUNTING_SYNC_EVERY_HOURS=${FIN_ACCOUNTING_SYNC_EVERY_HOURS:-3}
+      - FIN_ACCOUNTING_RELOAD_MONTHS=${FIN_ACCOUNTING_RELOAD_MONTHS:-3}
+      - FIN_ACCOUNTING_RETRY_ATTEMPTS=${FIN_ACCOUNTING_RETRY_ATTEMPTS:-3}
+      # Снимок строк заказов «Финучёта» (TASK-210), мин.
+      - FIN_ACCOUNTING_ORDERS_EVERY_MINUTES=${FIN_ACCOUNTING_ORDERS_EVERY_MINUTES:-15}
       - YANDEX_MARKET_BASE_URL=${YANDEX_MARKET_BASE_URL:-https://api.partner.market.yandex.ru}
       - OZON_SELLER_API_URL=${OZON_SELLER_API_URL:-https://api-seller.ozon.ru}
     depends_on:

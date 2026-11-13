@@ -150,6 +150,17 @@ describe('crm-features.domain', () => {
 });
 
 describe('Зависимости фич в CRM (requires, TASK-153)', () => {
+  it('«Финучёт» открывает только зонтик: подфича без него раздел не открывает (TASK-206)', () => {
+    const sub = { [FEATURE.FIN_ACCOUNTING_ORDERS]: true };
+    expect(visibleSections(sub, 'FBS', 'account')).not.toContain('ym-accounting');
+    expect(visibleSections({}, 'FBS', 'account')).not.toContain('ym-accounting');
+    expect(featureBlock(sub, [FEATURE.FIN_ACCOUNTING])?.code).toBe(FEATURE_DISABLED);
+
+    const umbrella = { [FEATURE.FIN_ACCOUNTING]: true };
+    expect(visibleSections(umbrella, 'FBS', 'account')).toContain('ym-accounting');
+    expect(featureBlock(umbrella, [FEATURE.FIN_ACCOUNTING])).toBeNull();
+  });
+
   it('«Unit-экономика» скрыта и закрыта, пока закрыты «Финансы»', () => {
     const own = { [FEATURE.UNIT_ECONOMICS]: true };
     expect(visibleSections(own, 'FBS', 'account')).not.toContain('ym-unit-economics');

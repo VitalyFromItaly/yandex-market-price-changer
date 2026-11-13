@@ -25,6 +25,15 @@ const points = (value: number) => `${value.toFixed(1).replace('.', ',')} п.п.`
 const units = (count: number) => `${count} шт.`;
 const days = (value: number) => `${Math.floor(value)} дн.`;
 const mp = (marketplace: TFinanceMarketplace) => MARKETPLACE_LABEL[marketplace];
+const dateTimeText = (at: Date) =>
+  at.toLocaleString('ru-RU', {
+    timeZone: 'Europe/Moscow',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 
 function list(labels: readonly string[]): string {
   const shown = labels.slice(0, LIST_LIMIT).map((label) => `• ${label}`);
@@ -182,6 +191,25 @@ export const NOTIFICATION_TEXT = {
       body:
         `Свой склад и склады площадок по себестоимости — ${rubText(input.totalKopecks)}, ` +
         `порог — ${rubText(input.limitKopecks)}.${noCost}`,
+    };
+  },
+
+  financeSyncFailed(input: {
+    marketplace: TFinanceMarketplace;
+    /** «ГГГГ-ММ» периода. */
+    month: string;
+    attempts: number;
+    lastSuccessAt: Date | null;
+  }): INotificationTextParts {
+    const [year, month] = input.month.split('-');
+    const success = input.lastSuccessAt
+      ? `Данные «Финучёта» за этот месяц — на ${dateTimeText(input.lastSuccessAt)}.`
+      : 'Успешной загрузки этого месяца ещё не было.';
+    return {
+      title: `${mp(input.marketplace)}: не удалось загрузить финансы за ${month}.${year}`,
+      body:
+        `Попыток: ${input.attempts}, последняя — со сбоем. ${success} ` +
+        'Загрузка повторится по расписанию; если сбой держится — проверьте подключение площадки.',
     };
   },
 };

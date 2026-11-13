@@ -361,11 +361,23 @@ export class OzonSellerClient {
   }
 
   /**
-   * Обход отправлений по курсору (TASK-196): у FBS v4 и FBO v3 один контракт.
-   * Конец — `has_next: false`, пустой курсор или пустая страница. Тот же курсор
-   * по кругу или потолок страниц — ошибка, а не «всё»: недочитанные заказы дали бы
-   * «Передаче остатков» заниженный резерв, а сверке — ложные расхождения.
+   * Отправления FBS за интервал сырыми объектами, с `financial_data` (цена
+   * продавца, выплата, комиссия по товару) — снимок строк заказов «Финучёта»
+   * (TASK-211). Только чтение.
    */
+  public async listFbsPostingsRaw(since: Date, to: Date): Promise<TRaw[]> {
+    return this.postingPages(OZON_PATHS.fbsPostings, OZON_FBS_POSTINGS_LIMIT, since, to, 'FBS', {
+      financial_data: true,
+    });
+  }
+
+  /** Отправления FBO сырыми объектами, с `financial_data`. Только чтение. */
+  public async listFboPostingsRaw(since: Date, to: Date): Promise<TRaw[]> {
+    return this.postingPages(OZON_PATHS.fboPostings, OZON_FBO_POSTINGS_LIMIT, since, to, 'FBO', {
+      financial_data: true,
+    });
+  }
+
   private async listPostings(
     path: string,
     limit: number,
@@ -373,7 +385,25 @@ export class OzonSellerClient {
     to: Date,
     scheme: string,
   ): Promise<IOzonPosting[]> {
-    const postings: IOzonPosting[] = [];
+    return mapPostings(await this.postingPages(path, limit, since, to, scheme));
+  }
+
+  /**
+   * Обход отправлений по курсору (TASK-196): у FBS v4 и FBO v3 один контракт.
+   * Конец — `has_next: false`, пустой курсор или пустая страница. Тот же курсор
+   * по кругу или потолок страниц — ошибка, а не «всё»: недочитанные заказы дали бы
+   * «Передаче остатков» заниженный резерв, а сверке — ложные расхождения.
+   * `withData` — блок `with` запроса (без него Ozon не шлёт `financial_data`).
+   */
+  private async postingPages(
+    path: string,
+    limit: number,
+    since: Date,
+    to: Date,
+    scheme: string,
+    withData?: Record<string, boolean>,
+  ): Promise<TRaw[]> {
+    const postings: TRaw[] = [];
     const seen = new Set<string>();
     let cursor = '';
     for (let page = 1; page <= OZON_MAX_PAGES; page += 1) {
@@ -382,8 +412,9 @@ export class OzonSellerClient {
         filter: { since: since.toISOString(), to: to.toISOString() },
         limit,
         cursor,
+        ...(withData ? { with: withData } : {}),
       };
-      const result = mapPostingsPage(await this.call(() => this.http.post(path, body)));
+      const result = rawPostingsPage(await this.call(() => this.http.post(path, body)));
       postings.push(...result.postings);
       if (!result.hasNext || !result.cursor || !result.postings.length) return postings;
       if (seen.has(result.cursor)) {
@@ -460,6 +491,29 @@ export class OzonSellerClient {
       await this.call(() => this.http.post(OZON_PATHS.financeBalance, body)),
       day,
     );
+  }
+
+  /**
+   * Сальдо за период (TASK-227): документ сверки v2 «Финучёта». Окно balance —
+   * не больше 30 дней, поэтому месяц из 31 дня — двумя запросами: входящее —
+   * первого куска, исходящее — последнего, начислено и выплачено — суммой.
+   * Только чтение; ответ не того вида — ошибка (`mapFinanceBalance`).
+   */
+  public async balanceOfPeriod(from: string, to: string): Promise<IOzonPeriodBalance> {
+    const parts: IOzonPeriodBalance[] = [];
+    for (let start = from; start <= to; ) {
+      const last = shiftDay(start, OZON_BALANCE_MAX_DAYS - 1);
+      const end = last < to ? last : to;
+      const body = { date_from: start, date_to: end };
+      parts.push(
+        mapFinanceBalanceTotals(
+          await this.call(() => this.http.post(OZON_PATHS.financeBalance, body)),
+          `${start}…${end}`,
+        ),
+      );
+      start = shiftDay(end, 1);
+    }
+    return combineOzonBalances(parts);
   }
 
   /**
@@ -868,6 +922,21 @@ export interface IOzonDayBalance {
   paymentsKopecks: number;
 }
 
+/** Сальдо Ozon за период в копейках. accrued/closing null — Ozon их не отдал. */
+export interface IOzonPeriodBalance {
+  /** Входящее сальдо на первый день (`total.opening_balance`). */
+  openingKopecks: number;
+  /** Начислено за период (`total.accrued`), со знаком как у Ozon. */
+  accruedKopecks: number | null;
+  /** Выплачено за период (Σ `total.payments`, модулем). */
+  paymentsKopecks: number;
+  /** Исходящее сальдо на последний день (`total.closing_balance`). */
+  closingKopecks: number | null;
+}
+
+/** Окно /v1/finance/balance по спеке — не больше 30 дней. */
+export const OZON_BALANCE_MAX_DAYS = 30;
+
 /** Валюты выплат, которые журнал понимает: он в рублёвых копейках. Пустая — рубли. */
 const BALANCE_CURRENCIES = new Set(['', 'RUB', 'RUR']);
 
@@ -913,6 +982,39 @@ export function mapFinanceBalance(raw: unknown, day: string): IOzonDayBalance {
   };
 }
 
+/**
+ * Ответ balance за период целиком (TASK-227): то же, что `mapFinanceBalance`,
+ * плюс `accrued` и `closing_balance`. Их отсутствие — не ошибка, а null:
+ * документа сверки нет, а раскладку выплат это не касается. Чужая валюта —
+ * ошибка, как у остальных сумм.
+ */
+export function mapFinanceBalanceTotals(raw: unknown, range: string): IOzonPeriodBalance {
+  const base = mapFinanceBalance(raw, range);
+  const data = levelOf(raw).total as TRaw;
+  const optional = (value: unknown, what: string) =>
+    value === undefined || value === null ? null : balanceKopecks(value, what, range);
+  return {
+    openingKopecks: base.openingKopecks,
+    accruedKopecks: optional(data.accrued, 'начисления'),
+    paymentsKopecks: base.paymentsKopecks,
+    closingKopecks: optional(data.closing_balance, 'исходящее сальдо'),
+  };
+}
+
+/** Куски периода по порядку → сальдо периода (null в любом куске — null в итоге). */
+export function combineOzonBalances(parts: readonly IOzonPeriodBalance[]): IOzonPeriodBalance {
+  if (!parts.length) throw new Error('Сальдо Ozon: пустой период');
+  const accrued = parts.map((p) => p.accruedKopecks);
+  return {
+    openingKopecks: parts[0].openingKopecks,
+    accruedKopecks: accrued.includes(null)
+      ? null
+      : accrued.reduce<number>((acc, v) => acc + (v ?? 0), 0),
+    paymentsKopecks: parts.reduce((acc, p) => acc + p.paymentsKopecks, 0),
+    closingKopecks: parts[parts.length - 1].closingKopecks,
+  };
+}
+
 // ─── Разбор отправлений (TASK-130, TASK-196) ───────────────────────────────────────────
 
 /**
@@ -924,10 +1026,16 @@ export function mapPostingsPage(raw: unknown): {
   hasNext: boolean;
   cursor: string;
 } {
+  const page = rawPostingsPage(raw);
+  return { ...page, postings: mapPostings(page.postings) };
+}
+
+/** Та же страница без разбора отправлений: объекты как пришли. */
+function rawPostingsPage(raw: unknown): { postings: TRaw[]; hasNext: boolean; cursor: string } {
   const data = (raw ?? {}) as TRaw;
   const list = Array.isArray(data.postings) ? data.postings : [];
   return {
-    postings: mapPostings(list),
+    postings: list.filter((item): item is TRaw => !!item && typeof item === 'object'),
     hasNext: data.has_next === true,
     cursor: textOf(data.cursor),
   };

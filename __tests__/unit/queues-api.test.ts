@@ -178,8 +178,8 @@ describe('QueuesController', () => {
         expect(queue.getJobs).toHaveBeenCalledWith(['failed'], 0, 49);
         expect(queue.getJobs).toHaveBeenCalledWith(['completed'], 0, 49);
       }
-      // total — сумма по всем парам (очередь, состояние): 8 очередей × 5 × 3.
-      expect(result.total).toBe(120);
+      // total — сумма по всем парам (очередь, состояние): 9 очередей × 5 × 3.
+      expect(result.total).toBe(135);
     });
 
     it('одна очередь + состояние all — пять запросов только к ней', async () => {
@@ -205,12 +205,13 @@ describe('QueuesController', () => {
       queues[QUEUE_NAMES.FINANCE_IMPORT].getJobs.mockResolvedValue([]);
       queues[QUEUE_NAMES.SELLER_NOTIFICATIONS].getJobs.mockResolvedValue([]);
       queues[QUEUE_NAMES.AI_WEEKLY_DIGEST].getJobs.mockResolvedValue([]);
+      queues[QUEUE_NAMES.ACCOUNTING_ORDERS].getJobs.mockResolvedValue([]);
 
       const result = await controller.jobs('all', 'failed', '2', '1');
 
       expect(queues[QUEUE_NAMES.FILE_PROCESSING].getJobs).toHaveBeenCalledWith(['failed'], 0, 2);
       expect(result.items.map((item) => item.id)).toEqual(['c', 'b']);
-      expect(result.total).toBe(24); // по 3 failed в каждой из восьми очередей
+      expect(result.total).toBe(27); // по 3 failed в каждой из девяти очередей
     });
 
     it('строка обогащается ником: в payload только числовой id', async () => {

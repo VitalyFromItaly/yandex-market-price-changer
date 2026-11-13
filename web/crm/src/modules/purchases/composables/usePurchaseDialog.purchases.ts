@@ -36,7 +36,7 @@ export function usePurchaseDialog(today: () => string = () => moscowToday()) {
     errors.value = {};
     const target = editing.value;
     try {
-      const body = purchaseBody(form.value);
+      const body = purchaseBody(form.value, store.view?.lotsEnabled ?? false);
       if (target === null) await store.create(body);
       else await store.update(target.id, body);
       open.value = false;

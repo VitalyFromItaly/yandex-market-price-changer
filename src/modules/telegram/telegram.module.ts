@@ -3,6 +3,7 @@ import { Module, forwardRef } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
 import { PostgresModule } from '../../database/postgres/postgres.module';
+import { AccountingModule } from '../accounting/accounting.module';
 import { AiAnalystModule } from '../ai-analyst/ai-analyst.module';
 import { FinanceModule } from '../finance/finance.module';
 import { HealthModule } from '../health/health.module';
@@ -44,6 +45,7 @@ import { AdminNotifierService } from './bots/shared/services/admin-notifier.serv
 import { BotCommandsService } from './bots/shared/services/bot-commands.service';
 import { StorePromptService } from './bots/shared/services/store-prompt.service';
 import { TelegramApiMetrics } from './bots/telegram-api-metrics.service';
+import { AccountingOrdersProcessor } from './queue/processors/accounting-orders.processor';
 import { FbyOverviewProcessor } from './queue/processors/fby-overview.processor';
 import { FeedbackDraftProcessor } from './queue/processors/feedback-draft.processor';
 import { FinanceImportProcessor } from './queue/processors/finance-import.processor';
@@ -61,8 +63,10 @@ import { TariffReportProcessor } from './queue/processors/tariff-report.processo
 import { WarehousesOverviewProcessor } from './queue/processors/warehouses-overview.processor';
 import { WeeklyDigestProcessor } from './queue/processors/weekly-digest.processor';
 import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
+import { AccountingOrdersScheduler } from './queue/services/accounting-orders.scheduler';
 import { FileProcessingService } from './queue/services/file-processing.service';
 import { FinanceImportScheduler } from './queue/services/finance-import.scheduler';
+import { FinanceSyncService } from './queue/services/finance-sync.service';
 import { HostingReminderScheduler } from './queue/services/hosting-reminder.scheduler';
 import { HostingReminderService } from './queue/services/hosting-reminder.service';
 import { ReportSchedulerService } from './queue/services/report-scheduler.service';
@@ -83,6 +87,8 @@ import { QUEUE_NAMES } from './index';
     PostgresModule,
     YandexModule,
     FinanceModule,
+    // Снимок строк заказов «Финучёта» (TASK-210): AccountingOrdersService.
+    AccountingModule,
     NotificationsModule,
     // ИИ-сводка недели (TASK-168): WeeklyDigestService — факты из финансов и AiService.
     AiAnalystModule,
@@ -145,6 +151,15 @@ import { QUEUE_NAMES } from './index';
           removeOnFail: 50,
           // Одна попытка: у united-netting квота 100 генераций в час, а
           // расписание (TASK-112) всё равно повторит период в следующий проход.
+          attempts: 1,
+        },
+      },
+      {
+        name: QUEUE_NAMES.ACCOUNTING_ORDERS,
+        defaultJobOptions: {
+          removeOnComplete: 20,
+          removeOnFail: 50,
+          // Одна попытка: через 15 минут опрос возьмёт то же окно (курсор не сдвинулся).
           attempts: 1,
         },
       },
@@ -244,10 +259,13 @@ import { QUEUE_NAMES } from './index';
     MarketReportProcessor,
     HostingReminderProcessor,
     FinanceImportProcessor,
+    AccountingOrdersProcessor,
     ReportSchedulerService,
     HostingReminderScheduler,
     HostingReminderService,
     FinanceImportScheduler,
+    AccountingOrdersScheduler,
+    FinanceSyncService,
     SellerNotificationsProcessor,
     SellerNotificationsScheduler,
     WeeklyDigestProcessor,
@@ -273,6 +291,8 @@ import { QUEUE_NAMES } from './index';
     // Панель очередей показывает расписание загрузки финансов, панель доступа
     // пересверяет его после правки флага — у того же планировщика.
     FinanceImportScheduler,
+    // Панель доступа пересверяет расписание снимка строк заказов «Финучёта».
+    AccountingOrdersScheduler,
     // Панель доступа пересверяет расписание уведомлений, CRM ставит проверку по кнопке.
     SellerNotificationsScheduler,
     // Панель доступа пересверяет расписание ИИ-сводки, панель очередей шлёт её по кнопке.

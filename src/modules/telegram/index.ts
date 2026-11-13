@@ -30,6 +30,13 @@ export const QUEUE_NAMES = {
    * чужие повторяемые задачи, а `@OnQueueFailed` там уже у ReportsProcessor.
    */
   AI_WEEKLY_DIGEST: 'ai-weekly-digest',
+  /**
+   * Снимок строк заказов «Финучёта» (TASK-210): раз в 15 минут на продавца с
+   * `fin_accounting` — getOrders по всем магазинам кабинета и запись версий в
+   * Postgres. Своя очередь: на `finance-import` один обработчик на concurrency 1,
+   * и частый опрос заказов стоял бы в очереди за долгими генерациями отчётов.
+   */
+  ACCOUNTING_ORDERS: 'accounting-orders',
 } as const;
 
 export const JOB_TYPES = {
@@ -102,6 +109,8 @@ export const JOB_TYPES = {
   CHECK_SELLER_NOTIFICATIONS: 'check-seller-notifications',
   /** Еженедельная ИИ-сводка продавцу; payload — продавец и вид запуска, без токена. */
   SEND_AI_WEEKLY_DIGEST: 'send-ai-weekly-digest',
+  /** Снимок строк заказов ЯМ продавца; payload — продавец, без токена. */
+  SYNC_ACCOUNTING_ORDERS: 'sync-accounting-orders',
   PROCESS_FILE: 'process-file',
   PARSE_FILE: 'parse-file',
   COMPARE_DATA: 'compare-data',

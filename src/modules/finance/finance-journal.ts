@@ -9,6 +9,7 @@
 import type { TFinanceArticle } from './finance-articles';
 import type { IOperationBreakdownPart } from './operation-breakdown';
 import type { TFinanceMarketplace } from '../../database/postgres/finance.schema';
+import type { TAccountingSubArticle } from '../accounting/accounting-sub-articles';
 
 /** Что импорт знает о версии документа, в которую ложатся операции. */
 export interface IFinanceOperationContext {
@@ -51,4 +52,13 @@ export interface IFinanceOperationRow {
    * операции Ozon (TASK-131). Ставит импорт.
    */
   breakdown?: IOperationBreakdownPart[];
+  /**
+   * Колонки реестра «Финучёта» (TASK-207, `accountingColumnsOf`). Текущий P&L
+   * их не читает; null — площадка значения не дала.
+   */
+  currency?: string | null;
+  itemId?: string | null;
+  reportedAt?: Date | null;
+  processingStatus?: string | null;
+  subArticle?: TAccountingSubArticle | null;
 }

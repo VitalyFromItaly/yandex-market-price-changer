@@ -76,6 +76,26 @@ const requireModelOverrides: Joi.CustomValidator<string> = (value, helpers) => {
   return value;
 };
 
+/**
+ * Переменные без умолчания — и почему. Остальные обязаны иметь `.default()` или
+ * быть `.optional()`: забытая в `.env` прода новая переменная не должна ронять
+ * старт (так упал прод на MARKETPLACE_WEBHOOK_IP_CHECK, 2026-11-03). Сюда — только
+ * если любое умолчание опасно или без значения работать нечем. Сторож — config.test.ts:
+ * обязательная в схеме переменная вне этого списка (или `${X:?}` в docker-compose)
+ * роняет CI, а не прод.
+ */
+export const REQUIRED_ENV_KEYS = {
+  STOCK_WRITE_ENABLED: 'запись в живой кабинет: умолчание любого знака опасно',
+  PRICE_WRITE_ENABLED: 'запись в живой кабинет: умолчание любого знака опасно',
+  MONGODB_URL: 'без базы работать нечем',
+  MONGODB_DATABASE: 'без базы работать нечем',
+  POSTGRES_URL: 'без финансового журнала работать нечем',
+  REDIS_HOST: 'без него Bull молча уходит на localhost',
+  TELEGRAM_TOKEN: 'без токена нет бота',
+  TELEGRAM_ADMIN_IDS: 'без админов заявки некому одобрять',
+  TELEGRAM_WEBHOOK_URL: 'только при TELEGRAM_UPDATE_MODE=webhook — без адреса апдейты не придут',
+} as const;
+
 export const envValidationSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
 
@@ -129,16 +149,15 @@ export const envValidationSchema = Joi.object({
    * Проверять ли IP отправителя уведомлений ЯМ/Ozon о заказах (`stock_push_events`).
    * IP — из X-Forwarded-For одного прокси (`trust proxy 1`, nginx CapRover): если перед
    * nginx встанет ещё прокси (Cloudflare и т.п.), каждое уведомление станет «чужим», и
-   * его отвергнет проверка — поэтому рычаг есть. Обязателен без умолчания: среда
-   * заявляет решение сама (довод STOCK_WRITE_ENABLED).
+   * его отвергнет проверка — поэтому рычаг есть. Умолчание `true`: безопасный знак
+   * очевиден, а обязательность без умолчания уронила прод, где переменную не завели
+   * (2026-11-03). `false` ставят только при лишнем прокси перед nginx.
    */
   MARKETPLACE_WEBHOOK_IP_CHECK: Joi.string()
     .valid('true', 'false')
-    .required()
+    .empty('')
+    .default('true')
     .messages({
-      'any.required':
-        'MARKETPLACE_WEBHOOK_IP_CHECK обязателен: true — уведомления площадок о заказах принимаются ' +
-        'только с их IP, false — без проверки (если перед nginx есть ещё прокси). В проде — true.',
       'any.only': 'MARKETPLACE_WEBHOOK_IP_CHECK принимает только true или false',
     }),
 
@@ -355,6 +374,66 @@ export const envValidationSchema = Joi.object({
     'number.base': 'POLZA_AI_BALANCE_WARN_RUB: число рублей (0 — не предупреждать)',
     'number.min': 'POLZA_AI_BALANCE_WARN_RUB: не может быть отрицательным (0 — не предупреждать)',
   }),
+
+  // --- «Финучёт»: загрузка финансов (TASK-212) ---
+  // Только у продавцов с фичей fin_accounting. Текущий месяц ЯМ и Ozon грузится
+  // раз в N часов (решение accounting_sync_frequent_3h: 3); WB — только ночью,
+  // новый отчёт у него раз в неделю. Не чаще раза в час: у ЯМ квота генераций.
+  FIN_ACCOUNTING_SYNC_EVERY_HOURS: Joi.number()
+    .integer()
+    .min(1)
+    .max(12)
+    .empty('')
+    .default(3)
+    .messages({
+      'number.base': 'FIN_ACCOUNTING_SYNC_EVERY_HOURS: целое число часов от 1 до 12',
+      'number.integer': 'FIN_ACCOUNTING_SYNC_EVERY_HOURS: целое число часов от 1 до 12',
+      'number.min': 'FIN_ACCOUNTING_SYNC_EVERY_HOURS: целое число часов от 1 до 12',
+      'number.max': 'FIN_ACCOUNTING_SYNC_EVERY_HOURS: целое число часов от 1 до 12',
+    }),
+  // Снимок строк заказов «Финучёта» (TASK-210, решение accounting_order_lines_sync):
+  // getOrders раз в N минут у продавцов с fin_accounting. Шаг округляется вверх
+  // до делителя часа (5, 10, 15, 20, 30, 60).
+  FIN_ACCOUNTING_ORDERS_EVERY_MINUTES: Joi.number()
+    .integer()
+    .min(5)
+    .max(60)
+    .empty('')
+    .default(15)
+    .messages({
+      'number.base': 'FIN_ACCOUNTING_ORDERS_EVERY_MINUTES: целое число минут от 5 до 60',
+      'number.integer': 'FIN_ACCOUNTING_ORDERS_EVERY_MINUTES: целое число минут от 5 до 60',
+      'number.min': 'FIN_ACCOUNTING_ORDERS_EVERY_MINUTES: целое число минут от 5 до 60',
+      'number.max': 'FIN_ACCOUNTING_ORDERS_EVERY_MINUTES: целое число минут от 5 до 60',
+    }),
+  // Окно перезагрузки: ночью перезагружаются текущий и N−1 прошлых месяцев —
+  // отчёт, появившийся с задержкой, забирается сам, пока месяц в окне.
+  FIN_ACCOUNTING_RELOAD_MONTHS: Joi.number()
+    .integer()
+    .min(1)
+    .max(12)
+    .empty('')
+    .default(3)
+    .messages({
+      'number.base': 'FIN_ACCOUNTING_RELOAD_MONTHS: целое число месяцев от 1 до 12',
+      'number.integer': 'FIN_ACCOUNTING_RELOAD_MONTHS: целое число месяцев от 1 до 12',
+      'number.min': 'FIN_ACCOUNTING_RELOAD_MONTHS: целое число месяцев от 1 до 12',
+      'number.max': 'FIN_ACCOUNTING_RELOAD_MONTHS: целое число месяцев от 1 до 12',
+    }),
+  // Повторы после сбоя загрузки периода: отложенные задачи через 10, 20, 40 мин…
+  // После последнего — уведомление продавцу. 0 — без повторов, сразу уведомление.
+  FIN_ACCOUNTING_RETRY_ATTEMPTS: Joi.number()
+    .integer()
+    .min(0)
+    .max(6)
+    .empty('')
+    .default(3)
+    .messages({
+      'number.base': 'FIN_ACCOUNTING_RETRY_ATTEMPTS: целое число повторов от 0 до 6',
+      'number.integer': 'FIN_ACCOUNTING_RETRY_ATTEMPTS: целое число повторов от 0 до 6',
+      'number.min': 'FIN_ACCOUNTING_RETRY_ATTEMPTS: целое число повторов от 0 до 6',
+      'number.max': 'FIN_ACCOUNTING_RETRY_ATTEMPTS: целое число повторов от 0 до 6',
+    }),
 
   // --- Yandex Market Partner API ---
   // Токен продавца здесь НЕ хранится: каждый пользователь вводит свой через

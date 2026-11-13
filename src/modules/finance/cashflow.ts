@@ -122,12 +122,16 @@ const isMoney = (article: TFinanceArticle) => FINANCE_ARTICLE_META[article].grou
 const inPeriod = (day: string, period: IFinancePeriod) => day >= period.from && day <= period.to;
 
 /**
- * Дни, в которые расход уходит деньгами в пределах периода. Ежемесячный — раз
+ * Дни, в которые расход уходит деньгами в пределах периода. Разовый и «за
+ * период» — в день начала. Ежемесячный — раз
  * в месяц в число дня начала; в месяце, где такого числа нет (31-е в
  * феврале), — в последний день.
  */
 export function expenseCashDays(expense: IAllocatableExpense, period: IFinancePeriod): string[] {
-  if (expense.kind === 'one_off') return inPeriod(expense.fromDay, period) ? [expense.fromDay] : [];
+  // Расход за период (TASK-220) оплачивается одной суммой — в день начала, как разовый.
+  if (expense.kind === 'one_off' || expense.kind === 'period') {
+    return inPeriod(expense.fromDay, period) ? [expense.fromDay] : [];
+  }
 
   const dayOfMonth = Number(expense.fromDay.slice(8, 10));
   const start = expense.fromDay > period.from ? expense.fromDay : period.from;

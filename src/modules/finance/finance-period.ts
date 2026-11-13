@@ -95,6 +95,14 @@ export const OZON_TRANSACTIONS_REPORT_TYPE = 'ozon-transaction-list';
 /** Тип «отчёта» WB — отчёт реализации (sales-reports/detailed, до 2026 — reportDetailByPeriod; TASK-136). */
 export const WB_REALIZATION_REPORT_TYPE = 'wb-realization-report';
 
+/**
+ * Тип отчёта WB «Продвижение», загружаемого файлом (TASK-209). Свой, а не
+ * отчёт реализации: свой ключ периода — API-импорт WB (`findStale` по ключу
+ * периода) строки файла не снимет, и счётчики версий документов не пересекутся.
+ * В `FINANCE_REPORT_TYPE` его нет: статуса месяца у файла нет.
+ */
+export const WB_PROMOTION_REPORT_TYPE = 'wb-promotion';
+
 /** Тип журнала площадки — ключ периода, версии документа и статуса месяца. */
 export const FINANCE_REPORT_TYPE: Record<TFinanceMarketplace, string> = {
   ym: YM_NETTING_REPORT_TYPE,

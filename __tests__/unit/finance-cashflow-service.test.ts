@@ -6,16 +6,16 @@ import { FinanceDocumentRepository } from '../../src/database/postgres/repositor
 import { FinanceExpenseRepository } from '../../src/database/postgres/repositories/finance-expense.repository';
 import { FinanceOperationRepository } from '../../src/database/postgres/repositories/finance-operation.repository';
 import { FinancePeriodRepository } from '../../src/database/postgres/repositories/finance-period.repository';
-import { FinancePurchaseRepository } from '../../src/database/postgres/repositories/finance-purchase.repository';
 import { FinanceTaxSettingsRepository } from '../../src/database/postgres/repositories/finance-tax-settings.repository';
 import { FinanceCashflowService } from '../../src/modules/finance/finance-cashflow.service';
 import { FinanceExpensesService } from '../../src/modules/finance/finance-expenses.service';
 import { financePeriodKey, monthPeriod } from '../../src/modules/finance/finance-period';
-import { FinancePurchasesService } from '../../src/modules/finance/finance-purchases.service';
+import type { FinancePurchasesService } from '../../src/modules/finance/finance-purchases.service';
 import { FinanceTaxService } from '../../src/modules/finance/finance-tax.service';
 import { FinanceService } from '../../src/modules/finance/finance.service';
 import { journalKeys, nettingRowToOperation } from '../../src/modules/finance/ym-journal';
 import { createTestFinanceDb } from '../helpers/test-postgres';
+import { purchasesServiceOf } from '../helpers/purchases-service';
 
 /**
  * ДДС (TASK-122) на PGlite рядом с настоящим P&L: закупка меняет денежный
@@ -86,7 +86,7 @@ beforeAll(async () => {
   test = await createTestFinanceDb();
   operations = new FinanceOperationRepository(test.db);
   documents = new FinanceDocumentRepository(test.db);
-  purchases = new FinancePurchasesService(new FinancePurchaseRepository(test.db));
+  purchases = purchasesServiceOf(test.db);
   expenses = new FinanceExpensesService(new FinanceExpenseRepository(test.db));
   cashflow = new FinanceCashflowService(operations, expenses, purchases);
   pnl = new FinanceService(

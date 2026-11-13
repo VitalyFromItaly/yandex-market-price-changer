@@ -20,6 +20,9 @@ const batch: Purchase = {
   paidDay: '2026-10-03',
   amountKopecks: 15_000_050,
   lines: [{ sku: 'W1', name: 'Часы', count: 3, priceKopecks: 5_000_000 }],
+  deliveryKopecks: 0,
+  otherCostsKopecks: 0,
+  lotCostSplit: 'value',
   note: null,
 };
 
@@ -61,6 +64,25 @@ describe('форма закупки', () => {
       amount: '',
       note: '',
       lines: [],
+      delivery: '',
+      otherCosts: '',
+      lotCostSplit: 'value',
+    });
+  });
+
+  it('поля партий: в форме — рубли, в теле — только при открытых партиях', () => {
+    const form = toPurchaseForm(
+      { ...batch, deliveryKopecks: 100_001, otherCostsKopecks: 0, lotCostSplit: 'count' },
+      '2026-10-15',
+    );
+    expect(form).toMatchObject({ delivery: '1000,01', otherCosts: '', lotCostSplit: 'count' });
+    const closed = purchaseBody(form);
+    expect(closed).not.toHaveProperty('delivery');
+    expect(closed).not.toHaveProperty('lotCostSplit');
+    expect(purchaseBody({ ...form, delivery: ' 1000,01 ' }, true)).toMatchObject({
+      delivery: '1000,01',
+      otherCosts: '',
+      lotCostSplit: 'count',
     });
   });
 

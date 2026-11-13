@@ -1,6 +1,9 @@
 import type { IWbOrderFacts } from './wb-orders';
 import type { IWbFbsOrder } from './wb.client';
-import type { IMarketplaceOrders } from '../marketplaces/marketplace-adapter';
+import type {
+  IMarketplaceOrders,
+  IMarketplaceRawOrderLine,
+} from '../marketplaces/marketplace-adapter';
 import type { ICalendarDate } from '../yandex/reports/moscow-day';
 import type { IReportPeriod } from '../yandex/reports/report-period';
 
@@ -8,6 +11,7 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { MarketplaceConnectionService } from '../../database/services/marketplace-connection.service';
 import { marketplaceOrderWindows, windowMoments } from '../marketplaces/order-windows';
+import { moscowDay } from '../yandex/reports/moscow-day';
 
 import { WbClientFactory } from './wb-client.factory';
 import { wbMarketplaceOrder } from './wb-orders';
@@ -99,6 +103,26 @@ export class WbOrdersService {
       orders: all.filter((order) => order.stage !== 'cancelled'),
       cancelled: all.filter((order) => order.stage === 'cancelled'),
     };
+  }
+
+  /**
+   * Сырые строки заказов и продаж «Статистики», ИЗМЕНЁННЫЕ с `window.from`
+   * (снимок строк заказов «Финучёта», TASK-211). Сначала все заказы, потом все
+   * продажи — по порядку и через тот же клиент фабрики: выдержка 61 с на токен
+   * (`WbStatisticsPacer`) общая с остальными вызовами «Статистики».
+   */
+  async rawOrderLines(
+    telegramUserId: string,
+    window: { from: Date; to: Date },
+  ): Promise<IMarketplaceRawOrderLine[]> {
+    const client = await wbSellerClient(this.clients, this.connections, telegramUserId);
+    const from = isoDay(moscowDay(window.from));
+    const orders = await client.listSupplierOrdersRaw(from);
+    const sales = await client.listSupplierSalesRaw(from);
+    return [
+      ...orders.map((raw) => ({ kind: 'wb-order' as const, raw })),
+      ...sales.map((raw) => ({ kind: 'wb-sale' as const, raw })),
+    ];
   }
 }
 

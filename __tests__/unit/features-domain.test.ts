@@ -102,6 +102,13 @@ describe('Реестр возможностей', () => {
       FEATURE.PRICE_SET_WRITE_YM,
       FEATURE.PRICE_SET_WRITE_OZON,
       FEATURE.PRICE_SET_WRITE_WB,
+      FEATURE.FIN_ACCOUNTING,
+      FEATURE.FIN_ACCOUNTING_ORDERS,
+      FEATURE.FIN_ACCOUNTING_RETURNS,
+      FEATURE.FIN_ACCOUNTING_LOTS,
+      FEATURE.FIN_ACCOUNTING_RECONCILE,
+      FEATURE.FIN_ACCOUNTING_DASHBOARD,
+      FEATURE.FIN_ACCOUNTING_UPLOADS,
       FEATURE.SKU_RATINGS,
       FEATURE.FORECAST,
       FEATURE.PRICE_CALCULATOR,
@@ -521,6 +528,26 @@ describe('Зависимости фич (requires, TASK-153)', () => {
     expect(
       featureGraphProblems({ a: meta(['b']), b: meta(['c']), c: meta(['a']) } as never),
     ).toEqual(['цикл зависимостей: a → b → c → a']);
+  });
+
+  it('подфичи «Финучёта» требуют зонтик fin_accounting и без него закрыты (TASK-206)', () => {
+    const subs = [
+      FEATURE.FIN_ACCOUNTING_ORDERS,
+      FEATURE.FIN_ACCOUNTING_RETURNS,
+      FEATURE.FIN_ACCOUNTING_LOTS,
+      FEATURE.FIN_ACCOUNTING_RECONCILE,
+      FEATURE.FIN_ACCOUNTING_DASHBOARD,
+      FEATURE.FIN_ACCOUNTING_UPLOADS,
+    ];
+    expect(FEATURE_META[FEATURE.FIN_ACCOUNTING].requires).toBeUndefined();
+    for (const sub of subs) {
+      expect(FEATURE_META[sub].requires, sub).toEqual([FEATURE.FIN_ACCOUNTING]);
+      expect(enabledIn(FEATURE_META, { [sub]: true }, sub), sub).toBe(false);
+      expect(
+        enabledIn(FEATURE_META, { [sub]: true, [FEATURE.FIN_ACCOUNTING]: true }, sub),
+        sub,
+      ).toBe(true);
+    }
   });
 
   it('unit-экономика и аномалии требуют «Финансы»; обзор и калькулятор цен — нет', () => {

@@ -36,6 +36,7 @@ import {
   resolveFeatureFlags,
   resolveFeatures,
 } from '../telegram/bots/shared/features.domain';
+import { AccountingOrdersScheduler } from '../telegram/queue/services/accounting-orders.scheduler';
 import { FinanceImportScheduler } from '../telegram/queue/services/finance-import.scheduler';
 import { SellerNotificationsScheduler } from '../telegram/queue/services/seller-notifications.scheduler';
 import { StockPushScheduler } from '../telegram/queue/services/stock-push.scheduler';
@@ -100,6 +101,7 @@ export class AccessController {
     private readonly notificationsSchedule: SellerNotificationsScheduler,
     private readonly digestSchedule: WeeklyDigestScheduler,
     private readonly pushSchedule: StockPushScheduler,
+    private readonly accountingOrdersSchedule: AccountingOrdersScheduler,
   ) {}
 
   /**
@@ -166,8 +168,16 @@ export class AccessController {
     }
 
     // Фича `finance` — это расписание загрузки: открыли — задача заводится
-    // сейчас, а не после рестарта. `refresh` не бросает и не ждётся.
-    if (body.feature === FEATURE.FINANCE) void this.financeSchedule.refresh();
+    // сейчас, а не после рестарта. `refresh` не бросает и не ждётся. Зонтик
+    // «Финучёта» (TASK-212) — тоже: ночное окно и частая задача `finacc-`, а
+    // Ozon/WB в расписании зависят от своих фич.
+    const financeKeys: string[] = [
+      FEATURE.FINANCE,
+      FEATURE.FIN_ACCOUNTING,
+      FEATURE.OZON,
+      FEATURE.WB,
+    ];
+    if (financeKeys.includes(body.feature)) void this.financeSchedule.refresh();
     // Проверка уведомлений — тоже расписание; `notifications` требует `finance`.
     if (body.feature === FEATURE.FINANCE || body.feature === FEATURE.NOTIFICATIONS) {
       void this.notificationsSchedule.refresh();
@@ -186,6 +196,8 @@ export class AccessController {
       FEATURE.WB,
     ];
     if (pushKeys.includes(body.feature)) void this.pushSchedule.refresh();
+    // Снимок строк заказов «Финучёта» (TASK-210) — расписание по зонтику.
+    if (body.feature === FEATURE.FIN_ACCOUNTING) void this.accountingOrdersSchedule.refresh();
 
     return await this.withStore(updated);
   }
@@ -248,6 +260,7 @@ export class AccessController {
     void this.notificationsSchedule.refresh();
     void this.digestSchedule.refresh();
     void this.pushSchedule.refresh();
+    void this.accountingOrdersSchedule.refresh();
 
     return await this.withStore(updated);
   }

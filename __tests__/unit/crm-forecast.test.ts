@@ -17,7 +17,6 @@ import { FinanceDocumentRepository } from '../../src/database/postgres/repositor
 import { FinanceExpenseRepository } from '../../src/database/postgres/repositories/finance-expense.repository';
 import { FinanceOperationRepository } from '../../src/database/postgres/repositories/finance-operation.repository';
 import { FinancePeriodRepository } from '../../src/database/postgres/repositories/finance-period.repository';
-import { FinancePurchaseRepository } from '../../src/database/postgres/repositories/finance-purchase.repository';
 import { FinanceTaxSettingsRepository } from '../../src/database/postgres/repositories/finance-tax-settings.repository';
 import { AI_TOOL } from '../../src/modules/ai-tools/ai-tools.domain';
 import { AiToolsService } from '../../src/modules/ai-tools/ai-tools.service';
@@ -32,7 +31,6 @@ import { FinanceCashflowService } from '../../src/modules/finance/finance-cashfl
 import { FinanceExpensesService } from '../../src/modules/finance/finance-expenses.service';
 import { FinanceForecastService } from '../../src/modules/finance/finance-forecast.service';
 import { financePeriodKey, monthPeriod } from '../../src/modules/finance/finance-period';
-import { FinancePurchasesService } from '../../src/modules/finance/finance-purchases.service';
 import { FinanceTaxService } from '../../src/modules/finance/finance-tax.service';
 import { FinanceService } from '../../src/modules/finance/finance.service';
 import { FORECAST_NO_JOURNAL } from '../../src/modules/finance/forecast';
@@ -46,6 +44,7 @@ import {
   isFeatureEnabled,
 } from '../../src/modules/telegram/bots/shared/features.domain';
 import { createTestFinanceDb } from '../helpers/test-postgres';
+import { purchasesServiceOf } from '../helpers/purchases-service';
 
 /**
  * «Прогнозы» CRM (TASK-151): факт и база — тот же `FinanceService.build`, что
@@ -101,11 +100,7 @@ beforeAll(async () => {
     { build: vi.fn() } as never,
     { report: vi.fn() } as never,
   );
-  const cashflow = new FinanceCashflowService(
-    operations,
-    expenses,
-    new FinancePurchasesService(new FinancePurchaseRepository(pg.db)),
-  );
+  const cashflow = new FinanceCashflowService(operations, expenses, purchasesServiceOf(pg.db));
   forecasts = new FinanceForecastService(finance, cashflow, taxes);
 }, 60_000);
 

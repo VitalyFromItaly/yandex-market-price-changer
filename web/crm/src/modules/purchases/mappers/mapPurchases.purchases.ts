@@ -17,7 +17,16 @@ import { PURCHASE_ERROR_CODE } from '../purchases.domain';
 import { ApiError } from '@/shared/http';
 import { formatDay, formatRub } from '@/shared/utils';
 
-const FIELDS: readonly PurchaseField[] = ['supplier', 'paidDay', 'amount', 'lines', 'note'];
+const FIELDS: readonly PurchaseField[] = [
+  'supplier',
+  'paidDay',
+  'amount',
+  'lines',
+  'delivery',
+  'otherCosts',
+  'lotCostSplit',
+  'note',
+];
 
 export function kopecksToRubText(kopecks: number): string {
   return formatRub(kopecks / 100);
@@ -61,7 +70,18 @@ export const emptyLine = (): PurchaseLineForm => ({ sku: '', name: '', count: '1
 
 /** Форма новой закупки или правки существующей. */
 export function toPurchaseForm(purchase: Purchase | null, today: string): PurchaseForm {
-  if (purchase === null) return { supplier: '', paidDay: today, amount: '', note: '', lines: [] };
+  if (purchase === null) {
+    return {
+      supplier: '',
+      paidDay: today,
+      amount: '',
+      note: '',
+      lines: [],
+      delivery: '',
+      otherCosts: '',
+      lotCostSplit: 'value',
+    };
+  }
   return {
     supplier: purchase.supplier,
     paidDay: purchase.paidDay,
@@ -73,11 +93,18 @@ export function toPurchaseForm(purchase: Purchase | null, today: string): Purcha
       count: String(line.count),
       price: amountInput(line.priceKopecks),
     })),
+    delivery: purchase.deliveryKopecks ? amountInput(purchase.deliveryKopecks) : '',
+    otherCosts: purchase.otherCostsKopecks ? amountInput(purchase.otherCostsKopecks) : '',
+    lotCostSplit: purchase.lotCostSplit,
   };
 }
 
-/** Пустые строки позиций (ни артикула, ни цены) не отправляются: их просто не дописали. */
-export function purchaseBody(form: PurchaseForm): PurchaseBody {
+/**
+ * Пустые строки позиций (ни артикула, ни цены) не отправляются: их просто не дописали.
+ * Поля партий — только при `lotsEnabled`: без фичи их нет в форме, и правка не должна
+ * обнулить доставку, внесённую раньше.
+ */
+export function purchaseBody(form: PurchaseForm, lotsEnabled = false): PurchaseBody {
   const note = form.note.trim();
   const lines = form.lines
     .filter((line) => line.sku.trim() !== '' || line.price.trim() !== '')
@@ -87,12 +114,19 @@ export function purchaseBody(form: PurchaseForm): PurchaseBody {
       count: line.count.trim(),
       price: line.price.trim(),
     }));
-  return {
+  const body: PurchaseBody = {
     supplier: form.supplier.trim(),
     paidDay: form.paidDay,
     amount: form.amount.trim(),
     note: note === '' ? null : note,
     lines: lines.length ? lines : null,
+  };
+  if (!lotsEnabled) return body;
+  return {
+    ...body,
+    delivery: form.delivery.trim(),
+    otherCosts: form.otherCosts.trim(),
+    lotCostSplit: form.lotCostSplit,
   };
 }
 

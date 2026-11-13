@@ -1,5 +1,5 @@
 import type { TFinanceMarketplace } from '../../../../database/postgres/finance.schema';
-import type { TFeatureMap } from '../../bots/shared/features.domain';
+import type { TFeatureKey, TFeatureMap } from '../../bots/shared/features.domain';
 
 import { FEATURE, isFeatureEnabled } from '../../bots/shared/features.domain';
 
@@ -91,15 +91,74 @@ export function pickFinanceUsers(
 export function pickFinanceMarketplaces(
   accounts: readonly IFinanceCandidate[],
   adminIds: readonly (number | string)[],
-  configured: { ym: ReadonlySet<string>; ozon: ReadonlySet<string>; wb: ReadonlySet<string> },
+  configured: IFinanceConfigured,
+): Map<string, TFinanceMarketplace[]> {
+  return pickMarketplacesBy(FEATURE.FINANCE, accounts, adminIds, configured);
+}
+
+/**
+ * Площадки «Финучёта» (TASK-212): то же правило, что `pickFinanceMarketplaces`,
+ * но вместо фичи `finance` — зонтик `fin_accounting` (он `finance` не требует:
+ * новый учёт читает тот же журнал, и без загрузки ему нечего показать). Таким
+ * продавцам ночной проход грузит окно перезагрузки, а частая задача — текущий
+ * месяц ЯМ и Ozon. Планировщик зовёт её без админов: авторасписание без
+ * согласия — довод `notifications_admins_not_auto`.
+ */
+export function pickAccountingMarketplaces(
+  accounts: readonly IFinanceCandidate[],
+  adminIds: readonly (number | string)[],
+  configured: IFinanceConfigured,
+): Map<string, TFinanceMarketplace[]> {
+  return pickMarketplacesBy(FEATURE.FIN_ACCOUNTING, accounts, adminIds, configured);
+}
+
+/** Объединение площадок по продавцам, порядок площадок — ЯМ, Ozon, WB. */
+export function mergeMarketplaceMaps(
+  ...maps: readonly ReadonlyMap<string, readonly TFinanceMarketplace[]>[]
+): Map<string, TFinanceMarketplace[]> {
+  const order: readonly TFinanceMarketplace[] = ['ym', 'ozon', 'wb'];
+  const result = new Map<string, Set<TFinanceMarketplace>>();
+  for (const map of maps) {
+    for (const [id, list] of map) {
+      const set = result.get(id) ?? new Set<TFinanceMarketplace>();
+      list.forEach((marketplace) => set.add(marketplace));
+      result.set(id, set);
+    }
+  }
+  return new Map(
+    [...result.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, set]) => [id, order.filter((marketplace) => set.has(marketplace))]),
+  );
+}
+
+export interface IFinanceConfigured {
+  ym: ReadonlySet<string>;
+  ozon: ReadonlySet<string>;
+  wb: ReadonlySet<string>;
+}
+
+function pickMarketplacesBy(
+  base: TFeatureKey,
+  accounts: readonly IFinanceCandidate[],
+  adminIds: readonly (number | string)[],
+  configured: IFinanceConfigured,
 ): Map<string, TFinanceMarketplace[]> {
   const result = new Map<string, TFinanceMarketplace[]>();
   const add = (id: string, marketplace: TFinanceMarketplace) =>
     result.set(id, [...(result.get(id) ?? []), marketplace]);
 
-  for (const id of pickFinanceUsers(accounts, adminIds, configured.ym)) add(id, 'ym');
+  const ymWanted = new Set<string>(adminIds.map(String));
+  for (const account of accounts) {
+    if (account.status === 'approved' && isFeatureEnabled(account.features, base)) {
+      ymWanted.add(account.telegramUserId);
+    }
+  }
+  for (const id of [...ymWanted].filter((candidate) => configured.ym.has(candidate)).sort()) {
+    add(id, 'ym');
+  }
 
-  // Ozon и WB: подключённый ключ плюс фичи `finance` и площадки; админ — без флагов.
+  // Ozon и WB: подключённый ключ плюс базовая фича и фича площадки; админ — без флагов.
   const byFeature = [
     ['ozon', FEATURE.OZON],
     ['wb', FEATURE.WB],
@@ -109,7 +168,7 @@ export function pickFinanceMarketplaces(
     for (const account of accounts) {
       if (
         account.status === 'approved' &&
-        isFeatureEnabled(account.features, FEATURE.FINANCE) &&
+        isFeatureEnabled(account.features, base) &&
         isFeatureEnabled(account.features, feature)
       ) {
         wanted.add(account.telegramUserId);
@@ -123,6 +182,62 @@ export function pickFinanceMarketplaces(
   }
 
   return new Map([...result.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+/**
+ * Префикс частой задачи «Финучёта» (TASK-212). Свой, не `finance-`: сверка
+ * ночного расписания снимает всё `finance-*`, чего нет в её списке, — и сняла
+ * бы частые задачи на каждом старте. Дефис — довод `FINANCE_JOB_PREFIX`.
+ */
+export const ACCOUNTING_JOB_PREFIX = 'finacc-';
+
+export function accountingJobId(telegramUserId: string): string {
+  return `${ACCOUNTING_JOB_PREFIX}${telegramUserId}`;
+}
+
+export function parseAccountingJobId(id: string | null | undefined): string | null {
+  if (!id?.startsWith(ACCOUNTING_JOB_PREFIX)) return null;
+  const telegramUserId = id.slice(ACCOUNTING_JOB_PREFIX.length);
+  return telegramUserId || null;
+}
+
+/**
+ * Площадки частой загрузки текущего месяца (решение
+ * `accounting_sync_frequent_3h`): ЯМ и Ozon. У WB новый отчёт реализации раз в
+ * неделю — чаще ночи его опрашивать незачем (матрица TASK-205).
+ */
+export const ACCOUNTING_FREQUENT_MARKETPLACES: ReadonlySet<TFinanceMarketplace> = new Set([
+  'ym',
+  'ozon',
+]);
+
+/**
+ * Cron частой задачи: раз в `everyHours` часов, минута — от хэша id (довод
+ * `financeCron`: продавцы не стоят в квоте Маркета разом, а минута не
+ * сдвигается оттого, что фичу открыли кому-то ещё).
+ */
+export function accountingCron(telegramUserId: string, everyHours: number): string {
+  let hash = 0;
+  for (const char of telegramUserId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  const minute = hash % 60;
+  const hours = Math.min(12, Math.max(1, Math.floor(everyHours)));
+  return hours === 1 ? `${minute} * * * *` : `${minute} */${hours} * * *`;
+}
+
+/**
+ * Префикс отложенного повтора после сбоя загрузки периода (TASK-212). Номер
+ * повтора — в id: повтор ставится, пока предыдущая задача с тем же периодом
+ * ещё активна, и одинаковый id Bull молча не поставил бы.
+ */
+export const FINANCE_RETRY_JOB_PREFIX = 'finretry-';
+
+export function financeRetryJobId(
+  telegramUserId: string,
+  marketplace: TFinanceMarketplace,
+  month: string,
+  attempt: number,
+): string {
+  return `${FINANCE_RETRY_JOB_PREFIX}${marketplace}-${telegramUserId}-${month}-${attempt}`;
 }
 
 /**

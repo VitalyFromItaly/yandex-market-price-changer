@@ -74,6 +74,7 @@ export const SKU_COLUMN_OF: Readonly<Record<TFinanceArticle, TSkuColumn | null>>
   other_services: 'otherServices',
   unknown: 'unrecognized',
   bonus_payment: null,
+  promotion_report: null,
 };
 
 export type TSkuColumns = Record<TSkuColumn, number>;

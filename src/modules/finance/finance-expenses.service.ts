@@ -1,6 +1,7 @@
 import type { IExpenseAllocation } from './expense-allocation';
-import type { TExpenseField } from './expense.domain';
+import type { IExpenseValue, TExpenseField } from './expense.domain';
 import type { IFinancePeriod } from './finance-period';
+import type { IExpenseWrite } from '../../database/postgres/repositories/finance-expense.repository';
 import type {
   TFinanceExpenseCategoryRow,
   TFinanceExpenseRow,
@@ -10,9 +11,17 @@ import { Injectable } from '@nestjs/common';
 
 import { FinanceExpenseRepository } from '../../database/postgres/repositories/finance-expense.repository';
 
-import { allocate } from './expense-allocation';
-import { isUuid, validateCategoryName, validateExpenseInput } from './expense.domain';
-import { assertFinancePeriod } from './finance-period';
+import { allocate, expenseShare } from './expense-allocation';
+import {
+  EXPENSE_REGISTRY_ARTICLE,
+  doubleCountArticleOf,
+  expenseRecognitionWindow,
+  isPresetCategory,
+  isUuid,
+  validateCategoryName,
+  validateExpenseInput,
+} from './expense.domain';
+import { assertFinancePeriod, financeToday } from './finance-period';
 
 /** Ввод расхода не прошёл проверку — `field` говорит, под каким полем показать. */
 export class ExpenseValidationError extends Error {
@@ -39,6 +48,15 @@ export class ExpenseCategoryInUseError extends Error {
     super(`Категория используется в записях: ${used}. Сначала перенесите или удалите их`);
     this.name = 'ExpenseCategoryInUseError';
   }
+}
+
+/**
+ * Расход для «Финучёта» (TASK-220): запись и её доля в месяце. У расхода заказа
+ * доля — вся сумма: заказ сам задаёт месяц своей карточки.
+ */
+export interface IAccountingExpense {
+  row: TFinanceExpenseRow;
+  kopecks: number;
 }
 
 export interface IExpensesSnapshot {
@@ -68,7 +86,10 @@ export class FinanceExpensesService {
     input: Record<string, unknown>,
   ): Promise<TFinanceExpenseRow> {
     const value = await this.validated(telegramUserId, input);
-    return this.repository.create(telegramUserId, value);
+    return this.repository.create(
+      telegramUserId,
+      await this.withDoubleCount(telegramUserId, value),
+    );
   }
 
   async update(
@@ -78,7 +99,11 @@ export class FinanceExpensesService {
   ): Promise<TFinanceExpenseRow> {
     if (!isUuid(id)) throw new ExpenseNotFoundError();
     const value = await this.validated(telegramUserId, input);
-    const row = await this.repository.update(telegramUserId, id, value);
+    const row = await this.repository.update(
+      telegramUserId,
+      id,
+      await this.withDoubleCount(telegramUserId, value),
+    );
     if (!row) throw new ExpenseNotFoundError();
     return row;
   }
@@ -116,6 +141,42 @@ export class FinanceExpensesService {
       throw new ExpenseValidationError('period', (error as Error).message);
     }
     return allocate(await this.repository.list(telegramUserId), period);
+  }
+
+  /**
+   * Расходы «Финучёта» на месяц карточки (TASK-220): привязанные к заказу —
+   * целиком, остальные — доля месяца по правилу `expenseShare` (то же, что у P&L,
+   * иначе «Расходы» и карточка разошлись бы). Нулевые доли отброшены.
+   */
+  async forAccounting(
+    telegramUserId: string,
+    month: IFinancePeriod,
+  ): Promise<IAccountingExpense[]> {
+    const rows = await this.repository.list(telegramUserId);
+    const result: IAccountingExpense[] = [];
+    for (const row of rows) {
+      const kopecks = row.scope === 'order' ? row.amountKopecks : expenseShare(row, month);
+      if (kopecks) result.push({ row, kopecks });
+    }
+    return result;
+  }
+
+  /** Статья реестра, которую расход повторяет за окно признания (решение `expenses_v2_double_count`). */
+  private async withDoubleCount(
+    telegramUserId: string,
+    value: IExpenseValue,
+  ): Promise<IExpenseWrite> {
+    const article = isPresetCategory(value.category)
+      ? EXPENSE_REGISTRY_ARTICLE[value.category]
+      : undefined;
+    if (!article) return { ...value, doubleCountArticle: null };
+    const today = financeToday();
+    const accruals = await this.repository.registryAccruals(
+      telegramUserId,
+      expenseRecognitionWindow(value, today),
+      [article],
+    );
+    return { ...value, doubleCountArticle: doubleCountArticleOf(value, accruals, today) };
   }
 
   private async validated(telegramUserId: string, input: Record<string, unknown>) {

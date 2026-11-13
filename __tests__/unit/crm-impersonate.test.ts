@@ -25,6 +25,7 @@ import { MarketplaceConnectionService } from '../../src/database/services/market
 import { YandexMarketService } from '../../src/database/services/yandex-market.service';
 import { FinanceImportScheduler } from '../../src/modules/telegram/queue/services/finance-import.scheduler';
 import { SellerNotificationsScheduler } from '../../src/modules/telegram/queue/services/seller-notifications.scheduler';
+import { AccountingOrdersScheduler } from '../../src/modules/telegram/queue/services/accounting-orders.scheduler';
 import { StockPushScheduler } from '../../src/modules/telegram/queue/services/stock-push.scheduler';
 import { WeeklyDigestScheduler } from '../../src/modules/telegram/queue/services/weekly-digest.scheduler';
 import { AccessNotifierService } from '../../src/modules/access/access-notifier.service';
@@ -149,6 +150,7 @@ describe('Вход в CRM за продавца по HTTP', { timeout: 60_000 },
         { provide: SellerNotificationsScheduler, useValue: { refresh: vi.fn() } },
         { provide: WeeklyDigestScheduler, useValue: { refresh: vi.fn() } },
         { provide: StockPushScheduler, useValue: { refresh: vi.fn() } },
+        { provide: AccountingOrdersScheduler, useValue: { refresh: vi.fn() } },
         { provide: ProductMatchService, useValue: {} },
       ],
     })

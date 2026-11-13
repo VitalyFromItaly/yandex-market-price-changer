@@ -27,7 +27,8 @@ export type TMarketplaceCapability =
   | 'catalog'
   | 'stocks'
   | 'stockWrite'
-  | 'priceWrite';
+  | 'priceWrite'
+  | 'orderLines';
 
 /**
  * Карточка площадки — НАША сущность (TASK-163), выведенная по ЯМ и Ozon: та
@@ -176,6 +177,32 @@ export interface IMarketplaceOrderSource {
   ): Promise<IMarketplaceOrders>;
 }
 
+/** Вид сырой записи снимка строк заказов: кто её прислал и как её разбирать. */
+export type TMarketplaceRawOrderLineKind = 'ozon-fbs' | 'ozon-fbo' | 'wb-order' | 'wb-sale';
+
+export interface IMarketplaceRawOrderLine {
+  kind: TMarketplaceRawOrderLineKind;
+  /** Объект ответа площадки как пришёл: разбирает его `accounting-order-lines.domain.ts`. */
+  raw: unknown;
+}
+
+/**
+ * Сырьё снимка строк заказов «Финучёта» (TASK-211). Сырьё, а не наша сущность:
+ * снимок хранит цену сделки полями площадки (цена покупателя, продавца, выплата),
+ * которых в общем `IMarketplaceOrder` нет и быть не должно. Только чтение.
+ */
+export interface IMarketplaceOrderLineSource {
+  /**
+   * Ozon — отправления FBS и FBO с `financial_data`, начатые в окне
+   * (`in_process_at`); WB — строки supplier/orders и supplier/sales,
+   * ИЗМЕНЁННЫЕ с `window.from` (`dateFrom` «Статистики»).
+   */
+  rawOrderLines(
+    ref: IMarketplaceConnectionRef,
+    window: { from: Date; to: Date },
+  ): Promise<IMarketplaceRawOrderLine[]>;
+}
+
 export interface IMarketplaceCatalog {
   /** Каталог карточек площадки — только чтение. */
   listProducts(ref: IMarketplaceConnectionRef): Promise<TMarketplaceProduct[]>;
@@ -288,6 +315,7 @@ export interface IMarketplaceCapabilities {
   stocks: IMarketplaceStocks;
   stockWrite: IMarketplaceStockWriter;
   priceWrite: IMarketplacePriceWriter;
+  orderLines: IMarketplaceOrderLineSource;
 }
 
 export const MARKETPLACE_CAPABILITIES = Object.keys({
@@ -298,6 +326,7 @@ export const MARKETPLACE_CAPABILITIES = Object.keys({
   stocks: true,
   stockWrite: true,
   priceWrite: true,
+  orderLines: true,
 } satisfies Record<TMarketplaceCapability, true>) as TMarketplaceCapability[];
 
 /** Часть адаптера площадки: несколько частей одной площадки реестр складывает. */

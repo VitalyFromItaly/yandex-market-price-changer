@@ -10,10 +10,12 @@
  * - `label` описывает график для читалок экрана.
  * Ряды НЕ складываются: каждая область — от нуля, отрицательная уходит вниз.
  * Пропущенные дни заполняет вызывающий (`fillDays`): примитив рисует что дали.
+ * `gaps` — значение `null` значит «неизвестно»: ряды рисуются линиями с разрывом
+ * на таком дне (область разрывов не умеет), в тултипе — «нет данных», не ноль.
  */
 import type { ChartTone } from './chart.domain';
 
-import { VisArea, VisAxis, VisCrosshair, VisTooltip, VisXYContainer } from '@unovis/vue';
+import { VisArea, VisAxis, VisCrosshair, VisLine, VisTooltip, VisXYContainer } from '@unovis/vue';
 import { computed } from 'vue';
 
 import { TONE_CSS } from './chart.domain';
@@ -28,6 +30,11 @@ export interface AreaPoint {
   values: Record<string, number>;
 }
 
+/** Точка режима `gaps`: null — неизвестно, на графике разрыв. */
+export interface AreaGapPoint extends Omit<AreaPoint, 'values'> {
+  values: Record<string, number | null>;
+}
+
 export interface AreaSeries {
   key: string;
   label: string;
@@ -36,22 +43,25 @@ export interface AreaSeries {
 
 const props = withDefaults(
   defineProps<{
-    points: readonly AreaPoint[];
+    points: readonly AreaGapPoint[];
     series: readonly AreaSeries[];
     label: string;
     format?: (value: number) => string;
     /** Короткий формат делений оси («12 тыс.»); по умолчанию — `format`. */
     axisFormat?: (value: number) => string;
     height?: number;
+    /** `null` в значениях — разрыв линии, а не ноль. */
+    gaps?: boolean;
   }>(),
   {
+    gaps: false,
     format: (value: number) => String(value),
     axisFormat: undefined,
     height: 220,
   },
 );
 
-interface Datum extends AreaPoint {
+interface Datum extends AreaGapPoint {
   i: number;
 }
 const data = computed<Datum[]>(() => props.points.map((p, i) => ({ ...p, i })));
@@ -61,8 +71,8 @@ const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)'
 const x = (d: Datum): number => d.i;
 const valueOf =
   (key: string) =>
-  (d: Datum): number =>
-    d.values[key] ?? 0;
+  (d: Datum): number | undefined =>
+    props.gaps ? (d.values[key] ?? undefined) : (d.values[key] ?? 0);
 const accessors = computed(() => props.series.map((s) => valueOf(s.key)));
 const crosshairColor = (_: Datum, i: number): string => TONE_CSS[props.series[i]?.tone ?? 'series'];
 
@@ -72,6 +82,9 @@ const escape = (text: string): string =>
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c,
   );
 
+const cellText = (value: number | null | undefined): string =>
+  props.gaps && (value === null || value === undefined) ? 'нет данных' : props.format(value ?? 0);
+
 function template(d: Datum): string {
   const rows = props.series
     .map(
@@ -80,7 +93,7 @@ function template(d: Datum): string {
         `<span style="width:8px;height:8px;border-radius:9999px;background:${TONE_CSS[s.tone]}"></span>` +
         `<span style="opacity:.7">${escape(s.label)}</span>` +
         `<span style="margin-left:auto;padding-left:12px;font-weight:600;font-variant-numeric:tabular-nums">` +
-        `${escape(props.format(d.values[s.key] ?? 0))}</span></div>`,
+        `${escape(cellText(d.values[s.key]))}</span></div>`,
     )
     .join('');
   return (
@@ -108,8 +121,16 @@ const yTick = (tick: number | Date): string => (props.axisFormat ?? props.format
         :duration="reducedMotion ? 0 : undefined"
         :margin="{ top: 8, right: 4 }"
       >
+        <VisLine
+          v-if="gaps"
+          :x="x"
+          :y="accessors"
+          :color="series.map((s) => TONE_CSS[s.tone])"
+          :line-width="2.5"
+          curve-type="monotoneX"
+        />
         <VisArea
-          v-for="(s, index) in series"
+          v-for="(s, index) in gaps ? [] : series"
           :key="s.key"
           :x="x"
           :y="accessors[index]"

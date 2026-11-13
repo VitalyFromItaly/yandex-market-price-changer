@@ -31,25 +31,17 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 
-import {
-  FINANCE_MARKETPLACES,
-  FINANCE_ORIGINAL_MAX_BYTES,
-} from '../../../database/postgres/finance.schema';
+import { FINANCE_MARKETPLACES } from '../../../database/postgres/finance.schema';
 import { labelResolver } from '../../finance/expense.domain';
 import { FinanceCashflowService } from '../../finance/finance-cashflow.service';
 import { FinanceExpensesService } from '../../finance/finance-expenses.service';
-import {
-  FinanceImportBusyError,
-  FinanceImportService,
-  FinanceNoStoreError,
-} from '../../finance/finance-import.service';
+import { FinanceImportService } from '../../finance/finance-import.service';
 import { financeToday } from '../../finance/finance-period';
 import { parseScreenMonth, screenMonths } from '../../finance/finance-screen';
 import {
   FinanceScreenService,
   FinanceScreenValidationError,
 } from '../../finance/finance-screen.service';
-import { NettingFileError } from '../../finance/ym-netting-file';
 import { FEATURE } from '../../telegram/bots/shared/features.domain';
 import {
   FinanceImportScheduler,
@@ -58,26 +50,17 @@ import {
 import { RequireFeature } from '../crm-auth.decorators';
 import { FEATURE_DISABLED } from '../crm-features.domain';
 import { CrmJwtGuard, IRequestWithCrmUser } from '../crm-jwt.guard';
-import { createUploadInterceptor } from '../crm-upload.interceptor';
 import { contentDisposition } from '../jobs/crm-jobs.controller';
-import { decodeFileName, INVALID_FILE } from '../price-list/crm-price-list.domain';
 
+import { acceptedUpload, financeUploadError, FinanceUploadInterceptor } from './crm-finance-upload';
 import {
   FINANCE_DOCUMENT_NOT_FOUND,
   FINANCE_DOCUMENT_NOT_FOUND_TEXT,
-  FINANCE_FILE_BAD_ROW,
-  FINANCE_FILE_UNRECOGNIZED,
-  FINANCE_FILE_WRONG_REPORT,
-  FINANCE_IMPORT_BUSY,
   FINANCE_MARKETPLACE_INVALID_TEXT,
-  FINANCE_NO_STORE,
   FINANCE_PULL_MONTHS_TEXT,
   FINANCE_PULL_NOT_ALLOWED,
   FINANCE_UPLOAD_BAD_EXTENSION_TEXT,
-  FINANCE_UPLOAD_EXTENSIONS,
-  FINANCE_UPLOAD_MONTH_TEXT,
   FINANCE_UPLOAD_NO_FILE_TEXT,
-  FINANCE_UPLOAD_TOO_LARGE_TEXT,
   financeMarketplaceClosedText,
   financeUnsupportedView,
   INVALID_FINANCE_REQUEST,
@@ -99,15 +82,6 @@ const intOf = (value: unknown): number | undefined => {
     ? Math.trunc(n)
     : undefined;
 };
-
-/**
- * Финотчёт файлом (TASK-114): лимит — потолок оригинала в документе, чтобы
- * загруженный файл сохранялся всегда и его можно было скачать из операции.
- */
-const FinanceUploadInterceptor = createUploadInterceptor({
-  maxBytes: FINANCE_ORIGINAL_MAX_BYTES,
-  tooLargeMessage: FINANCE_UPLOAD_TOO_LARGE_TEXT,
-});
 
 interface IPage<T> {
   total: number;
@@ -299,15 +273,10 @@ export class CrmFinanceController {
     @UploadedFile() file: IUploadedFile | undefined,
     @Body() body: { month?: unknown } | undefined,
   ): Promise<TCrmFinanceUploadView> {
-    if (!file) throw invalidFile(FINANCE_UPLOAD_NO_FILE_TEXT);
-    const filename = decodeFileName(file.originalname);
-    const ext = /\.([a-z0-9]+)$/i.exec(filename)?.[1]?.toLowerCase();
-    if (!FINANCE_UPLOAD_EXTENSIONS.some((allowed) => allowed === ext)) {
-      throw invalidFile(FINANCE_UPLOAD_BAD_EXTENSION_TEXT);
-    }
-    const month = parseScreenMonth(body?.month);
-    const allowed = screenMonths(financeToday(new Date())).map((m) => m.month);
-    if (!month || !allowed.includes(month.month)) throw invalid('month', FINANCE_UPLOAD_MONTH_TEXT);
+    const { filename, month } = acceptedUpload(file, body?.month, {
+      noFile: FINANCE_UPLOAD_NO_FILE_TEXT,
+      badExtension: FINANCE_UPLOAD_BAD_EXTENSION_TEXT,
+    });
 
     try {
       const { result } = await this.imports.importManual({
@@ -330,7 +299,7 @@ export class CrmFinanceController {
         unknown: result.unknown,
       };
     } catch (error) {
-      throw uploadError(error);
+      throw financeUploadError(error);
     }
   }
 
@@ -391,47 +360,6 @@ function invalid(field: string, message: string): BadRequestException {
     field,
     message,
   });
-}
-
-function invalidFile(message: string): BadRequestException {
-  return new BadRequestException({ statusCode: 400, code: INVALID_FILE, field: 'file', message });
-}
-
-const NETTING_FILE_ERROR_CODE: Record<NettingFileError['kind'], string> = {
-  unrecognized: FINANCE_FILE_UNRECOGNIZED,
-  'wrong-report': FINANCE_FILE_WRONG_REPORT,
-  'bad-row': FINANCE_FILE_BAD_ROW,
-  empty: INVALID_FILE,
-  unreadable: INVALID_FILE,
-};
-
-/** Отказы загрузки → коды для фронта; остальное уходит общим фильтром (500 + журнал). */
-function uploadError(error: unknown): unknown {
-  if (error instanceof NettingFileError) {
-    const code = NETTING_FILE_ERROR_CODE[error.kind];
-    return new BadRequestException({
-      statusCode: 400,
-      code,
-      field: 'file',
-      message: error.message,
-      ...error.details,
-    });
-  }
-  if (error instanceof FinanceImportBusyError) {
-    return new ConflictException({
-      statusCode: 409,
-      code: FINANCE_IMPORT_BUSY,
-      message: error.message,
-    });
-  }
-  if (error instanceof FinanceNoStoreError) {
-    return new ConflictException({
-      statusCode: 409,
-      code: FINANCE_NO_STORE,
-      message: error.message,
-    });
-  }
-  return error;
 }
 
 /**

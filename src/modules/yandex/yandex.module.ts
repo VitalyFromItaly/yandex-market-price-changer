@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { DatabaseModule } from '../../database/database.module';
+import { AccountingCostHistoryModule } from '../accounting/accounting-cost-history.module';
 import { AiModule } from '../ai/ai.module';
 import { ProductsModule } from '../products/products.module';
 
@@ -44,9 +45,12 @@ import { YandexClientFactory } from './yandex-client.factory';
  *
  * AiModule — черновику ответа на отзыв (`FeedbackDraftService`); сам он зависит
  * только от базы, цикла нет.
+ *
+ * AccountingCostHistoryModule — история закупа v2 «Финучёта» пишется загрузкой
+ * прайса (TASK-213); он зависит только от баз, цикла нет.
  */
 @Module({
-  imports: [DatabaseModule, ProductsModule, AiModule],
+  imports: [DatabaseModule, ProductsModule, AiModule, AccountingCostHistoryModule],
   providers: [
     YandexClientFactory,
     OrderReportsService,
