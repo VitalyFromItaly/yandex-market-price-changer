@@ -75,6 +75,10 @@ describe('подстатьи ЯМ', () => {
       expect(ymSubArticle('Начисление', SERVICE, name)).toBe(sub);
     }
     expect(ymSubArticle('Удержание', SERVICE, '')).toBe('act_summary');
+    // Живой импорт 11-2026: сводная, не удержанная из платежей, и её сторно без услуги.
+    expect(ymSubArticle('Корректировка удержания', SERVICE, null)).toBe('act_summary');
+    expect(ymSubArticle('Начисление', SERVICE, null)).toBe('act_summary');
+    expect(ymSubArticle('Корректировка удержания', SERVICE, 'Доставка покупателю')).toBe('unknown');
   });
 
   it('нормализация как у статей: регистр, пробелы, «ё»', () => {

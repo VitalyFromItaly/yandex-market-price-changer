@@ -107,8 +107,47 @@ describe('classifyYmRow: сторно услуг', () => {
     expect(op).toMatchObject({ article: 'commission', amountKopecks: 1730 });
   });
 
-  it('у сторно услуга обязательна: без неё — unknown, не «прочее»', () => {
-    expect(classifyYmRow(row('Начисление', SERVICES, null)).article).toBe('unknown');
+  it('сторно без услуги — сторно сводной строки акта: other_services со знаком «+»', () => {
+    // Живой импорт 11-2026, акт 31.10.2026.
+    expect(classifyYmRow(row('Начисление', SERVICES, null, 0))).toEqual({
+      article: 'other_services',
+      reversal: true,
+      signature: `Начисление · ${SERVICES} · —`,
+    });
+  });
+});
+
+describe('classifyYmRow: корректировки (живой импорт 11-2026)', () => {
+  it('корректировка удержания без услуги — сводная строка акта, other_services', () => {
+    expect(classifyYmRow(row('Корректировка удержания', SERVICES, null, -47000.9))).toEqual({
+      article: 'other_services',
+      reversal: false,
+      signature: `Корректировка удержания · ${SERVICES} · —`,
+    });
+  });
+
+  it('корректировка удержания с названием услуги не угадывается', () => {
+    expect(
+      classifyYmRow(row('Корректировка удержания', SERVICES, 'Доставка покупателю')).article,
+    ).toBe('unknown');
+  });
+
+  it('корректировка возврата расходов покупателю — то же удержание, знак «+» его уменьшает', () => {
+    const r = row(
+      'Корректировка возврата',
+      'Выплата расходов покупателю при возврате товара ненадлежащего качества',
+      null,
+      700,
+    );
+    expect(classifyYmRow(r)).toMatchObject({ article: 'withholdings', reversal: false });
+    const op = nettingRowToOperation(r, journalKeys([r])[0], {
+      telegramUserId: '1',
+      businessId: '2',
+      documentId: 'd',
+      documentVersion: 1,
+      periodKey: 'p',
+    });
+    expect(op).toMatchObject({ article: 'withholdings', amountKopecks: 70000 });
   });
 });
 

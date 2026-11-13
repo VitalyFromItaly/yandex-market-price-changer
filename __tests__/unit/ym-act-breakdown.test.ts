@@ -134,6 +134,15 @@ describe('isYmActSummaryRow — тот же признак, что ветка к
     expect(classifyYmRow(summary).article).toBe('other_services');
   });
 
+  it('корректировка удержания без услуги — тоже сводная (акт, не удержанный из платежей)', () => {
+    const correction = { ...summary, transactionType: 'Корректировка удержания' };
+    expect(isYmActSummaryRow(correction)).toBe(true);
+    expect(classifyYmRow(correction).article).toBe('other_services');
+    expect(isYmActSummaryRow({ ...correction, offerOrServiceName: 'Доставка покупателю' })).toBe(
+      false,
+    );
+  });
+
   it('удержание за услугу с названием и сторно без названия — не сводная', () => {
     expect(isYmActSummaryRow({ ...summary, offerOrServiceName: 'Доставка покупателю' })).toBe(
       false,

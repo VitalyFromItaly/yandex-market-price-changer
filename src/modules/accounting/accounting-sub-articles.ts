@@ -133,6 +133,8 @@ export const YM_TYPE_SOURCE_SUB = {
   'Начисление · Премия': 'premium',
   'Возврат · Удержание выплаты за утерю или порчу заказа': 'withholding',
   'Возврат · Выплата расходов покупателю при возврате товара ненадлежащего качества': 'withholding',
+  'Корректировка возврата · Выплата расходов покупателю при возврате товара ненадлежащего качества':
+    'withholding',
   'Списание · Скидка за участие в совместных акциях': 'promo_participation',
   'Возврат списания · Возврат скидки за участие в совместных акциях': 'promo_participation',
 } as const satisfies Record<string, TAccountingSubArticle>;
@@ -194,7 +196,13 @@ export function ymSubArticle(
     if (isBlank(serviceName)) return 'act_summary';
     return YM_WITHHELD.get(normalizeYmLabel(serviceName)) ?? 'unknown';
   }
+  // Сводная строка акта, не удержанная из платежей покупателей (`ym-articles.ts`).
+  if (type === normalizeYmLabel('Корректировка удержания')) {
+    return isBlank(serviceName) ? 'act_summary' : 'unknown';
+  }
   if (type === normalizeYmLabel('Начисление')) {
+    // Без услуги — сторно сводной строки акта, статья та же, что у сводной.
+    if (isBlank(serviceName)) return 'act_summary';
     return YM_REVERSED.get(normalizeYmLabel(serviceName)) ?? 'unknown';
   }
   return 'unknown';

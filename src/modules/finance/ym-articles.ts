@@ -70,6 +70,13 @@ const BY_TYPE_SOURCE = new Map<string, TFinanceArticle>(
         'Выплата расходов покупателю при возврате товара ненадлежащего качества',
         'withholdings',
       ],
+      // Живой импорт 11-2026: сторно этого удержания по тому же заказу (−700 → +700),
+      // знак «+» уменьшает удержание, дохода не появляется.
+      [
+        'Корректировка возврата',
+        'Выплата расходов покупателю при возврате товара ненадлежащего качества',
+        'withholdings',
+      ],
       // Услуги, оплаченные бонусным балансом совместных акций, — не деньги
       // («Справочно: списан с баланса»). В акт не входят: посчитать их расходом
       // значило бы удвоить услугу. Статья с группой `reference` в прибыль не идёт.
@@ -104,6 +111,13 @@ const REVERSED_SERVICES = byLabel([
 
 const WITHHELD = pair('Удержание', SERVICE_SOURCE);
 const REVERSED = pair('Начисление', SERVICE_SOURCE);
+/**
+ * Сводная строка акта, которую Маркет не удержал из платежей покупателей
+ * («Не будет удержан»). Живой импорт 11-2026: у акта 31.10.2026 обычной
+ * сводной строки нет, вместо неё эта, и её сумма до копейки равна Σ сводных
+ * листов отчёта услуг этого акта. Услуги оказаны — это расход, как у сводной.
+ */
+const WITHHELD_CORRECTION = pair('Корректировка удержания', SERVICE_SOURCE);
 
 const label = (value: unknown) =>
   value === null || value === undefined || value === '' ? '—' : String(value).trim();
@@ -117,7 +131,7 @@ const isBlank = (value: unknown) => value === null || value === undefined || val
  */
 export function isYmActSummaryRow(row: TRow): boolean {
   const key = pair(String(row.transactionType ?? ''), String(row.transactionSource ?? ''));
-  return key === WITHHELD && isBlank(row.offerOrServiceName);
+  return (key === WITHHELD || key === WITHHELD_CORRECTION) && isBlank(row.offerOrServiceName);
 }
 
 /** Строка united-netting → статья. Незнакомое — `unknown`, никогда не «прочее». */
@@ -128,7 +142,7 @@ export function classifyYmRow(row: TRow): IYmClassification {
   const direct = BY_TYPE_SOURCE.get(key);
   if (direct) return { article: direct, reversal: false, signature: typeSource };
 
-  if (key !== WITHHELD && key !== REVERSED) {
+  if (key !== WITHHELD && key !== REVERSED && key !== WITHHELD_CORRECTION) {
     return { article: 'unknown', reversal: false, signature: typeSource };
   }
 
@@ -137,6 +151,21 @@ export function classifyYmRow(row: TRow): IYmClassification {
   const service = row.offerOrServiceName;
   const signature = `${typeSource} · ${label(service)}`;
   const reversal = key === REVERSED;
+
+  if (key === WITHHELD_CORRECTION) {
+    // Корректировка с названием услуги в журнале не встречалась — не угадываем.
+    return isBlank(service)
+      ? { article: 'other_services', reversal: false, signature }
+      : { article: 'unknown', reversal: false, signature };
+  }
+
+  if (reversal && isBlank(service)) {
+    // Сторно сводной строки акта: живой импорт 11-2026, акт 31.10.2026, 0 ₽.
+    // Статья — та же, что у сводной; расшифровки по отчёту услуг у сторно нет
+    // (`isYmActSummaryRow` его не берёт: вторая «сводная» строка акта сломала бы
+    // расшифровку основной).
+    return { article: 'other_services', reversal: true, signature };
+  }
 
   if (!reversal && isBlank(service)) {
     // Сводная строка акта: подписка, пуши, вывоз, обработка, хранение возвратов
