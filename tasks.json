@@ -49,9 +49,10 @@
       "M30": "Финучёт: себестоимость — история закупа v2 (дата-время, исправления, строгая «Неизвестная закупка»), режим Б: партии и FIFO",
       "M31": "Финучёт: движок фактической прибыли заказа рядом с текущим — карточка заказа, три состояния, методики распределения, расходы v2, налог нового учёта",
       "M32": "Финучёт: возвраты v2 и сверка до копейки ЯМ/Ozon/WB с экраном для продавца",
-      "M33": "Финучёт: панель, аналитика, приёмка №1–7, документация и живая сверка закрытого периода"
+      "M33": "Финучёт: панель, аналитика, приёмка №1–7, документация и живая сверка закрытого периода",
+      "M34": "Доставка кода: деплой на прод только после зелёного CI"
     },
-    "active_tasks": 7,
+    "active_tasks": 8,
     "archived_tasks": 223,
     "archive_file": "tasks.archive.json"
   },
@@ -406,7 +407,8 @@
       "accounting_cost_history_product_search": "2026-11-11: поиск товара для «Истории закупа v2» — своя ручка «Финучёта» GET crm/ym/accounting/cost-history/products под fin_accounting (только доставка через ProductCatalogService.list: id, артикул, название). Причина: crm/ym/products закрыт фичей products, а fin_accounting от неё не зависит.",
       "accounting_return_condition_ym_mapping": "2026-11-11 (TASK-238): состояние возврата ЯМ — из items[].instances[]: status LOST/UTILIZED/PREPARED_FOR_UTILIZATION/EXPROPRIATED → lost; stockType FIT → fit; UNDEFINED/UNKNOWN/нет → unknown; любой другой stockType → damaged; CANCELLED и мёртвая заявка не считаются. Несколько экземпляров/возвратов позиции — худшее (lost > damaged > unknown > fit). Живой FBS-магазин stockType не присылает (3191 экземпляр, только status) — damaged для FBS берётся из причины покупателя (accounting_return_condition_ym_reason, TASK-241).",
       "accounting_return_condition_ym_reason": "2026-11-12 (TASK-241, решение владельца): брак FBS-возврата ЯМ — из причины покупателя items[].decisions[].reasonType: BAD_QUALITY / DAMAGE_DELIVERY / WRONG_ITEM у любого решения позиции → брак. Причина поднимает только unknown → damaged: пришедший stockType важнее (FIT остаётся fit), lost остаётся lost, CANCELLED не считается; позиция без instances с бракующей причиной → damaged. Остальные причины (DOES_NOT_FIT, LOYALTY_FAIL, CONTENT_FAIL, DELIVERY_FAIL, UNKNOWN) ничего не меняют. Это заявление покупателя, а не осмотр склада — часть «брака» на деле может быть годной; отвергнуты: ручная отметка продавца (нужны UI и хранилище) и оставить unknown.",
-      "ozon_wb_live_keys_low_turnover": "2026-11-12 (владелец): других ключей Ozon/WB нет. Единственные ключи — у 309809755 локально и у 406937947 на проде, это одни и те же кабинеты (отпечатки sha256 совпали). Оба живые (Ozon — авторизация ок, WB connect → ok), но оборота почти нет: Ozon 09–10.2026 — 0 операций, 11.2026 — 1; WB 10.2026 — 3 строки хранения на −0,42 ₽. TASK-186/187 остаются blocked: нужен кабинет с продажами, а не ключ. WB_TOKEN_LOCAL заведён как WB-подключение 309809755 в локальной Mongo."
+      "ozon_wb_live_keys_low_turnover": "2026-11-12 (владелец): других ключей Ozon/WB нет. Единственные ключи — у 309809755 локально и у 406937947 на проде, это одни и те же кабинеты (отпечатки sha256 совпали). Оба живые (Ozon — авторизация ок, WB connect → ok), но оборота почти нет: Ozon 09–10.2026 — 0 операций, 11.2026 — 1; WB 10.2026 — 3 строки хранения на −0,42 ₽. TASK-186/187 остаются blocked: нужен кабинет с продажами, а не ключ. WB_TOKEN_LOCAL заведён как WB-подключение 309809755 в локальной Mongo.",
+      "ci_gated_deploy": "2026-11-13 владелец: прод выкатывается CapRover по пушу в master сам, не дожидаясь CI; хочет механизм «билд не прошёл — не деплоится» (TASK-242)."
     },
     "price_template": {
       "fixture": "__tests__/fixtures/price-template.xlsx (Прайс 29.07.26.xlsx)",
@@ -602,6 +604,28 @@
       ],
       "status": "obsolete",
       "skip_reason": "2026-11-10: дубль TASK-216 (CRM: переключатель режима А/Б входит в неё) — заведена по ошибке при закрытии TASK-215"
+    },
+    {
+      "id": "TASK-242",
+      "milestone": "M34",
+      "category": "infrastructure",
+      "priority": "high",
+      "description": "Деплой только после зелёного CI. Сейчас CapRover выкатывает прод по своему GitHub-вебхуку на каждый пуш в master, параллельно с CI и независимо от его результата: красный typecheck/тест/сборка не мешают деплою (решение ci_gated_deploy). Нужно: вызов деплоя CapRover перенести в GitHub Actions отдельной job deploy с needs: build, только на push в master; вебхук CapRover на репозитории снять. ПОЧЕМУ: сломанный код и сломанная миграция (приложение мигрирует Postgres само при старте, отката у drizzle нет) не должны попадать на прод.",
+      "acceptance_criteria": [
+        "В .github/workflows/nodejs.yml есть job deploy: needs: build, if: push в refs/heads/master; дергает деплой CapRover (URL вебхука приложения из секрета CAPROVER_WEBHOOK_URL), без секрета падает с понятным сообщением, а не молча зелёная",
+        "pull_request и пуши в другие ветки деплой не запускают",
+        "Красный любой шаг build → deploy skipped, прод не меняется",
+        "Вебхук CapRover в настройках репозитория GitHub снят (шаг владельца), иначе деплой по-прежнему идёт в обход CI",
+        "Порядок и доводы описаны в README (CLAUDE.md — строка про CI и деплой)"
+      ],
+      "test_steps": [
+        "Шаг 1: actionlint/yaml-проверка workflow локально; npm-проверки проекта зелёные",
+        "Шаг 2 (владелец): добавить секрет CAPROVER_WEBHOOK_URL, снять вебхук CapRover в GitHub → Settings → Webhooks",
+        "Шаг 3: пуш с заведомо красным тестом в ветку → deploy не запускается; пуш в master с зелёным CI → в CapRover новая сборка",
+        "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [],
+      "status": "pending"
     }
   ]
 }
