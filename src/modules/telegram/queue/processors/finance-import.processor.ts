@@ -15,6 +15,7 @@ import {
   scheduledPeriods,
 } from '../../../finance/finance-period';
 import { mergePeriods, syncErrorText } from '../../../finance/finance-sync';
+import { traceMemory } from '../../../health/memory-watch.domain';
 import { MarketplaceNotConnectedError } from '../../../marketplaces/marketplace-adapter';
 import { MarketplaceRegistry } from '../../../marketplaces/marketplace-registry.service';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
@@ -99,6 +100,21 @@ export class FinanceImportProcessor {
 
   @Process({ name: JOB_TYPES.IMPORT_FINANCE, concurrency: 1 })
   async handle(job: Job<IFinanceImportJob>): Promise<TFinanceImportResult | IFinanceScheduledRun> {
+    const data = job.data;
+    const what =
+      'from' in data
+        ? `${data.marketplace ?? 'ym'} ${data.from}…${data.to}`
+        : (data.mode ?? 'nightly');
+    return traceMemory(
+      `finance-import ${data.telegramUserId} ${what}`,
+      () => this.run(job),
+      this.logger,
+    );
+  }
+
+  private async run(
+    job: Job<IFinanceImportJob>,
+  ): Promise<TFinanceImportResult | IFinanceScheduledRun> {
     const data = job.data;
     // `in`, а не проверка `scheduled`: без strictNullChecks union по
     // undefined-полю не сужается.
@@ -237,7 +253,13 @@ export class FinanceImportProcessor {
       startedAt,
     };
     try {
-      const result = await this.importFinance(telegramUserId, marketplace, period);
+      // Свой замер на месяц: ночной проход грузит несколько месяцев подряд, и в алерте
+      // о памяти нужно видеть, на какой площадке и месяце вырос процесс.
+      const result = await traceMemory(
+        `finance-import:period ${telegramUserId} ${marketplace} ${period.from}…${period.to}`,
+        () => this.importFinance(telegramUserId, marketplace, period),
+        this.logger,
+      );
       await this.sync.record({ ...run, outcome: result.status, finishedAt: new Date() });
       if (options.accounting && options.attempt > 1) await this.sync.notify(telegramUserId);
       return { status: result.status, result };

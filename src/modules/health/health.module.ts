@@ -6,6 +6,7 @@ import { AiModule } from '../ai/ai.module';
 import { TelegramModule } from '../telegram/telegram.module';
 
 import { HealthMonitorService } from './health-monitor.service';
+import { MemoryWatchService } from './memory-watch.service';
 
 /**
  * Самопроверка окружения.
@@ -32,7 +33,8 @@ import { HealthMonitorService } from './health-monitor.service';
  */
 @Module({
   imports: [DatabaseModule, PostgresModule, AiModule, forwardRef(() => TelegramModule)],
-  providers: [HealthMonitorService],
+  // MemoryWatchService — сэмплер RSS и алерт о нехватке памяти (memory-watch.domain.ts).
+  providers: [HealthMonitorService, MemoryWatchService],
   // Наружу — ради команды /health: она показывает ровно то, по чему монитор
   // принимает решения, а не считает состояние вторым способом.
   exports: [HealthMonitorService],

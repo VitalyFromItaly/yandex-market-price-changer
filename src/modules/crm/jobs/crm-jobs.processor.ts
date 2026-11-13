@@ -7,6 +7,7 @@ import { Logger } from '@nestjs/common';
 import { CrmJobResultService } from '../../../database/services/crm-job-result.service';
 import { YandexMarketService } from '../../../database/services/yandex-market.service';
 import { ErrorReporter } from '../../errors/error-reporter.service';
+import { traceMemory } from '../../health/memory-watch.domain';
 import { JOB_TYPES, QUEUE_NAMES } from '../../telegram';
 import { reportErrorMessage } from '../../yandex/reports/report-message';
 import { scopeStore } from '../../yandex/stores/stores.domain';
@@ -58,13 +59,18 @@ export class CrmJobsProcessor {
       const store = doc && campaignId ? scopeStore(doc, campaignId) : doc;
       if (doc && !store) throw new CrmJobError(STORE_GONE_TEXT);
 
-      const output = await definition.run({
-        jobId,
-        telegramUserId,
-        store,
-        params,
-        features: features ?? {},
-      });
+      const output = await traceMemory(
+        `crm:${kind} ${telegramUserId} ${JSON.stringify(params ?? {}).slice(0, 120)}`,
+        () =>
+          definition.run({
+            jobId,
+            telegramUserId,
+            store,
+            params,
+            features: features ?? {},
+          }),
+        this.logger,
+      );
       const bytes = resultBytes(output);
       if (bytes > MAX_RESULT_BYTES) {
         this.logger.warn(`crm-job ${kind} #${jobId}: результат ${bytes} байт — не сохраняю`);

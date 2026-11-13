@@ -7,6 +7,7 @@ import { Job } from 'bull';
 
 import { AccountingOrdersService } from '../../../accounting/accounting-orders.service';
 import { ErrorReporter } from '../../../errors/error-reporter.service';
+import { traceMemory } from '../../../health/memory-watch.domain';
 import { JOB_TYPES, QUEUE_NAMES } from '../../index';
 import { AccountingOrdersScheduler } from '../services/accounting-orders.scheduler';
 
@@ -28,6 +29,16 @@ export class AccountingOrdersProcessor {
 
   @Process({ name: JOB_TYPES.SYNC_ACCOUNTING_ORDERS, concurrency: 1 })
   async handle(
+    job: Job<IAccountingOrdersJob>,
+  ): Promise<IAccountingOrdersSyncReport | { skipped: 'not-eligible' }> {
+    return traceMemory(
+      `accounting-orders ${job.data.telegramUserId}`,
+      () => this.run(job),
+      this.logger,
+    );
+  }
+
+  private async run(
     job: Job<IAccountingOrdersJob>,
   ): Promise<IAccountingOrdersSyncReport | { skipped: 'not-eligible' }> {
     const { telegramUserId } = job.data;
