@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { FbyStockService } from '../../src/modules/yandex/fby/fby-stock.service';
+import {
+  FAILED_RETRIES,
+  FbyStockService,
+  RETRY_AFTER_FAILED_MS,
+} from '../../src/modules/yandex/fby/fby-stock.service';
 import { ReportGenerationError } from '../../src/modules/yandex/report-generation.error';
 
 /**
@@ -49,10 +53,7 @@ describe('FbyStockService', () => {
   });
 
   it('параллельные вызовы делят одну добычу', async () => {
-    const [first, second] = await Promise.all([
-      service.safeLoad(STORE),
-      service.safeLoad(STORE),
-    ]);
+    const [first, second] = await Promise.all([service.safeLoad(STORE), service.safeLoad(STORE)]);
 
     expect(generate).toHaveBeenCalledTimes(1);
     expect(first.snapshot).toBe(second.snapshot);
@@ -107,6 +108,77 @@ describe('FbyStockService', () => {
     await service.safeLoad(OTHER);
 
     expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  describe('FAILED свежей генерации — повтор новой генерацией', () => {
+    // 13.11.2026: 4 провала за секунды из 6 генераций вперемешку с успехами —
+    // Маркет роняет отчёт случайно, тот же запрос позже проходит.
+    const sleepOf = () => (service as unknown as { sleep: ReturnType<typeof vi.fn> }).sleep;
+
+    it('FAILED → DONE: снимок есть, админов не будим, пауза под лимит генерации', async () => {
+      generate.mockResolvedValueOnce('report-1').mockResolvedValueOnce('report-2');
+      info.mockResolvedValueOnce({ status: 'FAILED' });
+
+      const result = await service.safeLoad(STORE);
+
+      expect(result.snapshot).not.toBeNull();
+      expect(generate).toHaveBeenCalledTimes(2);
+      expect(info).toHaveBeenLastCalledWith('report-2');
+      expect(sleepOf()).toHaveBeenCalledWith(RETRY_AFTER_FAILED_MS);
+      expect(report).not.toHaveBeenCalled();
+    });
+
+    it('FAILED → FAILED → DONE: второго повтора хватает', async () => {
+      info.mockResolvedValueOnce({ status: 'FAILED' }).mockResolvedValueOnce({ status: 'FAILED' });
+
+      const result = await service.safeLoad(STORE);
+
+      expect(result.snapshot).not.toBeNull();
+      expect(generate).toHaveBeenCalledTimes(1 + FAILED_RETRIES);
+      expect(report).not.toHaveBeenCalled();
+    });
+
+    it('провалились все попытки: один алерт с перечнем прежних отчётов', async () => {
+      generate
+        .mockResolvedValueOnce('report-1')
+        .mockResolvedValueOnce('report-2')
+        .mockResolvedValueOnce('report-3');
+      info.mockResolvedValue({ status: 'FAILED' });
+
+      const result = await service.safeLoad(STORE);
+
+      expect(result).toEqual({ snapshot: null, error: 'generic' });
+      expect(generate).toHaveBeenCalledTimes(3);
+      expect(report).toHaveBeenCalledTimes(1);
+      const error = report.mock.calls[0][0].error;
+      expect(error).toBeInstanceOf(ReportGenerationError);
+      expect(error.reportId).toBe('report-3');
+      expect(error.message).toContain('после 3 попыток');
+      expect(error.message).toContain('report-1, report-2');
+    });
+
+    it('продолженный (застрявший) отчёт после FAILED не повторяем', async () => {
+      info.mockResolvedValue({ status: 'PENDING' });
+      await service.safeLoad(STORE);
+      report.mockClear();
+      info.mockResolvedValue({ status: 'FAILED' });
+
+      const result = await service.safeLoad(STORE);
+
+      expect(result.snapshot).toBeNull();
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(report).toHaveBeenCalledTimes(1);
+    });
+
+    it('сбой сети на повторной генерации пробрасывается как есть', async () => {
+      generate.mockResolvedValueOnce('report-1').mockRejectedValueOnce(new Error('ECONNRESET'));
+      info.mockResolvedValueOnce({ status: 'FAILED' });
+
+      const result = await service.safeLoad(STORE);
+
+      expect(result.error).toBe('generic');
+      expect(report.mock.calls[0][0].error.message).toBe('ECONNRESET');
+    });
   });
 
   describe('отчёт, не дождавшийся потолка ожидания', () => {

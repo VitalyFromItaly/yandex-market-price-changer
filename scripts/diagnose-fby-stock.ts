@@ -21,6 +21,17 @@ import {
  *  Q3. Что Маркет отдаёт по уже проваленному отчёту целиком (`--report`):
  *      бот печатает лишь поля, которые знает.
  *
+ * Ответ 13-11-2026 (FBY-кампания 148704883, по 3 генерации CSV и JSON): 4 из 6
+ * FAILED за 0,4–3 с вперемешку с DONE, формат ни при чём, `--report` по
+ * проваленному — только статус и времена. Вывод: случайный сбой Маркета, бот
+ * повторяет генерацию (`FAILED_RETRIES` в fby-stock.service.ts). Запускать
+ * снова — если алерт «после N попыток» начнёт приходить регулярно.
+ *
+ * На проде образ без ts-node и scripts/: собрать tsc
+ * (`--experimentalDecorators --emitDecoratorMetadata` — esbuild не пишет
+ * метаданные, схема Mongoose без них не собирается), положить в контейнер
+ * под /app и запустить node оттуда — node_modules и env уже там.
+ *
  * Запросы идут своим axios, а не через YandexApiClient: нужен СЫРОЙ ответ
  * (включая errors/warnings, которые клиент отбрасывает), и ради диагностики
  * не меняется прод-код. Повторов на ошибках нет — каждая видна как есть.
@@ -36,6 +47,7 @@ import {
  *   npx ts-node scripts/diagnose-fby-stock.ts --user=<id> --repeat=3
  *   npx ts-node scripts/diagnose-fby-stock.ts --user=<id> --format=JSON   # CSV (дефолт, как бот) | FILE | JSON
  *   npx ts-node scripts/diagnose-fby-stock.ts --user=<id> --report=<reportId>   # только опрос, без генерации
+ *   npx ts-node scripts/diagnose-fby-stock.ts --user=<id> --campaign=<id>   # не активная кампания токена
  */
 
 const DEFAULT_BASE_URL = 'https://api.partner.market.yandex.ru';
@@ -53,6 +65,8 @@ interface IArgs {
   format: TFormat;
   repeat: number;
   report?: string;
+  /** Кампания из кэша `stores`; нет — активная (`campaign_id`). */
+  campaign?: string;
 }
 
 interface IRawInfo {
@@ -77,7 +91,7 @@ function parseArgs(argv: string[]): IArgs {
   const repeat = Number(value('repeat') ?? 1);
   if (!Number.isInteger(repeat) || repeat < 1) throw new Error('--repeat — целое число от 1.');
 
-  return { user, format, repeat, report: value('report') };
+  return { user, format, repeat, report: value('report'), campaign: value('campaign') };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -155,10 +169,21 @@ async function main(): Promise<void> {
 
   if (!store?.token) throw new Error(`Магазин пользователя ${args.user} не найден или без токена.`);
 
-  const entry = store.stores?.find((s) => s.campaignId === store.campaign_id);
+  console.log('Магазины токена (кэш stores):');
+  for (const s of store.stores ?? []) {
+    const active = s.campaignId === store.campaign_id ? ' · активный' : '';
+    console.log(`  ${s.campaignId} · ${s.placementType ?? '?'} · ${s.storeName}${active}`);
+  }
+  // Экраны CRM берут магазин из URL (scopeStore), а не активный — поэтому
+  // отчёт в алерте мог быть заказан по другой кампании того же токена.
+  const campaignId = args.campaign ?? store.campaign_id;
+  const entry = store.stores?.find((s) => s.campaignId === campaignId);
+  if (args.campaign && !entry) {
+    throw new Error(`--campaign=${args.campaign} нет в кэше stores этого токена.`);
+  }
   console.log('─'.repeat(72));
   console.log(`  МАГАЗИН:   ${entry?.storeName ?? '(нет в кэше stores)'}`);
-  console.log(`  КАМПАНИЯ:  ${store.campaign_id} · бизнес ${store.business_id}`);
+  console.log(`  КАМПАНИЯ:  ${campaignId} · бизнес ${store.business_id}`);
   console.log(`  МОДЕЛЬ:    ${entry?.placementType ?? '(не определена)'}`);
   console.log('─'.repeat(72));
 
@@ -189,7 +214,7 @@ async function main(): Promise<void> {
       // Тот же запрос, что у бота: формат в query, кампания в теле.
       const { data } = await http.post<{ result?: { reportId?: string } }>(
         stocksOnWarehousesGeneratePath(),
-        { campaignId: Number(store.campaign_id) },
+        { campaignId: Number(campaignId) },
         { params: { format: args.format } },
       );
       console.log(`  generate:\n${json(data)}`);

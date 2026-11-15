@@ -474,6 +474,16 @@ queue like «📦 FBY» did.
   **one more** report behind the stuck one. Now a poll timeout (we wait up to 10 min) leaves the `reportId` in
   `FbyStockService.pending` for an hour, and the next call polls that report instead of generating a
   new one. A final answer, file or `FAILED`, clears it.
+- **A fresh generation that comes back `FAILED` is re-ordered, up to twice.** Market fails this report
+  at random: 13-10, 20-10 and 13-11-2026 alerts were `FAILED` within 0.4–3 s with no `subStatus`, and
+  `scripts/diagnose-fby-stock.ts` run on 13-11 against the FBY campaign gave 4 failures out of 6
+  generations, interleaved with successes, identically in CSV and JSON — so neither the format nor the
+  campaign is the cause, and the same request passes a couple of minutes later. `FbyStockService.load`
+  therefore generates anew (`FAILED_RETRIES = 2`, pause `RETRY_AFTER_FAILED_MS = 130 s` — the generation
+  limit window with a margin; everything runs in the background). Two retries, not one: at that day's
+  failure rate one retry would save only half the cases. A **resumed** report (from `pending`) is not
+  retried — its `FAILED` is Market's answer about a report that already sat in the queue. Only when all
+  attempts fail does the alert go out, with «после N попыток (прежние отчёты: …)» in the message.
 - **Why a report failed is visible in the admin panel.** `pollReport` throws `ReportGenerationError`
   (`yandex/report-generation.error.ts`), which carries `reportId` and what Market said: status,
   `subStatus`, `generationRequestedAt`/`FinishedAt`, `estimatedGenerationTime`, and how long we

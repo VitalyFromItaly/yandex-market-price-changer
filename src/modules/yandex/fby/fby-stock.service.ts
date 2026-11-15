@@ -57,6 +57,31 @@ const PENDING_REPORT_TTL_MS = 60 * 60_000;
 const POLL_INTERVAL_MS = 5000;
 export const POLL_MAX_ATTEMPTS = 120;
 
+/**
+ * Повторы новой генерации после FAILED. Маркет проваливает этот отчёт сам и
+ * случайно: 13.10, 20.10 и 13.11.2026 — FAILED за 0,4–3 с без subStatus; прогон
+ * diagnose-fby-stock 13.11 по FBY-кампании дал 4 провала из 6 вперемешку с
+ * успехами, одинаково в CSV и JSON. Значит формат и кампания ни при чём, а тот же
+ * запрос минутой позже проходит. Два повтора (три попытки), а не один: при
+ * сегодняшней доле отказов ~2/3 один повтор спасал бы лишь половину случаев.
+ * Пауза — окно лимита генерации (1 в 2 минуты) с запасом; всё идёт в фоне.
+ */
+export const FAILED_RETRIES = 2;
+export const RETRY_AFTER_FAILED_MS = 130_000;
+
+/** Последний провал с перечнем прежних: админ видит, что повторы были. */
+function withEarlierAttempts(
+  error: ReportGenerationError,
+  earlier: string[],
+): ReportGenerationError {
+  return new ReportGenerationError(
+    `${error.message} — после ${earlier.length + 1} попыток (прежние отчёты: ${earlier.join(', ')})`,
+    error.reportId,
+    error.info,
+    error.waitedMs,
+  );
+}
+
 /** Разбор отчёта вместе с моментом, НА который сняты остатки. */
 export interface IFbyStockSnapshot {
   summary: IFbyStockSummary;
@@ -168,27 +193,40 @@ export class FbyStockService {
    * Отчёт, не дождавшийся прошлого раза, продолжаем, а не заказываем заново:
    * новый встал бы в ту же очередь Маркета позади старого. Забываем его на
    * любом окончательном ответе — файл получен или Маркет сказал FAILED.
+   *
+   * FAILED свежей генерации повторяем новой генерацией до FAILED_RETRIES раз
+   * (см. константу); бросаем последний провал с перечнем прежних reportId.
    */
   public async load(store: YandexMarketDocument): Promise<IFbyStockSnapshot> {
     const key = this.keyOf(store);
     const client = this.clients.forStore(store);
     const waiting = this.pending.get(key);
-    const reportId =
-      waiting && waiting.until > Date.now()
-        ? waiting.reportId
-        : await client.generateStocksOnWarehousesReport();
+    const resumed = waiting && waiting.until > Date.now();
+    let reportId = resumed ? waiting.reportId : await client.generateStocksOnWarehousesReport();
+    const failedIds: string[] = [];
 
     let fileUrl: string;
-    try {
-      fileUrl = await this.pollReport(client, reportId);
-    } catch (error) {
-      const timedOut = error instanceof ReportGenerationError && error.info?.status !== 'FAILED';
-      if (timedOut) {
-        this.pending.set(key, { reportId, until: Date.now() + PENDING_REPORT_TTL_MS });
-      } else {
+    for (;;) {
+      try {
+        fileUrl = await this.pollReport(client, reportId);
+        break;
+      } catch (error) {
+        const failed = error instanceof ReportGenerationError && error.info?.status === 'FAILED';
+        if (!failed && error instanceof ReportGenerationError) {
+          this.pending.set(key, { reportId, until: Date.now() + PENDING_REPORT_TTL_MS });
+          throw error;
+        }
         this.pending.delete(key);
+        // Продолженный отчёт не повторяем: он уже стоял в очереди Маркета, а
+        // его провал — ответ по нему, а не мгновенный сбой новой генерации.
+        if (!failed) throw error;
+        if (resumed || failedIds.length >= FAILED_RETRIES) {
+          throw failedIds.length ? withEarlierAttempts(error, failedIds) : error;
+        }
+        failedIds.push(reportId);
+        await this.sleep(RETRY_AFTER_FAILED_MS);
+        reportId = await client.generateStocksOnWarehousesReport();
       }
-      throw error;
     }
     this.pending.delete(key);
 
