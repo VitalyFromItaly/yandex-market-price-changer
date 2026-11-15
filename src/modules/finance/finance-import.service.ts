@@ -23,7 +23,6 @@ import { FinancePeriodRepository } from '../../database/postgres/repositories/fi
 import { YandexMarketService } from '../../database/services/yandex-market.service';
 import { ErrorReporter } from '../errors/error-reporter.service';
 import { pollReportFile } from '../yandex/report-poll';
-import { unzipReportJson } from '../yandex/report-zip';
 import { YandexRateLimitError } from '../yandex/yandex-api.errors';
 import {
   unitedMarketplaceServicesGeneratePath,
@@ -46,22 +45,17 @@ import {
 import { periodStatusOf } from './finance-period-status';
 import { FinanceReconcileService } from './finance-reconcile.service';
 import { kopecksToRub, toKopecks } from './kopecks';
-import {
-  compactYmServicesSheet,
-  ymActBreakdownOf,
-  ymActDayOf,
-  ymActServicesTotalOf,
-} from './ym-act-breakdown';
+import { ymActBreakdownOf, ymActDayOf, ymActServicesTotalOf } from './ym-act-breakdown';
 import { isYmActSummaryRow } from './ym-articles';
 import {
   journalKeys,
   matchExistingOperations,
   nettingRowToOperation,
-  nettingRowsOf,
   operationKeyOf,
   parseYmDateTime,
 } from './ym-journal';
 import { parseYmNettingFile } from './ym-netting-file';
+import { parseYmReport } from './ym-report-parse';
 import { reportUnknownArticles, unknownArticleGroups } from './ym-unknown-articles';
 
 // Константа живёт в finance-period.ts (лист): её берут и сервисы, которые сами
@@ -667,7 +661,9 @@ export class FinanceImportService {
     const buffer = await client.downloadReportFile(fileUrl);
     // Разбор — до транзакции: ZIP и строки не трогают базу, и неизвестная
     // форма отчёта падает, не открыв ни одного соединения.
-    const rows = nettingRowsOf(unzipReportJson(buffer));
+    // В воркере: синхронный разбор месячного отчёта занимал цикл событий бота
+    // и раздувал RSS на гигабайты — см. ym-report-parse.ts.
+    const rows = await parseYmReport('netting', buffer);
     const keys = journalKeys(rows);
     // Тоже до транзакции: отчёт услуг — минуты Маркета, транзакция их не ждёт.
     const breakdowns = await this.actBreakdowns({
@@ -919,7 +915,7 @@ export class FinanceImportService {
     });
     if (!fileUrl) return null;
     // Выжимка листов сразу при разборе: месячный отчёт услуг — самый большой файл импорта.
-    return unzipReportJson(await client.downloadReportFile(fileUrl), compactYmServicesSheet);
+    return await parseYmReport('services', await client.downloadReportFile(fileUrl));
   }
 
   /** Один алерт на загрузку, сколько бы актов ни не сошлось. */
