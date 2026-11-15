@@ -358,6 +358,10 @@ admin --drop --archive --gzip < backup/mongo-<TS>.archive.gz`.
 - **Свои таблицы** `accounting_cost_records` + журнал `accounting_cost_record_changes` (миграция 0017, решение
   `accounting_cost_history_v2`). Текущая `CostHistory` (Mongo), `costAt`/`costOn` и `cogsOf` не меняются и v2 не
   читают — числа текущей «Прибыли» и P&L не двигаются по построению.
+- **Вставка и чтение — пачками по `COST_CHUNK_SIZE = 1000`.** У протокола Postgres потолок 65 535 параметров на
+  запрос. 15.11.2026 прайс на 17 526 товаров одним INSERT дал 87 630 параметров, и запрос упал с `08P01`
+  («bind message has 22094 parameter formats»): история не записалась вовсе. Пачки без общей транзакции:
+  `onConflictDoNothing` делает повтор безопасным, недописанное догонит следующая загрузка прайса.
 - **Начало — момент** (timestamptz), не московский день: две загрузки прайса за день с разной ценой — две записи, продажа
   между ними получает закуп первой. `productId` — id `Product` строкой, без FK; закуп — `IProductPurchase` в jsonb
   (цены в валюте дробные).

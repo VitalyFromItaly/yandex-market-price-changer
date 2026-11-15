@@ -363,4 +363,22 @@ describe('хранение v2 (Postgres)', () => {
     expect(await repo.insertMany(SELLER, writes)).toBe(1);
     expect(await repo.insertMany(SELLER, writes)).toBe(0);
   });
+
+  it('прайс больше потолка параметров Postgres пишется пачками (08P01, 15.11.2026)', async () => {
+    // 14 000 × 5 параметров = 70 000 > 65 535 — одним INSERT это падало.
+    const writes = Array.from({ length: 14_000 }, (_, i) => ({
+      productId: `bulk-${i}`,
+      validFrom: at('2026-11-15T00:00:00Z'),
+      purchase: { price: 100 + i, currency: 'RUR' },
+      source: 'price-list' as const,
+    }));
+
+    expect(await repo.insertMany(SELLER, writes)).toBe(14_000);
+    const records = await repo.recordsFor(
+      SELLER,
+      writes.map((write) => write.productId),
+    );
+    expect(records.size).toBe(14_000);
+    expect(records.get('bulk-13999')?.[0].purchase).toEqual({ price: 14_099, currency: 'RUR' });
+  }, 60_000);
 });

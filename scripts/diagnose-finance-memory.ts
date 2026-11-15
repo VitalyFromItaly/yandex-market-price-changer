@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 import { unzipSync } from 'fflate';
 import mongoose from 'mongoose';
+import { Pool } from 'pg';
 
 import { YandexMarketSchema } from '../src/database/schemas/yandex-market.schema';
 import { financeToday, monthPeriod, requestRange } from '../src/modules/finance/finance-period';
@@ -37,6 +38,15 @@ import {
  *
  * --save — сохранить скачанные ZIP (netting.zip, services.zip), --from — разобрать
  * сохранённые без Маркета (тогда --user не нужен и Mongo не трогается).
+ *
+ * --journal[=2026-01-01..2026-10-01] — другой вопрос: память ЧТЕНИЯ журнала из
+ * Postgres (15.11.2026: `pnl:journal … 2026-01-01…2026-09-30` — RSS 272 → 1719 МБ на
+ * 22 414 строках при heapTotal 204 МБ, то есть дело не в ZIP). Только SELECT по
+ * POSTGRES_URL, без Mongo и Маркета: размеры jsonb по месяцам, затем выборка
+ * `liveForPnl` целиком и без отдельных колонок — какая из них даёт память.
+ *
+ *   node --expose-gc -r ts-node/register scripts/diagnose-finance-memory.ts \
+ *     --user=<telegramUserId> --journal[=<from>..<to>]
  */
 
 const DEFAULT_BASE_URL = 'https://api.partner.market.yandex.ru';
@@ -48,6 +58,8 @@ interface IArgs {
   servicesMonth: string;
   save?: string;
   from?: string;
+  /** `--journal` — диапазон `from..to` (to не включительно). */
+  journal?: { from: string; to: string };
 }
 
 function parseArgs(argv: string[]): IArgs {
@@ -57,7 +69,11 @@ function parseArgs(argv: string[]): IArgs {
   const prev = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
   const args = { user: get('user'), month, servicesMonth: get('services-month') ?? prev };
   if (!get('from') && !args.user) throw new Error('Нужен --user=<telegramUserId> или --from=<dir>');
-  return { ...args, save: get('save'), from: get('from') };
+  const journalFlag = argv.find((a) => a === '--journal' || a.startsWith('--journal='));
+  const [jFrom, jTo] = (journalFlag?.split('=')[1] ?? '2026-01-01..2026-10-01').split('..');
+  const journal = journalFlag ? { from: jFrom, to: jTo } : undefined;
+  if (journal && !args.user) throw new Error('--journal требует --user=<telegramUserId>');
+  return { ...args, save: get('save'), from: get('from'), journal };
 }
 
 const gc = (): void => (global as { gc?: () => void }).gc?.();
@@ -147,8 +163,87 @@ async function download(
   return fileUrl ? client.downloadReportFile(fileUrl) : null;
 }
 
+/** Колонки `FinanceOperationRepository.liveForPnl` (ЯМ) — менять вместе с ним. */
+const PNL_COLUMNS: Record<string, string> = {
+  base:
+    'id, article, amount_kopecks, order_id, sku, service_name, transaction_type, transaction_source, ' +
+    'accrued_at, paid_at, act_date, model, marketplace, sub_article',
+  count: "raw->>'count' AS count",
+  breakdown: 'breakdown',
+};
+
+/** Пик RSS за время промиса: замер синхронный разбор не увидит, поэтому и «после». */
+async function peakOf<T>(
+  work: () => Promise<T>,
+): Promise<{ value: T; peakMb: number; ms: number }> {
+  let peak = process.memoryUsage().rss;
+  const timer = setInterval(() => {
+    peak = Math.max(peak, process.memoryUsage().rss);
+  }, 100);
+  const started = Date.now();
+  try {
+    const value = await work();
+    peak = Math.max(peak, process.memoryUsage().rss);
+    return { value, peakMb: Math.round(peak / MB), ms: Date.now() - started };
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+async function journalMode(user: string, range: { from: string; to: string }): Promise<void> {
+  const url = process.env.POSTGRES_URL;
+  if (!url) throw new Error('Нужен POSTGRES_URL');
+  const pool = new Pool({ connectionString: url, max: 1 });
+  const live = "telegram_user_id = $1 AND marketplace = 'ym' AND superseded_at IS NULL";
+  try {
+    console.log(
+      `\n=== Размеры журнала ${user} ym по месяцам (live-строки, pg_column_size — как хранится)`,
+    );
+    const { rows: months } = await pool.query(
+      `SELECT to_char(accrued_at AT TIME ZONE 'Europe/Moscow', 'YYYY-MM') AS month, count(*)::int AS rows,
+         round(sum(pg_column_size(raw)) / 1048576.0, 1) AS raw_mb,
+         round(sum(coalesce(pg_column_size(breakdown), 0)) / 1048576.0, 1) AS breakdown_mb,
+         max(coalesce(pg_column_size(breakdown), 0)) AS breakdown_max_b,
+         count(breakdown)::int AS with_breakdown
+       FROM finance_operations WHERE ${live} GROUP BY 1 ORDER BY 1`,
+      [user],
+    );
+    console.table(months);
+
+    const variants: Array<[string, string]> = [
+      ['только id', 'id'],
+      ['base', PNL_COLUMNS.base],
+      ['base + count', `${PNL_COLUMNS.base}, ${PNL_COLUMNS.count}`],
+      ['base + breakdown', `${PNL_COLUMNS.base}, ${PNL_COLUMNS.breakdown}`],
+      ['как liveForPnl', Object.values(PNL_COLUMNS).join(', ')],
+    ];
+    console.log(`\n=== Выборка за ${range.from}..${range.to} (accrued_at), как в P&L`);
+    for (const [title, columns] of variants) {
+      gc();
+      const before = Math.round(process.memoryUsage().rss / MB);
+      const { value, peakMb, ms } = await peakOf(() =>
+        pool.query(
+          `SELECT ${columns} FROM finance_operations WHERE ${live}
+             AND accrued_at >= $2::date AND accrued_at < $3::date`,
+          [user, range.from, range.to],
+        ),
+      );
+      mem(`${title}: ${value.rows.length} строк, ${ms} мс, пик rss ${peakMb} (до ${before})`);
+      value.rows.length = 0;
+      gc();
+      mem(`${title}: после gc`);
+    }
+  } finally {
+    await pool.end();
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if (args.journal) {
+    await journalMode(args.user as string, args.journal);
+    return;
+  }
   if (!(global as { gc?: unknown }).gc) console.log('Без --expose-gc: «отпущено» будет неточным.');
   mem('старт');
 

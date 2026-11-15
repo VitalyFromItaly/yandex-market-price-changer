@@ -38,6 +38,15 @@ export interface IAccountingCostCorrectionResult {
 }
 
 const r = accountingCostRecords;
+
+/**
+ * Строк/id в одном запросе. У протокола Postgres потолок 65 535 параметров
+ * (счётчик Int16): 15.11.2026 прайс на 17 526 товаров дал одним INSERT 87 630
+ * параметров, счётчик переполнился в «bind message has 22094 parameter formats
+ * but 0 parameters» (08P01), и история закупа не записалась вовсе. 1000 строк ×
+ * 5 параметров — с запасом, как UPSERT_CHUNK_SIZE журнала.
+ */
+export const COST_CHUNK_SIZE = 1000;
 const c = accountingCostRecordChanges;
 
 /** Строка таблицы → запись для правил домена. */
@@ -68,11 +77,18 @@ export class AccountingCostHistoryRepository {
     const byProduct = new Map<string, TAccountingCostRow[]>();
     const ids = [...new Set(productIds)];
     if (!ids.length) return byProduct;
-    const rows = await executor
-      .select()
-      .from(r)
-      .where(and(eq(r.telegramUserId, telegramUserId), inArray(r.productId, ids)))
-      .orderBy(asc(r.validFrom));
+    const rows: TAccountingCostRow[] = [];
+    for (let i = 0; i < ids.length; i += COST_CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + COST_CHUNK_SIZE);
+      rows.push(
+        ...(await executor
+          .select()
+          .from(r)
+          .where(and(eq(r.telegramUserId, telegramUserId), inArray(r.productId, chunk)))
+          .orderBy(asc(r.validFrom))),
+      );
+    }
+    // Товар целиком в одной пачке, поэтому порядок по validFrom внутри товара сохраняется.
     for (const row of rows) {
       const list = byProduct.get(row.productId) ?? [];
       list.push(row);
@@ -90,21 +106,26 @@ export class AccountingCostHistoryRepository {
     telegramUserId: string,
     writes: readonly IAccountingCostWrite[],
   ): Promise<number> {
-    if (!writes.length) return 0;
-    const inserted = await this.db
-      .insert(r)
-      .values(
-        writes.map((write) => ({
-          telegramUserId,
-          productId: write.productId,
-          validFrom: write.validFrom,
-          purchase: write.purchase,
-          source: write.source,
-        })),
-      )
-      .onConflictDoNothing({ target: [r.telegramUserId, r.productId, r.validFrom] })
-      .returning({ id: r.id });
-    return inserted.length;
+    // Без транзакции: onConflictDoNothing делает повтор безопасным, а недописанное
+    // догонит следующая загрузка прайса.
+    let count = 0;
+    for (let i = 0; i < writes.length; i += COST_CHUNK_SIZE) {
+      const inserted = await this.db
+        .insert(r)
+        .values(
+          writes.slice(i, i + COST_CHUNK_SIZE).map((write) => ({
+            telegramUserId,
+            productId: write.productId,
+            validFrom: write.validFrom,
+            purchase: write.purchase,
+            source: write.source,
+          })),
+        )
+        .onConflictDoNothing({ target: [r.telegramUserId, r.productId, r.validFrom] })
+        .returning({ id: r.id });
+      count += inserted.length;
+    }
+    return count;
   }
 
   /**
