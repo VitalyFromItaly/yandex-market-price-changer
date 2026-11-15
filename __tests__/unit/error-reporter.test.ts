@@ -66,7 +66,36 @@ describe('ErrorReporter', () => {
       requestedAt: '2026-10-13T10:01:24Z',
       finishedAt: '2026-10-13T10:01:25Z',
       waitedMs: 1200,
+      fault: 'external',
+      faultParty: 'Яндекс Маркет',
     });
+  });
+
+  it('алерт говорит, на чьей стороне сбой: Маркет провалил отчёт сам', async () => {
+    const { reporter, send } = build();
+    const error = new ReportGenerationError(
+      'Отчёт не сгенерировался',
+      'rep-2',
+      { status: 'FAILED' },
+      600,
+    );
+
+    await reporter.report({ error, source: 'yandex', context: 'fby:stock:side' });
+
+    expect(send.mock.calls[0][0]).toContain('Сторона: 🌐 Яндекс Маркет — провалил отчёт сам');
+  });
+
+  it('ошибка в нашем коде: «Сторона: 🛠 наша» и fault в журнале', async () => {
+    const { reporter, record, send } = build();
+
+    await reporter.report({
+      error: new TypeError('x is undefined'),
+      source: 'bot',
+      context: 'side:ours',
+    });
+
+    expect(send.mock.calls[0][0]).toContain('Сторона: 🛠 наша — ошибка в коде');
+    expect(record.mock.calls[0][0].details).toEqual({ fault: 'ours' });
   });
 
   it('записывает ошибку с классом, стеком и местом', async () => {

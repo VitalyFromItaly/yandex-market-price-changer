@@ -12,6 +12,7 @@ import { ReportGenerationError } from '../yandex/report-generation.error';
 import { YandexApiError } from '../yandex/yandex-api.errors';
 
 import { AlertThrottle } from './alert-throttle';
+import { faultLine, faultOf, type IFault } from './fault.domain';
 
 /**
  * Откуда прилетела ошибка. `scanner` — внешний сканер секретов (404 на
@@ -190,7 +191,13 @@ export class ErrorReporter {
       const source = this.sourceOf(error, input.source);
       const httpStatus = input.httpStatus ?? api?.status;
       const requestUrl = input.requestUrl ?? api?.request ?? report?.request;
-      const details = input.details ?? report?.details;
+      const fault = faultOf(error);
+      // Сторона сбоя — и в журнал: в админке видно то же, что в алерте.
+      const details = {
+        ...(input.details ?? report?.details),
+        fault: fault.side,
+        ...(fault.party ? { faultParty: fault.party } : {}),
+      };
 
       this.logger.error(
         `[${source}/${input.context}] ${errorType}: ${message}` +
@@ -221,7 +228,7 @@ export class ErrorReporter {
       });
 
       if (input.alert !== false) {
-        this.sendAlert({ errorType, message, source, requestUrl, input });
+        this.sendAlert({ errorType, message, source, requestUrl, fault, input });
       }
     } catch (failure) {
       // Сюда попасть можно только при ошибке в самом ловителе. Молчать нельзя,
@@ -286,12 +293,13 @@ export class ErrorReporter {
     message: string;
     source: string;
     requestUrl?: string;
+    fault: IFault;
     input: IErrorReport;
   }): void {
     const sender = this.alertSender;
     if (!sender) return;
 
-    const { errorType, message, source, requestUrl, input } = payload;
+    const { errorType, message, source, requestUrl, fault, input } = payload;
 
     // Ключ — вид ошибки и место, а НЕ текст сообщения: в тексте бывает id
     // заказа или артикул, и тогда каждая ошибка выглядит новой, а троттлинг
@@ -303,6 +311,7 @@ export class ErrorReporter {
     const lines = [
       `🚨 <b>${esc(errorType)}</b>`,
       `Место: ${esc(source)} / ${esc(input.context)}`,
+      esc(faultLine(fault)),
       input.telegramUserId ? `Пользователь: ${esc(input.telegramUserId)}` : null,
       requestUrl ? `Запрос: ${esc(requestUrl)}` : null,
       '',

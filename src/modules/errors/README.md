@@ -38,6 +38,16 @@ per-user attribution and does not survive a restart.
   hundred messages and stop reading alerts entirely — the catcher would make observability worse
   than its absence. The key deliberately excludes the message text, which often carries an order id
   and would make every error look new.
+- **Every alert says whose side the failure is on** — the line «Сторона: …» right under «Место:», and the
+  same in the journal (`details.fault` = `external | seller | ours | unknown`, `details.faultParty`).
+  Rules live in one pure function `faultOf` (`fault.domain.ts`), by error class and response code:
+  `ReportGenerationError`, 5xx, 420/429 and «no response» of a marketplace/Telegram → 🌐 that party;
+  401/403 of Market/Ozon/WB → 🔑 seller (their key or access), Telegram 403 → seller (blocked the bot);
+  any other 4xx → 🛠 ours (we built the request), Telegram 429 → ours (we send too often); Polza 401/403/402
+  → ours (the key and the balance are ours); Postgres/Mongo and any other `Error` → ours; a bare Node network
+  code or a non-Error → ❔ unknown. Why: on 13-11-2026 «Отчёт об остатках FBY не сгенерировался» looked like
+  our bug, and only a diagnostic run on prod showed that Market fails the report itself. The throttle key is
+  unchanged.
 - Alert delivery is wired by `ErrorAlertBridge` (`bots/error-alert.bridge.ts`) calling
   `setAlertSender` at bootstrap. A direct dependency would be a DI cycle: `BotRegistry` calls the
   reporter from `telegraf.catch`. A failure _while sending an alert_ is logged, never reported —
