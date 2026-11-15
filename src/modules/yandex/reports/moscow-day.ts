@@ -22,14 +22,33 @@ export interface IMoscowDay {
   offset: string;
 }
 
+/**
+ * Форматтеры — по одному на процесс, не на вызов. `new Intl.DateTimeFormat`
+ * стоит ~0,5 мс и держит память ICU вне кучи V8; `moscowDay` зовут на каждую
+ * строку журнала (`financeToday`), и 15.11.2026 импорт и P&L продавца с 34 тыс.
+ * строк поднимали RSS до 2,7 ГБ при куче 160 МБ (30 тыс. вызовов: 14 с и
+ * +750 МБ против 0,3 с и +7 МБ с общим форматтером).
+ */
+const DAY_FORMAT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: MOSCOW_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+const OFFSET_FORMAT = new Intl.DateTimeFormat('en-US', {
+  timeZone: MOSCOW_TIME_ZONE,
+  timeZoneName: 'longOffset',
+});
+const CLOCK_FORMAT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: MOSCOW_TIME_ZONE,
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
 /** Календарные части даты в московском часовом поясе. */
 export function moscowDay(now: Date = new Date()): IMoscowDay {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: MOSCOW_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(now);
+  const parts = DAY_FORMAT.formatToParts(now);
 
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
 
@@ -47,10 +66,7 @@ export function moscowDay(now: Date = new Date()): IMoscowDay {
  * подхватится само.
  */
 export function moscowOffset(now: Date = new Date()): string {
-  const formatted = new Intl.DateTimeFormat('en-US', {
-    timeZone: MOSCOW_TIME_ZONE,
-    timeZoneName: 'longOffset',
-  }).format(now);
+  const formatted = OFFSET_FORMAT.format(now);
 
   // Формат вида «7/29/2026, GMT+03:00».
   const match = formatted.match(/GMT([+-]\d{2}:\d{2})/);
@@ -70,12 +86,7 @@ export function moscowDateParam(now: Date = new Date()): string {
  * подпись «на 06:12 МСК» разошлась бы с реальностью на три часа.
  */
 export function moscowClock(now: Date = new Date()): string {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: MOSCOW_TIME_ZONE,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(now);
+  const parts = CLOCK_FORMAT.formatToParts(now);
 
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
   return `${get('hour')}:${get('minute')}`;

@@ -5,6 +5,9 @@ import { unzipSync } from 'fflate';
 import mongoose from 'mongoose';
 import { Pool } from 'pg';
 
+import { CostHistorySchema } from '../src/database/schemas/cost-history.schema';
+import { ProductSchema } from '../src/database/schemas/product.schema';
+import { PurchasePriceSchema } from '../src/database/schemas/purchase-price.schema';
 import { YandexMarketSchema } from '../src/database/schemas/yandex-market.schema';
 import { financeToday, monthPeriod, requestRange } from '../src/modules/finance/finance-period';
 import { compactYmServicesSheet } from '../src/modules/finance/ym-act-breakdown';
@@ -233,8 +236,89 @@ async function journalMode(user: string, range: { from: string; to: string }): P
       gc();
       mem(`${title}: после gc`);
     }
+
+    const { rows: skuRows } = await pool.query(
+      `SELECT DISTINCT sku FROM finance_operations WHERE ${live} AND sku IS NOT NULL
+         AND accrued_at >= $2::date AND accrued_at < $3::date`,
+      [user, range.from, range.to],
+    );
+    await mongoMode(
+      user,
+      skuRows.map((row: { sku: string }) => row.sku),
+    );
   } finally {
     await pool.end();
+  }
+}
+
+/** Закуп шага `pnl:journal` (`FinanceService.costs`) — те же запросы к Mongo. */
+async function mongoMode(user: string, skus: string[]): Promise<void> {
+  const url = process.env.MONGODB_URL;
+  const dbName = process.env.MONGODB_DATABASE;
+  if (!url || !dbName) throw new Error('Нужны MONGODB_URL и MONGODB_DATABASE');
+  await mongoose.connect(url, { dbName });
+  try {
+    const Product = mongoose.model('Product', ProductSchema);
+    const Purchase = mongoose.model('PurchasePrice', PurchasePriceSchema);
+    const Cost = mongoose.model('CostHistory', CostHistorySchema);
+    console.log(`\n=== Mongo: закуп по ${skus.length} SKU журнала (как FinanceService.costs)`);
+
+    const sizes = async <T>(model: mongoose.Model<T>, match: object): Promise<unknown> =>
+      (
+        await model.aggregate([
+          { $match: match },
+          {
+            $group: {
+              _id: null,
+              docs: { $sum: 1 },
+              mb: { $sum: { $divide: [{ $bsonSize: '$$ROOT' }, MB] } },
+              maxKb: { $max: { $divide: [{ $bsonSize: '$$ROOT' }, 1024] } },
+            },
+          },
+        ])
+      )[0];
+    const productMatch = { telegramUserId: user, 'marketplaceSkus.ym': { $in: skus } };
+    console.log('  товары', await sizes(Product, productMatch));
+    console.log(
+      '  цены закупа',
+      await sizes(Purchase, { telegramUserId: user, sku: { $in: skus } }),
+    );
+
+    const step = async (title: string, work: () => Promise<unknown[]>): Promise<unknown[]> => {
+      gc();
+      const before = Math.round(process.memoryUsage().rss / MB);
+      const { value, peakMb, ms } = await peakOf(work);
+      mem(`${title}: ${value.length} док., ${ms} мс, пик rss ${peakMb} (до ${before})`);
+      return value;
+    };
+    const products = (await step('товары lean', () =>
+      Product.find(productMatch).lean().exec(),
+    )) as Array<{ _id: unknown }>;
+    await step('товары, только _id и sku', () =>
+      Product.find(productMatch, { _id: 1, 'marketplaceSkus.ym': 1 }).lean().exec(),
+    );
+    await step('цены закупа (документы)', () =>
+      Purchase.find({ telegramUserId: user, sku: { $in: skus } }).exec(),
+    );
+    await step('цены закупа lean', () =>
+      Purchase.find({ telegramUserId: user, sku: { $in: skus } })
+        .lean()
+        .exec(),
+    );
+    const ids = products.map((product) => String(product._id));
+    console.log(
+      '  история цен',
+      await sizes(Cost, { telegramUserId: user, productId: { $in: ids } }),
+    );
+    await step('история цен lean', () =>
+      Cost.find({ telegramUserId: user, productId: { $in: ids } })
+        .lean()
+        .exec(),
+    );
+    gc();
+    mem('mongo: после gc');
+  } finally {
+    await mongoose.disconnect();
   }
 }
 
