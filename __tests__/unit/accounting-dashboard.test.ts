@@ -24,6 +24,7 @@ import {
   DASHBOARD_LINES,
   DASHBOARD_LINE_OF_RESULT_KEY,
   dashboardLineOfArticle,
+  dashboardLineOfOperation,
   dashboardTotalsOf,
   filterDashboardItems,
 } from '../../src/modules/accounting/accounting-dashboard.domain';
@@ -202,10 +203,25 @@ afterAll(async () => {
   await pg?.close();
 });
 
-beforeEach(async () => {
-  await pg.reset();
+/** Возврат заказа 1 в октябре: возврат платежа покупателю и плата за обратную доставку. */
+const refund = row({
+  transactionType: 'Возврат',
+  transactionSource: 'Возврат платежа покупателя',
+  transactionDate: '12.10.2026 10:00',
+  transactionSum: -10000,
+});
+const reverseDelivery = row({
+  shopSku: null,
+  transactionType: 'Удержание',
+  transactionSource: 'Оплата услуг Маркета',
+  offerOrServiceName: 'Доставка невыкупов и возвратов',
+  transactionDate: '12.10.2026 10:00',
+  transactionSum: -150,
+  count: null,
+});
+
+async function loadNetting(rows: Record<string, unknown>[]): Promise<void> {
   const documents = new FinanceDocumentRepository(pg.db);
-  const rows = [row(), commission];
   const { document } = await documents.registerVersion({
     marketplace: 'ym',
     telegramUserId: SELLER,
@@ -229,6 +245,11 @@ beforeEach(async () => {
       }),
     ),
   );
+}
+
+beforeEach(async () => {
+  await pg.reset();
+  await loadNetting([row(), commission]);
   await orderLines.upsertLines(SELLER, [line()]);
   await manual.create(
     SELLER,
@@ -413,6 +434,47 @@ describe('AccountingDashboardService — один период в трёх ба�
   });
 });
 
+describe('AccountingDashboardService — возврат', () => {
+  beforeEach(async () => {
+    await loadNetting([row(), commission, refund, reverseDelivery]);
+  });
+
+  it('«Возвраты и невыкупы» — только плата за возврат, возврат платежа гасит выручку', async () => {
+    for (const [basis, period] of [
+      ['sale', SEPT],
+      ['accrual', OCT],
+    ] as const) {
+      const dashboard = await service.summary(
+        SELLER,
+        {},
+        STORE,
+        { basis, period, filter: {} },
+        NOW,
+      );
+      expect(lineOf(dashboard, 'revenue').kopecks).toBe(0);
+      expect(lineOf(dashboard, 'returns').title).toBe('Возвраты и невыкупы');
+      expect(lineOf(dashboard, 'returns').kopecks).toBe(-15_000);
+      expect(lineOf(dashboard, 'logistics').kopecks).toBe(-10_000);
+      // Итог тот же, что «выручка 0 − комиссия − доставка − плата за возврат − закуп».
+      expect(ym(dashboard).netKopecks).toBe(-230_000 - 10_000 - 15_000 - 300_000);
+      expect(ym(dashboard).grossKopecks).toBe(-300_000);
+    }
+
+    const drill = await service.drill(
+      SELLER,
+      {},
+      STORE,
+      { basis: 'accrual', period: OCT, filter: {} },
+      { line: 'returns', marketplace: 'ym' },
+      NOW,
+    );
+    expect(drill.kopecks).toBe(-15_000);
+    expect(drill.operations.map((op) => [op.title, op.kopecks])).toEqual([
+      ['Доставка невыкупов и возвратов', -15_000],
+    ]);
+  });
+});
+
 describe('домен панели', () => {
   const item = (over: Partial<IDashboardItem>): IDashboardItem => ({
     marketplace: 'ym',
@@ -430,13 +492,27 @@ describe('домен панели', () => {
   });
   const money = () => ({ payableKopecks: 0, receivedKopecks: 0 });
 
-  it('каждая статья и строка карточки — на своей строке панели, возвраты — отдельно', () => {
+  it('каждая статья и строка карточки — на своей строке панели, платы за возврат — отдельно', () => {
     for (const article of FINANCE_ARTICLE_KEYS) {
       const line = dashboardLineOfArticle(article);
       expect(line === 'reference' || DASHBOARD_LINES.includes(line)).toBe(true);
     }
-    expect(dashboardLineOfArticle('returns')).toBe('returns');
+    // Возврат платежа — сторно продажи; в «Возвраты» идут только платы за возврат.
+    expect(dashboardLineOfArticle('returns')).toBe('revenue');
     expect(dashboardLineOfArticle('sales')).toBe('revenue');
+    expect(dashboardLineOfOperation({ article: 'reverse_logistics', subArticle: null })).toBe(
+      'returns',
+    );
+    expect(
+      dashboardLineOfOperation({ article: 'processing', subArticle: 'return_processing' }),
+    ).toBe('returns');
+    expect(dashboardLineOfOperation({ article: 'storage', subArticle: 'return_storage' })).toBe(
+      'returns',
+    );
+    expect(dashboardLineOfOperation({ article: 'processing', subArticle: 'processing' })).toBe(
+      'marketplace_services',
+    );
+    expect(dashboardLineOfOperation({ article: 'returns', subArticle: 'return' })).toBe('revenue');
     expect(
       Object.values(DASHBOARD_LINE_OF_RESULT_KEY).every((l) => DASHBOARD_LINES.includes(l)),
     ).toBe(true);

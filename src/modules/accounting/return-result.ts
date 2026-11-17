@@ -114,6 +114,11 @@ const RETURN_KEY_OF_SUB_ARTICLE: Partial<Record<TAccountingSubArticle, TReturnRe
   return_storage: 'return_storage',
 };
 
+/** Подстатьи платы за возврат — те же, что выделяет результат возврата; панель берёт их отсюда. */
+export const RETURN_FEE_SUB_ARTICLES: ReadonlySet<TAccountingSubArticle> = new Set(
+  Object.keys(RETURN_KEY_OF_SUB_ARTICLE) as TAccountingSubArticle[],
+);
+
 export function returnResultKeyOf(op: IOrderResultOperation): TReturnResultKey | 'reference' {
   const bySub = op.subArticle ? RETURN_KEY_OF_SUB_ARTICLE[op.subArticle] : undefined;
   return bySub ?? RETURN_RESULT_KEY_OF_ARTICLE[op.article];

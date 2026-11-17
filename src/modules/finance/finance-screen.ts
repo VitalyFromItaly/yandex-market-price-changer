@@ -39,6 +39,8 @@ export interface IFinanceScreenOperation {
   /** Версия отчёта, в которой строка встретилась последней, — её оригинал и скачивается. */
   documentId: string | null;
   count: string | null;
+  /** Подстатья «Финучёта» (`sub_article`); читает только `byIds`. */
+  subArticle?: string | null;
   /** Расшифровка одной суммы по статьям (TASK-155); null — операция целиком своей статьи. */
   breakdown?: IOperationBreakdownPart[] | null;
 }

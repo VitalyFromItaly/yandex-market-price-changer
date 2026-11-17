@@ -9,7 +9,7 @@ import type {
 
 const LINES: [DashboardLine, string][] = [
   ['revenue', 'Выручка'],
-  ['returns', 'Возвраты'],
+  ['returns', 'Возвраты и невыкупы'],
   ['compensations', 'Компенсации и прочие доходы'],
   ['cogs', 'Себестоимость'],
   ['commission', 'Комиссии'],

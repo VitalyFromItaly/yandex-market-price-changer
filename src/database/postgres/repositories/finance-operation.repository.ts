@@ -844,6 +844,7 @@ export class FinanceOperationRepository {
         documentId: t.lastDocumentId,
         count: sql<string | null>`${t.raw}->>'count'`,
         breakdown: t.breakdown,
+        subArticle: t.subArticle,
       })
       .from(t)
       .where(and(eq(t.telegramUserId, telegramUserId), inArray(t.id, [...ids])))

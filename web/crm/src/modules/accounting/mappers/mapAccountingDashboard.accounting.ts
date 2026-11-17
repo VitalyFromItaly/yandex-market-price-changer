@@ -5,6 +5,7 @@ import type {
   DashboardBlockKey,
   DashboardBlockResponse,
   DashboardCell,
+  DashboardLine,
   DashboardLineTotalResponse,
   DashboardRow,
   OrderProfitReason,
@@ -108,6 +109,12 @@ const formatPercent = (value: number): string => `${value.toLocaleString('ru-RU'
  * сервер её собрал (сами площадки в одно число не складываются); строки — в порядке
  * сервера, названия уже по базису. Все числа — с сервера, здесь только подписи.
  */
+/** Пояснения строк, где смысл не очевиден из подписи. */
+const LINE_HINT: Partial<Record<DashboardLine, string>> = {
+  revenue: 'За вычетом возврата платежа покупателю',
+  returns: 'Платы площадки за обратную доставку, обработку и хранение возвратов и невыкупов',
+};
+
 export function mapAccountingDashboard(data: AccountingDashboardResponse): AccountingDashboardView {
   const blocks = [...data.totals.byMarketplace, ...(data.totals.all ? [data.totals.all] : [])];
   const template = blocks[0]?.lines ?? [];
@@ -116,7 +123,7 @@ export function mapAccountingDashboard(data: AccountingDashboardResponse): Accou
   const lineRows: DashboardRow[] = template.map((t) => ({
     key: t.line,
     title: t.title,
-    hint: null,
+    hint: LINE_HINT[t.line] ?? null,
     cells: blocks.map((b) =>
       lineCell(
         b,
@@ -134,7 +141,7 @@ export function mapAccountingDashboard(data: AccountingDashboardResponse): Accou
     {
       key: 'gross',
       title: 'Валовая прибыль',
-      hint: 'Выручка, возвраты и себестоимость',
+      hint: 'Выручка за вычетом возврата платежа покупателю и себестоимость',
       cells: blocks.map((b) => totalCell(b, b.grossKopecks)),
       total: true,
     },
@@ -148,7 +155,7 @@ export function mapAccountingDashboard(data: AccountingDashboardResponse): Accou
     {
       key: 'margin',
       title: 'Маржа',
-      hint: 'Чистая прибыль к выручке за вычетом возвратов',
+      hint: 'Чистая прибыль к выручке за вычетом возврата платежа покупателю',
       cells: blocks.map((b) => totalCell(b, b.marginPercent, formatPercent)),
       total: false,
     },

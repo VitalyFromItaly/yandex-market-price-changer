@@ -15,7 +15,7 @@ describe('mapAccountingDashboard', () => {
     expect(view.columns.map((c) => c.label)).toEqual(['Яндекс Маркет', 'Ozon', 'Все площадки']);
     expect(view.columns[0]?.note).toContain('«Все площадки»');
     expect(view.columns[2]?.note).toBeNull();
-    expect(view.rows.slice(0, 2).map((r) => r.title)).toEqual(['Выручка', 'Возвраты']);
+    expect(view.rows.slice(0, 2).map((r) => r.title)).toEqual(['Выручка', 'Возвраты и невыкупы']);
     expect(view.rows.slice(-5).map((r) => r.key)).toEqual([
       'gross',
       'net',

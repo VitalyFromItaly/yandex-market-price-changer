@@ -13,7 +13,7 @@
 import type { IOrderCardOperation } from './accounting-order-card.domain';
 import type { IAccountingOrderLineInput } from './accounting-order-lines.domain';
 import type { IOrderProfit } from './order-profit-state';
-import type { TOrderResultKey } from './order-result';
+import type { IOrderResultOperation, TOrderResultKey } from './order-result';
 import type { TFinanceMarketplace } from '../../database/postgres/finance.schema';
 import type { TFinanceArticle } from '../finance/finance-articles';
 import type { IFinancePeriod } from '../finance/finance-period';
@@ -25,6 +25,7 @@ import { brandOf } from '../yandex/reports/brands';
 
 import { orderKeyOf } from './accounting-order-card.domain';
 import { ORDER_RESULT_KEY_OF_ARTICLE } from './order-result';
+import { RETURN_FEE_SUB_ARTICLES } from './return-result';
 
 /** Базис периода — обязательный: от него зависит, какие операции попадут в итог. */
 export type TDashboardBasis = 'sale' | 'accrual' | 'cash';
@@ -62,7 +63,7 @@ export type TDashboardLine =
 
 export const DASHBOARD_LINE_TITLE: Record<TDashboardLine, string> = {
   revenue: 'Выручка',
-  returns: 'Возвраты',
+  returns: 'Возвраты и невыкупы',
   compensations: 'Компенсации и прочие доходы',
   cogs: 'Себестоимость',
   commission: 'Комиссии',
@@ -110,12 +111,34 @@ export const DASHBOARD_LINE_OF_RESULT_KEY: Record<TOrderResultKey, TDashboardLin
 
 /**
  * Статья журнала → строка панели: через строку карточки (`ORDER_RESULT_KEY_OF_ARTICLE`),
- * чтобы панель и карточка не разошлись; `returns` — своя строка. `reference` — вне суммы.
+ * чтобы панель и карточка не разошлись. Возврат платежа покупателю (статья `returns`) —
+ * сторно продажи, он в «Выручке». `reference` — вне суммы.
  */
 export function dashboardLineOfArticle(article: TFinanceArticle): TDashboardLine | 'reference' {
-  if (article === 'returns') return 'returns';
   const key = ORDER_RESULT_KEY_OF_ARTICLE[article];
   return key === 'reference' ? 'reference' : DASHBOARD_LINE_OF_RESULT_KEY[key];
+}
+
+/**
+ * Плата площадки за возврат: обратная доставка, обработка и хранение возврата —
+ * по статье `reverse_logistics` или по подстатье (у Ozon обработка и хранение
+ * лежат в статьях `processing`/`storage`). Решение `accounting_dashboard_returns`.
+ */
+export function isReturnFeeOperation(
+  op: Pick<IOrderResultOperation, 'article' | 'subArticle'>,
+): boolean {
+  return (
+    op.article === 'reverse_logistics' ||
+    Boolean(op.subArticle && RETURN_FEE_SUB_ARTICLES.has(op.subArticle))
+  );
+}
+
+/** Операция → строка панели: плата за возврат — «Возвраты и невыкупы», остальное — по статье. */
+export function dashboardLineOfOperation(
+  op: Pick<IOrderResultOperation, 'article' | 'subArticle'>,
+): TDashboardLine | 'reference' {
+  const line = dashboardLineOfArticle(op.article);
+  return line !== 'reference' && isReturnFeeOperation(op) ? 'returns' : line;
 }
 
 export type TDashboardSource = 'journal' | 'manual' | 'order' | 'expense' | 'purchase' | 'tax';
@@ -153,7 +176,7 @@ export interface IDashboardOrder {
 
 /** Операция журнала или ручная → кирпич; справочная (баллы) — null. */
 export function operationItemOf(op: IOrderCardOperation): IDashboardItem | null {
-  const line = dashboardLineOfArticle(op.article);
+  const line = dashboardLineOfOperation(op);
   if (line === 'reference') return null;
   return {
     marketplace: op.marketplace,
@@ -171,8 +194,10 @@ export function operationItemOf(op: IOrderCardOperation): IDashboardItem | null 
 }
 
 /**
- * Суммы карточки заказа → кирпичи (базис «продажа»). `revenue` делится: строки
- * статьи `returns` — «Возвраты», остальное — «Выручка»; Σ двух = сумме карточки.
+ * Суммы карточки заказа → кирпичи (базис «продажа»). Из суммы с операциями
+ * выделяются платы за возврат (`isReturnFeeOperation`) — «Возвраты и невыкупы»,
+ * остальное — строка суммы; Σ двух = сумме карточки. Возврат платежа покупателю
+ * остаётся в «Выручке» (решение `accounting_dashboard_returns`).
  * Строки `only` — только эти строки панели (себестоимость в базисе «начисление»).
  */
 export function saleItemsOf(
@@ -190,43 +215,41 @@ export function saleItemsOf(
     const line = DASHBOARD_LINE_OF_RESULT_KEY[amount.key];
     const expected = amount.source === 'expected';
     const reason = amount.reason ?? null;
-    if (amount.key === 'revenue' && amount.operationIds.length) {
-      const ids = new Set(amount.operationIds);
-      const returns = order.operations.filter(
-        (op) =>
-          ids.has(op.id) &&
-          op.article === 'returns' &&
-          ORDER_RESULT_KEY_OF_ARTICLE[op.article] === 'revenue',
-      );
-      if (returns.length) {
-        const returnIds = new Set(returns.map((op) => op.id));
-        const returnsKopecks = returns.reduce((sum, op) => sum + op.amountKopecks, 0);
-        if (!only || only.has('returns')) {
-          items.push({
-            ...base,
-            line: 'returns',
-            kopecks: returnsKopecks,
-            expected,
-            source: 'order',
-            operationIds: [...returnIds],
-            title: DASHBOARD_LINE_TITLE.returns,
-            reason,
-          });
-        }
-        if (!only || only.has('revenue')) {
-          items.push({
-            ...base,
-            line: 'revenue',
-            kopecks: amount.kopecks === null ? null : amount.kopecks - returnsKopecks,
-            expected,
-            source: 'order',
-            operationIds: amount.operationIds.filter((id) => !returnIds.has(id)),
-            title: amount.title,
-            reason,
-          });
-        }
-        continue;
+    const ids = new Set(amount.operationIds);
+    // Части одной сводной операции несут её id: берём только части этой суммы.
+    const own = order.operations.filter(
+      (op) => ids.has(op.id) && ORDER_RESULT_KEY_OF_ARTICLE[op.article] === amount.key,
+    );
+    const fees = own.filter(isReturnFeeOperation);
+    if (fees.length) {
+      const feesKopecks = fees.reduce((sum, op) => sum + op.amountKopecks, 0);
+      const restIds = new Set(own.filter((op) => !isReturnFeeOperation(op)).map((op) => op.id));
+      if (!only || only.has('returns')) {
+        items.push({
+          ...base,
+          line: 'returns',
+          kopecks: feesKopecks,
+          expected,
+          source: 'order',
+          operationIds: [...new Set(fees.map((op) => op.id))],
+          title: DASHBOARD_LINE_TITLE.returns,
+          reason,
+        });
       }
+      const rest = amount.kopecks === null ? null : amount.kopecks - feesKopecks;
+      if (!only || only.has(line)) {
+        items.push({
+          ...base,
+          line,
+          kopecks: rest,
+          expected,
+          source: 'order',
+          operationIds: amount.operationIds.filter((id) => restIds.has(id)),
+          title: amount.title,
+          reason,
+        });
+      }
+      continue;
     }
     if (only && !only.has(line)) continue;
     items.push({
@@ -352,7 +375,7 @@ export interface IDashboardBlock extends IDashboardMoney {
   marketplace: TFinanceMarketplace | null;
   label: string;
   lines: IDashboardLineTotal[];
-  /** Выручка + возвраты + себестоимость; null — себестоимость неизвестна. */
+  /** Выручка (за вычетом возврата платежа) + себестоимость; null — себестоимость неизвестна. */
   grossKopecks: number | null;
   /** Σ всех строк; null — какая-то строка неизвестна. */
   netKopecks: number | null;
@@ -403,7 +426,8 @@ function blockOf(
 ): IDashboardBlock {
   const lines = lineTotalsOf(basis, items);
   const of = (line: TDashboardLine) => lines.find((l) => l.line === line)?.kopecks ?? null;
-  const netRevenue = sumOrNull([of('revenue'), of('returns')]);
+  // Выручка — уже за вычетом возврата платежа покупателю; платы за возврат, как логистика, в валовую не входят.
+  const netRevenue = of('revenue');
   const grossKopecks = sumOrNull([netRevenue, of('cogs')]);
   const netKopecks = sumOrNull(lines.map((l) => l.kopecks));
   const marginPercent =

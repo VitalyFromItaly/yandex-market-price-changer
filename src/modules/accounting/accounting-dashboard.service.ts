@@ -34,7 +34,7 @@ import {
   DASHBOARD_BASIS_HINT,
   DASHBOARD_BASIS_TITLE,
   catalogOf,
-  dashboardLineOfArticle,
+  dashboardLineOfOperation,
   dashboardLineTitle,
   dashboardTotalsOf,
   drillItemsOf,
@@ -244,12 +244,7 @@ export class AccountingDashboardService {
     const own = drillItemsOf(items, target.line, target.marketplace);
 
     const ids = [...new Set(own.flatMap((item) => item.operationIds))];
-    const views = operationViewsOf(
-      ids,
-      computed.operations,
-      (op) => dashboardLineOfArticle(op.article),
-      target.line,
-    );
+    const views = operationViewsOf(ids, computed.operations, dashboardLineOfOperation, target.line);
     const shownViews = views.slice(0, DASHBOARD_DRILL_LIMIT);
     await this.fillDocuments(telegramUserId, shownViews);
 
@@ -473,7 +468,7 @@ export class AccountingDashboardService {
         for (const row of await this.operations.byIds(telegramUserId, part)) {
           operations.push({
             ...row,
-            subArticle: null,
+            subArticle: (row.subArticle ?? null) as IOrderCardOperation['subArticle'],
             origin: 'journal',
             marketplace,
             documentId: row.documentId,
