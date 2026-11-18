@@ -42,7 +42,9 @@ const v = accountingOrderResultVersions;
  * корректировка после сверки видна новой строкой рядом со сверенной.
  * Голова читается под `FOR UPDATE` в транзакции, как у `AccountingOrderLineRepository`:
  * два пересчёта одного заказа не запишут одну версию дважды (уникальный
- * `(result_id, version)` уронил бы второй, а не испортил историю).
+ * `(result_id, version)` уронил бы второй, а не испортил историю). Первая вставка
+ * головы — `ON CONFLICT DO NOTHING` с перечитыванием: отсутствующую строку `FOR UPDATE`
+ * не блокирует, и параллельные CRM-джобы (дашборд + заказы) падали на 23505.
  */
 @Injectable()
 export class AccountingOrderResultRepository {
@@ -62,27 +64,27 @@ export class AccountingOrderResultRepository {
       expectedKopecks: profit.expectedKopecks,
     };
     return await this.db.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(r)
-        .where(
-          and(
-            eq(r.telegramUserId, telegramUserId),
-            eq(r.marketplace, key.marketplace),
-            eq(r.orderId, key.orderId),
-          ),
-        )
-        .for('update');
+      const headOf = async (): Promise<TAccountingOrderResultRow | undefined> => {
+        const [found] = await tx
+          .select()
+          .from(r)
+          .where(
+            and(
+              eq(r.telegramUserId, telegramUserId),
+              eq(r.marketplace, key.marketplace),
+              eq(r.orderId, key.orderId),
+            ),
+          )
+          .for('update');
+        return found;
+      };
 
-      if (row && row.fingerprint === fingerprint) {
-        return { version: row.version, written: false, reason: null };
-      }
-
-      const reason = snapshotReasonOf(row ? row.state : null, profit.state);
-      let resultId: string;
-      let version: number;
+      let row = await headOf();
+      let resultId: string | null = null;
       if (!row) {
-        version = 1;
+        // FOR UPDATE не блокирует отсутствующую строку: параллельный пересчёт того же заказа
+        // тоже видит «нет головы». ON CONFLICT ждёт чужую транзакцию — проигравший перечитывает
+        // уже закоммиченную голову и идёт по ветке существующей строки.
         const [inserted] = await tx
           .insert(r)
           .values({
@@ -90,13 +92,23 @@ export class AccountingOrderResultRepository {
             marketplace: key.marketplace,
             telegramUserId,
             orderId: key.orderId,
-            version,
+            version: 1,
             fingerprint,
             changedAt: now,
           })
+          .onConflictDoNothing({ target: [r.marketplace, r.telegramUserId, r.orderId] })
           .returning({ id: r.id });
-        resultId = inserted.id;
-      } else {
+        if (inserted) resultId = inserted.id;
+        else row = await headOf();
+      }
+
+      if (row && row.fingerprint === fingerprint) {
+        return { version: row.version, written: false, reason: null };
+      }
+
+      const reason = snapshotReasonOf(row ? row.state : null, profit.state);
+      let version = 1;
+      if (row) {
         version = row.version + 1;
         resultId = row.id;
         await tx
