@@ -21,6 +21,7 @@ import {
   emptyReturnTabs,
   returnStage,
   returnTab,
+  orderReturnTab,
   type IReportContext,
   type IReportDefinition,
   type TReportKey,
@@ -39,6 +40,7 @@ import {
   DEFAULT_PERIOD,
   assertPeriodOrdered,
   assertPeriodSupported,
+  clipToHistory,
   creationDateParams,
   isUnbounded,
   periodAgeDays,
@@ -153,8 +155,8 @@ export interface IReturnsSummary {
   /** Уже выданы магазину — путь закончен. */
   settled: number;
   /**
-   * Те же записи по вкладкам кабинета («Ждут отправки», «В пути», …): сумма
-   * вкладок кроме `completed` = `inFlight`, `completed` = `settled`.
+   * Строки отчёта по вкладкам кабинета («Ждут отправки», «В пути», …) — и записи
+   * /returns, и невыкупы по подстатусу заказа: Σ вкладок = `IReportResult.count`.
    */
   byTab: Record<TReturnTab, number>;
   /**
@@ -194,6 +196,11 @@ export interface IReportResult {
    * сходящуюся с итогом.
    */
   assembling?: number;
+  /**
+   * Период «Едет обратно» глубже 30 дней: невыкупы по заказам взяты только за
+   * последние 30 дней (`clipToHistory`), возвраты — за весь период. Текст обязан это сказать.
+   */
+  ordersClipped?: boolean;
 }
 
 /**
@@ -260,7 +267,14 @@ export class OrderReportsService {
         : false,
     };
 
-    const orders = await this.collectOrders(client, definition, now, period, options, context);
+    // «Едет обратно» за окно глубже 30 дней: возвраты — за весь период, невыкупы по
+    // подстатусу заказа — только в окне getOrders (clipToHistory), с оговоркой в тексте.
+    const ordersPeriod = definition.usesReturnsApi ? clipToHistory(period, now) : period;
+    const ordersClipped = ordersPeriod !== period;
+    if (ordersClipped) assertPeriodOrdered(period, now);
+    const orders = ordersPeriod
+      ? await this.collectOrders(client, definition, now, ordersPeriod, options, context)
+      : [];
     let totals = sumTotals(orders);
 
     let count = orders.length;
@@ -268,6 +282,8 @@ export class OrderReportsService {
 
     if (definition.usesReturnsApi) {
       returns = await this.collectReturns(client, orders, period, now);
+      // Невыкупы по подстатусу заказа — тоже строки реестра: Σ вкладок = count.
+      for (const order of orders) returns.byTab[orderReturnTab(order.substatus)] += 1;
       totals = addTotals(totals, returns.totals);
       count += returns.count;
     }
@@ -289,6 +305,7 @@ export class OrderReportsService {
       returns,
       viaArchive,
       assembling,
+      ordersClipped: ordersClipped || undefined,
     };
   }
 

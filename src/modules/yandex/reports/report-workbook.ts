@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import { orderTotals } from './money';
 import { moscowClock, moscowDateParam } from './moscow-day';
-import { REPORT } from './report-status-map';
+import { REPORT, RETURN_TAB_LABEL, orderReturnTab, returnTab } from './report-status-map';
 import type { IReturnRecord } from '../yandex-api.client';
 import type { IReportOrder, IReportResult } from './order-reports.service';
 
@@ -171,7 +171,14 @@ const RETURNING_HEADERS = [
   'Артикул',
   'Товар',
   'Кол-во',
+  // Последней — чтобы прежние колонки не съехали у тех, кто строил по ним сводные.
+  'Вкладка',
 ] as const;
+
+/** Подпись вкладки кабинета для строки книги; вне вкладок — пусто. */
+function tabLabel(tab: keyof typeof RETURN_TAB_LABEL | null): string {
+  return tab ? RETURN_TAB_LABEL[tab] : '';
+}
 
 /**
  * Книга «Едет обратно»: СТРОКА НА ПОЗИЦИЮ, не на заказ — артикулы и есть смысл
@@ -197,7 +204,7 @@ export function buildReturningWorkbook(
       formatCreationDate(order?.creationDate),
       order?.substatus ?? order?.status ?? '',
     ];
-    appendItemRows(all, base, order?.items);
+    appendItemRows(all, base, order?.items, tabLabel(orderReturnTab(order?.substatus)));
   }
 
   for (const record of returns) {
@@ -207,7 +214,12 @@ export function buildReturningWorkbook(
       formatCreationDate(record?.creationDate),
       record?.shipmentStatus ?? '',
     ];
-    appendItemRows(all, base, record?.items);
+    appendItemRows(
+      all,
+      base,
+      record?.items,
+      tabLabel(returnTab(record?.shipmentStatus, record?.refundStatus)),
+    );
   }
 
   const exported = all.slice(0, MAX_EXPORT_ROWS);
@@ -240,6 +252,7 @@ export function buildReturningWorkbook(
     { wch: 20 },
     { wch: 40 },
     { wch: 8 },
+    { wch: 16 },
   ];
 
   const book = XLSX.utils.book_new();
@@ -261,9 +274,11 @@ function appendItemRows(
   rows: (string | number)[][],
   base: (string | number)[],
   items: { offerId?: string; offerName?: string; count?: number }[] | undefined,
+  tail: string | null = null,
 ): void {
+  const after = tail === null ? [] : [tail];
   if (!Array.isArray(items) || !items.length) {
-    rows.push([...base, '', '', '']);
+    rows.push([...base, '', '', '', ...after]);
     return;
   }
 
@@ -274,6 +289,7 @@ function appendItemRows(
       item?.offerId ?? '',
       item?.offerName ?? '',
       Number.isFinite(count) ? count : '',
+      ...after,
     ]);
   }
 }

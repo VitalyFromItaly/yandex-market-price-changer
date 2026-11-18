@@ -7,6 +7,7 @@ import { MAX_DAYS, ordersByDay, worthCharting } from './ordersByDay.orders';
 const row = (dateSort: number, sales: number): OrderRow => ({
   id: `${dateSort}:${sales}`,
   orderId: 1,
+  type: 'order',
   typeLabel: '',
   date: '',
   dateSort,
@@ -15,6 +16,7 @@ const row = (dateSort: number, sales: number): OrderRow => ({
   sales,
   subsidies: 0,
   withDelivery: sales,
+  tab: null,
 });
 
 describe('ordersByDay', () => {

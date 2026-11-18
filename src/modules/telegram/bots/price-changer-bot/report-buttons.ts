@@ -41,7 +41,7 @@ export function isReportKey(value: string | undefined): value is TReportKey {
 // Лимит Telegram на callback_data — 64 байта; самое длинное здесь
 // `rep:month:shipped_today` — 23.
 
-export const REPORT_CB_PATTERN = /^rep:(today|day|week|month|prevmonth|all):([a-z_]+)$/;
+export const REPORT_CB_PATTERN = /^rep:(today|day|week|month|prevmonth|range|all):([a-z_]+)$/;
 
 export function reportCallback(period: TPeriodKey, reportKey: TReportKey): string {
   return `rep:${period}:${reportKey}`;
@@ -55,8 +55,16 @@ export function parseReportCallback(
   // «Прошлый месяц» есть только у «Прибыли» (periodsFor): у остальных отчётов
   // такой кнопки не рисуется, и подделанный callback — не их период.
   if (match[1] === PERIOD.PREV_MONTH && match[2] !== REPORT.PROFIT) return null;
+  // «Свой период» — только у «Едет обратно» (реестр возвратов с окном дат, как в кабинете).
+  if (match[1] === PERIOD.RANGE && match[2] !== REPORT.RETURNING) return null;
   return { period: match[1] as TPeriodKey, reportKey: match[2] };
 }
+
+/**
+ * Метка незакрытого вопроса «за какой период?» «Едет обратно» в `UserAccess.pendingReportDay`
+ * (поле общее с «Другим днём», где лежит ключ отчёта; ключом отчёта метка не бывает).
+ */
+export const RETURNING_RANGE_PENDING = 'returning:range';
 
 // --- кнопки раздела рассылки -------------------------------------------------
 

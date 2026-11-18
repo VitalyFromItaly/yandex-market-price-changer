@@ -239,6 +239,7 @@ describe('Выгрузка «едет обратно» .xlsx', () => {
       'Артикул',
       'Товар',
       'Кол-во',
+      'Вкладка',
     ]);
   });
 
@@ -254,7 +255,16 @@ describe('Выгрузка «едет обратно» .xlsx', () => {
     const { buffer } = buildReturningWorkbook([order], []);
     const [, first, second] = readBack(buffer);
 
-    expect(first).toEqual([777, 'Невыкуп', '28-07-2026', 'RETURNED', 'SKU-1', 'Кроссовки', 2]);
+    expect(first).toEqual([
+      777,
+      'Невыкуп',
+      '28-07-2026',
+      'RETURNED',
+      'SKU-1',
+      'Кроссовки',
+      2,
+      'В пути',
+    ]);
     expect(second[0]).toBe(777);
     expect(second[4]).toBe('SKU-2');
   });
@@ -271,6 +281,7 @@ describe('Выгрузка «едет обратно» .xlsx', () => {
     expect(first[4]).toBe('RET-1');
     expect(first[5]).toBe('');
     expect(first[6]).toBe(1);
+    expect(first[7]).toBe('В пути');
   });
 
   it('заказ и возврат без позиций НЕ исчезают из файла', () => {

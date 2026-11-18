@@ -288,6 +288,22 @@ export function periodAgeDays(period: IReportPeriod, now: Date = new Date()): nu
 }
 
 /**
+ * Период ЗАКАЗОВ «Едет обратно» (половина А, getOrders по подстатусу), обрезанный до
+ * 30-дневного окна getOrders. Возвраты (/returns) идут за весь период — метод дат не
+ * знает, режем у себя; заказы глубже окна взять неоткуда (у архива нет подстатусов).
+ *
+ * Возвращает сам `period`, если он в окне (вызывающий узнаёт обрезку по `!==`);
+ * `null` — период целиком старше окна, заказов не спрашиваем вовсе.
+ */
+export function clipToHistory(period: IReportPeriod, now: Date = new Date()): IReportPeriod | null {
+  if (isUnbounded(period) || periodAgeDays(period, now) <= HISTORY_WINDOW_DAYS) return period;
+  const bounds = periodBounds(period, now);
+  const start = shiftDays(moscowDay(now), -HISTORY_WINDOW_DAYS);
+  if (compareDates(bounds.to, start) < 0) return null;
+  return { key: PERIOD.RANGE, from: start, to: bounds.to };
+}
+
+/**
  * Только упорядоченность границ, БЕЗ возраста. Отдельно от
  * `assertPeriodSupported`: путь глубокой истории возраст не ограничивает, а
  * «начало позже конца» остаётся ошибкой на любом пути.
@@ -373,6 +389,8 @@ export function periodsFor(reportKey: string, options: { prevMonth: boolean }): 
     [PERIOD.WEEK, PERIOD.MONTH],
   ];
   if (reportKey === REPORT.PROFIT && options.prevMonth) rows.push([PERIOD.PREV_MONTH]);
+  // «Едет обратно» — реестр возвратов: окно дат, как фильтр «Период» кабинета ЯМ.
+  if (reportKey === REPORT.RETURNING) rows.push([PERIOD.RANGE]);
   rows.push([PERIOD.ALL]);
   return rows;
 }

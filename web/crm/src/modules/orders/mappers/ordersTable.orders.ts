@@ -1,4 +1,4 @@
-import type { OrderRow, SortDir, SortKey } from '../orders.domain';
+import type { OrderRow, ReturnTab, ReturnsFilter, SortDir, SortKey } from '../orders.domain';
 
 /**
  * Поиск по номеру заказа, составу (название, артикул) и статусу — без регистра.
@@ -52,4 +52,43 @@ export function nextSort(
 ): { key: SortKey; dir: SortDir } {
   if (current.key === key) return { key, dir: current.dir === 'asc' ? 'desc' : 'asc' };
   return { key, dir: key === 'status' ? 'asc' : 'desc' };
+}
+
+// --- реестр «Едет обратно»: фильтры как в кабинете ЯМ ---------------------------
+
+/** Строки под фильтром «Едет обратно»; `null` в поле — «все». */
+export function applyReturnsFilter(rows: readonly OrderRow[], filter: ReturnsFilter): OrderRow[] {
+  return rows.filter(
+    (row) =>
+      (filter.tab === null || row.tab === filter.tab) &&
+      (filter.status === null || row.statusLabel === filter.status) &&
+      (filter.type === null || row.type === filter.type),
+  );
+}
+
+/**
+ * Вкладки со счётчиками по строкам под фильтрами статуса и типа (без фильтра вкладки) —
+ * как кабинет пересчитывает вкладки под выбранными фильтрами. «Все» — последней, как там.
+ */
+export function returnTabOptions(
+  rows: readonly OrderRow[],
+  tabs: readonly ReturnTab[],
+  filter: Omit<ReturnsFilter, 'tab'>,
+): Array<{ key: string | null; label: string; count: number }> {
+  const scoped = applyReturnsFilter(rows, { ...filter, tab: null });
+  return [
+    ...tabs.map((tab) => ({
+      key: tab.key,
+      label: tab.label,
+      count: scoped.filter((row) => row.tab === tab.key).length,
+    })),
+    { key: null, label: 'Все', count: scoped.length },
+  ];
+}
+
+/** Статусы, реально встретившиеся в строках, — по алфавиту. */
+export function statusOptions(rows: readonly OrderRow[]): string[] {
+  return [...new Set(rows.map((row) => row.statusLabel).filter((label) => label !== ''))].sort(
+    (a, b) => a.localeCompare(b, 'ru'),
+  );
 }

@@ -171,6 +171,25 @@ describe('Отчёты о заказах в CRM (TASK-075)', () => {
     expect(view.returns).toMatchObject({ count: 1, inFlight: 1, activeOnly: false });
   });
 
+  it('«Едет обратно»: у строк вкладка кабинета, Σ вкладок = count; свой период принимается', async () => {
+    const { kinds } = await setup();
+    const params = { period: { key: 'range', from: '01-07-2026', to: '03-08-2026' } };
+    const view = (await kinds.run(REPORT.RETURNING, context(params), NOW)).data as ICrmOrdersView;
+
+    expect(view.rows.map((row) => row.tab)).toEqual(['inTransit', 'inTransit']);
+    expect(view.returns?.tabs.map((tab) => tab.key)).toEqual([
+      'awaitingDecision',
+      'readyForPickup',
+      'awaitingDispatch',
+      'inTransit',
+      'completed',
+    ]);
+    expect(view.returns?.tabs.reduce((acc, tab) => acc + tab.count, 0)).toBe(view.count);
+    expect(view.period).toMatchObject({ key: 'range', from: '01-07-2026', to: '03-08-2026' });
+    // У остальных отчётов свой период по-прежнему отказ.
+    expect(() => parseOrdersParams(REPORT.SHIPPED_TODAY, params)).toThrow(CrmJobError);
+  });
+
   it('«Выкуплено» тоже отдаёт книгу заказов — vykupleno-…xlsx', async () => {
     const { kinds } = await setup();
     const out = await kinds.run(REPORT.REDEEMED, context({ period: { key: PERIOD.TODAY } }), NOW);

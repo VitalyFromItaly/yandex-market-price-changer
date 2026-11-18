@@ -83,6 +83,8 @@ export interface OrderRowResponse {
   sales: number;
   subsidies: number;
   withDelivery: number;
+  /** Вкладка кабинета ЯМ (`ReturnTabKey`) — только у строк «Едет обратно». */
+  tab: string | null;
 }
 
 export interface MoneyTotals {
@@ -96,7 +98,8 @@ export interface OrdersReportResponse {
   title: string;
   count: number;
   totals: MoneyTotals;
-  period: ReportPeriod;
+  /** Эхо периода; у «своего диапазона» «Едет обратно» — ещё `from`/`to` (ДД-ММ-ГГГГ). */
+  period: ReportPeriod & { from?: string; to?: string };
   periodTitle: string | null;
   takenAt: string | null;
   assembling: number | null;
@@ -105,7 +108,7 @@ export interface OrdersReportResponse {
     inFlight: number;
     settled: number;
     activeOnly: boolean;
-    /** Непустые вкладки кабинета ЯМ в порядке показа; подписи — с сервера. */
+    /** Все вкладки кабинета ЯМ в порядке показа, с нулями; подписи — с сервера. */
     tabs: Array<{ key: string; label: string; count: number }>;
   } | null;
   notes: string[];
@@ -118,6 +121,7 @@ export interface OrderRow {
   /** Ключ строки в таблице — номер заказа не уникален (невыкуп и возврат одного заказа). */
   id: string;
   orderId: number | null;
+  type: OrderRowType;
   typeLabel: string;
   /** ДД-ММ-ГГГГ по Москве; пусто — даты нет. */
   date: string;
@@ -128,6 +132,14 @@ export interface OrderRow {
   sales: number;
   subsidies: number;
   withDelivery: number;
+  /** Вкладка кабинета ЯМ; null — строка не из «Едет обратно». */
+  tab: string | null;
+}
+
+/** Вкладка кабинета ЯМ в порядке показа — подпись с сервера. */
+export interface ReturnTab {
+  key: string;
+  label: string;
 }
 
 /** Модель экрана. */
@@ -144,14 +156,21 @@ export interface OrdersReport {
   returnsLine: string | null;
   /** Та же разбивка числами — для полосы «едет / выдано»; null, когда разбивать нечего. */
   returnsSplit: { inFlight: number; settled: number } | null;
-  /** Возвраты по вкладкам кабинета: «Ждут отправки 1 · В пути 25» — как у бота; null — пусто. */
-  returnsTabsLine: string | null;
+  /** Вкладки кабинета ЯМ (фильтр таблицы «Едет обратно»); пусто у остальных отчётов. */
+  returnTabs: ReturnTab[];
   notes: string[];
   emptyText: string;
   /** Колонка «Тип» нужна только «Едет обратно». */
   hasTypes: boolean;
   rows: OrderRow[];
   file: { filename: string; truncated: number } | null;
+}
+
+/** Фильтры реестра «Едет обратно» поверх строк; `null` — «все». */
+export interface ReturnsFilter {
+  tab: string | null;
+  status: string | null;
+  type: OrderRowType | null;
 }
 
 export type SortKey = 'orderId' | 'date' | 'status' | 'sales' | 'withDelivery';

@@ -13,8 +13,11 @@ import { computed, ref, watch } from 'vue';
 import OrdersByDayChart from '../components/OrdersByDayChart.vue';
 import OrdersSummary from '../components/OrdersSummary.vue';
 import OrdersTable from '../components/OrdersTable.vue';
+import ReturnsFilters from '../components/ReturnsFilters.vue';
 import { useOrdersTabs } from '../composables/useOrdersTabs.orders';
+import { useReturnsFilters } from '../composables/useReturnsFilters.orders';
 import { ordersByDay, worthCharting } from '../mappers/ordersByDay.orders';
+import { ORDER_REPORT } from '../orders.domain';
 import { useOrdersStore } from '../store/store.orders';
 
 import { Alert } from '@/components/ui/alert';
@@ -25,21 +28,29 @@ import { RefreshIndicator } from '@/components/ui/refresh-indicator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useStoreKey } from '@/shared/composables';
-import { PeriodPicker, useLinkedPeriod } from '@/shared/period';
+import { PeriodPicker, RangePicker, useLinkedPeriod } from '@/shared/period';
 
 const store = useOrdersStore();
 const storeKey = useStoreKey();
 const { period, report, isRefreshing, isFresh, savedAt, error } = storeToRefs(store);
+const { returnsPreset, returnsCustom, returnsRange } = storeToRefs(store);
 const { open, active, activeKey, deepHistory } = useOrdersTabs();
+
+/* «Едет обратно» — реестр возвратов как в кабинете ЯМ: окно дат, вкладки и фильтры. */
+const isReturning = computed(() => active.value?.key === ORDER_REPORT.RETURNING);
+const allRows = computed(() => report.value?.rows ?? []);
+const returnTabs = computed(() => report.value?.returnTabs ?? []);
+const filters = useReturnsFilters(allRows, returnTabs);
+const tableRows = computed(() => (isReturning.value ? filters.filtered.value : allRows.value));
 
 const unlimited = computed(() => deepHistory.value && active.value?.deepCapable === true);
 
 /* День, выбранный на графике, — фильтр таблицы. Новый отчёт — фильтр снимается. */
-const byDay = computed(() => (report.value === null ? null : ordersByDay(report.value.rows)));
+const byDay = computed(() => (report.value === null ? null : ordersByDay(tableRows.value)));
 const showChart = computed(() => byDay.value !== null && worthCharting(byDay.value));
 const day = ref<string | null>(null);
 const dayLabel = computed(() => byDay.value?.points.find((p) => p.key === day.value)?.date ?? null);
-watch(report, () => {
+watch([report, tableRows], () => {
   day.value = null;
 });
 
@@ -53,7 +64,7 @@ useLinkedPeriod(onPeriod);
 // Данные — при открытии, смене вкладки и периода. Прежняя задача при этом
 // бросается (useJob.start), её поздний ответ не покажется.
 watch(
-  [() => active.value?.key, period],
+  [() => active.value?.key, period, returnsRange],
   ([key]) => {
     if (key !== undefined) void store.load(key, storeKey.value);
   },
@@ -78,8 +89,15 @@ watch(
           </TabsTrigger>
         </TabsList>
       </Tabs>
+      <RangePicker
+        v-if="isReturning"
+        :preset="returnsPreset"
+        :custom="returnsCustom"
+        @preset="store.chooseReturnsPreset($event)"
+        @custom="store.chooseReturnsCustom($event)"
+      />
       <PeriodPicker
-        v-if="active?.periodic"
+        v-else-if="active?.periodic"
         :model-value="period"
         :unlimited="unlimited"
         @update:model-value="onPeriod"
@@ -130,8 +148,18 @@ watch(
         :selected="day"
         @select="day = $event"
       />
+      <ReturnsFilters
+        v-if="isReturning"
+        v-model:tab="filters.tab.value"
+        v-model:status="filters.status.value"
+        v-model:type="filters.type.value"
+        :tabs="filters.options.value"
+        :statuses="filters.statuses.value"
+        :active="filters.active.value"
+        @clear="filters.clear()"
+      />
       <OrdersTable
-        :rows="report.rows"
+        :rows="tableRows"
         :has-types="report.hasTypes"
         :day="day"
         :day-label="dayLabel"

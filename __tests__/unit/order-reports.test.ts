@@ -851,10 +851,10 @@ describe('Возвраты: период и разбивка', () => {
     const result = await reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
 
     expect(result.returns?.byTab).toEqual({
-      created: 1,
-      awaitingDispatch: 1,
-      inTransit: 2,
+      awaitingDecision: 0,
       readyForPickup: 0,
+      awaitingDispatch: 1,
+      inTransit: 3,
       completed: 1,
     });
     const { completed, ...inFlightTabs } = result.returns.byTab;
@@ -862,7 +862,7 @@ describe('Возвраты: период и разбивка', () => {
     expect(completed).toBe(result.returns.settled);
     // Бот печатает ту же раскладку строкой — пустые вкладки не показываются.
     expect(formatReport(result, NOW)).toContain(
-      'Оформлены <b>1</b> · Ждут отправки <b>1</b> · В пути <b>2</b> · Завершённые <b>1</b>',
+      'Ждут отправки <b>1</b> · В пути <b>3</b> · Завершены <b>1</b>',
     );
   });
 
@@ -972,5 +972,70 @@ describe('Выгрузка «едет обратно» файлом', () => {
       expect(result.caption).toContain('Едет обратно');
       expect(result.caption).not.toContain('не поместились');
     }
+  });
+});
+
+describe('«Едет обратно» за свой период глубже 30 дней (реестр как в кабинете)', () => {
+  const AUG = new Date('2026-08-03T10:00:00+03:00');
+  const ret = (id: number, creationDate: string, shipmentStatus = 'PICKED') => ({
+    returnId: id,
+    orderId: 2000 + id,
+    creationDate,
+    shipmentStatus,
+    amount: { value: 100 },
+  });
+
+  it('возвраты — за весь период, невыкупы по заказам — только в окне 30 дней, с оговоркой', async () => {
+    const { reports, queries } = await service({
+      returns: [ret(1, '2026-05-10T12:00:00+03:00'), ret(2, '2026-08-01T12:00:00+03:00')],
+    });
+    const period = {
+      key: PERIOD.RANGE,
+      from: { year: 2026, month: 5, day: 1 },
+      to: { year: 2026, month: 8, day: 3 },
+    } as const;
+    const result = await reports.build(STORE, REPORT.RETURNING, AUG, period);
+
+    expect(result.returns?.count).toBe(2);
+    expect(result.ordersClipped).toBe(true);
+    // Заказы спрошены не раньше 30 дней назад: 04-07-2026.
+    expect(String(queries[0].updatedAtFrom)).toMatch(/^2026-07-04/);
+    expect(formatReport(result, AUG)).toContain(
+      'Невыкупы по заказам — только за последние 30 дней',
+    );
+  });
+
+  it('в окне 30 дней ничего не режется и оговорки нет', async () => {
+    const { reports } = await service({ returns: [ret(1, '2026-08-01T12:00:00+03:00')] });
+    const result = await reports.build(STORE, REPORT.RETURNING, AUG, { key: PERIOD.MONTH });
+    expect(result.ordersClipped).toBeUndefined();
+  });
+
+  it('период целиком старше окна — заказы не спрашиваются', async () => {
+    const { reports, queries } = await service({ returns: [ret(1, '2026-05-10T12:00:00+03:00')] });
+    const period = {
+      key: PERIOD.RANGE,
+      from: { year: 2026, month: 5, day: 1 },
+      to: { year: 2026, month: 5, day: 31 },
+    } as const;
+    const result = await reports.build(STORE, REPORT.RETURNING, AUG, period);
+    expect(queries).toHaveLength(0);
+    expect(result.count).toBe(1);
+  });
+
+  it('невыкупы по подстатусу заказа — тоже во вкладках: Σ вкладок = count', async () => {
+    const { reports } = await service({
+      orders: [
+        { id: 1, status: 'DELIVERY', substatus: 'COURIER_RETURNS_ORDER', items: [] },
+        { id: 2, status: 'RETURNED', substatus: 'COURIER_RETURNED_ORDER', items: [] },
+      ],
+      returns: [ret(3, '2026-08-01T12:00:00+03:00', 'READY_FOR_PICKUP')],
+    });
+    const result = await reports.build(STORE, REPORT.RETURNING, AUG, { key: PERIOD.MONTH });
+    const tabs = result.returns.byTab;
+    expect(tabs.inTransit).toBe(1);
+    expect(tabs.completed).toBe(1);
+    expect(tabs.readyForPickup).toBe(1);
+    expect(Object.values(tabs).reduce((a, n) => a + n, 0)).toBe(result.count);
   });
 });

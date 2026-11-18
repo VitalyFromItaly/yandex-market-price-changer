@@ -65,6 +65,10 @@ npm run test:crm       # vitest --config web/crm/vitest.config.ts
   правилом в гарде `useMarketplaceGuard` (после `useAuthGuard`): разделы — статические маршруты, поэтому
   закрытая площадка переводится на «скоро» по имени маршрута на каждом переходе. Числа главной ЯМ
   стоят только у строки ЯМ — живой Ozon/WB ведёт в свой раздел.
+- «Отчёты → Едет обратно» (`modules/orders`) — реестр возвратов как в кабинете ЯМ: `RangePicker` (по умолчанию
+  «30 дней», `useReturnsRange`), вкладки со счётчиками (`?rt=`), статус, тип, магазин (`ReturnsFilters`,
+  `useReturnsFilters`, `useStoreSwitch`); вкладка строки приходит с сервера. Нативный `Select` — в ките
+  (`components/ui/select`). README crm, «Отчёты».
 - «Топ товаров» (`modules/top-skus`) — раздел магазина: все проданные товары за `RangePicker`-период (kind
   `top-skus:summary`, тот же ProfitService, что «Прибыль»), поиск и сортировка на клиенте по готовым строкам,
   вкладки «Регионы»/«Кластеры» (флага нет, под `report_profit`). README crm, «Топ товаров».

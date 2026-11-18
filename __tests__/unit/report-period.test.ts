@@ -441,3 +441,47 @@ describe('PERIOD.PREV_MONTH — «Прошлый месяц» «Прибыли»
     expect(SCHEDULE_PERIODS).not.toContain(PERIOD.PREV_MONTH);
   });
 });
+
+describe('«Свой период» у «Едет обратно»', () => {
+  const NOW = new Date('2026-11-18T09:00:00Z');
+
+  it('кнопка — только у «Едет обратно», перед «Всего»; callback чужого отчёта отвергается', async () => {
+    const { parseReportCallback, reportCallback } = await import(
+      '../../src/modules/telegram/bots/price-changer-bot/report-buttons'
+    );
+    const flat = periodsFor('returning', { prevMonth: false }).flat();
+    expect(flat.slice(-2)).toEqual(['range', 'all']);
+    expect(periodsFor('redeemed', { prevMonth: false }).flat()).not.toContain('range');
+    expect(parseReportCallback(reportCallback(PERIOD.RANGE, 'returning'))).toEqual({
+      period: 'range',
+      reportKey: 'returning',
+    });
+    expect(parseReportCallback('rep:range:redeemed')).toBeNull();
+  });
+
+  it('clipToHistory: в окне — тот же объект, глубже — с начала окна, целиком старше — null', async () => {
+    const { clipToHistory } = await import('../../src/modules/yandex/reports/report-period');
+    const month = { key: PERIOD.MONTH } as const;
+    expect(clipToHistory(month, NOW)).toBe(month);
+    const deep = {
+      key: PERIOD.RANGE,
+      from: { year: 2026, month: 9, day: 1 },
+      to: { year: 2026, month: 11, day: 18 },
+    } as const;
+    expect(clipToHistory(deep, NOW)).toEqual({
+      key: PERIOD.RANGE,
+      from: { year: 2026, month: 10, day: 19 },
+      to: { year: 2026, month: 11, day: 18 },
+    });
+    expect(
+      clipToHistory(
+        {
+          key: PERIOD.RANGE,
+          from: { year: 2026, month: 9, day: 1 },
+          to: { year: 2026, month: 9, day: 30 },
+        },
+        NOW,
+      ),
+    ).toBeNull();
+  });
+});

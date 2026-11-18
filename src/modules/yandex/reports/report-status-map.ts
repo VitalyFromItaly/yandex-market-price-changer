@@ -191,65 +191,93 @@ export function returnStage(
 }
 
 /**
- * Вкладка возврата — как кабинет ЯМ режет возвраты («Ждут отправки», «В пути», …).
+ * Вкладка возврата — ровно вкладки кабинета ЯМ «Возвраты» (FBS и Express):
+ * «Ждут решения · Готовы к выдаче · Ждут отправки · В пути · Завершены», «Все» — сумма.
  *
  * Одно число «едет обратно» не сверить с кабинетом: продавец видит там вкладки, а
  * у нас итог, и при расхождении непонятно, какая стадия виновата (17.11.2026 бот 67
- * против кабинетных 57 — два правила давали 57 оба). Разбивка по вкладкам сводит
- * спор к одной строке.
+ * против кабинетных 57 — разница оказалась окном дат: кабинет по умолчанию берёт
+ * последний месяц). Вкладки сводят спор к одной строке и служат фильтром экрана CRM.
  *
- * Названия — по смыслу цепочки статусов Partner API, а не по снимку кабинета: скрин
- * владельца («Ждут отправки 1 · В пути 32 · Завершённые») с продом 18.11 не сошёлся,
- * дата его неизвестна (решение `returns_by_cabinet_tabs`). Сверено только «В пути» =
- * `IN_TRANSIT` (32 на 17.11).
+ * Сверка 18.11.2026 (окно с 18.10, кабинет 02:51, прод ~06:10): «Готовы к выдаче»
+ * 8 = READY_FOR_PICKUP 8; активных 36 против 35. CREATED → «Ждут отправки» (3 против 1)
+ * и RECEIVED → «В пути» (17+7 против 27) — лучшая оценка по смыслу, снимки разнесены
+ * на три часа. Правится только эта таблица (README yandex «Едет обратно»).
  */
 export type TReturnTab =
-  | 'created'
+  | 'awaitingDecision'
+  | 'readyForPickup'
   | 'awaitingDispatch'
   | 'inTransit'
-  | 'readyForPickup'
   | 'completed';
 
 const RETURN_TAB: Record<TReturnShipmentStatus, TReturnTab> = {
-  [RETURN_SHIPMENT_STATUS.CREATED]: 'created',
-  [RETURN_SHIPMENT_STATUS.RECEIVED]: 'awaitingDispatch',
+  [RETURN_SHIPMENT_STATUS.CREATED]: 'awaitingDispatch',
+  [RETURN_SHIPMENT_STATUS.RECEIVED]: 'inTransit',
   [RETURN_SHIPMENT_STATUS.IN_TRANSIT]: 'inTransit',
   [RETURN_SHIPMENT_STATUS.READY_FOR_PICKUP]: 'readyForPickup',
   [RETURN_SHIPMENT_STATUS.PICKED]: 'completed',
 };
 
-/** Подписи вкладок; порядок ключей — порядок показа, по ходу возврата к продавцу. */
+/** Статус денег «ждёт решения продавца» — своя вкладка кабинета поверх стадии. */
+export const RETURN_WAITING_DECISION_REFUND_STATUS = 'WAITING_FOR_DECISION';
+
+/** Подписи вкладок — как в кабинете; порядок ключей — порядок показа. */
 export const RETURN_TAB_LABEL: Record<TReturnTab, string> = {
-  created: 'Оформлены',
+  awaitingDecision: 'Ждут решения',
+  readyForPickup: 'Готовы к выдаче',
   awaitingDispatch: 'Ждут отправки',
   inTransit: 'В пути',
-  readyForPickup: 'Готовы к выдаче',
-  completed: 'Завершённые',
+  completed: 'Завершены',
 };
 
+/** Подпись «всех» — суммы вкладок. */
+export const RETURN_TAB_ALL_LABEL = 'Все';
+
 /**
- * Вкладка записи; `null` — ни в одну: мёртвая заявка (как в `returnStage`) или
- * статус вне цепочки. Такие записи и в итог «Едет обратно» не входят.
+ * Вкладка записи /returns; `null` — ни в одну: мёртвая заявка (как в `returnStage`)
+ * или статус вне цепочки. Такие записи и в итог «Едет обратно» не входят.
  */
 export function returnTab(
   shipmentStatus: string | undefined,
   refundStatus?: string | undefined,
 ): TReturnTab | null {
   if (returnStage(shipmentStatus, refundStatus) === 'dead') return null;
-  return RETURN_TAB[shipmentStatus as TReturnShipmentStatus] ?? null;
+  const tab = RETURN_TAB[shipmentStatus as TReturnShipmentStatus] ?? null;
+  // Решение продавца нужно, пока посылка не выдана: выданная — уже «Завершены».
+  if (tab && tab !== 'completed' && refundStatus === RETURN_WAITING_DECISION_REFUND_STATUS) {
+    return 'awaitingDecision';
+  }
+  return tab;
+}
+
+/**
+ * Вкладка невыкупа, пойманного по подстатусу заказа (половина А «Едет обратно»):
+ * «курьер вернул» — путь закончен, остальные подстатусы — ещё едут.
+ */
+export function orderReturnTab(substatus: string | undefined): TReturnTab {
+  return substatus === RETURN_SUBSTATUS.COURIER_RETURNED_ORDER ? 'completed' : 'inTransit';
 }
 
 export function emptyReturnTabs(): Record<TReturnTab, number> {
-  return { created: 0, awaitingDispatch: 0, inTransit: 0, readyForPickup: 0, completed: 0 };
+  return {
+    awaitingDecision: 0,
+    readyForPickup: 0,
+    awaitingDispatch: 0,
+    inTransit: 0,
+    completed: 0,
+  };
 }
 
-/** Непустые вкладки в порядке показа — одна раскладка для бота и CRM. */
+/** Все вкладки в порядке показа, с нулями — одна раскладка для бота и CRM. */
 export function returnTabCounts(
   byTab: Record<TReturnTab, number>,
 ): Array<{ key: TReturnTab; label: string; count: number }> {
-  return (Object.keys(RETURN_TAB_LABEL) as TReturnTab[])
-    .filter((key) => byTab[key] > 0)
-    .map((key) => ({ key, label: RETURN_TAB_LABEL[key], count: byTab[key] }));
+  return (Object.keys(RETURN_TAB_LABEL) as TReturnTab[]).map((key) => ({
+    key,
+    label: RETURN_TAB_LABEL[key],
+    count: byTab[key],
+  }));
 }
 
 /**

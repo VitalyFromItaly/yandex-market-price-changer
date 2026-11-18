@@ -53,7 +53,7 @@
       "M34": "Доставка кода: деплой на прод только после зелёного CI",
       "M35": "Возвраты «Едет обратно» как в кабинете ЯМ"
     },
-    "active_tasks": 7,
+    "active_tasks": 8,
     "archived_tasks": 225,
     "archive_file": "tasks.archive.json"
   },
@@ -606,6 +606,29 @@
       ],
       "status": "obsolete",
       "skip_reason": "2026-11-10: дубль TASK-216 (CRM: переключатель режима А/Б входит в неё) — заведена по ошибке при закрытии TASK-215"
+    },
+    {
+      "id": "TASK-244",
+      "milestone": "M35",
+      "category": "functional",
+      "priority": "medium",
+      "description": "«Едет обратно»: сверить вкладки с кабинетом ЯМ одновременным снимком — скрин всего ряда вкладок кабинета (FBS и Express, период как в кабинете) и в ту же минуту на проде только чтением `diagnose-returns --user=478368727 --from=<начало окна> --skip-bot`. Сверка TASK-243 была приблизительной (скрин и прогон разнесены на три часа: CREATED→«Ждут отправки» 3 vs 1, RECEIVED→«В пути» 17+7 vs 27). При расхождении поправить только RETURN_TAB в report-status-map.ts, обновить README yandex «Едет обратно» и строку в docs/known-gaps.md.",
+      "acceptance_criteria": [
+        "Снимок: скрин кабинета и вывод diagnose-returns сделаны в одну минуту",
+        "Числа по вкладкам у бота = кабинету, либо расхождение объяснено и записано",
+        "Если правка нужна — изменён только RETURN_TAB (RETURN_STAGE, подписи, returnTab() не тронуты), тесты report-status-map обновлены",
+        "README yandex «Едет обратно» содержит итог сверки; строка в known-gaps закрыта или уточнена"
+      ],
+      "test_steps": [
+        "Шаг 1: скрин всего ряда вкладок кабинета ЯМ → Возвраты (FBS и Express, период по умолчанию) с видимым временем",
+        "Шаг 2: в ту же минуту на проде diagnose-returns --user=478368727 --from=<начало окна> --skip-bot",
+        "Шаг 3: разложить вывод по RETURN_TAB и сравнить с вкладками скрина",
+        "Шаг 4: npx tsc --noEmit && npm run lint && npm test && npm run typecheck:crm && npm run test:crm"
+      ],
+      "dependencies": [
+        "TASK-243"
+      ],
+      "status": "in_progress"
     }
   ]
 }

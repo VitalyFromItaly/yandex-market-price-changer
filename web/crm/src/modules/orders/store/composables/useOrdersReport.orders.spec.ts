@@ -74,6 +74,27 @@ describe('useOrdersReport', () => {
     expect(store.report?.file?.filename).toBe('vykupleno-03-08-2026-1000.xlsx');
   });
 
+  it('«Едет обратно» уходит окном дат (по умолчанию 30 дней) и сверяет эхо по датам', async () => {
+    vi.setSystemTime(new Date('2026-11-18T09:00:00Z'));
+    api.start.mockResolvedValue({ jobId: 'j1', created: true });
+    const store = useOrdersStore();
+    await store.load('returning', 's1');
+    expect(api.start).toHaveBeenCalledWith(
+      'orders:returning',
+      { period: { key: 'range', from: '20-10-2026', to: '18-11-2026' } },
+      's1',
+    );
+
+    const echo = { key: 'range', day: null, from: '20-10-2026', to: '18-11-2026' } as never;
+    api.get.mockResolvedValue(done('j1', data({ key: 'returning', period: echo })));
+    await vi.advanceTimersByTimeAsync(FIRST_POLL_MS);
+    expect(store.report?.key).toBe('returning');
+
+    store.chooseReturnsCustom({ from: '2026-10-18', to: '2026-11-18' });
+    expect(store.returnsPreset).toBe('custom');
+    expect(store.returnsRange).toEqual({ from: '2026-10-18', to: '2026-11-18' });
+  });
+
   it('«Едет до клиента» уходит без периода', async () => {
     api.start.mockResolvedValue({ jobId: 'j1', created: true });
     const store = useOrdersStore();

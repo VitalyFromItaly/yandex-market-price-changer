@@ -76,6 +76,14 @@ export function unboundedNote(result: Pick<IReportResult, 'period' | 'viaArchive
     : `Заказы Яндекс.Маркет отдаёт не старше ${HISTORY_WINDOW_DAYS} дней.`;
 }
 
+/** Оговорка «Едет обратно» за окно глубже 30 дней (`ordersClipped`) — общая для бота и CRM. */
+export function clippedNote(result: Pick<IReportResult, 'ordersClipped'>): string | null {
+  return result.ordersClipped
+    ? `Невыкупы по заказам — только за последние ${HISTORY_WINDOW_DAYS} дней (глубже Маркет ` +
+        'заказы не отдаёт); возвраты — за весь период.'
+    : null;
+}
+
 /**
  * Про обрезку книги потолком строк. Молча урезанная выгрузка выглядит как
  * полная, и расхождение с кабинетом продавец найдёт сам, в худший момент.
@@ -143,8 +151,9 @@ export function formatReport(result: IReportResult, now: Date = new Date()): str
         : `↩️ Возвраты: ${b(result.returns.count)}` +
             ` — едет ${b(result.returns.inFlight)}, выдано магазину ${b(result.returns.settled)}`,
     );
-    // Вкладки кабинета: продавец сверяет по ним, а не по одному итогу (TASK-243).
-    const tabs = returnTabCounts(result.returns.byTab);
+    // Вкладки кабинета: продавец сверяет по ним, а не по одному итогу. В сообщении —
+    // только непустые; CRM показывает все, как кабинет.
+    const tabs = returnTabCounts(result.returns.byTab).filter((t) => t.count > 0);
     if (tabs.length) lines.push(tabs.map((t) => `${t.label} ${b(t.count)}`).join(' · '));
   }
 
@@ -160,6 +169,8 @@ export function formatReport(result: IReportResult, now: Date = new Date()): str
    */
   const note = unboundedNote(result);
   if (note) lines.push('', `ℹ️ ${note}`);
+  const clipped = clippedNote(result);
+  if (clipped) lines.push('', `ℹ️ ${clipped}`);
 
   return lines.join('\n');
 }

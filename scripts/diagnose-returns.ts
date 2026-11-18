@@ -170,6 +170,19 @@ async function printBotCount(client: YandexApiClient, store: YandexMarketDocumen
 
   printByStatus(records, staleDaysOf(process.argv.slice(2)));
 
+  // Окно фильтра дат кабинета (`returnsFrom` в URL «Возвратов»): по умолчанию кабинет
+  // показывает последний месяц, а бот — всё, что не закрыто. `--from=YYYY-MM-DD`.
+  const from = argOf(process.argv.slice(2), 'from');
+  if (from) {
+    const updated = (r: IReturnRecord): string =>
+      (r.raw as { updateDate?: string })?.updateDate ?? r.creationDate ?? '';
+    const stageOf = (r: IReturnRecord): string => `${r.shipmentStatus}/${returnTypeOf(r)}`;
+    const byCreated = records.filter((r) => (r.creationDate ?? '') >= from);
+    const byUpdated = records.filter((r) => updated(r) >= from);
+    printCounts(`Б, ОФОРМЛЕНЫ С ${from} (${byCreated.length}):`, countBy(byCreated, stageOf));
+    printCounts(`Б, ОБНОВЛЕНЫ С ${from} (${byUpdated.length}):`, countBy(byUpdated, stageOf));
+  }
+
   if (process.argv.includes('--list')) {
     console.log();
     console.log('Б построчно (оформлен / обновлён):');
@@ -342,7 +355,8 @@ async function main(): Promise<void> {
   console.log(RULE);
   console.log();
 
-  await printBotCount(client, store);
+  // `--skip-bot` — без подсчёта бота (он ходит и в /orders): когда /orders лежит, /returns жив.
+  if (!process.argv.includes('--skip-bot')) await printBotCount(client, store);
 
   const all: IReturnRecord[] = [];
   let pages = 0;
@@ -352,6 +366,37 @@ async function main(): Promise<void> {
   }
   console.log(`Возвратов всего: ${all.length} (страниц: ${pages})`);
   console.log();
+
+  // Все записи в окне кабинета — сверка вкладок «Ждут решения … Завершены · Все».
+  const windowFrom = argOf(process.argv.slice(2), 'from');
+  if (windowFrom) {
+    const inWindow = all.filter((r) => (r.creationDate ?? '') >= windowFrom);
+    printCounts(
+      `ВСЕ ЗАПИСИ, ОФОРМЛЕНЫ С ${windowFrom} (${inWindow.length}) — стадия/деньги/тип:`,
+      countBy(
+        inWindow,
+        (r) => `${r.shipmentStatus ?? '-'}/${r.refundStatus ?? '-'}/${returnTypeOf(r)}`,
+      ),
+    );
+    const decided = (r: IReturnRecord): string => {
+      const items = ((r.raw as { items?: Array<{ decisions?: Array<{ decisionType?: string }> }> })
+        ?.items ?? []) as Array<{ decisions?: Array<{ decisionType?: string }> }>;
+      const types = items.flatMap((i) => (i.decisions ?? []).map((d) => d.decisionType ?? '?'));
+      return types.length ? [...new Set(types)].join('+') : '(нет решений)';
+    };
+    printCounts(
+      'ТЕ ЖЕ — по решению (decisionType) × стадия:',
+      countBy(inWindow, (r) => `${decided(r)} / ${r.shipmentStatus ?? '-'}`),
+    );
+    // Кабинет может резать окно по дате последнего изменения, а не оформления.
+    const touched = all.filter(
+      (r) => ((r.raw as { updateDate?: string })?.updateDate ?? r.creationDate ?? '') >= windowFrom,
+    );
+    printCounts(
+      `ВСЕ ЗАПИСИ, ОБНОВЛЕНЫ С ${windowFrom} (${touched.length}) — стадия:`,
+      countBy(touched, (r) => r.shipmentStatus ?? '-'),
+    );
+  }
 
   // 1. Раскладка по стадии отгрузки. Она отвечает на вопрос «что вообще есть»
   // до того, как какой-либо фильтр что-то отбросил.

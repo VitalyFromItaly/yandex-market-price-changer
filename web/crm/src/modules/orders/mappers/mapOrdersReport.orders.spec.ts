@@ -2,7 +2,7 @@ import type { OrdersReportResponse } from '../orders.domain';
 
 import { describe, expect, it } from 'vitest';
 
-import { mapOrdersReport, returnsLine, returnsTabsLine, rowDate } from './mapOrdersReport.orders';
+import { mapOrdersReport, returnsLine, rowDate } from './mapOrdersReport.orders';
 
 const RESPONSE: OrdersReportResponse = {
   key: 'returning',
@@ -32,6 +32,7 @@ const RESPONSE: OrdersReportResponse = {
       sales: 700,
       subsidies: 0,
       withDelivery: 700,
+      tab: 'inTransit',
     },
     {
       orderId: 555,
@@ -42,6 +43,7 @@ const RESPONSE: OrdersReportResponse = {
       sales: 430,
       subsidies: 0,
       withDelivery: 430,
+      tab: 'inTransit',
     },
   ],
   file: { filename: 'edet-obratno-03-08-2026-1000.xlsx', rows: 2, truncated: 0 },
@@ -82,19 +84,9 @@ describe('mapOrdersReport', () => {
     expect(returnsLine(null)).toBeNull();
   });
 
-  it('вкладки кабинета — строка бота «Ждут отправки 1 · В пути 25»', () => {
-    const tabs = [
-      { key: 'awaitingDispatch', label: 'Ждут отправки', count: 1 },
-      { key: 'inTransit', label: 'В пути', count: 25 },
-    ];
-    expect(returnsTabsLine({ count: 26, inFlight: 26, settled: 0, activeOnly: true, tabs })).toBe(
-      'Ждут отправки 1 · В пути 25',
-    );
-    expect(
-      returnsTabsLine({ count: 0, inFlight: 0, settled: 0, activeOnly: true, tabs: [] }),
-    ).toBeNull();
-    expect(returnsTabsLine(null)).toBeNull();
-    expect(mapOrdersReport(RESPONSE).returnsTabsLine).toBe('В пути 1');
+  it('вкладки кабинета — с сервера в порядке показа', () => {
+    expect(mapOrdersReport(RESPONSE).returnTabs).toEqual([{ key: 'inTransit', label: 'В пути' }]);
+    expect(mapOrdersReport({ ...RESPONSE, returns: null }).returnTabs).toEqual([]);
   });
 
   it('битая или пустая дата — пусто и в конец сортировки', () => {

@@ -2,7 +2,13 @@ import type { OrderRow } from '../orders.domain';
 
 import { describe, expect, it } from 'vitest';
 
-import { filterRows, nextSort, sortRows } from './ordersTable.orders';
+import {
+  applyReturnsFilter,
+  filterRows,
+  nextSort,
+  sortRows,
+  statusOptions,
+} from './ordersTable.orders';
 
 const row = (
   orderId: number,
@@ -13,6 +19,7 @@ const row = (
 ): OrderRow => ({
   id: String(orderId),
   orderId,
+  type: 'order',
   typeLabel: 'Заказ',
   date: '',
   dateSort,
@@ -21,6 +28,7 @@ const row = (
   sales,
   subsidies: 0,
   withDelivery: sales,
+  tab: null,
 });
 
 const ROWS = [
@@ -57,5 +65,33 @@ describe('таблица заказов', () => {
       key: 'status',
       dir: 'asc',
     });
+  });
+});
+
+describe('реестр «Едет обратно»', () => {
+  const ret = (orderId: number, tab: string, status: string): OrderRow => ({
+    ...row(orderId, 0, 100, '', status),
+    type: 'return',
+    tab,
+  });
+  const rows = [ret(1, 'inTransit', 'Едет к вам'), ret(2, 'completed', 'Выдан магазину')];
+
+  it('фильтр по вкладке, статусу и типу; null — все', () => {
+    const all = { tab: null, status: null, type: null };
+    expect(applyReturnsFilter(rows, all)).toHaveLength(2);
+    expect(applyReturnsFilter(rows, { ...all, tab: 'completed' }).map((r) => r.orderId)).toEqual([
+      2,
+    ]);
+    expect(
+      applyReturnsFilter(rows, { ...all, status: 'Едет к вам' }).map((r) => r.orderId),
+    ).toEqual([1]);
+    expect(applyReturnsFilter(rows, { ...all, type: 'nonRedemption' })).toEqual([]);
+  });
+
+  it('статусы — встретившиеся, по алфавиту, без пустых', () => {
+    expect(statusOptions([...rows, ret(3, 'inTransit', '')])).toEqual([
+      'Выдан магазину',
+      'Едет к вам',
+    ]);
   });
 });

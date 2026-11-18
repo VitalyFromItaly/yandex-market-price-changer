@@ -10,6 +10,7 @@ import {
   effectiveDefinition,
   emptyReturnTabs,
   returnTab,
+  orderReturnTab,
   returnTabCounts,
   isCancelled,
   matchesDefinition,
@@ -381,8 +382,8 @@ describe('Стадии возврата', () => {
   });
 
   it('вкладки кабинета — по стадии отгрузки; мёртвая заявка и чужой статус — ни в одну', () => {
-    expect(returnTab('CREATED', 'STARTED_BY_USER')).toBe('created');
-    expect(returnTab('RECEIVED')).toBe('awaitingDispatch');
+    expect(returnTab('CREATED', 'STARTED_BY_USER')).toBe('awaitingDispatch');
+    expect(returnTab('RECEIVED')).toBe('inTransit');
     expect(returnTab('IN_TRANSIT')).toBe('inTransit');
     expect(returnTab('READY_FOR_PICKUP')).toBe('readyForPickup');
     expect(returnTab('PICKED')).toBe('completed');
@@ -392,14 +393,27 @@ describe('Стадии возврата', () => {
     expect(returnTab(undefined)).toBeNull();
   });
 
-  it('раскладка вкладок — непустые, по ходу возврата к продавцу', () => {
-    const byTab = { ...emptyReturnTabs(), inTransit: 25, awaitingDispatch: 11, created: 4 };
+  it('«Ждут решения» — по статусу денег, пока посылка не выдана', () => {
+    expect(returnTab('READY_FOR_PICKUP', 'WAITING_FOR_DECISION')).toBe('awaitingDecision');
+    expect(returnTab('IN_TRANSIT', 'WAITING_FOR_DECISION')).toBe('awaitingDecision');
+    expect(returnTab('PICKED', 'WAITING_FOR_DECISION')).toBe('completed');
+  });
+
+  it('невыкуп по подстатусу заказа: «курьер вернул» — завершён, остальное — в пути', () => {
+    expect(orderReturnTab('COURIER_RETURNED_ORDER')).toBe('completed');
+    expect(orderReturnTab('COURIER_RETURNS_ORDER')).toBe('inTransit');
+    expect(orderReturnTab(undefined)).toBe('inTransit');
+  });
+
+  it('раскладка вкладок — все, как в кабинете, с нулями', () => {
+    const byTab = { ...emptyReturnTabs(), inTransit: 25, awaitingDispatch: 11 };
     expect(returnTabCounts(byTab)).toEqual([
-      { key: 'created', label: 'Оформлены', count: 4 },
+      { key: 'awaitingDecision', label: 'Ждут решения', count: 0 },
+      { key: 'readyForPickup', label: 'Готовы к выдаче', count: 0 },
       { key: 'awaitingDispatch', label: 'Ждут отправки', count: 11 },
       { key: 'inTransit', label: 'В пути', count: 25 },
+      { key: 'completed', label: 'Завершены', count: 0 },
     ]);
-    expect(returnTabCounts(emptyReturnTabs())).toEqual([]);
   });
 
   it('PICKED — путь закончен', () => {

@@ -660,25 +660,36 @@ each failure was silent.
   > `returns.tabs` in the CRM. Tab labels come from the server, so the bot and the CRM print the same
   > words.
 
-  | Вкладка         | Статус             |
-  | --------------- | ------------------ |
-  | Оформлены       | `CREATED` (живой)  |
-  | Ждут отправки   | `RECEIVED`         |
-  | В пути          | `IN_TRANSIT`       |
-  | Готовы к выдаче | `READY_FOR_PICKUP` |
-  | Завершённые     | `PICKED`           |
+- **Registry with the cabinet's tabs and filters (18-11-2026).** The 57-vs-67 dispute turned out to be the
+  **date window**: the cabinet's «Возвраты» (FBS и Express) defaults to the last month (`returnsFrom` in its URL),
+  while «Всего» counts every open record, including ~9 that Market has kept «в пути» since summer. In the same
+  window (from 18-10) we had 35 active vs the cabinet's 36, with «Готовы к выдаче» 8 = 8. So the CRM «Едет обратно»
+  became a registry like the cabinet (owner's decision): tabs with counts, period, order number, status, type,
+  store. The bot gets «✏️ Свой период» and a «Вкладка» column in the xlsx.
 
-  - **Reconciliation:** the labels follow the Partner API status chain, **not** a verified cabinet
-    snapshot (decision `returns_by_cabinet_tabs`). The owner's screenshot showed «Ждут отправки 1 ·
-    В пути 32 · Завершённые», with the leftmost tab cut off and the date unknown. Only «В пути» =
-    `IN_TRANSIT` matched, and only the 17-11 data (26 non-redemptions + 6 returns = 32). On 18-11,
-    `diagnose-returns` (block «ЗАПИСИ БОТА ПО СТАДИИ») gave `IN_TRANSIT` 25, `RECEIVED` 11,
-    `CREATED` 4, `READY_FOR_PICKUP` 0 (all 21 were picked up overnight) — bot total **40**, which
-    equals the sum of the tabs. «Ждут отправки 1» matches no status on either date.
-  - `RETURN_STAGE`/`returnStage` is **unchanged**: the 09-08 reconciliation (68, live `CREATED`
-    included) still stands, and the tabs make any future discrepancy point to one status.
-  - `byTab` is filled on the same line as `inFlight`/`settled`. The non-`completed` tabs sum to
-    `inFlight`, and `completed` = `settled` (pinned in `order-reports.test.ts`).
+  | Вкладка         | Правило (`returnTab` / `orderReturnTab`)                     |
+  | --------------- | ------------------------------------------------------------ |
+  | Ждут решения    | `refundStatus` `WAITING_FOR_DECISION`, until picked up       |
+  | Готовы к выдаче | `READY_FOR_PICKUP`                                           |
+  | Ждут отправки   | `CREATED` (live)                                             |
+  | В пути          | `RECEIVED`, `IN_TRANSIT`; non-redemptions by order substatus |
+  | Завершены       | `PICKED`; non-redemption `COURIER_RETURNED_ORDER`            |
+
+  - **Reconciliation status:** only «Готовы к выдаче» is verified exactly. `CREATED` → «Ждут отправки» (3 vs 1)
+    and `RECEIVED` → «В пути» (17+7 vs 27) are best guesses: the snapshots were three hours apart. Fixing them
+    touches only `RETURN_TAB`. To verify: a screenshot of the whole tab row plus
+    `diagnose-returns --user=… --from=<window start> --skip-bot` in the same minute. `--skip-bot` skips
+    `/orders`, which was down with 500 on 18-11.
+  - The registry does **not** include `LOST`/`CANCELLED`/records without a stage. The cabinet's «Завершены» has
+    a few of them, so «Завершены» and «Все» may be a few higher there.
+  - `byTab` covers both halves (non-redemptions from `/orders` too), so the tabs sum to `count`. The
+    `inFlight`/`settled` split is unchanged. The bot line shows non-empty tabs; the CRM shows all of them.
+  - **Period «свой диапазон» (`PERIOD.RANGE`)** — only for «Едет обратно» (`periodsFor`, `parseReportCallback`,
+    `parseOrdersParams`). Returns come for the whole range, up to 366 days (the method takes no dates; we filter
+    ourselves). Non-redemptions from `getOrders` come only for the last 30 days: `clipToHistory` clips them
+    instead of refusing, `ordersClipped` → `clippedNote` in the bot and in CRM `notes`. The archive has no
+    substatuses, so there is nowhere to get them deeper.
+  - `RETURN_STAGE`/`returnStage` is **unchanged**.
 
 - **The period was not applied at all.** The returns method takes no dates — only `pageToken`,
   `limit`, `shipmentStatuses` — so half the report was cut by `updatedAt` and half was not, and «за

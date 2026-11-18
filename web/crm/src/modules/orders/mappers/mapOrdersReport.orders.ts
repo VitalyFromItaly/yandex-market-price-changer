@@ -39,6 +39,7 @@ export function mapOrderRow(row: OrderRowResponse, index: number): OrderRow {
   return {
     id: `${row.type}:${row.orderId ?? 'none'}:${index}`,
     orderId: row.orderId,
+    type: row.type,
     typeLabel: ROW_TYPE_LABEL[row.type],
     ...rowDate(row.date),
     statusLabel: statusLabel(row.status),
@@ -46,6 +47,7 @@ export function mapOrderRow(row: OrderRowResponse, index: number): OrderRow {
     sales: row.sales,
     subsidies: row.subsidies,
     withDelivery: row.withDelivery,
+    tab: row.tab,
   };
 }
 
@@ -57,12 +59,6 @@ export function returnsLine(returns: OrdersReportResponse['returns']): string | 
     `Возвраты: ${formatCount(returns.count)} — едет ${formatCount(returns.inFlight)}, ` +
     `выдано магазину ${formatCount(returns.settled)}`
   );
-}
-
-/** Вкладки кабинета — та же строка, что у бота: «Ждут отправки 1 · В пути 25». */
-export function returnsTabsLine(returns: OrdersReportResponse['returns']): string | null {
-  if (returns === null || returns.tabs.length === 0) return null;
-  return returns.tabs.map((tab) => `${tab.label} ${formatCount(tab.count)}`).join(' · ');
 }
 
 export function mapOrdersReport(response: OrdersReportResponse): OrdersReport {
@@ -80,7 +76,7 @@ export function mapOrdersReport(response: OrdersReportResponse): OrdersReport {
       response.returns === null || response.returns.activeOnly || response.returns.count === 0
         ? null
         : { inFlight: response.returns.inFlight, settled: response.returns.settled },
-    returnsTabsLine: returnsTabsLine(response.returns),
+    returnTabs: (response.returns?.tabs ?? []).map((tab) => ({ key: tab.key, label: tab.label })),
     notes: response.notes,
     emptyText: response.emptyText,
     hasTypes: response.key === ORDER_REPORT.RETURNING,

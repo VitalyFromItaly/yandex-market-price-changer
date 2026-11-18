@@ -8,12 +8,23 @@ import { amountValue, orderTotals, type IMoneyTotals } from '../../yandex/report
 import { moscowStamp } from '../../yandex/reports/moscow-day';
 import {
   ASSEMBLING_NOTE,
+  clippedNote,
   emptyReportText,
   truncatedNote,
   unboundedNote,
 } from '../../yandex/reports/report-message';
-import { DEFAULT_PERIOD, isUnbounded, periodTitle } from '../../yandex/reports/report-period';
-import { REPORT, returnTabCounts } from '../../yandex/reports/report-status-map';
+import {
+  DEFAULT_PERIOD,
+  PERIOD,
+  isUnbounded,
+  periodTitle,
+} from '../../yandex/reports/report-period';
+import {
+  REPORT,
+  orderReturnTab,
+  returnTab,
+  returnTabCounts,
+} from '../../yandex/reports/report-status-map';
 import { formatOfferIds } from '../../yandex/reports/report-workbook';
 import { parsePeriodParams, periodEcho } from '../jobs/crm-period.domain';
 
@@ -51,6 +62,8 @@ export function parseOrdersParams(
   params: Record<string, unknown>,
 ): IReportPeriod {
   if (key === REPORT.IN_TRANSIT) return DEFAULT_PERIOD;
+  // «Едет обратно» — реестр возвратов с окном дат, как фильтр «Период» кабинета.
+  if (key === REPORT.RETURNING) return parsePeriodParams(params, [PERIOD.RANGE]);
   return parsePeriodParams(params);
 }
 
@@ -70,6 +83,8 @@ export interface ICrmOrderRow {
   sales: number;
   subsidies: number;
   withDelivery: number;
+  /** Вкладка кабинета ЯМ — только у строк «Едет обратно»; фронт по ней фильтрует. */
+  tab: TReturnTab | null;
 }
 
 export interface ICrmOrdersView {
@@ -90,7 +105,7 @@ export interface ICrmOrdersView {
     inFlight: number;
     settled: number;
     activeOnly: boolean;
-    /** Непустые вкладки кабинета в порядке показа — те же, что строка бота. */
+    /** Все вкладки кабинета в порядке показа, с нулями; Σ = count отчёта. */
     tabs: Array<{ key: TReturnTab; label: string; count: number }>;
   } | null;
   /** Оговорки — те же формулировки, что у бота, без значков и разметки. */
@@ -124,6 +139,7 @@ export function toCrmOrdersView(
     // (у метода возвратов названий нет вовсе). Названия — в xlsx, колонка «Состав».
     items: formatOfferIds(order?.items),
     ...orderTotals(order),
+    tab: key === REPORT.RETURNING ? orderReturnTab(order?.substatus) : null,
   }));
 
   for (const record of result.returns?.records ?? []) {
@@ -137,6 +153,7 @@ export function toCrmOrdersView(
       sales: value,
       subsidies: 0,
       withDelivery: value,
+      tab: returnTab(record.shipmentStatus, record.refundStatus),
     });
   }
 
@@ -144,6 +161,8 @@ export function toCrmOrdersView(
   if (result.assembling) notes.push(ASSEMBLING_NOTE);
   const unbounded = unboundedNote(result);
   if (unbounded) notes.push(unbounded);
+  const clipped = clippedNote(result);
+  if (clipped) notes.push(clipped);
   if (workbook?.truncated) notes.push(truncatedNote(key, workbook.rows, result.count));
 
   return {

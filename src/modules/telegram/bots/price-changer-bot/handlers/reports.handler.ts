@@ -18,7 +18,9 @@ import {
 import {
   DEFAULT_PERIOD,
   PERIOD,
+  assertPeriodOrdered,
   parseDayInput,
+  parseRangeInput,
   periodButtonLabel,
   periodsFor,
   type IReportPeriod,
@@ -29,6 +31,7 @@ import {
   type TReportKey,
 } from '../../../../../modules/yandex/reports/report-status-map';
 import { HISTORY_WINDOW_DAYS } from '../../../../../modules/yandex/yandex-api.paths';
+import { YandexDateRangeError } from '../../../../../modules/yandex/yandex-date-window';
 import { ErrorReporter } from '../../../../errors/error-reporter.service';
 import { TTelegrafBot } from '../../../domain.telegram';
 import { esc, htmlOptions } from '../../../formatting/telegram-format';
@@ -41,7 +44,12 @@ import {
 } from '../../shared/features.domain';
 import { StorePromptService } from '../../shared/services/store-prompt.service';
 import { PriceChangerKeyboard } from '../price-changer.keyboard';
-import { REPORT_CB_PATTERN, parseReportCallback, reportCallback } from '../report-buttons';
+import {
+  REPORT_CB_PATTERN,
+  RETURNING_RANGE_PENDING,
+  parseReportCallback,
+  reportCallback,
+} from '../report-buttons';
 
 /**
  * Показ отчётов пользователю.
@@ -92,6 +100,10 @@ export class ReportsHandler {
         await this.askDay(ctx, parsed.reportKey);
         return;
       }
+      if (parsed.period === PERIOD.RANGE) {
+        await this.askRange(ctx);
+        return;
+      }
 
       await this.run(ctx, parsed.reportKey, { key: parsed.period });
     });
@@ -131,6 +143,48 @@ export class ReportsHandler {
     );
   }
 
+  /** «Свой период» «Едет обратно»: две даты текстом, вопрос — в `pendingReportDay`. */
+  private async askRange(ctx: Context): Promise<void> {
+    await this.access.setPendingReportDay(
+      ctx.from.id.toString(),
+      ctx.botInfo.id.toString(),
+      RETURNING_RANGE_PENDING,
+    );
+    await ctx.reply(
+      [
+        `✏️ За какой период показать «${esc(reportDefinition(REPORT.RETURNING).title)}»?`,
+        '',
+        'Пришлите две даты — например <code>18-10-2026 18-11-2026</code>.',
+        '',
+        `ℹ️ Возвраты — за весь период (не длиннее года), невыкупы по заказам — только за последние ` +
+          `${HISTORY_WINDOW_DAYS} дней.`,
+      ].join('\n'),
+      htmlOptions(),
+    );
+  }
+
+  /** Ответ на «Свой период»; вопрос остаётся открытым, пока даты не годны. */
+  private async handlePendingRange(ctx: Context, text: string): Promise<void> {
+    const range = parseRangeInput(text);
+    if (!range) {
+      await ctx.reply(
+        'Не понял период. Нужны две даты ДД-ММ-ГГГГ, например <code>18-10-2026 18-11-2026</code>.',
+        htmlOptions(),
+      );
+      return;
+    }
+    const period: IReportPeriod = { key: PERIOD.RANGE, from: range.from, to: range.to };
+    try {
+      assertPeriodOrdered(period);
+    } catch (error) {
+      if (!(error instanceof YandexDateRangeError)) throw error;
+      await ctx.reply(`❌ ${esc(error.userMessage)}`, htmlOptions());
+      return;
+    }
+    await this.access.setPendingReportDay(ctx.from.id.toString(), ctx.botInfo.id.toString(), null);
+    await this.run(ctx, REPORT.RETURNING, period);
+  }
+
   /**
    * Обработка присланной даты. Зовётся из обработчика текста, когда у
    * пользователя есть незакрытый вопрос про день отчёта.
@@ -144,6 +198,10 @@ export class ReportsHandler {
     const account = await this.access.findByUserAndBot(telegramUserId, botId);
     const reportKey = account?.pendingReportDay;
     if (!reportKey) return false;
+    if (reportKey === RETURNING_RANGE_PENDING) {
+      await this.handlePendingRange(ctx, text);
+      return true;
+    }
 
     const day = parseDayInput(text);
     if (!day) {
