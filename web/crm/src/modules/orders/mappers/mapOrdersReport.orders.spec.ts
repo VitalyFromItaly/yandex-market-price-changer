@@ -2,7 +2,7 @@ import type { OrdersReportResponse } from '../orders.domain';
 
 import { describe, expect, it } from 'vitest';
 
-import { mapOrdersReport, returnsLine, rowDate } from './mapOrdersReport.orders';
+import { mapOrdersReport, returnsLine, returnsTabsLine, rowDate } from './mapOrdersReport.orders';
 
 const RESPONSE: OrdersReportResponse = {
   key: 'returning',
@@ -13,7 +13,13 @@ const RESPONSE: OrdersReportResponse = {
   periodTitle: 'с начала месяца, 01-08-2026 — 03-08-2026',
   takenAt: null,
   assembling: null,
-  returns: { count: 1, inFlight: 1, settled: 0, activeOnly: false },
+  returns: {
+    count: 1,
+    inFlight: 1,
+    settled: 0,
+    activeOnly: false,
+    tabs: [{ key: 'inTransit', label: 'В пути', count: 1 }],
+  },
   notes: [],
   emptyText: 'Возвратов и невыкупов нет.',
   rows: [
@@ -67,13 +73,28 @@ describe('mapOrdersReport', () => {
   });
 
   it('разбивка возвратов — слова бота; на «Всего» — только активные', () => {
-    expect(returnsLine({ count: 3, inFlight: 2, settled: 1, activeOnly: false })).toBe(
+    expect(returnsLine({ count: 3, inFlight: 2, settled: 1, activeOnly: false, tabs: [] })).toBe(
       'Возвраты: 3 — едет 2, выдано магазину 1',
     );
-    expect(returnsLine({ count: 3, inFlight: 3, settled: 0, activeOnly: true })).toBe(
+    expect(returnsLine({ count: 3, inFlight: 3, settled: 0, activeOnly: true, tabs: [] })).toBe(
       'Активных возвратов: 3 — едут к вам',
     );
     expect(returnsLine(null)).toBeNull();
+  });
+
+  it('вкладки кабинета — строка бота «Ждут отправки 1 · В пути 25»', () => {
+    const tabs = [
+      { key: 'awaitingDispatch', label: 'Ждут отправки', count: 1 },
+      { key: 'inTransit', label: 'В пути', count: 25 },
+    ];
+    expect(returnsTabsLine({ count: 26, inFlight: 26, settled: 0, activeOnly: true, tabs })).toBe(
+      'Ждут отправки 1 · В пути 25',
+    );
+    expect(
+      returnsTabsLine({ count: 0, inFlight: 0, settled: 0, activeOnly: true, tabs: [] }),
+    ).toBeNull();
+    expect(returnsTabsLine(null)).toBeNull();
+    expect(mapOrdersReport(RESPONSE).returnsTabsLine).toBe('В пути 1');
   });
 
   it('битая или пустая дата — пусто и в конец сортировки', () => {

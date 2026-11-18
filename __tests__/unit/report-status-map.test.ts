@@ -8,6 +8,9 @@ import {
   REPORT_DEFINITIONS,
   RETURN_SUBSTATUS,
   effectiveDefinition,
+  emptyReturnTabs,
+  returnTab,
+  returnTabCounts,
   isCancelled,
   matchesDefinition,
   matchesReport,
@@ -375,6 +378,28 @@ describe('Стадии возврата', () => {
     expect(returnStage('IN_TRANSIT', 'CANCELLED')).toBe('inFlight');
     expect(returnStage('RECEIVED', 'REJECTED')).toBe('inFlight');
     expect(returnStage('PICKED', 'CANCELLED')).toBe('settled');
+  });
+
+  it('вкладки кабинета — по стадии отгрузки; мёртвая заявка и чужой статус — ни в одну', () => {
+    expect(returnTab('CREATED', 'STARTED_BY_USER')).toBe('created');
+    expect(returnTab('RECEIVED')).toBe('awaitingDispatch');
+    expect(returnTab('IN_TRANSIT')).toBe('inTransit');
+    expect(returnTab('READY_FOR_PICKUP')).toBe('readyForPickup');
+    expect(returnTab('PICKED')).toBe('completed');
+    expect(returnTab('CREATED', 'CANCELLED')).toBeNull();
+    expect(returnTab('CREATED', 'REJECTED')).toBeNull();
+    expect(returnTab('LOST')).toBeNull();
+    expect(returnTab(undefined)).toBeNull();
+  });
+
+  it('раскладка вкладок — непустые, по ходу возврата к продавцу', () => {
+    const byTab = { ...emptyReturnTabs(), inTransit: 25, awaitingDispatch: 11, created: 4 };
+    expect(returnTabCounts(byTab)).toEqual([
+      { key: 'created', label: 'Оформлены', count: 4 },
+      { key: 'awaitingDispatch', label: 'Ждут отправки', count: 11 },
+      { key: 'inTransit', label: 'В пути', count: 25 },
+    ]);
+    expect(returnTabCounts(emptyReturnTabs())).toEqual([]);
   });
 
   it('PICKED — путь закончен', () => {

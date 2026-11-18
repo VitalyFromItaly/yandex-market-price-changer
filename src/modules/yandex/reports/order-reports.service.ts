@@ -18,10 +18,13 @@ import {
   matchesDefinition,
   queryStatuses,
   reportDefinition,
+  emptyReturnTabs,
   returnStage,
+  returnTab,
   type IReportContext,
   type IReportDefinition,
   type TReportKey,
+  type TReturnTab,
 } from './report-status-map';
 import { isFby, placementOfCampaign } from '../stocks/placement';
 import {
@@ -149,6 +152,11 @@ export interface IReturnsSummary {
   inFlight: number;
   /** Уже выданы магазину — путь закончен. */
   settled: number;
+  /**
+   * Те же записи по вкладкам кабинета («Ждут отправки», «В пути», …): сумма
+   * вкладок кроме `completed` = `inFlight`, `completed` = `settled`.
+   */
+  byTab: Record<TReturnTab, number>;
   /**
    * Ровно те записи, что вошли в `count`: после фильтра периода и
    * дедупликации по orderId. Нужны выгрузке .xlsx — файл обязан сходиться с
@@ -568,6 +576,7 @@ export class OrderReportsService {
     let count = 0;
     let inFlight = 0;
     let settled = 0;
+    const byTab = emptyReturnTabs();
     const records: IReturnRecord[] = [];
 
     const stages = unbounded ? RETURN_ACTIVE_STATUSES : RETURN_SHIPMENT_STATUSES;
@@ -596,10 +605,12 @@ export class OrderReportsService {
 
         if (stage === 'inFlight') inFlight += 1;
         if (stage === 'settled') settled += 1;
+        const tab = returnTab(record.shipmentStatus, record.refundStatus);
+        if (tab) byTab[tab] += 1;
       }
     }
 
-    return { count, totals, inFlight, settled, records };
+    return { count, totals, inFlight, settled, byTab, records };
   }
 
   /**

@@ -59,6 +59,12 @@ export function returnsLine(returns: OrdersReportResponse['returns']): string | 
   );
 }
 
+/** Вкладки кабинета — та же строка, что у бота: «Ждут отправки 1 · В пути 25». */
+export function returnsTabsLine(returns: OrdersReportResponse['returns']): string | null {
+  if (returns === null || returns.tabs.length === 0) return null;
+  return returns.tabs.map((tab) => `${tab.label} ${formatCount(tab.count)}`).join(' · ');
+}
+
 export function mapOrdersReport(response: OrdersReportResponse): OrdersReport {
   return {
     key: response.key,
@@ -74,6 +80,7 @@ export function mapOrdersReport(response: OrdersReportResponse): OrdersReport {
       response.returns === null || response.returns.activeOnly || response.returns.count === 0
         ? null
         : { inFlight: response.returns.inFlight, settled: response.returns.settled },
+    returnsTabsLine: returnsTabsLine(response.returns),
     notes: response.notes,
     emptyText: response.emptyText,
     hasTypes: response.key === ORDER_REPORT.RETURNING,

@@ -47,6 +47,10 @@ import {
  * с экземплярами и причиной покупателя (`decisions[].reasonType`): им проверяется
  * состояние возврата (TASK-238) и брак FBS по причине покупателя (TASK-241).
  *
+ * Блок «ЗАПИСИ БОТА ПО СТАДИИ» — та же сетка, что вкладки кабинета («Ждут отправки»,
+ * «В пути», …): сверка по вкладкам, а не по одному итогу (TASK-243). `--stale-days=N`
+ * (по умолчанию 45) — сколько записей в каждой стадии без движения дольше N дней.
+ *
  * `--list` печатает построчно CREATED и записи без `shipmentStatus` — те две
  * группы, из-за которых расхождение и возникает.
  *
@@ -164,6 +168,8 @@ async function printBotCount(client: YandexApiClient, store: YandexMarketDocumen
     ),
   );
 
+  printByStatus(records, staleDaysOf(process.argv.slice(2)));
+
   if (process.argv.includes('--list')) {
     console.log();
     console.log('Б построчно (оформлен / обновлён):');
@@ -183,6 +189,54 @@ async function printBotCount(client: YandexApiClient, store: YandexMarketDocumen
           `обновлён ${(o.updatedAt ?? '').slice(0, 10)} | ${own || 'нет записи /returns'}`,
       );
     }
+  }
+  console.log();
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Порог «висит давно» в днях: `--stale-days=N`, по умолчанию 45 (кандидат сверки 17.11). */
+function staleDaysOf(argv: string[]): number {
+  const n = Number(argOf(argv, 'stale-days') ?? 45);
+  return Number.isFinite(n) && n > 0 ? n : 45;
+}
+
+/** Последнее движение записи: `updateDate`, без неё — дата оформления. */
+function lastMoveOf(record: IReturnRecord): number | null {
+  const iso = (record.raw as { updateDate?: string })?.updateDate ?? record.creationDate;
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * Записи бота по стадии — ровно та сетка, по которой кабинет режет вкладки
+ * («Ждут отправки», «В пути», …). Невыкупы и возвраты отдельно, плюс сколько
+ * висит без движения дольше порога: кабинет может прятать застрявшие.
+ * Сверять с числами на вкладках кабинета того же дня.
+ */
+function printByStatus(records: IReturnRecord[], staleDays: number): void {
+  const now = Date.now();
+  const rows = new Map<string, { all: number; unredeemed: number; ret: number; stale: number }>();
+  for (const r of records) {
+    const key = r.shipmentStatus ?? '(нет shipmentStatus)';
+    const row = rows.get(key) ?? { all: 0, unredeemed: 0, ret: 0, stale: 0 };
+    row.all += 1;
+    if (returnTypeOf(r) === 'UNREDEEMED') row.unredeemed += 1;
+    else row.ret += 1;
+    const moved = lastMoveOf(r);
+    if (moved != null && now - moved > staleDays * DAY_MS) row.stale += 1;
+    rows.set(key, row);
+  }
+  console.log(`ЗАПИСИ БОТА ПО СТАДИИ — сверять с вкладками кабинета (висит > ${staleDays} дн.):`);
+  console.log(
+    `  ${'стадия'.padEnd(24)} ${'всего'.padStart(6)} ${'невыкуп'.padStart(8)} ` +
+      `${'возврат'.padStart(8)} ${'висит'.padStart(6)}`,
+  );
+  for (const [key, row] of [...rows].sort((a, b) => b[1].all - a[1].all)) {
+    console.log(
+      `  ${key.padEnd(24)} ${String(row.all).padStart(6)} ${String(row.unredeemed).padStart(8)} ` +
+        `${String(row.ret).padStart(8)} ${String(row.stale).padStart(6)}`,
+    );
   }
   console.log();
 }

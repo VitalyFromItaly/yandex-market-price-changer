@@ -650,6 +650,36 @@ each failure was silent.
     fails no test — the report just shows a different number, and the seller is the one who notices.
   - `IReturnRecord.returnId` reads `id` first: the field is called `id` in `ReturnDTO`, so while the
     mapper read only `returnId` it was `undefined` on every record.
+- **Cabinet tabs, not one total (TASK-243, 18-11-2026).** On 17-11 the bot showed 67 for FBS
+  `148655119` while the seller saw 57. Two rules both give 57: «drop `CREATED` and anything idle
+
+  > ~45 days», or «drop RECEIVED non-redemptions and `CREATED`/`STARTED_BY_USER`». One number cannot
+  > tell them apart. The cabinet shows returns as tabs, so the report now does too:
+  > `returnTab()` / `RETURN_TAB` / `RETURN_TAB_LABEL` in `report-status-map.ts` →
+  > `IReturnsSummary.byTab` → one line in the bot («Оформлены 4 · Ждут отправки 11 · В пути 25») and
+  > `returns.tabs` in the CRM. Tab labels come from the server, so the bot and the CRM print the same
+  > words.
+
+  | Вкладка         | Статус             |
+  | --------------- | ------------------ |
+  | Оформлены       | `CREATED` (живой)  |
+  | Ждут отправки   | `RECEIVED`         |
+  | В пути          | `IN_TRANSIT`       |
+  | Готовы к выдаче | `READY_FOR_PICKUP` |
+  | Завершённые     | `PICKED`           |
+
+  - **Reconciliation:** the labels follow the Partner API status chain, **not** a verified cabinet
+    snapshot (decision `returns_by_cabinet_tabs`). The owner's screenshot showed «Ждут отправки 1 ·
+    В пути 32 · Завершённые», with the leftmost tab cut off and the date unknown. Only «В пути» =
+    `IN_TRANSIT` matched, and only the 17-11 data (26 non-redemptions + 6 returns = 32). On 18-11,
+    `diagnose-returns` (block «ЗАПИСИ БОТА ПО СТАДИИ») gave `IN_TRANSIT` 25, `RECEIVED` 11,
+    `CREATED` 4, `READY_FOR_PICKUP` 0 (all 21 were picked up overnight) — bot total **40**, which
+    equals the sum of the tabs. «Ждут отправки 1» matches no status on either date.
+  - `RETURN_STAGE`/`returnStage` is **unchanged**: the 09-08 reconciliation (68, live `CREATED`
+    included) still stands, and the tabs make any future discrepancy point to one status.
+  - `byTab` is filled on the same line as `inFlight`/`settled`. The non-`completed` tabs sum to
+    `inFlight`, and `completed` = `settled` (pinned in `order-reports.test.ts`).
+
 - **The period was not applied at all.** The returns method takes no dates — only `pageToken`,
   `limit`, `shipmentStatuses` — so half the report was cut by `updatedAt` and half was not, and «за
   сегодня» and «с 1 числа месяца» returned the same set. That is precisely what the seller reported

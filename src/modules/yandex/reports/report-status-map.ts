@@ -191,6 +191,68 @@ export function returnStage(
 }
 
 /**
+ * Вкладка возврата — как кабинет ЯМ режет возвраты («Ждут отправки», «В пути», …).
+ *
+ * Одно число «едет обратно» не сверить с кабинетом: продавец видит там вкладки, а
+ * у нас итог, и при расхождении непонятно, какая стадия виновата (17.11.2026 бот 67
+ * против кабинетных 57 — два правила давали 57 оба). Разбивка по вкладкам сводит
+ * спор к одной строке.
+ *
+ * Названия — по смыслу цепочки статусов Partner API, а не по снимку кабинета: скрин
+ * владельца («Ждут отправки 1 · В пути 32 · Завершённые») с продом 18.11 не сошёлся,
+ * дата его неизвестна (решение `returns_by_cabinet_tabs`). Сверено только «В пути» =
+ * `IN_TRANSIT` (32 на 17.11).
+ */
+export type TReturnTab =
+  | 'created'
+  | 'awaitingDispatch'
+  | 'inTransit'
+  | 'readyForPickup'
+  | 'completed';
+
+const RETURN_TAB: Record<TReturnShipmentStatus, TReturnTab> = {
+  [RETURN_SHIPMENT_STATUS.CREATED]: 'created',
+  [RETURN_SHIPMENT_STATUS.RECEIVED]: 'awaitingDispatch',
+  [RETURN_SHIPMENT_STATUS.IN_TRANSIT]: 'inTransit',
+  [RETURN_SHIPMENT_STATUS.READY_FOR_PICKUP]: 'readyForPickup',
+  [RETURN_SHIPMENT_STATUS.PICKED]: 'completed',
+};
+
+/** Подписи вкладок; порядок ключей — порядок показа, по ходу возврата к продавцу. */
+export const RETURN_TAB_LABEL: Record<TReturnTab, string> = {
+  created: 'Оформлены',
+  awaitingDispatch: 'Ждут отправки',
+  inTransit: 'В пути',
+  readyForPickup: 'Готовы к выдаче',
+  completed: 'Завершённые',
+};
+
+/**
+ * Вкладка записи; `null` — ни в одну: мёртвая заявка (как в `returnStage`) или
+ * статус вне цепочки. Такие записи и в итог «Едет обратно» не входят.
+ */
+export function returnTab(
+  shipmentStatus: string | undefined,
+  refundStatus?: string | undefined,
+): TReturnTab | null {
+  if (returnStage(shipmentStatus, refundStatus) === 'dead') return null;
+  return RETURN_TAB[shipmentStatus as TReturnShipmentStatus] ?? null;
+}
+
+export function emptyReturnTabs(): Record<TReturnTab, number> {
+  return { created: 0, awaitingDispatch: 0, inTransit: 0, readyForPickup: 0, completed: 0 };
+}
+
+/** Непустые вкладки в порядке показа — одна раскладка для бота и CRM. */
+export function returnTabCounts(
+  byTab: Record<TReturnTab, number>,
+): Array<{ key: TReturnTab; label: string; count: number }> {
+  return (Object.keys(RETURN_TAB_LABEL) as TReturnTab[])
+    .filter((key) => byTab[key] > 0)
+    .map((key) => ({ key, label: RETURN_TAB_LABEL[key], count: byTab[key] }));
+}
+
+/**
  * Типы субсидий Маркета. Тоже перечисление Partner API, и живёт оно ЗДЕСЬ по той
  * же причине, что `RETURN_SHIPMENT_STATUS`: тест «статусы не размазаны по коду»
  * ловит литерал `'DELIVERY'` в любом другом файле — и правильно ловит, потому

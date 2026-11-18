@@ -14,6 +14,7 @@
 //   node tools/backlog.mjs start TASK-137       status -> in_progress
 //   node tools/backlog.mjs finish TASK-137      перенос в архив + пересчёт счётчиков
 
+/* eslint-disable */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -117,6 +118,7 @@ function cmdShow(id) {
 
   console.log(`${task.id}  ${task.milestone}  ${task.category}  ${task.priority}  ${task.status}`)
   console.log(`\n${task.description}`)
+  if (task.skills?.length) console.log(`\nСкилы: ${task.skills.join(' → ')}`)
 
   const section = (title, items) => {
     if (!items?.length) return

@@ -46,6 +46,9 @@ defineProps<{ report: OrdersReport }>();
           Из них собирается на складе Маркета: {{ formatCount(report.assembling) }}
         </p>
         <p v-if="report.returnsLine" class="tnum">{{ report.returnsLine }}</p>
+        <p v-if="report.returnsTabsLine" class="tnum text-muted-foreground">
+          {{ report.returnsTabsLine }}
+        </p>
         <SegmentBar
           v-if="report.returnsSplit"
           class="max-w-md py-1"

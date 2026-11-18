@@ -1,6 +1,6 @@
 import type { IReportResult } from '../../yandex/reports/order-reports.service';
 import type { IReportPeriod } from '../../yandex/reports/report-period';
-import type { TReportKey } from '../../yandex/reports/report-status-map';
+import type { TReportKey, TReturnTab } from '../../yandex/reports/report-status-map';
 import type { IReportWorkbook } from '../../yandex/reports/report-workbook';
 import type { ICrmPeriodEcho } from '../jobs/crm-period.domain';
 
@@ -13,7 +13,7 @@ import {
   unboundedNote,
 } from '../../yandex/reports/report-message';
 import { DEFAULT_PERIOD, isUnbounded, periodTitle } from '../../yandex/reports/report-period';
-import { REPORT } from '../../yandex/reports/report-status-map';
+import { REPORT, returnTabCounts } from '../../yandex/reports/report-status-map';
 import { formatOfferIds } from '../../yandex/reports/report-workbook';
 import { parsePeriodParams, periodEcho } from '../jobs/crm-period.domain';
 
@@ -85,7 +85,14 @@ export interface ICrmOrdersView {
   takenAt: string | null;
   /** FBY: сколько из count собирается на складе Маркета. */
   assembling: number | null;
-  returns: { count: number; inFlight: number; settled: number; activeOnly: boolean } | null;
+  returns: {
+    count: number;
+    inFlight: number;
+    settled: number;
+    activeOnly: boolean;
+    /** Непустые вкладки кабинета в порядке показа — те же, что строка бота. */
+    tabs: Array<{ key: TReturnTab; label: string; count: number }>;
+  } | null;
   /** Оговорки — те же формулировки, что у бота, без значков и разметки. */
   notes: string[];
   emptyText: string;
@@ -154,6 +161,7 @@ export function toCrmOrdersView(
           inFlight: result.returns.inFlight,
           settled: result.returns.settled,
           activeOnly: isUnbounded(result.period),
+          tabs: returnTabCounts(result.returns.byTab),
         }
       : null,
     notes,

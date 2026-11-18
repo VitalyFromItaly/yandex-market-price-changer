@@ -2,7 +2,7 @@ import { b, esc } from '../../telegram/formatting/telegram-format';
 import { SUBSIDIES_LABEL, formatRubles } from './money';
 import { moscowStamp } from './moscow-day';
 import { DEFAULT_PERIOD, isUnbounded, periodTitle } from './report-period';
-import { REPORT } from './report-status-map';
+import { REPORT, returnTabCounts } from './report-status-map';
 import { HISTORY_WINDOW_DAYS } from '../yandex-api.paths';
 import { YandexApiError } from '../yandex-api.errors';
 import type { IReportResult } from './order-reports.service';
@@ -143,6 +143,9 @@ export function formatReport(result: IReportResult, now: Date = new Date()): str
         : `↩️ Возвраты: ${b(result.returns.count)}` +
             ` — едет ${b(result.returns.inFlight)}, выдано магазину ${b(result.returns.settled)}`,
     );
+    // Вкладки кабинета: продавец сверяет по ним, а не по одному итогу (TASK-243).
+    const tabs = returnTabCounts(result.returns.byTab);
+    if (tabs.length) lines.push(tabs.map((t) => `${t.label} ${b(t.count)}`).join(' · '));
   }
 
   /**

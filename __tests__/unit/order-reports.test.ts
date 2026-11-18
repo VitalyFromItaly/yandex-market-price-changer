@@ -261,9 +261,7 @@ describe('Отчёт «едет обратно» (TASK-025)', () => {
    */
   it('запись возврата не выдумывает субсидию', async () => {
     const { reports } = await service({
-      returns: [
-        { returnId: 1, orderId: 5, creationDate: RETURN_DATE, amount: { value: 400 } },
-      ],
+      returns: [{ returnId: 1, orderId: 5, creationDate: RETURN_DATE, amount: { value: 400 } }],
     });
 
     const result = await reports.build(STORE, REPORT.RETURNING, NOW);
@@ -636,11 +634,9 @@ describe('Выгрузка «уехало клиенту» файлом', () => 
   it('на «Всего» подпись объясняет источник: архив или окно в 30 дней', async () => {
     const orders = [{ id: 1, status: 'DELIVERY', itemsTotal: 1000 }];
 
-    const plain = await (await service({ orders })).reports.exportShipped(
-      STORE,
-      { key: PERIOD.ALL },
-      NOW,
-    );
+    const plain = await (
+      await service({ orders })
+    ).reports.exportShipped(STORE, { key: PERIOD.ALL }, NOW);
     if (!plain.empty) expect(plain.caption).toContain('не старше');
 
     // Архивный путь мокается через iterateOrdersStats — заглушка iterateOrders
@@ -840,6 +836,34 @@ describe('Возвраты: период и разбивка', () => {
     expect(result.returns?.settled).toBe(1);
     // «Возвраты: N — едет X, выдано Y» обязано сходиться: N = X + Y.
     expect(result.returns.inFlight + result.returns.settled).toBe(result.returns.count);
+  });
+
+  it('вкладки кабинета сходятся с «едет / выдано»: completed = выдано, остальные = едет', async () => {
+    const { reports } = await service({
+      returns: [
+        ret(1, '2026-08-02T12:00:00+03:00', 'IN_TRANSIT'),
+        ret(2, '2026-08-02T12:00:00+03:00', 'IN_TRANSIT'),
+        ret(3, '2026-08-02T12:00:00+03:00', 'RECEIVED'),
+        ret(4, '2026-08-02T12:00:00+03:00', 'PICKED'),
+        ret(5, '2026-08-02T12:00:00+03:00', 'CREATED'),
+      ],
+    });
+    const result = await reports.build(STORE, REPORT.RETURNING, AUG, MONTH);
+
+    expect(result.returns?.byTab).toEqual({
+      created: 1,
+      awaitingDispatch: 1,
+      inTransit: 2,
+      readyForPickup: 0,
+      completed: 1,
+    });
+    const { completed, ...inFlightTabs } = result.returns.byTab;
+    expect(Object.values(inFlightTabs).reduce((a, n) => a + n, 0)).toBe(result.returns.inFlight);
+    expect(completed).toBe(result.returns.settled);
+    // Бот печатает ту же раскладку строкой — пустые вкладки не показываются.
+    expect(formatReport(result, NOW)).toContain(
+      'Оформлены <b>1</b> · Ждут отправки <b>1</b> · В пути <b>2</b> · Завершённые <b>1</b>',
+    );
   });
 
   it('отменённая заявка CREATED не считается и не съедает живой возврат заказа', async () => {

@@ -2,8 +2,8 @@
   "meta": {
     "project": "Yandex Market Bot — read-only Telegram-бот отчётов по заказам Яндекс.Маркета",
     "note": "Архив выполненных задач. Задачи переносятся сюда из tasks.json при переводе в статус done. Формулировки не меняются. Обратно в tasks.json задачи не возвращаются.",
-    "archived_tasks": 224,
-    "updated_at": "2026-11-13"
+    "archived_tasks": 225,
+    "updated_at": "2026-11-18"
   },
   "tasks": [
     {
@@ -5165,6 +5165,29 @@
         "Шаг 2 (владелец): добавить секрет CAPROVER_WEBHOOK_URL, снять вебхук CapRover в GitHub → Settings → Webhooks",
         "Шаг 3: пуш с заведомо красным тестом в ветку → deploy не запускается; пуш в master с зелёным CI → в CapRover новая сборка",
         "Проверки: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build"
+      ],
+      "dependencies": [],
+      "status": "done"
+    },
+    {
+      "id": "TASK-243",
+      "milestone": "M35",
+      "category": "functional",
+      "priority": "high",
+      "description": "«Едет обратно» — разбивка по вкладкам кабинета ЯМ (бот + CRM). ПОЧЕМУ: у продавца 478368727 бот показывает 66–67, кабинет 57, и два правила-кандидата 17.11 дают 57 оба — по одному числу их не различить. Кабинет показывает возвраты вкладками (скрин 18.11: «… | Ждут отправки 1 | В пути 32 | Завершённые»), «В пути 32» = IN_TRANSIT (26 невыкупов + 6 возвратов на 17.11). Разбивка по тем же вкладкам даёт продавцу сверку построчно и снимает спор о правиле (решение returns_by_cabinet_tabs). План: ~/.claude/plans/fbs-delightful-lecun.md.",
+      "acceptance_criteria": [
+        "scripts/diagnose-returns.ts (только чтение) печатает раскладку активных возвратов по вкладкам кабинета и по shipmentStatus × returnType × refundStatus",
+        "Сопоставление shipmentStatus → вкладка — исчерпывающий Record в report-status-map.ts; мёртвые CREATED не попадают ни в одну вкладку",
+        "OrderReportsService отдаёт returns.byTab рядом с inFlight/settled; итог «Едет обратно» = сумма вкладок «едет»",
+        "Сообщение бота «Едет обратно» и экран CRM показывают одну и ту же строку вкладок с числами; в crm/ нет логики",
+        "Сверка 18.11 с прода (числа по вкладкам и что сверено по скрину, а что по смыслу) записана в README yandex «Едет обратно»",
+        "Тесты: report-status-map (каждый статус → вкладка, мёртвый CREATED), order-reports (byTab суммируется)"
+      ],
+      "test_steps": [
+        "Шаг 1: npx tsc --noEmit && npm run lint && npm run prettier:check && npm test && npm run typecheck:crm && npm run test:crm && npm run build — зелёные",
+        "Шаг 2: diagnose-returns на проде для --user=478368727 — «В пути» совпадает со свежим числом кабинета (32 на 18.11 или текущее), сумма вкладок «едет» = число бота",
+        "Шаг 3: локальный бот (другой Telegram-бот) — кнопка «Едет обратно» показывает строку вкладок",
+        "Шаг 4: CRM (npm run dev:crm) — экран «Едет обратно» показывает те же числа"
       ],
       "dependencies": [],
       "status": "done"

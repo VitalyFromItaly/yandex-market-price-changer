@@ -100,7 +100,14 @@ export interface OrdersReportResponse {
   periodTitle: string | null;
   takenAt: string | null;
   assembling: number | null;
-  returns: { count: number; inFlight: number; settled: number; activeOnly: boolean } | null;
+  returns: {
+    count: number;
+    inFlight: number;
+    settled: number;
+    activeOnly: boolean;
+    /** Непустые вкладки кабинета ЯМ в порядке показа; подписи — с сервера. */
+    tabs: Array<{ key: string; label: string; count: number }>;
+  } | null;
   notes: string[];
   emptyText: string;
   rows: OrderRowResponse[];
@@ -137,6 +144,8 @@ export interface OrdersReport {
   returnsLine: string | null;
   /** Та же разбивка числами — для полосы «едет / выдано»; null, когда разбивать нечего. */
   returnsSplit: { inFlight: number; settled: number } | null;
+  /** Возвраты по вкладкам кабинета: «Ждут отправки 1 · В пути 25» — как у бота; null — пусто. */
+  returnsTabsLine: string | null;
   notes: string[];
   emptyText: string;
   /** Колонка «Тип» нужна только «Едет обратно». */
