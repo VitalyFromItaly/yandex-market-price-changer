@@ -69,13 +69,18 @@ export interface IAccountingOrdersSyncOptions {
   ignoreCursor?: boolean;
 }
 
-/** Сбой площадок прохода: остальные уже записаны, ошибку видит процессор. */
-export class AccountingOrdersSyncError extends Error {
+/**
+ * Сбой площадок прохода: остальные уже записаны, ошибку видит процессор.
+ * `AggregateError` с исходными ошибками в `errors` — по ним `faultOf` решает
+ * «Сторону» алерта (18.11.2026 5xx Маркета под обычным `Error` вышел «нашей»).
+ */
+export class AccountingOrdersSyncError extends AggregateError {
   constructor(
     readonly report: IAccountingOrdersSyncReport,
     readonly causes: Partial<Record<TFinanceMarketplace, unknown>>,
   ) {
     super(
+      Object.values(causes),
       `Снимок строк заказов: сбой ${Object.entries(report.results)
         .filter(([, result]) => result.outcome === 'failed')
         .map(([marketplace, result]) => `${marketplace} — ${(result as { error: string }).error}`)

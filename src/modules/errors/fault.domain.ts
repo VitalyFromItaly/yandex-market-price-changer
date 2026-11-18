@@ -74,7 +74,33 @@ function apiFault(party: TParty, status: number, error: unknown): IFault {
   return { side: 'ours', reason: `${name} не принял наш запрос (${status})` };
 }
 
+/** Чем выше, тем важнее для нас: наш баг не прячется за сбоем площадки. */
+const SIDE_WEIGHT: Record<TFaultSide, number> = { ours: 3, unknown: 2, seller: 1, external: 0 };
+
+/**
+ * Обёртка нескольких сбоев (`AggregateError`, напр. проход площадок «Финучёта»):
+ * сторона — худшая из исходных; у сбоев площадок — все площадки через запятую.
+ */
+function aggregateFault(errors: readonly unknown[]): IFault {
+  const faults = errors.map((inner) => faultOf(inner));
+  const side = faults.reduce<TFaultSide>(
+    (worst, fault) => (SIDE_WEIGHT[fault.side] > SIDE_WEIGHT[worst] ? fault.side : worst),
+    'external',
+  );
+  const same = faults.filter((fault) => fault.side === side);
+  if (same.length === 1) return same[0];
+  const reasons = [...new Set(same.map((fault) => fault.reason).filter(Boolean))].join('; ');
+  const parties = [...new Set(same.map((fault) => fault.party).filter(Boolean))].join(', ');
+  return {
+    side,
+    ...(parties ? { party: parties } : {}),
+    ...(reasons ? { reason: reasons } : {}),
+  };
+}
+
 export function faultOf(error: unknown): IFault {
+  if (error instanceof AggregateError && error.errors.length) return aggregateFault(error.errors);
+
   if (error instanceof ReportGenerationError) {
     const party = PARTY_NAME.yandex;
     if (error.info?.status === 'FAILED') {

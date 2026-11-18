@@ -1,12 +1,15 @@
 import { DrizzleQueryError } from 'drizzle-orm';
 import { describe, it, expect } from 'vitest';
 
+import type { IAccountingOrdersSyncReport } from '../../src/modules/accounting/accounting-orders.service';
+
+import { AccountingOrdersSyncError } from '../../src/modules/accounting/accounting-orders.service';
 import { PolzaApiError, PolzaInsufficientFundsError } from '../../src/modules/ai/polza.errors';
 import { faultLine, faultOf } from '../../src/modules/errors/fault.domain';
-import { OzonAuthError } from '../../src/modules/ozon/ozon.errors';
+import { OzonApiError, OzonAuthError } from '../../src/modules/ozon/ozon.errors';
 import { WbApiError } from '../../src/modules/wb/wb.errors';
 import { ReportGenerationError } from '../../src/modules/yandex/report-generation.error';
-import { YandexApiError } from '../../src/modules/yandex/yandex-api.errors';
+import { YandexApiError, YandexServerError } from '../../src/modules/yandex/yandex-api.errors';
 
 /** Ошибка Telegram так, как её отдаёт telegraf: код в `response.error_code`. */
 const telegram = (code: number) =>
@@ -93,5 +96,50 @@ describe('faultLine', () => {
 
   it('без причины — без тире', () => {
     expect(faultLine({ side: 'unknown' })).toBe('Сторона: ❔ не определена');
+  });
+});
+
+/**
+ * Обёртка сбоев площадок «Финучёта». 18.11.2026 INTERNAL_ERROR Маркета в очереди
+ * accounting-orders вышел «🛠 наша — ошибка в коде»: faultOf видел только обёртку.
+ */
+describe('faultOf: AggregateError', () => {
+  const failed = (...marketplaces: Array<'ym' | 'ozon' | 'wb'>): IAccountingOrdersSyncReport => ({
+    results: Object.fromEntries(marketplaces.map((m) => [m, { outcome: 'failed', error: 'x' }])),
+  });
+
+  it('один сбой Маркета 500 — сторона Маркета', () => {
+    const error = new AccountingOrdersSyncError(failed('ym'), {
+      ym: new YandexServerError('INTERNAL_ERROR: Internal error', 500),
+    });
+    expect(faultOf(error)).toEqual({
+      side: 'external',
+      party: 'Яндекс Маркет',
+      reason: 'ошибка сервера 500',
+    });
+  });
+
+  it('сбой площадки и наш баг — наша', () => {
+    const error = new AccountingOrdersSyncError(failed('ym', 'wb'), {
+      ym: new YandexServerError('x', 500),
+      wb: new TypeError('boom'),
+    });
+    expect(faultOf(error)).toEqual({ side: 'ours', reason: 'ошибка в коде' });
+  });
+
+  it('две площадки — обе в party', () => {
+    const error = new AccountingOrdersSyncError(failed('ym', 'ozon'), {
+      ym: new YandexServerError('x', 500),
+      ozon: new OzonApiError('x', 503),
+    });
+    expect(faultOf(error)).toEqual({
+      side: 'external',
+      party: 'Яндекс Маркет, Ozon',
+      reason: 'ошибка сервера 500; ошибка сервера 503',
+    });
+  });
+
+  it('пустой AggregateError — как обычная ошибка', () => {
+    expect(faultOf(new AggregateError([], 'x'))).toEqual({ side: 'ours', reason: 'ошибка в коде' });
   });
 });

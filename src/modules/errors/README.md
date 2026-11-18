@@ -48,6 +48,11 @@ per-user attribution and does not survive a restart.
   code or a non-Error → ❔ unknown. Why: on 13-11-2026 «Отчёт об остатках FBY не сгенерировался» looked like
   our bug, and only a diagnostic run on prod showed that Market fails the report itself. The throttle key is
   unchanged.
+  A wrapper of several failures is an `AggregateError` (`AccountingOrdersSyncError`): `faultOf` judges the
+  inner `errors` and takes the worst side for us (`ours > unknown > seller > external` — our bug never hides
+  behind a marketplace outage), parties of the same side joined with «, ». Why: on 18-11-2026 a Market 5xx
+  (`INTERNAL_ERROR`) in `accounting-orders` came out as «🛠 наша — ошибка в коде» — `faultOf` saw only a plain
+  `Error` wrapper.
 - Alert delivery is wired by `ErrorAlertBridge` (`bots/error-alert.bridge.ts`) calling
   `setAlertSender` at bootstrap. A direct dependency would be a DI cycle: `BotRegistry` calls the
   reporter from `telegraf.catch`. A failure _while sending an alert_ is logged, never reported —
