@@ -8,6 +8,7 @@ import { parsePromoCallback } from '../../../yandex/reports/promo';
 import { PERIOD } from '../../../yandex/reports/report-period';
 import { REPORT } from '../../../yandex/reports/report-status-map';
 import { isFby } from '../../../yandex/stocks/placement';
+import { parseTopCallback } from '../../../yandex/top-skus/top-skus.callbacks';
 import { MENU, menuLayout } from '../price-changer-bot/menu.constants';
 import {
   MENU_TO_REPORT,
@@ -1291,6 +1292,8 @@ const MENU_TO_FEATURE: Readonly<Record<string, TFeatureKey>> = {
   [MENU.QUARANTINE]: FEATURE.PRICE_QUARANTINE,
   [MENU.FEEDBACK]: FEATURE.GOODS_FEEDBACK,
   [MENU.PAYMENTS]: FEATURE.PAYMENTS_REPORT,
+  // «Топ товаров» — часть «Прибыли» без своего флага (решение владельца 18.11.2026).
+  [MENU.TOP_SKUS]: FEATURE.REPORT_PROFIT,
   [MENU.PRICE_RECOMMENDATIONS]: FEATURE.PRICE_RECOMMENDATIONS,
   [MENU.MARKET_REPORTS]: FEATURE.MARKET_REPORTS,
   [MENU.OFFER_CARDS]: FEATURE.OFFER_CARDS,
@@ -1343,6 +1346,7 @@ export function requiredFeatures(input: {
     if (fb?.action === 'ai') return [FEATURE.GOODS_FEEDBACK, FEATURE.FEEDBACK_AI_REPLY];
     if (fb !== null) return [FEATURE.GOODS_FEEDBACK];
     if (parsePayCallback(input.callbackData) !== null) return [FEATURE.PAYMENTS_REPORT];
+    if (parseTopCallback(input.callbackData) !== null) return [FEATURE.REPORT_PROFIT];
     if (parseMktCallback(input.callbackData) !== null) return [FEATURE.MARKET_REPORTS];
     // Ряд «🔔 Уведомления» в «⏰ Рассылке» (TASK-152): свой ключ, а не `schedule` —
     // старая кнопка в истории чата не меняет время уведомлений закрытой фичи.

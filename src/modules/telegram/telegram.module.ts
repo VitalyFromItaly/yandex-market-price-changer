@@ -38,6 +38,7 @@ import { SharedCommandsHandler } from './bots/price-changer-bot/handlers/shared-
 import { SlashCommandsHandler } from './bots/price-changer-bot/handlers/slash-commands.handler';
 import { StartHandler } from './bots/price-changer-bot/handlers/start.handler';
 import { StockUploadHandler } from './bots/price-changer-bot/handlers/stock-upload.handler';
+import { TopSkusHandler } from './bots/price-changer-bot/handlers/top-skus.handler';
 import { WarehousesHandler } from './bots/price-changer-bot/handlers/warehouses.handler';
 import { PriceChangerComposer } from './bots/price-changer-bot/price-changer.composer';
 import { PriceChangerKeyboard } from './bots/price-changer-bot/price-changer.keyboard';
@@ -60,6 +61,7 @@ import { ReportsProcessor } from './queue/processors/reports.processor';
 import { SellerNotificationsProcessor } from './queue/processors/seller-notifications.processor';
 import { StockSyncProcessor } from './queue/processors/stock-sync.processor';
 import { TariffReportProcessor } from './queue/processors/tariff-report.processor';
+import { TopSkusReportProcessor } from './queue/processors/top-skus-report.processor';
 import { WarehousesOverviewProcessor } from './queue/processors/warehouses-overview.processor';
 import { WeeklyDigestProcessor } from './queue/processors/weekly-digest.processor';
 import { YandexApiProcessor } from './queue/processors/yandex-api.processor';
@@ -220,6 +222,7 @@ import { QUEUE_NAMES } from './index';
     QuarantineHandler,
     FeedbackHandler,
     PaymentsHandler,
+    TopSkusHandler,
     PriceRecommendationsHandler,
     MarketReportsHandler,
     OfferCardsHandler,
@@ -254,6 +257,7 @@ import { QUEUE_NAMES } from './index';
     TariffReportProcessor,
     FeedbackDraftProcessor,
     PaymentsReportProcessor,
+    TopSkusReportProcessor,
     PriceRecommendationsProcessor,
     OfferCardsProcessor,
     MarketReportProcessor,

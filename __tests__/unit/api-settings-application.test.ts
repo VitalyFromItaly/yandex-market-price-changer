@@ -12,6 +12,7 @@ import { AdminNotifierService } from '../../src/modules/telegram/bots/shared/ser
 import { AppConfigService } from '../../src/config/app-config.service';
 import { ScheduleHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/schedule.handler';
 import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/reports.handler';
+import { TopSkusHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/top-skus.handler';
 import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 
@@ -141,6 +142,8 @@ describe('ApiSettingsHandler: подача заявки', () => {
           provide: ReportsHandler,
           useValue: { handlePendingDay: opts.pendingDay ?? (async () => false) },
         },
+        // «Свой период» топа в этих сценариях тоже не спрошен.
+        { provide: TopSkusHandler, useValue: { handlePendingRange: async () => false } },
         // Вопрос про ответ на отзыв в этих сценариях тоже закрыт.
         { provide: FeedbackHandler, useValue: { handlePendingReply: async () => false } },
         {

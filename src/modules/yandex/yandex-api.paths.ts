@@ -79,6 +79,8 @@ export const API_VERSIONS = {
    * business-методами; сверить на боевом при первом включении фичи.
    */
   offerCards: 'v2',
+  /** Справочник регионов (`GET regions/{id}`) — по документации v2. */
+  regions: 'v2',
 } as const;
 
 export function campaignsPath(): string {
@@ -100,6 +102,15 @@ export function returnsPath(campaignId: string): string {
  */
 export function ordersStatsPath(campaignId: string): string {
   return `/${API_VERSIONS.ordersStats}/campaigns/${encodeURIComponent(campaignId)}/stats/orders`;
+}
+
+/**
+ * Регион справочника с цепочкой родителей до страны (`GET regions/{id}`). У метода
+ * суточное групповое ограничение по числу регионов — поэтому ответ кэшируется в Mongo
+ * (`YmRegion`), и каждый id спрашивается один раз на всех продавцов.
+ */
+export function regionPath(regionId: number): string {
+  return `/${API_VERSIONS.regions}/regions/${encodeURIComponent(String(regionId))}`;
 }
 
 /** Каталог товаров продавца (POST). Отдаёт offerId — это и есть артикул. */

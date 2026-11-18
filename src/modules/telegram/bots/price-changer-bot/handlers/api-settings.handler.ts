@@ -106,6 +106,7 @@ import {
 import { FeedbackHandler } from './feedback.handler';
 import { ReportsHandler } from './reports.handler';
 import { ScheduleHandler } from './schedule.handler';
+import { TopSkusHandler } from './top-skus.handler';
 
 /** Префикс callback_data подсказки. Дальше идёт название шага. */
 export const HELP_PREFIX = 'onboarding_help:';
@@ -167,6 +168,8 @@ export class ApiSettingsHandler {
     private scheduleHandler: ScheduleHandler,
     private readonly clients: YandexClientFactory,
     private readonly reportsHandler: ReportsHandler,
+    // «Свой период» «Топа товаров» — то же поле pendingReportDay, что «Другой день».
+    private readonly topSkusHandler: TopSkusHandler,
     // Четвёртый pending-вопрос цепочки — черновик ответа на отзыв.
     private readonly feedbackHandler: FeedbackHandler,
     private readonly errors: ErrorReporter,
@@ -995,6 +998,11 @@ export class ApiSettingsHandler {
       // handlePendingRate забирает ТОЛЬКО числовой ввод: дата и время числами не
       // являются и доходят до своих обработчиков ниже.
       if (await this.handlePendingRate(ctx, text)) {
+        return { message: '' }; // ответ уже отправлен внутри
+      }
+      // «Свой период» топа — ДО «Другого дня»: поле pendingReportDay у них общее, и
+      // отчёты приняли бы метку топа за ключ отчёта («отчёт недоступен»).
+      if (await this.topSkusHandler.handlePendingRange(ctx, text)) {
         return { message: '' }; // ответ уже отправлен внутри
       }
       if (await this.reportsHandler.handlePendingDay(ctx, text)) {

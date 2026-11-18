@@ -26,6 +26,7 @@ import { QuarantineHandler } from './quarantine.handler';
 import { ReportsHandler } from './reports.handler';
 import { ScheduleHandler } from './schedule.handler';
 import { SharedCommandsHandler } from './shared-commands.handler';
+import { TopSkusHandler } from './top-skus.handler';
 import { WarehousesHandler } from './warehouses.handler';
 
 @Injectable()
@@ -46,6 +47,7 @@ export class MenuCommandsHandler {
     private quarantineHandler: QuarantineHandler,
     private feedbackHandler: FeedbackHandler,
     private paymentsHandler: PaymentsHandler,
+    private topSkusHandler: TopSkusHandler,
     private priceRecommendationsHandler: PriceRecommendationsHandler,
     private marketReportsHandler: MarketReportsHandler,
     private offerCardsHandler: OfferCardsHandler,
@@ -87,6 +89,7 @@ export class MenuCommandsHandler {
     bot.hears(MENU.QUARANTINE, (ctx) => this.quarantineHandler.handle(ctx));
     bot.hears(MENU.FEEDBACK, (ctx) => this.feedbackHandler.handle(ctx));
     bot.hears(MENU.PAYMENTS, (ctx) => this.paymentsHandler.handle(ctx));
+    bot.hears(MENU.TOP_SKUS, (ctx) => this.topSkusHandler.handle(ctx));
     bot.hears(MENU.PRICE_RECOMMENDATIONS, (ctx) => this.priceRecommendationsHandler.handle(ctx));
     bot.hears(MENU.MARKET_REPORTS, (ctx) => this.marketReportsHandler.handle(ctx));
     bot.hears(MENU.OFFER_CARDS, (ctx) => this.offerCardsHandler.handle(ctx));

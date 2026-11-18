@@ -1,4 +1,4 @@
-import type { IReportOrder, IReportOrderItem } from './order-reports.service';
+import type { IPlaceRef, IReportOrder, IReportOrderItem } from './order-reports.service';
 import type { IPeriodBounds } from './report-period';
 import type { TOrderStatus } from './report-status-map';
 
@@ -76,11 +76,15 @@ type TRawStatsOrder = {
   creationDate?: string;
   /** ISO без смещения, московское время — аналог `updatedAt` живого getOrders. */
   statusUpdateDate?: string;
+  /** Регион доставки (`OrdersStatsDeliveryRegionDTO`) — разрез «Топа товаров» по регионам. */
+  deliveryRegion?: { id?: number; name?: string };
   items?: Array<{
     shopSku?: string;
     offerName?: string;
     count?: number;
     prices?: Array<{ type?: string; costPerItem?: number }>;
+    /** Склад, с которого ушла позиция (`OrdersStatsWarehouseDTO`) — разрез по кластерам. */
+    warehouse?: { id?: number; name?: string };
   }>;
 };
 
@@ -126,6 +130,7 @@ export function statsOrderToReportOrder(raw: unknown): IReportOrder {
       offerName: item?.offerName,
       count: item?.count,
       price: priceOf(item, PRICE_BUYER)?.costPerItem,
+      warehouse: placeRef(item?.warehouse),
     });
   }
 
@@ -145,7 +150,14 @@ export function statsOrderToReportOrder(raw: unknown): IReportOrder {
     deliveryTotal,
     subsidies,
     items,
+    region: placeRef(order.deliveryRegion),
   };
+}
+
+/** `{id, name}` справочника Маркета; без обоих полей — `undefined`, а не пустой объект. */
+function placeRef(raw: { id?: number; name?: string } | undefined): IPlaceRef | undefined {
+  if (raw?.id == null && !raw?.name) return undefined;
+  return { id: raw.id, name: raw.name };
 }
 
 /** Ценовая запись позиции нужного типа. */

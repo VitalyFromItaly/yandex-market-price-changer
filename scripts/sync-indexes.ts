@@ -21,6 +21,7 @@ import { ProductSchema } from '../src/database/schemas/product.schema';
 import { CostHistorySchema } from '../src/database/schemas/cost-history.schema';
 import { MarketplaceConnectionSchema } from '../src/database/schemas/marketplace-connection.schema';
 import { ProductCardIssueSchema } from '../src/database/schemas/product-card-issue.schema';
+import { YmRegionSchema } from '../src/database/schemas/ym-region.schema';
 
 /**
  * Приведение индексов существующей базы к схемам.
@@ -61,6 +62,7 @@ const MODELS = [
   { name: 'SellerNotificationSettings', schema: SellerNotificationSettingsSchema },
   { name: 'StockPushSettings', schema: StockPushSettingsSchema },
   { name: 'SellerNotification', schema: SellerNotificationSchema },
+  { name: 'YmRegion', schema: YmRegionSchema },
 ];
 
 async function main(): Promise<void> {

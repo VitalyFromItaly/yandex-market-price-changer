@@ -51,6 +51,7 @@ export const SECTION_KIND = {
   quarantine: 'ym-store',
   feedback: 'ym-store',
   payments: 'ym-store',
+  'top-skus': 'ym-store',
   'market-reports': 'ym-store',
   recommendations: 'ym-store',
   'offer-cards': 'ym-store',

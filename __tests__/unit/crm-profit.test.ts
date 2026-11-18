@@ -7,6 +7,7 @@ import { Test } from '@nestjs/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CostHistoryService } from '../../src/database/services/cost-history.service';
+import { YmRegionsService } from '../../src/modules/yandex/regions/ym-regions.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { ErrorReporter } from '../../src/modules/errors/error-reporter.service';
 import { FinanceService } from '../../src/modules/finance/finance.service';
@@ -125,6 +126,7 @@ async function setup() {
       { provide: YandexClientFactory, useValue: { forStore: () => client } },
       { provide: PurchasePriceService, useValue: purchasePrices },
       { provide: CostHistoryService, useValue: { findForSkus: async () => new Map() } },
+      { provide: YmRegionsService, useValue: { resolve: async () => new Map() } },
       { provide: ErrorReporter, useValue: { report: vi.fn() } },
       { provide: FinanceService, useValue: finance },
     ],

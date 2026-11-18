@@ -158,6 +158,7 @@ describe('разделы по площадке', () => {
       ['ym-quarantine', 'quarantine'],
       ['ym-feedback', 'feedback'],
       ['ym-payments', 'payments'],
+      ['ym-top-skus', 'top-skus'],
       ['ym-market-reports', 'market-reports'],
       ['ym-recommendations', 'recommendations'],
       ['ym-offer-cards', 'offer-cards'],

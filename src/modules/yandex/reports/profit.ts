@@ -235,12 +235,16 @@ export interface IProfitOrderItem {
    * за продвижение: и порог ступени, и сам процент — от ценника товара.
    */
   price?: number;
+  /** Склад отгрузки — только у архивного пути; читает его лишь `IProfitOptions.placeOf`. */
+  warehouse?: { id?: number; name?: string };
 }
 
 /** Заказ в объёме, нужном для прибыли. */
 export interface IProfitOrder extends IOrderMoney {
   id?: number;
   items?: readonly IProfitOrderItem[];
+  /** Регион доставки — только у архивного пути; читает его лишь `IProfitOptions.placeOf`. */
+  region?: { id?: number; name?: string };
   /** Даты заказа — для ряда по дням (`IProfitOptions.dayField`). */
   creationDate?: string;
   updatedAt?: string;
@@ -288,6 +292,27 @@ export interface IProfitOptions {
    * По умолчанию `creationDate`.
    */
   dayField?: 'creationDate' | 'updatedAt';
+  /**
+   * Где продана позиция — регион покупателя и кластер склада отгрузки («Топ товаров»).
+   * Передали — итог и каждая строка `bySku` получают разрезы `byRegion`/`byCluster` в ТОМ
+   * ЖЕ проходе, поэтому Σ по регионам = Σ по кластерам = итог по построению. Названия
+   * решает вызывающий (подъём региона до субъекта, кластер по складу) — формула здесь одна.
+   */
+  placeOf?: (order: IProfitOrder, item: IProfitOrderItem) => IProfitPlace;
+}
+
+/** Место продажи позиции — подписи разрезов; пустое значение решает `placeOf`. */
+export interface IProfitPlace {
+  region: string;
+  cluster: string;
+}
+
+/** Строка разреза по месту: те же деньги, что у `IProfitSku`, на одно место. */
+export interface IProfitPlaceRow {
+  name: string;
+  count: number;
+  revenue: number;
+  net: number;
 }
 
 /** Точка ряда по дням: МСК-день (`ГГГГ-ММ-ДД`), продажи и чистая учтённых заказов. */
@@ -314,6 +339,9 @@ export interface IProfitSku {
   margin: number | null;
   /** Штук в заказах с возвратом. */
   returns: number;
+  /** Разрезы по месту — только при `IProfitOptions.placeOf`, по убыванию продаж. */
+  byRegion?: IProfitPlaceRow[];
+  byCluster?: IProfitPlaceRow[];
 }
 
 /** Услуги по заказу, если они известны. Сравнение id и числом, и строкой. */
@@ -380,7 +408,25 @@ export interface IProfitTotals {
    * здесь нет, как нет их и в итоге.
    */
   bySku: IProfitSku[];
+  /** Разрезы по месту — только при `IProfitOptions.placeOf`, по убыванию продаж. */
+  byRegion?: IProfitPlaceRow[];
+  byCluster?: IProfitPlaceRow[];
   rates: IProfitRates;
+}
+
+type TPlaceMap = Map<string, IProfitPlaceRow>;
+
+function addPlace(map: TPlaceMap, name: string, count: number, revenue: number, net: number): void {
+  const row = map.get(name) ?? { name, count: 0, revenue: 0, net: 0 };
+  row.count += count;
+  row.revenue += revenue;
+  row.net += net;
+  map.set(name, row);
+}
+
+function placeRows(map: TPlaceMap | undefined): IProfitPlaceRow[] | undefined {
+  if (!map) return undefined;
+  return [...map.values()].sort((a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name));
 }
 
 /** Число или мусор → число. `null`, `undefined` и NaN дают 0, а не NaN дальше. */
@@ -572,6 +618,10 @@ export function profitOf(
   };
   let undatedOrders = 0;
   const dayField = options?.dayField ?? 'creationDate';
+  const placeOf = options?.placeOf;
+  const regions: TPlaceMap | undefined = placeOf ? new Map() : undefined;
+  const clusters: TPlaceMap | undefined = placeOf ? new Map() : undefined;
+  const skuPlaces = new Map<string, { regions: TPlaceMap; clusters: TPlaceMap }>();
 
   for (const order of orders ?? []) {
     // Выручка = платёж покупателя ПЛЮС субсидия Маркета: скидку по акции даёт
@@ -658,10 +708,22 @@ export function profitOf(
       if (!sku) return;
       const count = amount(item.count) || 1;
       const row = skuOf(sku, item);
-      row.count += count;
-      row.revenue += orderRevenue * shares[index];
-      row.net +=
+      const itemRevenue = orderRevenue * shares[index];
+      const itemNet =
         netBeforeCosts(shares[index]) - itemPromo[index] - (costOf(sku, order) ?? 0) * count;
+      row.count += count;
+      row.revenue += itemRevenue;
+      row.net += itemNet;
+
+      if (placeOf) {
+        const place = placeOf(order, item);
+        addPlace(regions, place.region, count, itemRevenue, itemNet);
+        addPlace(clusters, place.cluster, count, itemRevenue, itemNet);
+        const own = skuPlaces.get(sku) ?? { regions: new Map(), clusters: new Map() };
+        addPlace(own.regions, place.region, count, itemRevenue, itemNet);
+        addPlace(own.clusters, place.cluster, count, itemRevenue, itemNet);
+        skuPlaces.set(sku, own);
+      }
     });
 
     const day = orderDayIso(order?.[dayField]);
@@ -697,8 +759,18 @@ export function profitOf(
     byDay: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)),
     undatedOrders,
     bySku: [...skus.values()]
-      .map((row) => ({ ...row, margin: row.revenue ? row.net / row.revenue : null }))
+      .map((row) => ({
+        ...row,
+        margin: row.revenue ? row.net / row.revenue : null,
+        ...(placeOf
+          ? {
+              byRegion: placeRows(skuPlaces.get(row.sku)?.regions) ?? [],
+              byCluster: placeRows(skuPlaces.get(row.sku)?.clusters) ?? [],
+            }
+          : {}),
+      }))
       .sort((a, b) => b.revenue - a.revenue || a.sku.localeCompare(b.sku)),
+    ...(placeOf ? { byRegion: placeRows(regions), byCluster: placeRows(clusters) } : {}),
     // Ставки возвращаются целиком, включая скидки: отчёт печатает их рядом с
     // суммами, чтобы число можно было проверить.
     rates: normalized,

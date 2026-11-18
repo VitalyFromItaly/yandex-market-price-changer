@@ -37,6 +37,7 @@ import { settingsRoutes } from '@/modules/settings/pages/routes';
 import { skuRatingsRoutes } from '@/modules/sku-ratings/pages/routes';
 import { storeRoutes, storesRoutes } from '@/modules/stores/pages/routes';
 import { taxesRoutes } from '@/modules/taxes/pages/routes';
+import { topSkusRoutes } from '@/modules/top-skus/pages/routes';
 import { unitEconomicsRoutes } from '@/modules/unit-economics/pages/routes';
 import { warehousesRoutes } from '@/modules/warehouses/pages/routes';
 import { ACCOUNT_LEVEL_NAV, ALL_MARKETPLACES } from '@/navigation';
@@ -55,6 +56,7 @@ const inStoreRoutes: RouteRecordRaw[] = [
   ...quarantineRoutes,
   ...feedbackRoutes,
   ...paymentsRoutes,
+  ...topSkusRoutes,
   ...marketReportsRoutes,
   ...recommendationsRoutes,
   ...offerCardsRoutes,

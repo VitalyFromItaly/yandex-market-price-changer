@@ -102,6 +102,8 @@ export const CRM_SECTIONS: Readonly<Record<string, readonly TFeatureKey[]>> = {
   // Отзывы тоже бизнесовые: магазин задаёт кабинет и токен.
   'ym-feedback': [FEATURE.GOODS_FEEDBACK],
   'ym-payments': [FEATURE.PAYMENTS_REPORT],
+  // Топ товаров — магазина, как «Прибыль»: живые заказы выбранного магазина.
+  'ym-top-skus': [FEATURE.REPORT_PROFIT],
   // Шесть отчётов — вкладки одного раздела под одним флагом, как в боте.
   'ym-market-reports': [FEATURE.MARKET_REPORTS],
   'ym-recommendations': [FEATURE.PRICE_RECOMMENDATIONS],
@@ -172,6 +174,7 @@ export const CRM_STORE_SECTIONS: ReadonlySet<string> = new Set([
   'ym-quarantine',
   'ym-feedback',
   'ym-payments',
+  'ym-top-skus',
   'ym-market-reports',
   'ym-recommendations',
   'ym-offer-cards',

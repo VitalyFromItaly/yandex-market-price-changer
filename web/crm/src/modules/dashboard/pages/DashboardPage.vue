@@ -55,6 +55,7 @@ import { useDashboardStore } from '../store/store.dashboard';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { OptionGroup } from '@/components/ui/option-group';
 import { PageHeader } from '@/components/ui/page-header';
+import { useStoresStore } from '@/modules/stores/store/store.stores';
 import { useStoreKey } from '@/shared/composables';
 import { periodQuery } from '@/shared/period';
 
@@ -87,6 +88,12 @@ type Linked = Pick<KpiMeta, 'source' | 'route' | 'report'>;
 const metaOf = (item: Linked) => SOURCES.find((meta) => meta.key === item.source);
 
 /** Отчёт, откуда число, с периодом его источника — окна обязаны совпадать. */
+/** «Все товары» — раздел «Топ товаров», если он открыт у магазина (`report_profit`). */
+const storesStore = useStoresStore();
+const topSkusTo = computed<RouteLocationRaw | null>(() =>
+  storesStore.current?.sections.includes('ym-top-skus') === true ? { name: 'ym-top-skus' } : null,
+);
+
 function targetOf(item: Linked): RouteLocationRaw {
   const meta = metaOf(item);
   const period = meta ? sourcePeriod(meta, store.period) : null;
@@ -255,6 +262,7 @@ watch(
         :rows="topRows"
         :heading="chartHeading"
         :to="targetOf(PROFIT_CHART)"
+        :all-to="topSkusTo"
         :is-refreshing="profitSource.isRefreshing || stocksSource.isRefreshing"
         :saved-at="profitSource.savedAt"
         :error="profitSource.error"

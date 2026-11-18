@@ -58,6 +58,11 @@ export const MENU = {
    */
   PAYMENTS: '💳 Платежи',
   /**
+   * Все проданные товары за выбранный период (сообщение + xlsx). Своего флага нет:
+   * виден тем, у кого открыта «Прибыль» (`report_profit`).
+   */
+  TOP_SKUS: '🏆 Топ товаров',
+  /**
    * Рекомендации Маркета по ценам: какие товары дороже «привлекательной» цены
    * и на сколько. Закрыт фичей `price_recommendations`, по умолчанию
    * выключенной.
@@ -131,6 +136,9 @@ export const MENU_LAYOUT: readonly (readonly TMenuLabel[])[] = [
   // по умолчанию выключена, так что у большинства ряд остаётся одной кнопкой
   // (featureMenuLayout убирает подпись, ряд не пустеет — Прибыль в нём есть).
   [MENU.PROFIT, MENU.TARIFF_CALC],
+  // Топ товаров — под Прибылью: те же числа по товарам. Default-off — у большинства
+  // ряд схлопывается (featureMenuLayout).
+  [MENU.TOP_SKUS],
   [MENU.SHIPPED_TODAY, MENU.REDEEMED],
   [MENU.RETURNING, MENU.IN_TRANSIT],
   // FBY — своим рядом: это не срез заказов, а отдельный экран. Фича по

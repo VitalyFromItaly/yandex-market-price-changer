@@ -849,6 +849,15 @@ HTTP: `POST /api/crm/jobs {kind, params, store}` → `{jobId, created}`, `GET /j
   другим периодом вернёт идущую задачу со СТАРЫМ периодом. Фронт сверяет `data.period` с запросом,
   чужой результат не показывает и один раз перезапускает задачу.
 
+### «Топ товаров» (`src/modules/crm/top-skus/`, фронт `web/crm/src/modules/top-skus/`)
+
+Kind `top-skus:summary` магазина (scope `store`, как «Прибыль») под `report_profit` (своего флага нет); `deep_history` —
+модификатор снимком features, разрезы по месту считаются всегда. Вид — `toCrmTopSkusView(topSkusOf(ProfitService.build))`, все строки без среза;
+правила и доводы — `src/modules/yandex/README.md`, «Топ товаров и регионы». Период — всегда `range` (пресеты
+`RangePicker` фронт переводит в даты), эхо несёт `from`/`to`. Вкладки «Товары / Регионы / Кластеры» в URL
+(`:tab?`), все три открыты всегда. Карточка «Топ товаров по продажам» на Главной остаётся
+топ-10 и при открытом разделе получает ссылку «Все товары».
+
 ### «Прибыль» и «Калькулятор» в CRM (`src/modules/crm/profit/`, фронт `web/crm/src/modules/profit/`)
 
 Два kind-а фоновых задач: `profit:profit` (фича `report_profit`) и `profit:tariff_calc` (`tariff_calc`).

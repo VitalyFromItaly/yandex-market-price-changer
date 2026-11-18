@@ -17,6 +17,7 @@ import { YmPriceWriteService } from './prices/ym-price-write.service';
 import { ProductSeedService } from './products/product-seed.service';
 import { QuarantineService } from './quarantine/quarantine.service';
 import { RecommendationsService } from './recommendations/recommendations.service';
+import { YmRegionsService } from './regions/ym-regions.service';
 import { OrderReportsService } from './reports/order-reports.service';
 import { ProfitService } from './reports/profit.service';
 import { TariffQuoteService } from './reports/tariff-quote.service';
@@ -55,6 +56,7 @@ import { YandexClientFactory } from './yandex-client.factory';
     YandexClientFactory,
     OrderReportsService,
     ProfitService,
+    YmRegionsService,
     StockSyncService,
     ProductSeedService,
     StockLevelsService,

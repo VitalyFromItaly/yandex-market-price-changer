@@ -77,6 +77,17 @@ export interface IReportOrderItem {
    * Нужна прибыли: комиссия за продвижение считается от ценника товара.
    */
   price?: number;
+  /**
+   * Склад отгрузки позиции. Есть только у архивного пути (stats/orders): живой getOrders
+   * склада не отдаёт. Нужен разрезу «Топа товаров» по кластерам («Топ товаров»).
+   */
+  warehouse?: IPlaceRef;
+}
+
+/** Ссылка на справочник Маркета — регион или склад. */
+export interface IPlaceRef {
+  id?: number;
+  name?: string;
 }
 
 /** Заказ в объёме, нужном отчётам. */
@@ -103,6 +114,8 @@ export interface IReportOrder {
    */
   subsidies?: IOrderSubsidy[];
   items?: IReportOrderItem[];
+  /** Регион доставки — только у архивного пути (stats/orders `deliveryRegion`). */
+  region?: IPlaceRef;
 }
 
 /**
@@ -198,6 +211,13 @@ export interface IReportBuildOptions {
    * другое».
    */
   placement?: string;
+  /**
+   * Весь период — через архив stats/orders, даже моложе 30 дней. Нужен разрезу «Топа
+   * товаров» по регионам и кластерам: регион доставки и склад отгрузки есть только у
+   * архива. Глубже 30 дней по-прежнему лишь при `deepHistory`. Только на определениях
+   * с фильтром по дате оформления или обновления (у остальных архив не применим).
+   */
+  archive?: boolean;
 }
 
 /**
@@ -352,7 +372,9 @@ export class OrderReportsService {
     // слишком старой даты было бы отказом на ровном месте. На архивном пути
     // возраст не ограничен — остаётся только упорядоченность границ.
     if (effective.dateFilter !== 'none' && !isUnbounded(period)) {
-      if (useStats) assertPeriodOrdered(period, now);
+      // Глубина без 30-дневного предела — только у deep_history; принудительный архив
+      // (`archive`) меняет источник, но не глубину.
+      if (useStats && options.deepHistory) assertPeriodOrdered(period, now);
       else assertPeriodSupported(period, now);
     }
 
@@ -430,6 +452,10 @@ export class OrderReportsService {
     now: Date,
     options: IReportBuildOptions,
   ): boolean {
+    const datedArchive =
+      !isUnbounded(period) &&
+      (definition.dateFilter === 'creationDate' || definition.dateFilter === 'updatedAt');
+    if (options.archive && datedArchive) return true;
     if (!options.deepHistory) return false;
     if (isUnbounded(period)) return !!definition.unboundedStatuses;
 

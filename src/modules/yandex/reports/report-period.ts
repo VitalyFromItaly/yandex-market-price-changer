@@ -56,6 +56,12 @@ export const PERIOD = {
    * читается как обещание, которого он не держит.
    */
   ALL: 'all',
+  /**
+   * Произвольный диапазон `from`–`to` (календарные даты МСК). Только у «Топа товаров»
+   * («Топ товаров»): кнопками его нет ни у одного другого отчёта (`periodsFor`), а глубже
+   * 30 дней он, как любой период, идёт через архив при `deep_history`.
+   */
+  RANGE: 'range',
 } as const;
 
 export type TPeriodKey = (typeof PERIOD)[keyof typeof PERIOD];
@@ -67,7 +73,13 @@ export type TPeriodKey = (typeof PERIOD)[keyof typeof PERIOD];
 export interface IReportPeriod {
   key: TPeriodKey;
   day?: ICalendarDate;
+  /** Границы `range` — обе включительно. */
+  from?: ICalendarDate;
+  to?: ICalendarDate;
 }
+
+/** Предел длины `range` в днях — тот же, что у диапазонов CRM (`MAX_RANGE_DAYS`). */
+export const MAX_RANGE_DAYS = 366;
 
 export const DEFAULT_PERIOD: IReportPeriod = { key: PERIOD.TODAY };
 
@@ -124,6 +136,9 @@ export function periodBounds(period: IReportPeriod, now: Date = new Date()): IPe
       const last = shiftDays(startOfMonth(today), -1);
       return { from: startOfMonth(last), to: last };
     }
+    case PERIOD.RANGE:
+      // Без границ — как день без даты: «сегодня», а не падение.
+      return { from: period.from ?? period.to ?? today, to: period.to ?? period.from ?? today };
     default:
       return { from: today, to: today };
   }
@@ -285,6 +300,9 @@ export function assertPeriodOrdered(period: IReportPeriod, now: Date = new Date(
   if (from.getTime() > to.getTime()) {
     throw new YandexDateRangeError('Начало периода позже его конца.');
   }
+  if (period.key === PERIOD.RANGE && daysBetween(from, to) + 1 > MAX_RANGE_DAYS) {
+    throw new YandexDateRangeError(`Период длиннее ${MAX_RANGE_DAYS} дней.`);
+  }
 }
 
 // --- подписи -----------------------------------------------------------------
@@ -302,6 +320,8 @@ export function periodButtonLabel(key: TPeriodKey): string {
       return '⏮ Прошлый месяц';
     case PERIOD.ALL:
       return '📚 Всего';
+    case PERIOD.RANGE:
+      return '✏️ Свой период';
     default:
       return '📅 Сегодня';
   }
@@ -375,11 +395,29 @@ export function periodTitle(period: IReportPeriod, now: Date = new Date()): stri
     return period.key === PERIOD.TODAY ? `за сегодня, ${from}` : `за ${from}`;
   }
 
+  if (period.key === PERIOD.RANGE) return `за ${from} — ${to}`;
+
   const prefix = PERIOD_TITLE_PREFIX[period.key] ?? 'с начала месяца';
   return `${prefix}, ${from} — ${to}`;
 }
 
 // --- ввод конкретной даты ----------------------------------------------------
+
+/**
+ * Разбор диапазона «01.10.2026–31.10.2026» (тире, дефис с пробелами, «-» между датами
+ * через пробел). Порядок границ не исправляется — его проверит `assertPeriodOrdered`
+ * с понятным текстом.
+ */
+export function parseRangeInput(text: string): { from: ICalendarDate; to: ICalendarDate } | null {
+  const parts = text
+    .trim()
+    .split(/\s*[—–]\s*|\s+-\s+|\s+/)
+    .filter(Boolean);
+  if (parts.length !== 2) return null;
+  const from = parseDayInput(parts[0]);
+  const to = parseDayInput(parts[1]);
+  return from && to ? { from, to } : null;
+}
 
 /**
  * Разбор даты, присланной пользователем.

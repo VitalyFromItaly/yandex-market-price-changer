@@ -39,6 +39,7 @@ import { MarketReportsHandler } from '../../src/modules/telegram/bots/price-chan
 import { OfferCardsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/offer-cards.handler';
 import { MarketCategoriesService } from '../../src/modules/yandex/market-reports/market-categories.service';
 import { PaymentsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/payments.handler';
+import { TopSkusHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/top-skus.handler';
 import { PriceRecommendationsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/price-recommendations.handler';
 import { QuarantineHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/quarantine.handler';
 import { FeedbackService } from '../../src/modules/yandex/feedback/feedback.service';
@@ -70,6 +71,7 @@ import { ProfitService } from '../../src/modules/yandex/reports/profit.service';
 import { FinanceService } from '../../src/modules/finance/finance.service';
 import { StoreSettingsService } from '../../src/modules/yandex/settings/store-settings.service';
 import { CostHistoryService } from '../../src/database/services/cost-history.service';
+import { YmRegionsService } from '../../src/modules/yandex/regions/ym-regions.service';
 import { PurchasePriceService } from '../../src/database/services/purchase-price.service';
 import { PurchasePrice } from '../../src/database/schemas/purchase-price.schema';
 import { formatAdminCallback } from '../../src/modules/telegram/bots/shared/access.domain';
@@ -269,6 +271,7 @@ describe('Онбординг: от /start до отчёта', () => {
         FeedbackService,
         FeedbackHandler,
         PaymentsHandler,
+        TopSkusHandler,
         PriceRecommendationsHandler,
         MarketReportsHandler,
         MarketCategoriesService,
@@ -314,6 +317,7 @@ describe('Онбординг: от /start до отчёта', () => {
         PurchasePriceService,
         // Истории нет — закуп из прайса действует «с начала времён» (TASK-116).
         { provide: CostHistoryService, useValue: { findForSkus: async () => new Map() } },
+        { provide: YmRegionsService, useValue: { resolve: async () => new Map() } },
         StoreSettingsService,
         { provide: getModelToken(ActionLog.name), useValue: logsModel },
         { provide: getModelToken(UserAccess.name), useValue: accessModel },

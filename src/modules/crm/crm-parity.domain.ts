@@ -134,6 +134,7 @@ export const BOT_SCREEN_SECTIONS: Readonly<Record<keyof typeof MENU, TBotScreenP
   QUARANTINE: { section: 'ym-quarantine' },
   FEEDBACK: { section: 'ym-feedback' },
   PAYMENTS: { section: 'ym-payments' },
+  TOP_SKUS: { section: 'ym-top-skus' },
   PRICE_RECOMMENDATIONS: { section: 'ym-recommendations' },
   MARKET_REPORTS: { section: 'ym-market-reports' },
   OFFER_CARDS: { section: 'ym-offer-cards' },

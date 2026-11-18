@@ -18,7 +18,8 @@ import { CrmJobError } from './crm-jobs.domain';
  * передаёт его в `extra` сам. Иначе любой отчёт о заказах принял бы его молча.
  */
 const PERIOD_KEYS = new Set<string>(
-  Object.values(PERIOD).filter((key) => key !== PERIOD.PREV_MONTH),
+  // `range` — тоже только по `extra`: свой диапазон есть лишь у «Топа товаров».
+  Object.values(PERIOD).filter((key) => key !== PERIOD.PREV_MONTH && key !== PERIOD.RANGE),
 );
 
 const BAD_PERIOD = 'Не удалось разобрать период отчёта. Выберите его заново.';
@@ -35,12 +36,28 @@ export function parsePeriodParams(
   if (raw === undefined) return DEFAULT_PERIOD;
   if (typeof raw !== 'object' || raw === null) throw new CrmJobError(BAD_PERIOD);
 
-  const { key: periodKey, day } = raw as { key?: unknown; day?: unknown };
+  const {
+    key: periodKey,
+    day,
+    from,
+    to,
+  } = raw as {
+    key?: unknown;
+    day?: unknown;
+    from?: unknown;
+    to?: unknown;
+  };
   const known =
     typeof periodKey === 'string' &&
     (PERIOD_KEYS.has(periodKey) || (extra as readonly string[]).includes(periodKey));
   if (!known) {
     throw new CrmJobError(BAD_PERIOD);
+  }
+  if (periodKey === PERIOD.RANGE) {
+    const start = typeof from === 'string' ? parseDayInput(from) : null;
+    const end = typeof to === 'string' ? parseDayInput(to) : null;
+    if (!start || !end) throw new CrmJobError('Нужны обе даты периода в формате ДД-ММ-ГГГГ.');
+    return { key: PERIOD.RANGE, from: start, to: end };
   }
   if (periodKey !== PERIOD.DAY) return { key: periodKey as TPeriodKey };
 
@@ -52,6 +69,9 @@ export function parsePeriodParams(
 export interface ICrmPeriodEcho {
   key: TPeriodKey;
   day: string | null;
+  /** Границы `range` (ДД-ММ-ГГГГ); у остальных периодов — `null`. */
+  from?: string | null;
+  to?: string | null;
 }
 
 /**
@@ -60,7 +80,16 @@ export interface ICrmPeriodEcho {
  * результат по этому полю.
  */
 export function periodEcho(period: IReportPeriod): ICrmPeriodEcho {
-  return { key: period.key, day: period.day ? calendarDateParam(period.day) : null };
+  const echo: ICrmPeriodEcho = {
+    key: period.key,
+    day: period.day ? calendarDateParam(period.day) : null,
+  };
+  // Поля диапазона — только у `range`: эхо остальных периодов не меняется.
+  if (period.key === PERIOD.RANGE) {
+    echo.from = period.from ? calendarDateParam(period.from) : null;
+    echo.to = period.to ? calendarDateParam(period.to) : null;
+  }
+  return echo;
 }
 
 // --- пресеты платежей: «Платежи» и три отчёта Маркета с периодом ---------------

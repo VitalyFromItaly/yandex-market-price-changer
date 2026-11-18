@@ -21,6 +21,7 @@ import { ScheduleHandler } from './handlers/schedule.handler';
 import { SlashCommandsHandler } from './handlers/slash-commands.handler';
 import { StartHandler } from './handlers/start.handler';
 import { StockUploadHandler } from './handlers/stock-upload.handler';
+import { TopSkusHandler } from './handlers/top-skus.handler';
 
 /**
  * Собирает бота из синглтон-обработчиков.
@@ -77,6 +78,7 @@ export class PriceChangerComposer {
       { name: 'quarantineCallbacks', register: (b) => this.quarantine.registerCallbacks(b) },
       { name: 'feedbackCallbacks', register: (b) => this.feedback.registerCallbacks(b) },
       { name: 'paymentsCallbacks', register: (b) => this.payments.registerCallbacks(b) },
+      { name: 'topSkusCallbacks', register: (b) => this.topSkus.registerCallbacks(b) },
       { name: 'marketReportsCallbacks', register: (b) => this.marketReports.registerCallbacks(b) },
       // Кнопки визарда (выбор магазина, «Как получить?») — тоже ДО общего
       // callback_query, по той же причине. Пока они регистрировались вместе с
@@ -114,6 +116,7 @@ export class PriceChangerComposer {
     private readonly quarantine: QuarantineHandler,
     private readonly feedback: FeedbackHandler,
     private readonly payments: PaymentsHandler,
+    private readonly topSkus: TopSkusHandler,
     private readonly marketReports: MarketReportsHandler,
     private readonly callbacks: CallbackQueryHandler,
     private readonly apiSettings: ApiSettingsHandler,

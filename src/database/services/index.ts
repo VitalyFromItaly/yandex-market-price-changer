@@ -17,6 +17,7 @@ export { MarketplaceConnectionService } from './marketplace-connection.service';
 export { SellerNotificationSettingsService } from './seller-notification-settings.service';
 export { StockPushSettingsService } from './stock-push-settings.service';
 export { SellerNotificationService } from './seller-notification.service';
+export { YmRegionService } from './ym-region.service';
 export type { IAccessIdentity, IAdminIdentity, TDraftField } from './user-access.service';
 export type { IPurchasePriceRow } from './purchase-price.service';
 export type { CreateYandexMarketDto, UpdateYandexMarketDto } from './yandex-market.service';

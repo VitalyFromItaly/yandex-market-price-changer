@@ -19,6 +19,7 @@ import { ReportsHandler } from '../../src/modules/telegram/bots/price-changer-bo
 import { QuarantineHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/quarantine.handler';
 import { FeedbackHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/feedback.handler';
 import { PaymentsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/payments.handler';
+import { TopSkusHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/top-skus.handler';
 import { MarketReportsHandler } from '../../src/modules/telegram/bots/price-changer-bot/handlers/market-reports.handler';
 
 /**
@@ -82,6 +83,10 @@ describe('PriceChangerComposer: порядок регистрации', () => {
         {
           provide: PaymentsHandler,
           useValue: { registerCallbacks: () => order.push('paymentsCallbacks') },
+        },
+        {
+          provide: TopSkusHandler,
+          useValue: { registerCallbacks: () => order.push('topSkusCallbacks') },
         },
         {
           provide: MarketReportsHandler,
@@ -159,6 +164,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
       'quarantineCallbacks',
       'feedbackCallbacks',
       'paymentsCallbacks',
+      'topSkusCallbacks',
       'marketReportsCallbacks',
       'onboardingCallbacks',
       'callbacks',
@@ -177,6 +183,7 @@ describe('PriceChangerComposer: порядок регистрации', () => {
       'quarantineCallbacks',
       'feedbackCallbacks',
       'paymentsCallbacks',
+      'topSkusCallbacks',
       'marketReportsCallbacks',
     ]) {
       expect(order.indexOf(step)).toBeLessThan(order.indexOf('callbacks'));

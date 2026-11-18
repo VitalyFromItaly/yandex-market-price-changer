@@ -19,6 +19,7 @@ export * from './marketplace-connection.schema';
 export * from './seller-notification-settings.schema';
 export * from './stock-push-settings.schema';
 export * from './seller-notification.schema';
+export * from './ym-region.schema';
 
 export interface IYandexMarketSchema {
   telegramUserId: number;

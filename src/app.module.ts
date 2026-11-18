@@ -51,6 +51,7 @@ import { CrmStockPushModule } from './modules/crm/stock-push/crm-stock-push.modu
 import { CrmStocksModule } from './modules/crm/stocks/crm-stocks.module';
 import { CrmStoresModule } from './modules/crm/stores/crm-stores.module';
 import { CrmTaxesModule } from './modules/crm/taxes/crm-taxes.module';
+import { CrmTopSkusModule } from './modules/crm/top-skus/crm-top-skus.module';
 import { CrmUnitEconomicsModule } from './modules/crm/unit-economics/crm-unit-economics.module';
 import { CrmWarehousesModule } from './modules/crm/warehouses/crm-warehouses.module';
 import { CrmWbModule } from './modules/crm/wb/crm-wb.module';
@@ -104,6 +105,7 @@ import { YandexModule } from './modules/yandex/yandex.module';
     CrmJobsModule,
     CrmOrdersModule,
     CrmProfitModule,
+    CrmTopSkusModule,
     CrmPriceListModule,
     CrmSettingsModule,
     CrmExpensesModule,

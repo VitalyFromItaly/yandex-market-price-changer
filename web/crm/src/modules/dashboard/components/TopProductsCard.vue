@@ -36,6 +36,8 @@ defineProps<{
   loadingText?: string;
   /** Почему в колонке остатка «—» (остатки не пришли). */
   stockNote?: string | null;
+  /** Раздел «Топ товаров» со всеми товарами и своим периодом; закрыт — ссылки нет. */
+  allTo?: RouteLocationRaw | null;
 }>();
 defineEmits<{ retry: [] }>();
 </script>
@@ -47,13 +49,23 @@ defineEmits<{ retry: [] }>();
         <CardTitle class="text-base">Топ товаров по продажам</CardTitle>
         <p v-if="heading" class="text-xs text-muted-foreground">{{ heading }}</p>
       </div>
-      <RouterLink
-        :to="to"
-        class="inline-flex shrink-0 items-center gap-1 text-sm text-link hover:underline"
-      >
-        В «Прибыль»
-        <ArrowRight class="size-4" aria-hidden="true" />
-      </RouterLink>
+      <div class="flex shrink-0 flex-col items-end gap-1">
+        <RouterLink
+          v-if="allTo"
+          :to="allTo"
+          class="inline-flex items-center gap-1 text-sm text-link hover:underline"
+        >
+          Все товары
+          <ArrowRight class="size-4" aria-hidden="true" />
+        </RouterLink>
+        <RouterLink
+          :to="to"
+          class="inline-flex items-center gap-1 text-sm text-link hover:underline"
+        >
+          В «Прибыль»
+          <ArrowRight class="size-4" aria-hidden="true" />
+        </RouterLink>
+      </div>
     </CardHeader>
     <CardContent class="flex flex-col gap-2">
       <div v-if="error && rows === null" class="flex flex-col items-start gap-2">

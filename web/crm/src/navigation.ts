@@ -223,6 +223,11 @@ const NAV_META: Record<Section, SectionMeta> = {
     icon: MessagesSquare,
     description: 'Отзывы о товарах, которые ждут вашего ответа',
   },
+  'top-skus': {
+    label: 'Топ товаров',
+    icon: Trophy,
+    description: 'Все проданные товары за любой период, регионы и кластеры продаж',
+  },
   payments: {
     label: 'Платежи',
     icon: Wallet,

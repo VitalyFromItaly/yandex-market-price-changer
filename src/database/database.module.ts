@@ -31,6 +31,7 @@ import { TelegramApiBucket, TelegramApiBucketSchema } from './schemas/telegram-a
 import { UserAccess, UserAccessSchema } from './schemas/user-access.schema';
 import { User, UserSchema } from './schemas/user.schema';
 import { YandexMarket, YandexMarketSchema } from './schemas/yandex-market.schema';
+import { YmRegion, YmRegionSchema } from './schemas/ym-region.schema';
 import { ActionLogService } from './services/action-log.service';
 import { AdminCredentialService } from './services/admin-credential.service';
 import { AiTurnService } from './services/ai-turn.service';
@@ -50,6 +51,7 @@ import { StockPushSettingsService } from './services/stock-push-settings.service
 import { TelegramApiBucketService } from './services/telegram-api-bucket.service';
 import { UserAccessService } from './services/user-access.service';
 import { YandexMarketService } from './services/yandex-market.service';
+import { YmRegionService } from './services/ym-region.service';
 
 @Module({
   imports: [
@@ -101,6 +103,7 @@ import { YandexMarketService } from './services/yandex-market.service';
       { name: SellerNotificationSettings.name, schema: SellerNotificationSettingsSchema },
       { name: StockPushSettings.name, schema: StockPushSettingsSchema },
       { name: SellerNotification.name, schema: SellerNotificationSchema },
+      { name: YmRegion.name, schema: YmRegionSchema },
     ]),
   ],
   providers: [
@@ -124,6 +127,7 @@ import { YandexMarketService } from './services/yandex-market.service';
     SellerNotificationSettingsService,
     StockPushSettingsService,
     SellerNotificationService,
+    YmRegionService,
   ],
   exports: [
     DatabaseService,
@@ -147,6 +151,7 @@ import { YandexMarketService } from './services/yandex-market.service';
     SellerNotificationSettingsService,
     StockPushSettingsService,
     SellerNotificationService,
+    YmRegionService,
   ],
 })
 export class DatabaseModule {}

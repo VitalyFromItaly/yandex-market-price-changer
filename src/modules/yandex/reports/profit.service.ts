@@ -10,6 +10,9 @@ import { CostHistoryService } from '../../../database/services/cost-history.serv
 import { PurchasePriceService } from '../../../database/services/purchase-price.service';
 import { ErrorReporter } from '../../errors/error-reporter.service';
 import { datedCosts } from '../../products/cost-history.domain';
+import { placeResolver, regionIdsOf } from '../regions/ym-regions.domain';
+import { YmRegionsService } from '../regions/ym-regions.service';
+import { isFby, placementOfCampaign } from '../stocks/placement';
 import { YandexClientFactory } from '../yandex-client.factory';
 
 import { OrderReportsService } from './order-reports.service';
@@ -78,6 +81,12 @@ export interface IProfitBuildOptions {
    * Решение тоже у вызывающего — по тем же причинам.
    */
   deepHistory?: boolean;
+  /**
+   * Разрезы по регионам покупателя и кластерам отгрузки («Топ товаров»). Оба набора
+   * тогда идут через архив stats/orders (регион и склад есть только там), а `bySku`
+   * и итоги получают `byRegion`/`byCluster` (`IProfitOptions.placeOf`).
+   */
+  places?: boolean;
 }
 
 /**
@@ -97,6 +106,7 @@ export class ProfitService {
     private readonly clients: YandexClientFactory,
     private readonly errors: ErrorReporter,
     private readonly costHistory: CostHistoryService,
+    private readonly regions: YmRegionsService,
   ) {}
 
   public async build(
@@ -111,9 +121,10 @@ export class ProfitService {
     // Два обхода параллельно: это разные фильтры даты (обновление против
     // оформления), объединить их одним запросом нельзя. Отчёт строится по
     // кнопке и раз в сутки, часовой квоте Partner API это ничто.
+    const source = { deepHistory: options.deepHistory, archive: options.places };
     const [result, placedOrders] = await Promise.all([
-      this.reports.build(store, REPORT.PROFIT, now, period, { deepHistory: options.deepHistory }),
-      this.reports.collectPlacedOrders(store, period, now, { deepHistory: options.deepHistory }),
+      this.reports.build(store, REPORT.PROFIT, now, period, source),
+      this.reports.collectPlacedOrders(store, period, now, source),
     ]);
 
     const rates = ratesOf(store);
@@ -138,13 +149,17 @@ export class ProfitService {
     // по названию и категории profitOf определяет бренд позиции для комиссии
     // за продвижение.
     const returned = await this.returnedOrderIds(store);
+    const placeOf = options.places
+      ? await this.placeOfStore(store, [...result.orders, ...placedOrders.orders])
+      : undefined;
     // Выкупленные отобраны по updatedAt — по нему и ряд по дням (см. dayField).
     const totals = profitOf(result.orders, costs, rates, {
       returned,
       rows,
       dayField: 'updatedAt',
+      placeOf,
     });
-    const placed = profitOf(placedOrders.orders, costs, rates, { returned, rows });
+    const placed = profitOf(placedOrders.orders, costs, rates, { returned, rows, placeOf });
 
     this.logger.log(
       `Прибыль для ${store.telegramUserId}: выкуплено ${totals.orders}, ` +
@@ -170,6 +185,16 @@ export class ProfitService {
       pricesUpdatedAt: await this.purchasePrices.lastUpdatedAt(store.telegramUserId),
       tariffEstimate,
     };
+  }
+
+  /**
+   * `placeOf` магазина: регионы заказов из кэша справочника (недостающие — у Маркета),
+   * модель размещения — из кэша `stores` (не знаем — не FBY: кластер «свой склад»).
+   */
+  private async placeOfStore(store: YandexMarketDocument, orders: readonly IReportOrder[]) {
+    const client = this.clients.forStore(store);
+    const regions = await this.regions.resolve(client, regionIdsOf(orders));
+    return placeResolver(regions, isFby(placementOfCampaign(store.stores, store.campaign_id)));
   }
 
   /**

@@ -46,6 +46,7 @@ import {
   QUARANTINE_CONFIRM_BATCH,
   QUARANTINE_PAGE_LIMIT,
   RECOMMENDATIONS_PAGE_LIMIT,
+  regionPath,
   reportInfoPath,
   returnsPath,
   stocksOnWarehousesGeneratePath,
@@ -525,6 +526,15 @@ export class YandexApiClient {
     );
 
     return { items: data.orders ?? [], nextPageToken: data.paging?.nextPageToken };
+  }
+
+  /**
+   * Регион справочника с цепочкой `parent` до страны (`RegionDTO`, сырой). Нет такого —
+   * `undefined`. Только чтение; кэширует ответ вызывающий (`YmRegionsService`).
+   */
+  public async getRegion(regionId: number): Promise<unknown> {
+    const data = await this.get<{ regions?: unknown[] }>(regionPath(regionId), {});
+    return data?.regions?.[0];
   }
 
   /** Одна страница возвратов. */
